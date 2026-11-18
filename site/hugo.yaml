@@ -77,6 +77,8 @@ params:
 
 copyright: "jackstay is licensed under the Apache License 2.0."
 
+# On a phone, Hextra's menu lists these entries with the guide's pages under Guide, so Get started and
+# More on GitHub (the guide's first and last pages) appear there twice.
 menu:
   main:
     - name: Get started
@@ -86,7 +88,7 @@ menu:
       pageRef: /guide
       weight: 2
     - name: More on GitHub
-      pageRef: /more-on-github
+      pageRef: /guide/more-on-github
       weight: 3
     - name: Search
       weight: 4
