@@ -199,26 +199,31 @@ func parseStat(stat []byte, boot int64) (process Process, session int, err error
 	if len(fields) <= startField {
 		return Process{}, 0, fmt.Errorf("stat of %d has %d fields after the name", pid, len(fields))
 	}
-	numbers := make([]int64, 0, 4)
-	for _, index := range []int{1, 2, 3, startField} {
-		number, convErr := strconv.ParseInt(fields[index], 10, 64)
+	// The parent, group and session are process numbers, which the kernel keeps in 32 bits
+	// (pid_t); the start is in clock ticks since boot, a 64-bit count.
+	ids := make([]int, 0, 3)
+	for _, index := range []int{1, 2, 3} {
+		id, convErr := strconv.ParseInt(fields[index], 10, 32)
 		if convErr != nil {
 			return Process{}, 0, fmt.Errorf("stat of %d, field %d: %w", pid, index+3, convErr)
 		}
-		numbers = append(numbers, number)
+		ids = append(ids, int(id))
 	}
-	ticks := numbers[3]
+	ticks, err := strconv.ParseInt(fields[startField], 10, 64)
+	if err != nil {
+		return Process{}, 0, fmt.Errorf("stat of %d, field %d: %w", pid, startField+3, err)
+	}
 	micros := boot*1_000_000 + ticks*(1_000_000/ticksPerSecond)
 	process = Process{
 		PID:         pid,
-		Parent:      int(numbers[0]),
-		Group:       int(numbers[1]),
+		Parent:      ids[0],
+		Group:       ids[1],
 		Start:       micros / 1_000_000,
 		StartMicros: micros,
 		Name:        string(stat[open+1 : end]),
 		Zombie:      fields[0] == "Z",
 	}
-	return process, int(numbers[2]), nil
+	return process, ids[2], nil
 }
 
 // readStatus reads /proc/<pid>/status: the effective user (the second number of `Uid:`: real,
