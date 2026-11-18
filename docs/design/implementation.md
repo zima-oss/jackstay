@@ -1596,11 +1596,8 @@ secondary limit honours `Retry-After`.
 **Checks** are one GraphQL query of the head commit's `statusCheckRollup`, paged to the end: the
 newest run of each check name in each check suite (so a re-run does not leave a false red) and
 commit statuses of other apps. Each workflow run is a suite of its own, so a run a `concurrency`
-group cancelled for a newer run is still listed. Such a run is **superseded**, reported and not
-judged, only on GitHub's own evidence: its annotation "Canceling since a higher priority waiting
-request for 'GROUP' exists", and a newer run (a higher run id) of the same workflow (by id), event
-and branch with a check of the same name, which is judged instead. Without the annotation (a run
-cancelled by hand, or two independent runs of one workflow on one head) the cancellation stands.
+group cancelled for a newer run is still listed and still counts: neither the run's metadata nor
+GitHub's cancellation annotation ties it to the run that replaced it (issue #13).
 Buckets: SUCCESS → pass; SKIPPED,
 NEUTRAL → skipping; FAILURE, ERROR, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE → fail; CANCELLED →
 cancel (settled, failing, and named as a cancellation); STALE, PENDING, EXPECTED and anything else

@@ -19,20 +19,14 @@ const (
 // Check is one context of a commit's statusCheckRollup: the newest run of each check name, and
 // the commit statuses of other apps.
 type Check struct {
-	Name       string
-	Kind       CheckKind
-	Status     string // a check run's: QUEUED, IN_PROGRESS, COMPLETED, …
-	Conclusion string // a completed check run's: SUCCESS, FAILURE, …
-	State      string // a status's: SUCCESS, PENDING, FAILURE, ERROR, EXPECTED
-	Link       string
-	Workflow   string // the workflow of an Actions check run
-	WorkflowID int64  // its workflow's id
-	RunID      int64  // its workflow run
-	Event      string // the event that started the run: push, pull_request, …
-	Branch     string // the branch its check suite ran for
-	// Annotations are a check run's first annotations' messages: GitHub writes why it cancelled a
-	// run there ("Canceling since a higher priority waiting request for 'GROUP' exists").
-	Annotations []string
+	Name        string
+	Kind        CheckKind
+	Status      string // a check run's: QUEUED, IN_PROGRESS, COMPLETED, …
+	Conclusion  string // a completed check run's: SUCCESS, FAILURE, …
+	State       string // a status's: SUCCESS, PENDING, FAILURE, ERROR, EXPECTED
+	Link        string
+	Workflow    string // the workflow of an Actions check run
+	RunID       int64  // its workflow run
 	AppID       int64  // the app whose check suite holds a check run (GitHub Actions: 15368)
 	Description string // a status's
 	StartedAt   time.Time
@@ -87,8 +81,7 @@ const checksQuery = `query($owner: String!, $name: String!, $oid: GitObjectID!, 
         nodes {
           __typename
           ... on CheckRun { name status conclusion detailsUrl startedAt completedAt
-            annotations(first: 10) { nodes { message } }
-            checkSuite { app { databaseId } branch { name } workflowRun { databaseId event workflow { databaseId name } } } }
+            checkSuite { app { databaseId } workflowRun { databaseId workflow { name } } } }
           ... on StatusContext { context state targetUrl description createdAt }
         }
       } }
@@ -104,24 +97,14 @@ type checkNode struct {
 	DetailsURL  string     `json:"detailsUrl"`
 	StartedAt   *time.Time `json:"startedAt"`
 	CompletedAt *time.Time `json:"completedAt"`
-	Annotations *struct {
-		Nodes []struct {
-			Message string `json:"message"`
-		} `json:"nodes"`
-	} `json:"annotations"`
-	CheckSuite *struct {
+	CheckSuite  *struct {
 		App *struct {
 			DatabaseID int64 `json:"databaseId"`
 		} `json:"app"`
-		Branch *struct {
-			Name string `json:"name"`
-		} `json:"branch"`
 		WorkflowRun *struct {
-			DatabaseID int64  `json:"databaseId"`
-			Event      string `json:"event"`
+			DatabaseID int64 `json:"databaseId"`
 			Workflow   struct {
-				DatabaseID int64  `json:"databaseId"`
-				Name       string `json:"name"`
+				Name string `json:"name"`
 			} `json:"workflow"`
 		} `json:"workflowRun"`
 	} `json:"checkSuite"`
@@ -147,22 +130,12 @@ func (node checkNode) check() Check {
 	if node.CompletedAt != nil {
 		check.CompletedAt = *node.CompletedAt
 	}
-	if node.Annotations != nil {
-		for _, annotation := range node.Annotations.Nodes {
-			check.Annotations = append(check.Annotations, annotation.Message)
-		}
-	}
 	if node.CheckSuite != nil && node.CheckSuite.App != nil {
 		check.AppID = node.CheckSuite.App.DatabaseID
 	}
-	if node.CheckSuite != nil && node.CheckSuite.Branch != nil {
-		check.Branch = node.CheckSuite.Branch.Name
-	}
 	if node.CheckSuite != nil && node.CheckSuite.WorkflowRun != nil {
 		check.Workflow = node.CheckSuite.WorkflowRun.Workflow.Name
-		check.WorkflowID = node.CheckSuite.WorkflowRun.Workflow.DatabaseID
 		check.RunID = node.CheckSuite.WorkflowRun.DatabaseID
-		check.Event = node.CheckSuite.WorkflowRun.Event
 	}
 	return check
 }

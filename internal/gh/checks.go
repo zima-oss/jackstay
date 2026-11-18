@@ -3,7 +3,6 @@ package gh
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -165,8 +164,8 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 				mergeSaid = true
 			}
 		}
-		if len(rows) == 0 {
-			// Queued but nothing registered: the state four hand-rolled loops took for "finished".
+		if len(rows) == 0 && len(options.required) == 0 {
+			// Queued but nothing registered (with required checks, weigh names the ones missing): the state four hand-rolled loops took for "finished".
 			if !announced {
 				work.say("no checks registered for this commit yet — waiting for the run to appear (this is not a pass)")
 				announced = true
@@ -302,28 +301,17 @@ func (work *session) sameBase(pull githubapi.PullRequest) error {
 // weighed is a head's checks judged: the ones still to wait for, the ones that stop a merge, and
 // what is only reported.
 type weighed struct {
-	pending    []string          // names waited for: not settled, or required and not registered
-	failed     []githubapi.Check // failed or cancelled checks that count
-	judged     int               // how many checks count
-	superseded []githubapi.Check // cancelled runs a newer run of the same workflow replaced
-	ignored    []githubapi.Check // not required, and pending or cancelled: reported, not waited for
+	pending []string          // names waited for: not settled, or required and not registered
+	failed  []githubapi.Check // failed or cancelled checks that count
+	judged  int               // how many checks count
+	ignored []githubapi.Check // not required, and pending or cancelled: reported, not waited for
 }
 
-// weigh judges rows against the required checks (none: every check counts). A cancelled check run
-// is superseded when a newer run of its workflow for the same event (a higher run id) has a check
-// of the same name: a concurrency group cancelled it for that run, which is judged instead.
+// weigh judges rows against the required checks (none: every check counts).
 func weigh(rows []githubapi.Check, required []RequiredCheck) weighed {
 	var out weighed
-	var live []githubapi.Check
-	for _, row := range rows {
-		if replacedBy(row, rows) {
-			out.superseded = append(out.superseded, row)
-			continue
-		}
-		live = append(live, row)
-	}
 	present := make([]bool, len(required))
-	for _, row := range live {
+	for _, row := range rows {
 		counts := len(required) == 0
 		for index, check := range required {
 			if check.satisfiedBy(row) {
@@ -352,56 +340,16 @@ func weigh(rows []githubapi.Check, required []RequiredCheck) weighed {
 	return out
 }
 
-// concurrencyCancel is GitHub's annotation on a run a concurrency group cancelled for a newer
-// request in the group.
-var concurrencyCancel = regexp.MustCompile(`^Canceling since a higher priority waiting request for '(.*)' exists`)
-
-// cancelledFor is the concurrency group GitHub says it cancelled the check run for, if it says so.
-func cancelledFor(row githubapi.Check) (string, bool) {
-	for _, message := range row.Annotations {
-		if found := concurrencyCancel.FindStringSubmatch(strings.TrimSpace(message)); found != nil {
-			return found[1], true
-		}
-	}
-	return "", false
-}
-
-// replacedBy says whether row is a cancelled check run that a newer run replaced (issue #13). The
-// evidence is GitHub's own: its annotation that a concurrency group cancelled the run for a newer
-// request in the group, and that newer run, the next of the same workflow (by id), event and branch
-// with a check of the same name. A cancellation without that annotation (by hand, by a timeout, by
-// a dispatch's own group) stands.
-func replacedBy(row githubapi.Check, rows []githubapi.Check) bool {
-	if row.Kind != githubapi.CheckRun || row.Bucket() != githubapi.Cancel || row.WorkflowID == 0 || row.RunID == 0 {
-		return false
-	}
-	if _, cancelled := cancelledFor(row); !cancelled {
-		return false
-	}
-	for _, other := range rows {
-		if other.Kind == githubapi.CheckRun && other.WorkflowID == row.WorkflowID && other.Event == row.Event &&
-			other.Branch == row.Branch && other.Name == row.Name && other.RunID > row.RunID {
-			return true
-		}
-	}
-	return false
-}
-
-// notes are the lines that say what was set aside: superseded runs, checks not required, and
+// notes are the lines that say what was set aside: checks not required, and
 // cancelled checks that count (a cancellation, not a failure).
 func (judged weighed) notes() []string {
 	var lines []string
-	for _, row := range judged.superseded {
-		group, _ := cancelledFor(row)
-		lines = append(lines, fmt.Sprintf("superseded: %s (run %d of %s, cancelled by its concurrency group %q; a newer run replaced it)",
-			row.Name, row.RunID, row.Workflow, group))
-	}
 	for _, row := range judged.ignored {
 		lines = append(lines, fmt.Sprintf("not required: %s %s (not waited for)", row.Name, row.Bucket()))
 	}
 	for _, row := range judged.failed {
 		if row.Bucket() == githubapi.Cancel {
-			lines = append(lines, fmt.Sprintf("cancelled: %s (run %d of %s), and no newer run replaced it", row.Name, row.RunID, row.Workflow))
+			lines = append(lines, fmt.Sprintf("cancelled: %s (run %d of %s): a cancellation is not a pass", row.Name, row.RunID, row.Workflow))
 		}
 	}
 	return lines

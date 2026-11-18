@@ -90,9 +90,7 @@ func TestChecksArePagedToTheEnd(t *testing.T) {
 			"pageInfo": {"hasNextPage": true, "endCursor": "C1"},
 			"nodes": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "d1",
 				"startedAt": "2026-11-16T10:00:00Z", "completedAt": "2026-11-16T10:01:00Z",
-				"annotations": {"nodes": [{"message": "Canceling since a higher priority waiting request for 'ci-feat' exists"}]},
-				"checkSuite": {"app": {"databaseId": 15368}, "branch": {"name": "feat"},
-					"workflowRun": {"databaseId": 9, "event": "pull_request", "workflow": {"databaseId": 4, "name": "ci"}}}}]}}}}}}`),
+				"checkSuite": {"app": {"databaseId": 15368}, "workflowRun": {"databaseId": 9, "workflow": {"name": "ci"}}}}]}}}}}}`),
 		jsonAnswer(http.StatusBadGateway, `{}`), // a read: retried
 		jsonAnswer(http.StatusOK, `{"data": {"repository": {"object": {"statusCheckRollup": {"contexts": {
 			"pageInfo": {"hasNextPage": false, "endCursor": "C2"},
@@ -104,10 +102,8 @@ func TestChecksArePagedToTheEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Check{
-		{Name: "test", Kind: CheckRun, Status: "COMPLETED", Conclusion: "SUCCESS", Link: "d1", Workflow: "ci", WorkflowID: 4, RunID: 9,
-			Event: "pull_request", Branch: "feat", AppID: 15368,
-			Annotations: []string{"Canceling since a higher priority waiting request for 'ci-feat' exists"},
-			StartedAt:   checks[0].StartedAt, CompletedAt: checks[0].CompletedAt},
+		{Name: "test", Kind: CheckRun, Status: "COMPLETED", Conclusion: "SUCCESS", Link: "d1", Workflow: "ci", RunID: 9, AppID: 15368,
+			StartedAt: checks[0].StartedAt, CompletedAt: checks[0].CompletedAt},
 		{Name: "deploy/preview", Kind: StatusContext, State: "PENDING", Link: "t1", Description: "building"},
 		{Name: "lint", Kind: CheckRun, Status: "IN_PROGRESS"},
 	}

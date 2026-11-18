@@ -542,3 +542,15 @@ func TestTheTestMergeCommitsResultTakesPrecedence(t *testing.T) {
 		t.Fatal("merged on the head's green over the merge commit's red")
 	}
 }
+
+// A merge commit with results, none of them required, and nothing on the head: the timeout names
+// the required checks missing, not a workflow that never ran.
+func TestAnEmptyJudgedCommitNamesTheMissingRequiredChecks(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "unrelated", Kind: githubapi.StatusContext, State: "SUCCESS"}})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	_, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stderr, "gate (not registered yet)")
+}
