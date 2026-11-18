@@ -62,12 +62,19 @@ terminal:
 # licence is listed, everything is in English; and the site builds from them with no warning and no
 # link that leads nowhere (site/layouts/_markup/render-link.html as the pages are made, then
 # cmd/jst-sitelinks over every page the build wrote: the menus and the home page's buttons and cards
-# too, at the Pages address's path)
+# too, at the Pages address's path); and a guide page has the sidebar beside it on a desktop (the
+# guide is of type docs: Hextra's default type hides it, `hx:md:hidden`) listing the guide's pages
 docs:
     go test -count=1 -v ./internal/docs
     folder="$(mktemp -d)" && trap 'rm -r "$folder"' EXIT && \
     go run {{hugo}} --source site --panicOnWarning --baseURL {{site_address}} --destination "$folder/public" --quiet && \
     go run ./cmd/jst-sitelinks "$folder/public" {{site_address}} && \
+    page="$folder/public/guide/tests/index.html" && \
+    sidebar="$(grep -o '<aside class="hextra-sidebar-container[^"]*"' "$page")" && \
+    if [[ "$sidebar" != *hx:md:sticky* || "$sidebar" == *hx:md:hidden* ]] || \
+      ! grep -q 'hextra-sidebar-active-item' "$page" || \
+      ! grep -q 'href="/jackstay/guide/getting-started/"' "$page"; then \
+      echo "FAILED: docs: the guide's sidebar is not shown on a desktop ($page)"; exit 1; fi && \
     echo "docs: the site builds"
 
 # The documentation site (W-076), built into .build/site as the Pages workflow builds and publishes

@@ -77,6 +77,8 @@ params:
 
 copyright: "jackstay is licensed under the Apache License 2.0."
 
+# More on GitHub is the guide's last page, in its sidebar; a menu entry of its own would list it twice
+# in the phone's menu, which shows the guide's pages under Guide.
 menu:
   main:
     - name: Get started
@@ -85,9 +87,6 @@ menu:
     - name: Guide
       pageRef: /guide
       weight: 2
-    - name: More on GitHub
-      pageRef: /guide/more-on-github
-      weight: 3
     - name: Search
       weight: 4
       params:
