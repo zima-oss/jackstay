@@ -85,28 +85,14 @@ func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			for _, change := range plan.Changes {
 				fmt.Fprintf(stdout, "wrote  %-24s %s: %s\n", change.ID, change.Path, change.What)
 			}
-			switch options.Only {
-			case PartSettings:
-				fmt.Fprintf(stdout, "jst adopt: %d change(s) written: %s alone. Land it in a pull request of its own (rule D0, "+
-					"merged by the owner); then `jst adopt --apply` on the merged base writes the other files\n", len(plan.Changes), config.Name)
-			case PartFiles:
-				next := "`jst adopt --plan` shows what is left in it"
-				if options.Pin {
-					next = "the pin moves there with `jst adopt --apply --pin --only settings`, in a pull request of its own"
-				}
-				fmt.Fprintf(stdout, "jst adopt: %d change(s) written, %s left as it is; %s\n", len(plan.Changes), config.Name, next)
-			default:
+			if options.Only == "" {
 				fmt.Fprintf(stdout, "jst adopt: %d change(s) written; `jst adopt --plan` should now find nothing\n", len(plan.Changes))
+			} else {
+				fmt.Fprintf(stdout, "jst adopt: %d change(s) written, the %s part\n", len(plan.Changes), options.Only)
 			}
 		}
-		if len(plan.Deferred) > 0 {
-			fmt.Fprintf(stdout, "jst adopt: accepted, but in the part --only left out: %s; pass `--accept` with them again "+
-				"when that part is applied\n", strings.Join(plan.Deferred, ", "))
-		}
-		if options.Only == "" && plan.SplitsAcrossParts() {
-			fmt.Fprintf(stdout, "jst adopt: %[1]s and other files changed together, and rule D0 refuses them in one pull request: "+
-				"commit %[1]s alone first, in a pull request of its own merged by the owner, then the other files in another "+
-				"(`--only settings` and `--only files` write each part alone)\n", config.Name)
+		if step := NextStep(options, plan); step != "" {
+			fmt.Fprintf(stdout, "jst adopt: %s\n", step)
 		}
 		return 0
 	}
@@ -288,4 +274,39 @@ func Check(dir string) (inProject bool, problems, notes []string) {
 		notes = append(notes, fmt.Sprintf("%s keeps %s: %s", plan.Project, exception.ID, exception.Why))
 	}
 	return true, problems, notes
+}
+
+// NextStep is what is left after an apply, as the command to run: the part --only left out, with
+// the flags that part needs again (--pin and an explicit --profile for the settings, which the
+// files were rendered from; the --accept IDs whose writes it holds). Rule D0 lands jackstay.json
+// in a pull request of its own, so an apply that wrote both parts says how to split them. ""
+// when nothing is left.
+func NextStep(options Options, plan *Plan) string {
+	accepts := func(ids []string) string {
+		var out strings.Builder
+		for _, id := range ids {
+			out.WriteString(" --accept " + id)
+		}
+		return out.String()
+	}
+	settingsFlags := ""
+	if options.Pin {
+		settingsFlags += " --pin"
+	}
+	if options.Profile != "" {
+		settingsFlags += " --profile " + options.Profile
+	}
+	switch {
+	case options.Only == PartSettings && len(plan.Changes) > 0:
+		return fmt.Sprintf("next: land %s alone in a pull request of its own (rule D0, merged by the owner); then, on the "+
+			"merged base: `jst adopt --apply%s` for the other files", config.Name, accepts(plan.Deferred))
+	case options.Only == PartFiles && (options.Pin || options.Profile != "" || len(plan.Deferred) > 0):
+		return fmt.Sprintf("next: land these files; then, in a pull request of its own: `jst adopt --apply --only settings%s%s`",
+			settingsFlags, accepts(plan.Deferred))
+	case options.Only == "" && plan.SplitsAcrossParts():
+		return fmt.Sprintf("%[1]s and other files changed together, and rule D0 refuses them in one pull request: commit %[1]s "+
+			"alone first, in a pull request of its own merged by the owner, then the other files in another "+
+			"(`--only settings` and `--only files` write each part alone)", config.Name)
+	}
+	return ""
 }

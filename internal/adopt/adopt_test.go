@@ -617,6 +617,36 @@ func TestAnAcceptOfTheOtherPartIsDeferred(t *testing.T) {
 	if !strings.Contains(read(t, root, ".github/workflows/release.yml"), "# edit") {
 		t.Fatal("the deferred accept was written")
 	}
+	step := NextStep(newer, made)
+	if !strings.Contains(step, "`jst adopt --apply --accept workflow:release:edited`") {
+		t.Fatalf("the next step does not carry the deferred accept: %s", step)
+	}
+	// The settings merged: the step named, run on the merged base, finishes the move.
+	after := optionsFor(root)
+	after.Version, after.Accept = "0.6.0", []string{"workflow:release:edited"}
+	applyTwice(t, after)
+	if text := read(t, root, ".github/workflows/release.yml"); strings.Contains(text, "# edit") || !strings.Contains(text, `JACKSTAY_VERSION: "v0.6.0"`) {
+		t.Fatal("the files step did not write the accepted workflow for the new pin")
+	}
+	after.Accept = nil
+	if made := plan(t, after); len(made.Changes) != 0 || len(made.Conflicts) != 0 {
+		t.Fatalf("left after both steps: %v %v", changeIDs(made.Changes), made.Conflicts)
+	}
+}
+
+func TestTheNextStepCarriesTheSettingsFlags(t *testing.T) {
+	files := &Plan{Changes: []Change{{ID: "workflow:release", Path: ".github/workflows/release.yml"}}, Deferred: []string{"jackstay.json:x"}}
+	options := Options{Pin: true, Profile: "../profiles/ours.json", Only: PartFiles}
+	if step := NextStep(options, files); !strings.Contains(step, "`jst adopt --apply --only settings --pin --profile ../profiles/ours.json --accept jackstay.json:x`") {
+		t.Fatalf("files first: %s", step)
+	}
+	both := &Plan{Changes: []Change{{ID: "jackstay.json", Path: "jackstay.json"}, {ID: "workflow:release", Path: ".github/workflows/release.yml"}}}
+	if step := NextStep(Options{}, both); !strings.Contains(step, "rule D0 refuses them in one pull request") {
+		t.Fatalf("both parts: %s", step)
+	}
+	if step := NextStep(Options{}, files); step != "" {
+		t.Fatalf("nothing left, yet: %s", step)
+	}
 }
 
 // A part with nothing to write is still an array in the JSON plan.

@@ -205,12 +205,13 @@ When jackstay changes, a project's session can adopt the new version with this p
 > first time, if there is one). Settle each conflict it lists: do the migration as the project's
 > own work, or add an exception with its reason to `jackstay.json`'s `adopt.exceptions`. Before
 > `--accept …:edited`, move the project's own lines out of the text the plan shows will be
-> replaced; never edit inside the `jackstay-adopt` markers. Run `jst adopt --apply` with the
-> accepted IDs; then `jst adopt --plan` must exit 0. Run `jst doctor` and the project's gate, and
-> open one pull request listing each conflict and how it was settled. When the changes touch
-> `jackstay.json` and other files, land them in two pull requests instead (rule D0): first
-> `jst adopt --apply --only settings` (with `--pin` and the accepted IDs of `jackstay.json`), merged
-> by the owner; then, on the merged base, `jst adopt --apply` with the other accepted IDs.
+> replaced; never edit inside the `jackstay-adopt` markers. If the plan changes `jackstay.json`
+> and other files, land them in two pull requests (rule D0): run `jst adopt --apply --only
+> settings` with every accepted ID (and `--pin`, `--profile` as needed), open a pull request of
+> `jackstay.json` alone for the owner to merge, and after it merges run the command `jst adopt`
+> printed as the next step. Otherwise run `jst adopt --apply` with the accepted IDs. Then
+> `jst adopt --plan` must exit 0. Run `jst doctor` and the project's gate, and list in each pull
+> request each conflict and how it was settled.
 
 ## What can go wrong
 
