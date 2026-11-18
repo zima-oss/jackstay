@@ -1,0 +1,50 @@
+name: card-line
+
+# The example profile's own card-line: jackstay's embedded template, run on the organisation's
+# self-hosted runners. `jst adopt` replaces the embedded template of the same name with this one
+# and writes it to .github/workflows/card-line.yml with its marked first line.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+concurrency:
+  group: card-line-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  JACKSTAY_VERSION: "@@jackstay_version@@"
+
+jobs:
+  card-line:
+    # Only branches of this repository: a self-hosted runner never runs a fork's code.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [@@runner_labels@@]
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the pull request merged with the base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Download jackstay's binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/jackstay"
+          cd "$RUNNER_TEMP/jackstay"
+          gh release download "$JACKSTAY_VERSION" -R @@jackstay_repository@@ -p 'jackstay_*_linux_amd64.tar.gz' -p checksums.txt
+          sha256sum --check --ignore-missing checksums.txt
+          tar -xzf jackstay_*_linux_amd64.tar.gz
+          echo "$RUNNER_TEMP/jackstay" >> "$GITHUB_PATH"
+      - name: The Card line, the changelog entry and the tree's rules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: jst lint pr --event "$GITHUB_EVENT_PATH"

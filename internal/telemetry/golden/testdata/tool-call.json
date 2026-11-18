@@ -1,0 +1,75 @@
+[
+  {
+    "name": "jst guard",
+    "kind": 1,
+    "parent": "",
+    "status": 0,
+    "scope": "jackstay",
+    "attributes": {
+      "gen_ai.conversation.id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "gen_ai.tool.call.id": "toolu_golden_1",
+      "gen_ai.tool.name": "Bash",
+      "gen_ai.tool.type": "function",
+      "jackstay.args": "<x>",
+      "jackstay.claude.session_id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.claude.tool_use_id": "toolu_golden_1",
+      "jackstay.command": "guard",
+      "jackstay.cwd": "<x>",
+      "jackstay.exit_code": 0,
+      "jackstay.guard.answer_ms": "<x>",
+      "jackstay.guard.command": "rm -rf src",
+      "jackstay.guard.command_sha256": "3458dbc49d678c646ee8154b6e94c74bae57a1cba3bf7dcbeec8ccd22e5c7094",
+      "jackstay.guard.outcome": "refused",
+      "jackstay.guard.rules": [
+        "rm-recursive"
+      ],
+      "jackstay.guard.tool": "Bash",
+      "jackstay.outcome": "refused"
+    },
+    "events": [
+      {
+        "name": "jackstay.guard.decision",
+        "attributes": {
+          "jackstay.guard.outcome": "refused",
+          "jackstay.guard.rules": [
+            "rm-recursive"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "jst guard",
+    "kind": 1,
+    "parent": "",
+    "status": 0,
+    "scope": "jackstay",
+    "attributes": {
+      "gen_ai.conversation.id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "gen_ai.tool.call.id": "toolu_golden_2",
+      "gen_ai.tool.name": "Bash",
+      "gen_ai.tool.type": "function",
+      "jackstay.args": "<x>",
+      "jackstay.claude.session_id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.claude.tool_use_id": "toolu_golden_2",
+      "jackstay.command": "guard",
+      "jackstay.cwd": "<x>",
+      "jackstay.exit_code": 0,
+      "jackstay.guard.answer_ms": "<x>",
+      "jackstay.guard.command": "git status --short",
+      "jackstay.guard.command_sha256": "c96885f0a85f64c61b0d76510ca80e4a19be674e163a73b68a0a3d57f4dc15b6",
+      "jackstay.guard.outcome": "allowed",
+      "jackstay.guard.tool": "Bash",
+      "jackstay.outcome": "allowed"
+    },
+    "events": [
+      {
+        "name": "jackstay.guard.decision",
+        "attributes": {
+          "jackstay.guard.outcome": "allowed"
+        }
+      }
+    ]
+  }
+]
+

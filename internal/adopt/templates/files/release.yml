@@ -1,0 +1,65 @@
+name: release
+
+# jackstay's release workflow (docs/design/release.md sections 6 and 8): on every landing on the base,
+# `jst release publish` makes, tags and publishes what a landed release request asks for, then
+# `jst release pr` creates, refreshes or closes the release pull request. Both derive everything
+# from git, so a rerun is safe. Every write uses the writing App's token: its client ID is the
+# variable JACKSTAY_RELEASE_APP_CLIENT_ID and its key the secret JACKSTAY_RELEASE_APP_PRIVATE_KEY.
+
+on:
+  push:
+    branches: [@@release_base@@]
+  workflow_dispatch: {}
+
+concurrency:
+  group: jackstay-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read # GITHUB_TOKEN reads only
+
+env:
+  JACKSTAY_VERSION: "@@jackstay_version@@"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: The writing App's token
+        id: writer
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.JACKSTAY_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.JACKSTAY_RELEASE_APP_PRIVATE_KEY }}
+      - name: Download jackstay's binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/jackstay"
+          cd "$RUNNER_TEMP/jackstay"
+          gh release download "$JACKSTAY_VERSION" -R @@jackstay_repository@@ -p 'jackstay_*_linux_amd64.tar.gz' -p checksums.txt
+          sha256sum --check --ignore-missing checksums.txt
+          tar -xzf jackstay_*_linux_amd64.tar.gz
+          echo "$RUNNER_TEMP/jackstay" >> "$GITHUB_PATH"
+      - name: Check out with full history and the writing App's token
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ steps.writer.outputs.token }}
+      - name: Tags, without force
+        run: git fetch --no-tags origin 'refs/tags/*:refs/tags/*'
+      - name: jst release publish
+        env:
+          GH_TOKEN: ${{ steps.writer.outputs.token }}
+          JACKSTAY_RELEASE_AUTHOR: ${{ steps.writer.outputs.app-slug }}[bot]
+        run: jst release publish
+      - name: jst release pr
+        if: always()
+        env:
+          GH_TOKEN: ${{ steps.writer.outputs.token }}
+          JACKSTAY_RELEASE_AUTHOR: ${{ steps.writer.outputs.app-slug }}[bot]
+        run: jst release pr

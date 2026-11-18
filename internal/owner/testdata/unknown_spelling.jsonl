@@ -1,0 +1,3 @@
+{"type":"user","timestamp":"2026-09-11T08:00:00.000Z","message":{"content":"hello"}}
+{"type":"assistant","timestamp":"2026-09-22T13:47:00.000Z","message":{"content":[{"type":"tool_use","id":"toolu_ask2","name":"AskUserQuestion","input":{"questions":[{"question":"What?"}]}}]}}
+{"type":"user","timestamp":"2026-09-22T13:47:32.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_ask2","content":"Picked: yes"}]}}

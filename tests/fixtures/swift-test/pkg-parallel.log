@@ -1,0 +1,51 @@
+[1/4] Testing OtherTests.AlphaTests/testSkip
+[2/4] Testing OtherTests.AlphaTests/testOne
+[3/4] Testing OtherTests.AlphaTests/testExpected
+[4/4] Testing OtherTests.BetaTests/testFails
+Test Suite 'Selected tests' started at 2026-01-02 12:52:15.100.
+Test Suite 'OtherTests.xctest' started at 2026-01-02 12:52:15.101.
+Test Suite 'BetaTests' started at 2026-01-02 12:52:15.101.
+Test Case '-[OtherTests.BetaTests testFails]' started.
+/tmp/pkg/Tests/OtherTests/XC.swift:8: error: -[OtherTests.BetaTests testFails] : XCTAssertEqual failed: ("1") is not equal to ("5")
+Test Case '-[OtherTests.BetaTests testFails]' failed (0.022 seconds).
+Test Suite 'BetaTests' failed at 2026-01-02 12:52:15.123.
+	 Executed 1 test, with 1 failure (0 unexpected) in 0.022 (0.022) seconds
+Test Suite 'OtherTests.xctest' failed at 2026-01-02 12:52:15.124.
+	 Executed 1 test, with 1 failure (0 unexpected) in 0.022 (0.022) seconds
+Test Suite 'Selected tests' failed at 2026-01-02 12:52:15.124.
+	 Executed 1 test, with 1 failure (0 unexpected) in 0.022 (0.024) seconds
+
+◇ Test run started.
+↳ Testing Library Version: 2403
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+◇ Test run started.
+↳ Testing Library Version: 2403
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite Grouped started.
+➜ Test skipped() skipped: "not today"
+◇ Test passes() started.
+◇ Test "A display name" started.
+◇ Test param(x:) started.
+◇ Test fails() started.
+◇ Test known() started.
+◇ Test inner() started.
+◇ Test case passing 1 argument x → 1 to param(x:) started.
+✘ Test fails() recorded an issue at ST.swift:4:22: Expectation failed: one() == 2
+↳ one() == 2 → false
+↳   one() → 1
+━ Test known() recorded a known issue at ST.swift:6:39: Expectation failed: one() == 3
+↳ one() == 3 → false
+↳   one() → 1
+✔ Test "A display name" passed after 0.001 seconds.
+✔ Test passes() passed after 0.001 seconds.
+✘ Test fails() failed after 0.001 seconds with 1 issue.
+━ Test known() passed after 0.001 seconds with 1 known issue.
+✔ Test inner() passed after 0.001 seconds.
+✔ Suite Grouped passed after 0.001 seconds.
+◇ Test case passing 1 argument x → 2 to param(x:) started.
+✔ Test param(x:) with 2 test cases passed after 0.001 seconds.
+✘ Test run with 7 tests in 1 suite failed after 0.001 seconds with 2 issues (including 1 known issue).
+Note: Some test targets reported failures:
+  - OtherTests (XCTest)
+  - LibTests (Swift Testing)

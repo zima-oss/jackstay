@@ -1,0 +1,50 @@
+# golangci-lint v2 (W-037; rebuilt for v2, not copied from an older v1-keyed file).
+version: "2"
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - revive
+    - gosec
+    - varnamelen # W-040: readable names in the framework's code; tests are exempt (below)
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf # writes to standard output and error: nothing to do if they fail
+        - fmt.Fprintln
+        - fmt.Fprint
+        - io.WriteString
+    revive:
+      rules:
+        - name: exported
+        - name: var-naming
+        - name: indent-error-flow
+    varnamelen:
+      # Every name in the framework's code says what it holds: no single letters or two-letter
+      # abbreviations, however short their scope (W-040). `ok` and `id` are words.
+      min-name-length: 3
+      max-distance: 1
+      check-receiver: true
+      check-return: true
+      check-type-param: true
+      ignore-names: [ok, id]
+    gosec:
+      excludes:
+        - G204 # jackstay runs git, gh and the commands its user configures, by design
+        - G304 # jackstay reads the files its user names (jackstay.json, logs)
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck, gosec, varnamelen]
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/zima-oss/jackstay

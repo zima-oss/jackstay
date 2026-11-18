@@ -1,0 +1,61 @@
+Test Suite 'All tests' started at 2026-01-02 12:52:01.416.
+Test Suite 'OtherTests.xctest' started at 2026-01-02 12:52:01.418.
+Test Suite 'AlphaTests' started at 2026-01-02 12:52:01.418.
+Test Case '-[OtherTests.AlphaTests testExpected]' started.
+XCTExpectFailure: matcher accepted Assertion Failure at XC.swift:6: XCTAssertEqual failed: ("1") is not equal to ("2")
+XC.swift:6: Expected failure in -[OtherTests.AlphaTests testExpected]: XCTAssertEqual failed: ("1") is not equal to ("2")Reason: (known)
+Test Case '-[OtherTests.AlphaTests testExpected]' passed (0.025 seconds).
+Test Case '-[OtherTests.AlphaTests testOne]' started.
+Test Case '-[OtherTests.AlphaTests testOne]' passed (0.000 seconds).
+Test Case '-[OtherTests.AlphaTests testSkip]' started.
+/tmp/pkg/Tests/OtherTests/XC.swift:5: -[OtherTests.AlphaTests testSkip] : Test skipped - no
+Test Case '-[OtherTests.AlphaTests testSkip]' skipped (0.001 seconds).
+Test Suite 'AlphaTests' passed at 2026-01-02 12:52:01.446.
+	 Executed 3 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.026 (0.027) seconds
+Test Suite 'BetaTests' started at 2026-01-02 12:52:01.446.
+Test Case '-[OtherTests.BetaTests testFails]' started.
+/tmp/pkg/Tests/OtherTests/XC.swift:8: error: -[OtherTests.BetaTests testFails] : XCTAssertEqual failed: ("1") is not equal to ("5")
+Test Case '-[OtherTests.BetaTests testFails]' failed (0.001 seconds).
+Test Suite 'BetaTests' failed at 2026-01-02 12:52:01.446.
+	 Executed 1 test, with 1 failure (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'OtherTests.xctest' failed at 2026-01-02 12:52:01.446.
+	 Executed 4 tests, with 1 test skipped and 1 failure (0 unexpected) in 0.027 (0.028) seconds
+Test Suite 'All tests' failed at 2026-01-02 12:52:01.446.
+	 Executed 4 tests, with 1 test skipped and 1 failure (0 unexpected) in 0.027 (0.030) seconds
+Test Suite 'All tests' started at 2026-01-02 12:52:01.860.
+Test Suite 'All tests' passed at 2026-01-02 12:52:01.862.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.002) seconds
+◇ Test run started.
+↳ Testing Library Version: 2403
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+◇ Test run started.
+↳ Testing Library Version: 2403
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite Grouped started.
+◇ Test passes() started.
+◇ Test "A display name" started.
+➜ Test skipped() skipped: "not today"
+◇ Test fails() started.
+◇ Test known() started.
+◇ Test param(x:) started.
+◇ Test inner() started.
+━ Test known() recorded a known issue at ST.swift:6:39: Expectation failed: one() == 3
+↳ one() == 3 → false
+↳   one() → 1
+✘ Test fails() recorded an issue at ST.swift:4:22: Expectation failed: one() == 2
+↳ one() == 2 → false
+↳   one() → 1
+✔ Test "A display name" passed after 0.001 seconds.
+◇ Test case passing 1 argument x → 1 to param(x:) started.
+◇ Test case passing 1 argument x → 2 to param(x:) started.
+✘ Test fails() failed after 0.001 seconds with 1 issue.
+✔ Test param(x:) with 2 test cases passed after 0.001 seconds.
+✔ Test inner() passed after 0.001 seconds.
+━ Test known() passed after 0.001 seconds with 1 known issue.
+✔ Suite Grouped passed after 0.001 seconds.
+✔ Test passes() passed after 0.001 seconds.
+✘ Test run with 7 tests in 1 suite failed after 0.001 seconds with 2 issues (including 1 known issue).
+Note: Some test targets reported failures:
+  - OtherTests (XCTest)
+  - LibTests (Swift Testing)

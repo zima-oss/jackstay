@@ -1,0 +1,137 @@
+name: release
+
+# jackstay's release (docs/design/implementation.md, section 6; W-075): a pushed version tag is
+# built, signed and notarised by GoReleaser (.goreleaser.yaml), and published by this workflow to
+# this repository's GitHub Releases. The job runs in the `release` environment, which holds the
+# macOS signing and notarisation secrets (MACOS_SIGN_P12, MACOS_SIGN_PASSWORD, MACOS_NOTARY_KEY,
+# MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER_ID) and requires the owner's approval. It checks the tag,
+# runs the gate on the tagged tree, lets GoReleaser build without publishing, then creates the
+# release itself as a draft and fills, checks and publishes that one release by its id.
+
+on:
+  push:
+    tags: ['v*']
+
+# One release of a tag at a time, never cancelled half-way.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # Releases are published from the public repository only (W-075).
+    if: github.repository == 'zima-oss/jackstay'
+    runs-on: ubuntu-latest
+    environment: release
+    # The gate (about half an hour), the builds, and a notarisation wait of at most 18 minutes.
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ github.ref_name }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Check out (every branch and tag, for the checks and GoReleaser)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tag is annotated, the commit checked out, on main, and names the source's version
+        run: |
+          [ "$(git cat-file -t "refs/tags/$TAG")" = tag ] \
+            || { echo "::error::$TAG is not an annotated tag (W-020: git tag -a)"; exit 1; }
+          commit=$(git rev-parse "refs/tags/$TAG^{commit}")
+          [ "$commit" = "$(git rev-parse HEAD)" ] \
+            || { echo "::error::$TAG ($commit) is not the commit checked out"; exit 1; }
+          git merge-base --is-ancestor "$commit" origin/main \
+            || { echo "::error::$TAG ($commit) is not a commit on main"; exit 1; }
+          version=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' internal/version/version.go)
+          [ "$TAG" = "v$version" ] \
+            || { echo "::error::$TAG does not name the source's version ($version, internal/version/version.go)"; exit 1; }
+      - name: The signing and notarisation secrets are set
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          # Without them GoReleaser would build unsigned macOS binaries (signing is enabled by
+          # MACOS_SIGN_P12 being set, for local snapshots): refused here instead.
+          for name in MACOS_SIGN_P12 MACOS_SIGN_PASSWORD MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
+            [ -n "${!name}" ] || { echo "::error::the release environment has no $name"; exit 1; }
+          done
+      - name: Go from go.mod's toolchain line
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: just
+        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - name: Git identity and default branch for the integration tests
+        run: |
+          git config --global user.name "gate"
+          git config --global user.email "gate@example.invalid"
+          git config --global init.defaultBranch main
+      - name: just gate (on the tagged tree)
+        run: just gate
+      - name: GoReleaser builds, signs and notarises; it publishes nothing
+        env:
+          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
+          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          # The tag checked above, even when another tag names the same commit.
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
+        run: |
+          folder=$(mktemp -d)
+          JST_LICENCES="$folder/licenses" \
+            go run github.com/goreleaser/goreleaser/v2@v2.20.2 release --clean --skip=publish,announce
+      - name: Publish the release, created by this run and named by its id
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          # A published release of the tag refuses the run (W-020: never redone); only a confirmed
+          # 404 lets it on. Asked before the release is made and again before it is published.
+          no_published_release() {
+            if gh api "repos/$REPOSITORY/releases/tags/$TAG" >/dev/null 2>"$RUNNER_TEMP/release.err"; then
+              fail "$TAG has a published release already"
+            fi
+            grep -q "HTTP 404" "$RUNNER_TEMP/release.err" \
+              || { cat "$RUNNER_TEMP/release.err"; fail "whether $TAG has a release cannot be told"; }
+          }
+          # The tag on GitHub still names the commit built.
+          remote=$(git ls-remote origin "refs/tags/$TAG^{}" | cut -f 1)
+          [ "$remote" = "$(git rev-parse HEAD)" ] || fail "$TAG on GitHub names $remote, not the commit built"
+          cd dist
+          files=(jackstay_*.tar.gz checksums.txt)
+          [ "${#files[@]}" -eq 5 ] || fail "dist/ holds ${#files[@]} artifacts, not 4 archives and checksums.txt"
+          no_published_release
+          # A draft of the tag an earlier run left is read and deleted by the maintainer first.
+          drafts=$(gh api --paginate "repos/$REPOSITORY/releases?per_page=100" \
+            --jq "[.[] | select(.draft and .tag_name == \"$TAG\")] | length" | awk '{ total += $1 } END { print total + 0 }')
+          [ "$drafts" = 0 ] || fail "$TAG has $drafts draft release(s) from an earlier run: read and delete them first"
+          id=$(gh api --method POST "repos/$REPOSITORY/releases" -f tag_name="$TAG" -f name="$TAG" -f body="" \
+            -F draft=true --jq .id)
+          [ -n "$id" ] || fail "GitHub named no release"
+          echo "draft release $id of $TAG"
+          for file in "${files[@]}"; do
+            gh api --method POST -H "Content-Type: application/octet-stream" \
+              "https://uploads.github.com/repos/$REPOSITORY/releases/$id/assets?name=$file" --input "$file" --jq .name >/dev/null
+          done
+          # The draft holds exactly the artifacts built: GitHub's sha256 digest of each, nothing else.
+          expected=$(sha256sum "${files[@]}" | awk '{ print "sha256:" $1 " " $2 }' | sort)
+          actual=$(gh api "repos/$REPOSITORY/releases/$id/assets?per_page=100" --jq '.[] | "\(.digest) \(.name)"' | sort)
+          [ "$expected" = "$actual" ] || fail "the draft $id does not hold exactly the artifacts built"
+          no_published_release
+          [ "$(gh api --method PATCH "repos/$REPOSITORY/releases/$id" -F draft=false --jq .draft)" = false ] \
+            || fail "the draft $id was not published"
+          [ "$(gh api "repos/$REPOSITORY/releases/tags/$TAG" --jq .id)" = "$id" ] \
+            || fail "the published release of $TAG is not the one this run made ($id)"
+          echo "published $TAG: release $id"

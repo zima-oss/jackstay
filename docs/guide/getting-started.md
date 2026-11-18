@@ -1,0 +1,129 @@
+# Getting started
+
+From nothing to a project whose agents run their tests through jackstay and are stopped before a
+destructive command, in four steps. Each step links the page that says more.
+
+## What an install leaves to you
+
+The install script installs `jst` and changes nothing else. These steps are yours, and this page
+walks through each:
+
+| Step | Where | Needed for |
+|---|---|---|
+| Put `~/.local/bin` on `PATH` | your shell's profile; the script prints the exact line when it is missing | running `jst` |
+| Let Claude Code's sandbox write `~/.jackstay` | `sandbox.filesystem.allowWrite` in `~/.claude/settings.json` | records of runs in sandboxed sessions ([Claude Code](claude-code.md#the-sandbox)) |
+| `jst adopt --apply`, then commit what it wrote | each project | the guard hook and the `AGENTS.md` block |
+| Accept Claude Code's trust dialog | the first session in each project | Claude Code loading the hook |
+| Optional: install Codex and run `codex login` | your terminal | `jst review` ([Codex](codex.md)) |
+| Optional: `gh auth login`, and `github.account` in `jackstay.json` | your terminal; the project | `jst gh` and GitHub in `jst tidy` ([Branches and GitHub](branches-and-github.md#the-account)) |
+
+`jst doctor` checks what it can of these, and names the fix of each problem it finds.
+
+## 1. Install
+
+On macOS or Linux, x86-64 or arm64, in sh, bash or zsh (in fish or another shell, run `sh`
+first):
+
+```sh
+script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && sh -c "$script"
+```
+
+It installs `jst` into `~/.local/bin`, without `sudo`, after checking the download against the
+release's checksums. When `~/.local/bin` is not on your `PATH`, it prints the line to add (for sh,
+bash or zsh; for another shell, the folder); add it, open a new terminal, then:
+
+```sh
+jst doctor
+```
+
+If you use Claude Code with its sandbox on, allow `~/.jackstay` in `~/.claude/settings.json`, so
+runs inside sandboxed sessions are recorded (`jst doctor` reports `sandbox-blocks-state` until then):
+
+```json
+{"sandbox": {"filesystem": {"allowWrite": ["~/.jackstay"]}}}
+```
+
+To read the script first, or to install another way: [Install](install.md).
+
+## 2. Adopt a project
+
+In the project's repository:
+
+```sh
+cd my-service
+jst adopt            # what jackstay would write here; nothing is written
+jst adopt --apply    # write it
+git add jackstay.json AGENTS.md CLAUDE.md .claude/settings.json
+git commit -m "Adopt jackstay"
+```
+
+This writes `jackstay.json`, a block in `AGENTS.md` that teaches agents the tools, and the guard
+hook in `.claude/settings.json`. More, and how to bring an organisation's rules with a profile:
+[Adopting a project](adopt.md).
+
+## 3. Run your tests through jackstay
+
+Declare how your tests run, as a scope in `jackstay.json`. The `evidence` pattern finds the number
+of tests in the output; only a run whose tests were counted is a pass:
+
+```json
+"test": {
+  "judge": "steps",
+  "scopes": {
+    "quick": {"run": ["python3", "-m", "pytest", "-q"], "evidence": "([0-9]+) passed",
+              "timeout": 600, "when": "while working"}
+  }
+}
+```
+
+```sh
+jst check            # is jackstay.json usable
+jst test quick
+```
+
+```
+12 passed in 0.84s
+jst test: the whole output: ~/.jackstay/my-service/outputs/18e9237caf5bb0c0-15904.log  (`jst test last` shows this again)
+jst test: outcome=passed (0 s, counted=12)
+```
+
+Read the last `jst test:` line. `exited-0` means the command ended 0 but nothing counted its tests,
+which is not a pass. After a failure, `jst test last` shows what went wrong without running again.
+Add a `gate` scope for what a change must pass before it merges: [Tests](tests.md).
+
+Run `jst adopt --apply` again after adding a section: the `AGENTS.md` block then tells agents about
+it.
+
+## 4. See the guard at work
+
+Open a Claude Code session in the project and accept its trust dialog: Claude Code loads a
+project's hooks only after it. Then ask the agent to run exactly this line in its shell:
+
+```sh
+false && rm -r jackstay-guard-probe
+```
+
+The line can delete nothing: `false` fails, so the shell never reaches `rm`. The guard reads the
+whole line before it runs, and refuses it for the `rm -r`. With the hook working, the agent's shell
+tool answers with that refusal, in the session itself:
+
+```
+jst guard refused this command; nothing was run.
+- `rm -r jackstay-guard-probe`: a recursive rm outside temporary and regenerable folders cannot be undone: jackstay-guard-probe. Instead: move it to jackstay's trash, which can be undone: `jst trash <path>`; …
+```
+
+Only the hook can stop the agent's own command, so that answer is the proof. Anything else (the
+line ran and ended with status 1, or a warning instead of a refusal) means the check failed: either
+the hook is not loaded ([Claude Code](claude-code.md#what-can-go-wrong) says what to look at), or
+the project's `jackstay.json` has set `rm-recursive` to `warn` or `off` ([The guard](guard.md#levels-and-your-own-rules)).
+
+To ask the guard about a command yourself, without an agent, use `jst guard check -- 'COMMAND'`: it
+judges the command as the hook would, whether or not any session has loaded the hook. What the
+guard refuses, and how to change a rule's level: [The guard](guard.md). Claude Code's sandbox
+needs `~/.jackstay` writable: [Claude Code](claude-code.md#the-sandbox).
+
+## Next
+
+- [Tests](tests.md): scopes, the gate, receipts.
+- [Branches and GitHub](branches-and-github.md): worktrees per task, tidying what is finished.
+- [Background processes](background.md): servers that stop at a deadline.

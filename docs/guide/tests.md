@@ -1,0 +1,225 @@
+# Tests
+
+`jst test` runs a test command, judges its output, records the run and keeps its output. A single
+command is a pass only when its tests were counted; a gate is a pass when its steps are, and its
+line shows each step's outcome (a step judged by its exit status alone counts no tests). A pass is keyed by the exact tree it ran on, so a later run of
+the same tree can be skipped where you opt in.
+
+## Read the last `jst test:` line
+
+Every run ends with one line on standard error naming its outcome. Read that line, not the exit
+status alone: a test command may itself end with 2 or 77.
+
+| Outcome | Meaning | Exit |
+|---|---|---|
+| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A gate: every step `passed`, `exited-0` or `resumed`, and at least one ran now — so a gate of exit-judged steps alone can be `passed` with no test counted (see each step's outcome on the same line) | 0 |
+| `exited-0` | ended 0, but nothing counted its tests: **not a pass** | 0 |
+| `reused` | nothing ran: a receipt for this tree exists and reuse is on | 0 |
+| `resumed` | a gate under `--resume` where every step was skipped: nothing ran, not a pass | 0 |
+| `failed` | ended non-zero, or a veto line was seen | the command's status, or 1 |
+| `not-started` | `jackstay.json` or the lock could not be used, or a `requires` check failed; nothing ran | 2 |
+| `refused` | `--resume` met a step that failed before on this same tree | 2 |
+| `gave-up` | the machine-wide lock was not had within `--wait` | 75 |
+| `nothing-run` | ended 0, but the output showed no test | 76 |
+| `unjudged` | ended 0, but the output could not be read to its end, or it left processes or files that cannot be attributed | 77 |
+| `timed-out` | a scope's timeout ended the whole process tree | 124 |
+| `stopped` | `jst test` was asked to stop; it ends by that signal | — |
+
+The command cannot start: 127.
+
+## `jst test -- COMMAND`: any command
+
+```sh
+jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]
+```
+
+Runs any command, recorded. It needs no `jackstay.json`; without one, a run that ends 0 is
+`exited-0`, never `passed`. To make it count, list the command in `receipts.commands` with an
+`evidence` pattern (below).
+
+```sh
+jst test -- go test ./...
+jst test last                # the last run again: outcome, what went wrong, where the output is
+```
+
+## Scopes: `jst test <scope>`
+
+```sh
+jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock] [--resume] [--keep-going] [--commit REV]
+jst test list [--project NAME]       # the scopes, what each runs, when the project runs it
+jst test plan SCOPE [ARGS...]        # the words a scope would run, step by step; runs nothing
+jst test last [--scope S] [--json]   # the last run, without running anything
+```
+
+A project declares its scopes in `jackstay.json`'s `test` section. There are six names, with one
+meaning each in every project; anything else starts with `x-`:
+
+| Scope | Meaning |
+|---|---|
+| `focused` | the tests named on the command line: `jst test focused ParserTests` |
+| `changed` | what a change since a base can affect, chosen by your own selector |
+| `quick` | a broad look, less the slowest classes |
+| `full` | the whole suite a headless run can do |
+| `display` | what needs a real screen or device |
+| `gate` | every step a change must pass to merge, in order |
+
+When each is required is your rule, written once in the scope's `when`; `jst test list` prints it,
+so your `AGENTS.md` can point there instead of restating it.
+
+```json
+"receipts": {"toolchain": []},
+"test": {
+  "judge": "steps",
+  "timeout": 1800,
+  "scopes": {
+    "quick":   {"run": ["python3", "-m", "pytest", "-q", "-m", "not slow"],
+                "evidence": "([0-9]+) passed", "timeout": 600,
+                "when": "while working"},
+    "full":    {"run": ["python3", "-m", "pytest", "-q"], "evidence": "([0-9]+) passed",
+                "veto": "^ERROR", "when": "before handing over"},
+    "gate":    {"steps": ["lint", "full"], "when": "before every pull request"}
+  },
+  "steps": {
+    "lint": {"run": ["ruff", "check", "."], "judge": "exit"}
+  }
+}
+```
+
+Keys of a scope or step: `run` (the words; placeholders `{tests}`, the names given to `focused` as
+one regular expression, made for `swift test --filter`; `{base}`, the scope's `base` or `--base REF`;
+`{slow}`, the slow classes `quick` skips) or `steps`;
+`judge` (`steps`: an `evidence` pattern with one number group counts the tests; `exit`: status only,
+so `exited-0` at best; `swift-test`: built in for `swift test`); `evidence` and `veto` (RE2);
+`timeout` (seconds; the whole process tree is stopped at it); `requires` (checks run first); `env`;
+`lock`; `when`. A scope that lists `steps` needs `receipts.toolchain` written out, even as an empty
+list.
+
+### The gate
+
+```sh
+jst test gate                    # every step in order; stops at the first that is not passed or exited-0
+jst test gate --keep-going       # runs the rest and reports each
+jst test gate --resume           # skips steps that passed before on this same clean tree
+jst test gate --commit HEAD      # on a clean copy of HEAD that jackstay makes and removes
+```
+
+```
+jst test: outcome=passed (gate gate, 0.9 s: lint=exited-0, full=passed)
+```
+
+- The gate's line names each step's own outcome: `lint=exited-0` ran and ended 0 without counting
+  tests; `full=passed` counted them. A step that is `exited-0` (or one that `passed`) can be
+  resumed.
+- `--resume` skips a step only on a clean checkout whose key (HEAD, the step's definition, the
+  listed environment and toolchain, the refs it depends on) matches a step that passed. A step that
+  failed on this tree is not run again: the gate ends `refused` until the tree changes.
+- `--commit REV` runs on a clone that shares the repository's objects, so your uncommitted work
+  cannot make it pass or fail. It has no ignored files (`node_modules`, build folders): a step that
+  needs them builds them.
+
+### After a run
+
+Every run's output is kept in `~/.jackstay/<project>/outputs/` (the newest 30). A run that did not
+pass prints up to 40 lines that say what went wrong, and where the whole output is. After a
+failure, read `jst test last` instead of running again.
+
+## Receipts
+
+After a `passed` run, jackstay stores a receipt keyed by the tree: the files under
+`receipts.inputs` (tracked, and untracked ones the committed `.gitignore` files do not hide), less
+`receipts.exclude`, the command's words, the toolchain output, the listed environment variables and
+the refs you name. A command you opt in is then not run again on the same key: it prints the receipt
+and ends `reused`.
+
+```json
+"receipts": {
+  "inputs": ["."],
+  "exclude": [".claude/**"],
+  "env": ["CI", "APP_*"],
+  "toolchain": [["python3", "--version"]],
+  "commands": [
+    {"argv": ["python3", "-m", "pytest", "-q"], "reuse": true, "evidence": "([0-9]+) passed"}
+  ]
+}
+```
+
+- Reuse is opt-in per command (`"reuse": true`, an exact `argv`, an `evidence` pattern), and needs
+  `env` and `toolchain` written out.
+- A command listed with `"reuse": false` (or by `argv_prefix`) is keyed and counted but always runs;
+  each repeat is logged as `would-hit`, which measures what reuse would save before you turn it on.
+- It never reuses on `main` or `master` (`receipts.no_reuse_branches`), nor when HEAD is the tip of
+  such a branch; a receipt is used for `max_age_hours` (default 72).
+- `--no-reuse` (or `JACKSTAY_NO_REUSE`) runs anyway.
+
+```sh
+jst receipts key -- python3 -m pytest -q    # the key here, what went into it, whether it would be reused
+jst receipts list [--project NAME]          # the stored receipts
+jst receipts stats [--project NAME] [--json]   # runs, reuses and seconds saved
+```
+
+The key cannot see what lies outside the checkout (an SDK, a daemon, the network), files the
+committed `.gitignore` hides (a build folder), unlisted environment variables, or a flaky test.
+Tests that depend on those are not candidates for reuse.
+
+## The machine-wide lock: `jst lock`
+
+```sh
+jst lock [--project NAME] [--wait SECONDS] [--also-hold PATH=VARIABLE]... [--note-words WORDS] -- COMMAND [ARG ...]
+jst lock status [--json]
+```
+
+Heavy commands from many sessions and projects on one machine take turns, in the order they came.
+`jst lock -- COMMAND` always locks. `jst test` takes the lock only when the project sets
+`"lock": {"enabled": true}` (for its scopes, by each scope's `lock`) or the call says `--lock`. The
+lock is off by default: turn it on when simultaneous runs are shown to cause failures (see
+`jst baseline`), not before.
+
+```sh
+jst lock -- xcodebuild test -scheme App
+jst lock --wait 600 -- ./run-integration.sh   # give up after 10 minutes, having run nothing (exit 75)
+jst lock status                               # who runs, who waits
+```
+
+Exit: the command's own status; 2 the lock or `jackstay.json` cannot be used (inside an agent
+sandbox that cannot write `~/.jackstay`, for one); 75 gave up waiting; 127 the command cannot start.
+`--also-hold` also holds a project's older lock file, so its old script and jackstay exclude each
+other. The lock is advisory: a command run without it is not stopped.
+
+## `jst check` and `jst patterns`
+
+```sh
+jst check [DIR]        # exit 0 usable (perhaps with warnings), 2 a problem or no jackstay.json
+jst patterns [DIR...]  # exit 0 every pattern is RE2, 1 some are not, 2 a file is missing or not JSON
+```
+
+`jst check` also warns about the `test` section: a scope with no timeout, and a gate that runs a
+slow step (over 60 s, by the recorded median) before a fast one (under 10 s).
+
+## Measuring: `jst baseline`
+
+```sh
+jst baseline --repo . --since 2026-11-01 --until 2026-11-14 [--json]
+```
+
+Reads, and changes nothing. Over a span of UTC days it counts, from Claude Code transcripts, git
+and jackstay's run record: test runs by kind and their time, merges, overlapping gate runs, every
+destructive command the guard would refuse today, and whether failures go together with
+simultaneous runs (the evidence for turning the lock on). Kinds come from `jackstay.json`'s
+`baseline` section or `--kind NAME=REGEX`. `--examples FILE` writes each command the guard would
+refuse to a file; it may hold private text. Without Claude Code transcripts, only the git and
+run-record parts have anything to read (`--projects-dir` names another transcript folder).
+
+## What can go wrong
+
+| What you see | What to do |
+|---|---|
+| `outcome=exited-0` | Nothing counted the tests. Give the scope `judge: steps` and an `evidence` pattern with one number group, or `swift-test`. |
+| `not-started`: `receipts.toolchain` must be written out | Add `"receipts": {"toolchain": []}` (or your toolchain commands). |
+| `unjudged` with `left-running=…` | The tests left processes behind; jackstay stopped them. Fix the test's cleanup. |
+| `timed-out` | The scope's `timeout` ended the whole tree. Raise it, or split the scope. |
+| A scope name refused | Only the six names, or `x-…`. `jst test list` shows yours. |
+| `gave-up` (75) | The lock was busy past `--wait`; `jst lock status` shows who holds it. |
+| `jst lock` exit 2 inside an agent sandbox | The sandbox cannot write `~/.jackstay`. Allow it ([Claude Code](claude-code.md#the-sandbox)), or run heavy runs outside the sandbox. |
+
+The design: [testing.md](../design/testing.md), and for receipts, the lock and `jst baseline`,
+[implementation.md, sections 5.4 and 9](../design/implementation.md#9-receipts-and-the-baseline-jst-test----command-jst-receipts-jst-baseline).

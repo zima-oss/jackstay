@@ -1,0 +1,12 @@
+{{- /*
+  The guide, read from docs/guide (W-076: one source). The site carries only what a user needs
+  (W-077): the design and the decision records stay in the repository, and the guide's links to
+  them lead to GitHub (layouts/_markup/render-link.html). The integrations are a group of their own
+  in the sidebar, guide/integrations (its page is content/guide/integrations/_index.md).
+*/ -}}
+{{- partial "jackstay/pages-from-docs.html" (dict
+  "adapter" .
+  "section" "guide"
+  "folder" "docs/guide"
+  "groups" (dict "claude-code.md" "integrations" "codex.md" "integrations")
+) -}}

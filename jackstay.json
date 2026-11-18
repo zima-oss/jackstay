@@ -1,0 +1,97 @@
+{
+  "jackstay_schema": 2,
+  "project": "jackstay",
+  "receipts": {
+    "inputs": [
+      "."
+    ],
+    "exclude": [
+      ".claude/**",
+      ".omc/**",
+      ".omx/**",
+      ".idea/**"
+    ],
+    "toolchain": [
+      [
+        "git",
+        "--version"
+      ],
+      [
+        "go",
+        "version"
+      ]
+    ],
+    "env": [
+      "JACKSTAY_*",
+      "GO*"
+    ]
+  },
+  "test": {
+    "judge": "steps",
+    "timeout": 1800,
+    "scopes": {
+      "gate": {
+        "run": [
+          "just",
+          "gate"
+        ],
+        "when": "before a finished step is pushed (W-040) and before an install: the Go checks, the integration tests, the security checks, the docs check",
+        "evidence": "Ran ([0-9]+) tests?",
+        "veto": "^FAILED"
+      },
+      "x-go": {
+        "run": [
+          "just",
+          "go"
+        ],
+        "when": "after any change to cmd/, internal/ or go.mod",
+        "evidence": "Ran ([0-9]+) tests?",
+        "veto": "^FAILED"
+      },
+      "x-integration": {
+        "run": [
+          "just",
+          "integration"
+        ],
+        "when": "with x-go: the tests that need real git (//go:build integration; docs/design/implementation.md section 10)",
+        "evidence": "Ran ([0-9]+) tests?",
+        "veto": "^FAILED"
+      },
+      "x-check": {
+        "run": [
+          "just",
+          "check"
+        ],
+        "when": "with x-go: gofmt, go vet, golangci-lint (docs/design/implementation.md section 10)",
+        "judge": "exit"
+      },
+      "x-sec": {
+        "run": [
+          "just",
+          "security"
+        ],
+        "when": "before an install: govulncheck and gosec",
+        "judge": "exit"
+      },
+      "x-docs": {
+        "run": [
+          "just",
+          "docs"
+        ],
+        "when": "after a change to documents: links lead somewhere, every decision is listed",
+        "judge": "exit"
+      }
+    }
+  },
+  "ids": {
+    "W": {
+      "files": "docs/decisions/W-{n}-*.md",
+      "width": 3
+    }
+  },
+  "procs": {
+    "default_minutes": 30,
+    "max_minutes": 240
+  },
+  "review": {}
+}

@@ -1,0 +1,107 @@
+# jackstay's documentation site (W-076): Hugo with the Hextra theme. It carries only what a user
+# needs (W-077): the home page, and the guide, which the content adapter content/_content.gotmpl
+# reads straight from docs/guide (mounted below as assets), so each page has one source. The design
+# and the decision records stay in the repository; the guide's links to them lead to GitHub.
+# Build it with `just site`; `just docs` checks that it builds without a broken link.
+
+title: jackstay
+baseURL: https://zima-oss.github.io/jackstay/
+locale: en
+enableRobotsTXT: true
+enableGitInfo: false
+# Hugo leaves nothing in site/: its build lock is off (one build at a time is the justfile's and the
+# workflow's), its cache of processed resources and `just site`'s output go to .build/, which git
+# ignores and jackstay's guard and `jst tidy` count as regenerable, so a worktree that built the
+# site is not kept for it.
+noBuildLock: true
+resourceDir: ../.build/hugo-resources
+
+module:
+  hugoVersion:
+    # The version the site is built with is pinned in the justfile (`hugo`); this is the floor.
+    min: "0.170.1"
+  # The theme is a Go module, pinned by go.mod and checked against go.sum; fetched through the Go
+  # module proxy (Hugo's default fetches straight from GitHub).
+  proxy: https://proxy.golang.org
+  imports:
+    - path: github.com/imfing/hextra
+  mounts:
+    # Defining mounts replaces Hugo's defaults, so the site's own folders are listed too.
+    - source: content
+      target: content
+    - source: layouts
+      target: layouts
+    - source: assets
+      target: assets
+    # The Markdown the pages are made from, and the files they link to on GitHub (the design, the
+    # decision records, docs/profiles), so the render hook can check that each exists. Only what a
+    # page reads or links to is used.
+    - source: ../docs
+      target: assets/docs
+    - source: ../CONTRIBUTING.md
+      target: assets/CONTRIBUTING.md
+    # The quick install, served beside the pages as /install.sh.
+    - source: ../install.sh
+      target: static/install.sh
+
+params:
+  # The repository the site links to for files that are not pages (the design, for example).
+  repository: https://github.com/zima-oss/jackstay
+  navbar:
+    displayTitle: true
+    displayLogo: false
+    width: wide
+  page:
+    width: wide
+  theme:
+    default: system
+    displayToggle: true
+  search:
+    enable: true
+    type: flexsearch
+    flexsearch:
+      index: content
+      # FlexSearch is vendored rather than fetched from a CDN at each build: the build needs no
+      # network beyond the Go module proxy, and the file is the one the npm registry's integrity hash
+      # names (assets/lib/README.md says where from, its hash and licence).
+      js: lib/flexsearch-0.8.143/flexsearch.bundle.min.js
+  footer:
+    enable: true
+    displayCopyright: true
+    displayPoweredBy: false
+  editURL:
+    enable: false
+  blog:
+    list:
+      displayTags: false
+
+copyright: "jackstay is licensed under the Apache License 2.0."
+
+menu:
+  main:
+    - name: Get started
+      pageRef: /guide/getting-started
+      weight: 1
+    - name: Guide
+      pageRef: /guide
+      weight: 2
+    - name: More on GitHub
+      pageRef: /more-on-github
+      weight: 3
+    - name: Search
+      weight: 4
+      params:
+        type: search
+    - name: GitHub
+      weight: 5
+      url: https://github.com/zima-oss/jackstay
+      params:
+        icon: github
+
+markup:
+  goldmark:
+    renderer:
+      # The documents are plain Markdown; nothing in them needs raw HTML.
+      unsafe: false
+  highlight:
+    noClasses: false

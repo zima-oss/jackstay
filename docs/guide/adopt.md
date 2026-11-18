@@ -1,0 +1,220 @@
+# Adopting a project
+
+A project adopts jackstay by having a `jackstay.json` at the root of its repository, committed. One
+command, `jst adopt`, writes it and everything else jackstay owns in a project, and tells you what
+it will not decide for you.
+
+## `jst adopt`
+
+```sh
+jst adopt [--plan] [--profile PATH] [--json] [DIR]
+jst adopt --apply [--accept ID]... [--pin] [--profile PATH] [DIR]
+jst adopt --block [--profile PATH] [DIR]
+```
+
+`jst adopt` brings the project around `DIR` (default: here) to jackstay's reference. It owns four
+places and nothing else:
+
+| Place | What jackstay writes |
+|---|---|
+| `jackstay.json` | created with `jackstay_schema` and `project` when missing; a profile's defaults added where the project has no value; never a value you set |
+| `AGENTS.md` | the tools block, between two `jackstay-adopt` markers; `CLAUDE.md` holding `@AGENTS.md` when there is no `CLAUDE.md` |
+| `.claude/settings.json` | the guard hook (`PreToolUse`, matcher `Bash`, `jst-guard`), every other key kept |
+| `.github/workflows/` | `card-line.yml` when the project has `cards` or `changes`; `release.yml` when it has `release` |
+
+- `--plan` (the default) prints the changes and the **conflicts**, and writes nothing.
+- `--apply` writes the changes. With any conflict left, it writes nothing at all.
+- `--accept ID` lets `--apply` overwrite the one thing a conflict protects, for this run only.
+- `--profile PATH` uses an organisation's profile (below); `--apply` records it in
+  `jackstay.json` so later runs need no flag.
+- `--pin` moves `adopt.pin`, the jackstay release the workflows download, to the running version.
+  Without it the pin never moves.
+- `--block` prints the AGENTS block this project gets.
+- Exit: 0 adopted (nothing to change, or everything written); 1 conflicts left; 2 usage, or
+  `jackstay.json` or the profile cannot be read; 3 (`--plan`) changes pending, no conflict.
+
+A second `--apply` writes nothing. `jst doctor` run inside a project reports when it has drifted
+(after you install a newer jackstay, say).
+
+### Example: a fresh repository
+
+```sh
+cd my-service
+jst adopt
+```
+
+```
+jst adopt: project my-service (/home/you/my-service), no profile
+changes (4):
+  agents-block                 AGENTS.md: new, with the block
+  claude-md                    CLAUDE.md: new: @AGENTS.md (Claude Code reads CLAUDE.md)
+  hook:guard                   .claude/settings.json: add the guard hook (PreToolUse, Bash, jst-guard)
+  jackstay.json                jackstay.json: new: jackstay_schema, project
+conflicts (0)
+```
+
+```sh
+jst adopt --apply
+jst adopt              # exit 0: nothing left
+git add jackstay.json AGENTS.md CLAUDE.md .claude/settings.json
+git commit -m "Adopt jackstay"
+```
+
+Each time you add a section to `jackstay.json`, run `jst adopt` again: the AGENTS block lists only
+the tools the project has enabled, and a workflow is written when its section appears.
+
+### Conflicts
+
+A conflict is a difference `jst adopt` must not decide. Each has a stable ID:
+
+| ID | When | Settled by |
+|---|---|---|
+| `agents:edited` | the text between the markers was edited by hand | move your lines outside the markers, then `--accept agents:edited` |
+| `agents:markers` | the markers are malformed | fixing the file by hand |
+| `workflow:<name>:unmarked` | a workflow of that name exists and is not jackstay's | `--accept`, or an exception |
+| `workflow:<name>:edited` | a jackstay workflow was edited | `--accept`, or an exception |
+| `file:<path>:missing`, `file:<path>:present` | the profile requires or forbids a path | the change the profile names, or an exception |
+| `jackstay.json:<key>:missing` | the profile requires a key | adding it, or an exception |
+| `scope:<name>:missing`, `scope:<name>:runner` | the profile requires a test scope, or how scopes are run | changing the scope, or an exception |
+| `jackstay.json:invalid` | the file with the profile's defaults would not pass `jst check` | changing your value |
+| `hook:settings-unreadable` | `.claude/settings.json` is not a JSON object | fixing the file by hand |
+
+An exception keeps a conflict on purpose, with a reason, in `jackstay.json`:
+
+```json
+"adopt": {
+  "exceptions": {
+    "file:Makefile:present": "moving to a justfile after the 2.0 release"
+  }
+}
+```
+
+Never edit inside the `jackstay-adopt` markers: change `jackstay.json` or the profile instead.
+
+## `jackstay.json`
+
+The nearest `jackstay.json` at or above the folder a command runs in is the project's file. It is
+read strictly: one JSON object, no key twice, an unknown key is an error. Every section is optional;
+a command is stopped only by a broken section it reads.
+
+```sh
+jst check            # is the whole file usable? exit 0, or 2 naming every problem
+jst patterns         # the patterns that are not RE2 (Go's dialect: no lookaround, no backreferences)
+```
+
+Put `jst check` in your project's own gate.
+
+| Section | What it configures | Guide page |
+|---|---|---|
+| `jackstay_schema` (required), `project` | the file's version (1 or 2; most sections need 2) and the project's name | here |
+| `guard` | `regenerable` folder names, your own `deny` rules, each rule's level | [guard](guard.md) |
+| `test` | scopes, steps, judges, timeouts, leftovers | [tests](tests.md) |
+| `receipts` | what goes into a tree's key, which commands may reuse a receipt | [tests](tests.md#receipts) |
+| `lock` | the machine-wide lock for heavy runs (off by default) | [tests](tests.md#the-machine-wide-lock-jst-lock) |
+| `baseline` | the kinds of test run `jst baseline` counts | [tests](tests.md#measuring-jst-baseline) |
+| `procs` | `jst bg`'s default and maximum deadline | [background](background.md) |
+| `trash` | how long `jst trash` keeps entries | [guard](guard.md#jst-trash) |
+| `github` | the account jackstay acts as, the remote, wait defaults | [branches and GitHub](branches-and-github.md) |
+| `review` | reviewers, brief, severities, round limit; present (even `{}`), the AGENTS block tells agents about `jst review` | [reviews](review.md) |
+| `cards`, `ids`, `records` | the `Card:` line, number series, one-file records | [records](records.md) |
+| `changes`, `release` | changelog entries, versions and the release workflow | [releases](releases.md) |
+| `adopt` | the workflows' pin, the profile, kept exceptions | here |
+| `telemetry` | the journal's retention and how command text is recorded | [observability](observability.md) |
+
+### A real example
+
+This is close to jackstay's own `jackstay.json`: a Go project whose checks are `just` recipes.
+
+```json
+{
+  "jackstay_schema": 2,
+  "project": "jackstay",
+  "receipts": {
+    "inputs": ["."],
+    "exclude": [".claude/**", ".idea/**"],
+    "toolchain": [["git", "--version"], ["go", "version"]],
+    "env": ["JACKSTAY_*", "GO*"]
+  },
+  "test": {
+    "judge": "steps",
+    "timeout": 1800,
+    "scopes": {
+      "gate": {
+        "run": ["just", "gate"],
+        "when": "before a finished step is pushed, and before an install",
+        "evidence": "Ran ([0-9]+) tests?",
+        "veto": "^FAILED"
+      },
+      "x-go": {
+        "run": ["just", "go"],
+        "when": "after any change to cmd/, internal/ or go.mod",
+        "evidence": "Ran ([0-9]+) tests?",
+        "veto": "^FAILED"
+      },
+      "x-docs": {
+        "run": ["just", "docs"],
+        "when": "after a change to documents",
+        "judge": "exit"
+      }
+    }
+  },
+  "ids": {
+    "W": {"files": "docs/decisions/W-{n}-*.md", "width": 3}
+  },
+  "procs": {"default_minutes": 30, "max_minutes": 240}
+}
+```
+
+## Profiles
+
+A profile carries an organisation's rules, so that many projects adopt jackstay the same way. It is
+one JSON file of data, kept outside jackstay (in a repository of your organisation, say), passed
+once with `--profile`.
+
+| Key | What it does |
+|---|---|
+| `files.required`, `files.forbidden` | paths that must or must not exist (with what replaces a forbidden one) |
+| `scopes.required`, `scopes.run_with` | test scopes every project declares, and the commands scopes may start with |
+| `jackstay_json.required`, `jackstay_json.defaults` | keys a project must set; sections and keys added where missing |
+| `workflows.<name>` | the organisation's own workflow templates, replacing jackstay's of the same name |
+| `values` | names its templates use as `@@name@@` |
+| `agents.rules`, `agents.leave_out` | lines added to the AGENTS block; block items left out |
+
+The example profile, with every capability: [docs/profiles/example/profile.json](../profiles/example/profile.json),
+with its own [card-line workflow](../profiles/example/workflows/card-line.yml), which runs on
+self-hosted runners.
+
+```sh
+jst adopt --profile ../org-profile/profile.json            # the plan with the profile
+jst adopt --apply --profile ../org-profile/profile.json    # recorded in jackstay.json's adopt.profile
+jst adopt                                                   # later runs need no flag
+```
+
+A profile is refused as a whole (exit 2) when a key is unknown, a path leaves its folder, a
+workflow's `uses:` is not pinned to a full commit hash, a template uses an undefined `@@name@@`, or a
+default would not pass `jst check`.
+
+## Bringing a project up to date, for an agent
+
+When jackstay changes, a project's session can adopt the new version with this prompt:
+
+> Bring this project up to date with jackstay. Run `jst adopt --plan` (with `--profile <path>` the
+> first time, if there is one). Settle each conflict it lists: do the migration as the project's
+> own work, or add an exception with its reason to `jackstay.json`'s `adopt.exceptions`. Before
+> `--accept …:edited`, move the project's own lines out of the text the plan shows will be
+> replaced; never edit inside the `jackstay-adopt` markers. Run `jst adopt --apply` with the
+> accepted IDs; then `jst adopt --plan` must exit 0. Run `jst doctor` and the project's gate, and
+> open one pull request listing each conflict and how it was settled.
+
+## What can go wrong
+
+- **`jst check` exit 2 after an edit**: the message names the key. An unknown key is an error, not
+  ignored: a misspelt safety setting must not be silently off.
+- **A newer schema**: a file written for a newer jackstay is refused with the advice to upgrade.
+- **The workflows download a release you have not published**: they download `adopt.pin` from
+  jackstay's public releases. Move the pin with `jst adopt --apply --pin` after installing a new
+  version, in a pull request of its own.
+- **A block fitted by hand without markers** is not recognised: remove it, and let `--apply` append
+  the generated one.
+
+The design: [adopt.md](../design/adopt.md).

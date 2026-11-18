@@ -1,0 +1,50 @@
+name: card-line
+
+# jackstay's Card line, changelog entry and tree rules on every pull request event (`jst lint pr`;
+# docs/design/release.md section 7). A workflow of its own: it listens for `edited`, since the
+# description is what is checked.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+concurrency:
+  group: card-line-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  JACKSTAY_VERSION: "@@jackstay_version@@"
+
+jobs:
+  card-line:
+    # Only branches of this repository: a fork's code never runs here.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the pull request merged with the base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the rules read the merge base, the base's jackstay.json and when files were added
+      - name: Download jackstay's binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/jackstay"
+          cd "$RUNNER_TEMP/jackstay"
+          gh release download "$JACKSTAY_VERSION" -R @@jackstay_repository@@ -p 'jackstay_*_linux_amd64.tar.gz' -p checksums.txt
+          sha256sum --check --ignore-missing checksums.txt
+          tar -xzf jackstay_*_linux_amd64.tar.gz
+          echo "$RUNNER_TEMP/jackstay" >> "$GITHUB_PATH"
+      - name: The Card line, the changelog entry and the tree's rules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: jst lint pr --event "$GITHUB_EVENT_PATH"

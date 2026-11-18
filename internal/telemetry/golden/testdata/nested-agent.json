@@ -1,0 +1,148 @@
+[
+  {
+    "name": "jst guard",
+    "kind": 1,
+    "parent": "",
+    "status": 0,
+    "scope": "jackstay",
+    "attributes": {
+      "gen_ai.agent.id": "agent-1",
+      "gen_ai.agent.name": "Explore",
+      "gen_ai.conversation.id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "gen_ai.tool.call.id": "toolu_golden_3",
+      "gen_ai.tool.name": "Bash",
+      "gen_ai.tool.type": "function",
+      "jackstay.args": "<x>",
+      "jackstay.claude.agent_id": "agent-1",
+      "jackstay.claude.agent_type": "Explore",
+      "jackstay.claude.session_id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.claude.tool_use_id": "toolu_golden_3",
+      "jackstay.command": "guard",
+      "jackstay.cwd": "<x>",
+      "jackstay.exit_code": 0,
+      "jackstay.guard.answer_ms": "<x>",
+      "jackstay.guard.command": "jst review --task golden",
+      "jackstay.guard.command_sha256": "7b3b3f1aa9c2e793d97aab1891c95902891cd3cbf6a039c685ff36250d587d21",
+      "jackstay.guard.outcome": "allowed",
+      "jackstay.guard.tool": "Bash",
+      "jackstay.outcome": "allowed"
+    },
+    "events": [
+      {
+        "name": "jackstay.guard.decision",
+        "attributes": {
+          "jackstay.guard.outcome": "allowed"
+        }
+      }
+    ]
+  },
+  {
+    "name": "jst review",
+    "kind": 2,
+    "parent": "<outside>",
+    "status": 0,
+    "scope": "jackstay",
+    "attributes": {
+      "gen_ai.conversation.id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.args": "<x>",
+      "jackstay.claude.session_id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.command": "review",
+      "jackstay.cwd": "<x>",
+      "jackstay.exit_code": 0,
+      "jackstay.outcome": "ok"
+    }
+  },
+  {
+    "name": "review.attempt",
+    "kind": 1,
+    "parent": "#1 jst review",
+    "status": 0,
+    "scope": "jackstay",
+    "attributes": {
+      "gen_ai.conversation.id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.claude.session_id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.exit_code": 0,
+      "jackstay.head": "c1",
+      "jackstay.outcome": "clear",
+      "jackstay.review.attempt": 1,
+      "jackstay.review.round": 1,
+      "jackstay.review.store": "<x>",
+      "jackstay.review.task": "golden"
+    },
+    "events": [
+      {
+        "name": "jackstay.review.verdict",
+        "attributes": {
+          "jackstay.review.disposition": 0,
+          "jackstay.review.outcome": "clear",
+          "jackstay.review.round": 1
+        }
+      }
+    ]
+  },
+  {
+    "name": "invoke_agent codex",
+    "kind": 3,
+    "parent": "#2 review.attempt",
+    "status": 0,
+    "scope": "jackstay",
+    "schema_url": "https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev",
+    "attributes": {
+      "gen_ai.agent.name": "codex",
+      "gen_ai.conversation.id": "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001",
+      "gen_ai.operation.name": "invoke_agent",
+      "gen_ai.provider.name": "openai",
+      "gen_ai.request.reasoning.level": "high",
+      "gen_ai.usage.cache_read.input_tokens": 1200,
+      "gen_ai.usage.cache_write.input_tokens": 5,
+      "gen_ai.usage.input_tokens": 1500,
+      "gen_ai.usage.output_tokens": 100,
+      "gen_ai.usage.reasoning.output_tokens": 50,
+      "jackstay.claude.session_id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.codex.thread_id": "0199aaaa-bbbb-7ccc-8ddd-eeeeffff0001",
+      "jackstay.outcome": "done",
+      "jackstay.review.reviewer": "codex",
+      "jackstay.review.store": "<x>"
+    },
+    "events": [
+      {
+        "name": "jackstay.codex.turn",
+        "attributes": {
+          "gen_ai.usage.cache_read.input_tokens": 1000,
+          "gen_ai.usage.cache_write.input_tokens": 0,
+          "gen_ai.usage.input_tokens": 1200,
+          "gen_ai.usage.output_tokens": 80,
+          "gen_ai.usage.reasoning.output_tokens": 40,
+          "jackstay.codex.turn.index": 1
+        }
+      },
+      {
+        "name": "jackstay.codex.turn",
+        "attributes": {
+          "gen_ai.usage.cache_read.input_tokens": 200,
+          "gen_ai.usage.cache_write.input_tokens": 5,
+          "gen_ai.usage.input_tokens": 300,
+          "gen_ai.usage.output_tokens": 20,
+          "gen_ai.usage.reasoning.output_tokens": 10,
+          "jackstay.codex.turn.index": 2
+        }
+      }
+    ]
+  },
+  {
+    "name": "exec codex",
+    "kind": 3,
+    "parent": "#3 invoke_agent codex",
+    "status": 0,
+    "scope": "jackstay",
+    "attributes": {
+      "gen_ai.conversation.id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.child.argv": "<x>",
+      "jackstay.child.pid": "<x>",
+      "jackstay.claude.session_id": "8a2f0c1e-0000-4000-8000-00000000c1a0",
+      "jackstay.exit_code": 0,
+      "jackstay.outcome": "exited-0"
+    }
+  }
+]
+

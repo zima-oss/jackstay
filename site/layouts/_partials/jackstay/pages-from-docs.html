@@ -1,0 +1,61 @@
+{{- /*
+  Adds one page for each Markdown file of a docs folder, for a content adapter (W-076: one source).
+
+  The file's first line `# Title` becomes the page's title, without its backticks (a title is plain
+  text in the sidebar and the browser's tab), and leaves the body, as the theme prints the title
+  itself; README.md becomes the section's own page. The order in the sidebar follows the folder's
+  README.md: a page comes where the README first links to it, the rest after, by title. Each page
+  keeps the file it was made from in its `jackstay_source` param, which the link render hook
+  resolves links by.
+
+  Context: a dict with
+    adapter  the content adapter's context (its .AddPage)
+    section  the site's section the pages go to: "guide"
+    folder   the folder the files are read from, as mounted under assets: "docs/guide"
+    groups   an optional dict, file name -> a group under the section ("codex.md": "integrations"):
+             the page goes to section/group/name, where the group's page is a content file of the
+             site (content/guide/integrations/_index.md)
+*/ -}}
+{{- $adapter := .adapter -}}
+{{- $section := .section -}}
+{{- $folder := .folder -}}
+{{- $groups := .groups | default dict -}}
+{{- $readme := resources.Get (printf "%s/README.md" $folder) -}}
+{{- $order := "" -}}
+{{- with $readme }}{{ $order = .Content }}{{ end -}}
+{{- range resources.Match (printf "%s/*.md" $folder) -}}
+  {{- $name := path.Base .Name -}}
+  {{- $text := .Content -}}
+  {{- $title := strings.TrimSuffix ".md" $name -}}
+  {{- $body := $text -}}
+  {{- with findRESubmatch `^# ([^\n]+)\n` $text 1 -}}
+    {{- $title = replace (index (index . 0) 1) "`" "" -}}
+    {{- $body = strings.TrimPrefix (index (index . 0) 0) $text -}}
+  {{- end -}}
+  {{- $params := dict "jackstay_source" (printf "%s/%s" $folder $name) -}}
+  {{- if eq $name "README.md" -}}
+    {{- $adapter.AddPage (dict
+      "kind" "section"
+      "path" $section
+      "title" $title
+      "params" $params
+      "content" (dict "mediaType" "text/markdown" "value" $body)
+    ) -}}
+  {{- else -}}
+    {{- $weight := 1000 -}}
+    {{- $mention := printf "](%s" $name -}}
+    {{- if strings.Contains $order $mention -}}
+      {{- $weight = add (len (index (split $order $mention) 0)) 1 -}}
+    {{- end -}}
+    {{- $where := $section -}}
+    {{- with index $groups $name }}{{ $where = printf "%s/%s" $section . }}{{ end -}}
+    {{- $adapter.AddPage (dict
+      "kind" "page"
+      "path" (printf "%s/%s" $where (strings.TrimSuffix ".md" $name))
+      "title" $title
+      "weight" $weight
+      "params" $params
+      "content" (dict "mediaType" "text/markdown" "value" $body)
+    ) -}}
+  {{- end -}}
+{{- end -}}

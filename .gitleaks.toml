@@ -1,0 +1,21 @@
+# gitleaks' default rules, with the findings that are jackstay's own synthetic secrets allowed by
+# name: the telemetry mask's golden fixtures and the design's example of them. Each is made up to show that the mask hides it; none is a real credential.
+# `gitleaks dir .` over the tree finds nothing else.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "curl -u user:password examples the mask must hide (made up, never real)"
+targetRules = ["curl-auth-user"]
+paths = [
+  '''(^|/)internal/telemetry/mask/mask_test\.go$''',
+  '''(^|/)docs/design/observability\.md$''',
+]
+
+[[allowlists]]
+description = "the mask test's synthetic 64-digit hex key (made up, never real)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)internal/telemetry/mask/mask_test\.go$''']
+regexes = ['''3f9c2a7b1d4e6f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708''']

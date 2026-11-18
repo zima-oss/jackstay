@@ -1,0 +1,64 @@
+note: output of the code under test
+note: output of the code under test
+
+note: output of the code under test
+Test Suite 'Selected tests' started at 2026-01-02 04:30:37.876.
+Test Suite 'KappaTests.xctest' started at 2026-01-02 04:30:37.877.
+Test Suite 'Suite245Tests' started at 2026-01-02 04:30:37.877.
+@passing KappaTests.Suite245Tests 600
+2026-01-02 04:35:12.301 xctest[1000:2000] ERROR: Negative values for setRowHeight: not allowed (0.000)
+2026-01-02 04:35:12.301 xctest[1000:2000] ERROR: Negative values for setRowHeight: not allowed (0.000)
+@passing KappaTests.Suite245Tests 400
+note: output of the code under test
+Test Suite 'Suite245Tests' passed at 2026-01-02 04:39:59.990.
+	 Executed 1000 tests, with 0 failures (0 unexpected) in 562.104 (562.113) seconds
+Test Suite 'Suite275Tests' started at 2026-01-02 04:40:00.000.
+Test Case '-[KappaTests.Suite275Tests test3202]' started.
+/work/project/Tests/KappaTests/Suite275Tests.swift:82: -[KappaTests.Suite275Tests test3202] : Test skipped - not on this machine
+Test Case '-[KappaTests.Suite275Tests test3202]' skipped (0.001 seconds).
+Test Suite 'Suite275Tests' passed at 2026-01-02 04:40:00.900.
+	 Executed 1 test, with 1 test skipped and 0 failures (0 unexpected) in 0.874 (0.875) seconds
+Test Suite 'Suite306Tests' started at 2026-01-02 04:40:00.000.
+@passing KappaTests.Suite306Tests 2
+Test Case '-[KappaTests.Suite306Tests test3731]' started.
+/work/project/Tests/KappaTests/Suite306Tests.swift:114: -[KappaTests.Suite306Tests test3731] : Test skipped - not on this machine
+Test Case '-[KappaTests.Suite306Tests test3731]' skipped (0.001 seconds).
+Test Suite 'Suite306Tests' passed at 2026-01-02 04:40:00.900.
+	 Executed 3 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.874 (0.875) seconds
+Test Suite 'Suite330Tests' started at 2026-01-02 04:40:00.000.
+@passing KappaTests.Suite330Tests 31
+Test Case '-[KappaTests.Suite330Tests test3950]' started.
+/work/project/Tests/KappaTests/Suite330Tests.swift:623: -[KappaTests.Suite330Tests test3950] : Test skipped - not on this machine
+Test Case '-[KappaTests.Suite330Tests test3950]' skipped (0.001 seconds).
+Test Suite 'Suite330Tests' passed at 2026-01-02 04:40:00.900.
+	 Executed 32 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.874 (0.875) seconds
+Test Suite 'Suite340Tests' started at 2026-01-02 04:40:00.000.
+@passing KappaTests.Suite340Tests 25
+Test Case '-[KappaTests.Suite340Tests test4061]' started.
+/work/project/Tests/KappaTests/Suite340Tests.swift:412: -[KappaTests.Suite340Tests test4061] : Test skipped - not on this machine
+Test Case '-[KappaTests.Suite340Tests test4061]' skipped (0.001 seconds).
+Test Suite 'Suite340Tests' passed at 2026-01-02 04:40:00.900.
+	 Executed 26 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.874 (0.875) seconds
+Test Suite 'Suite350Tests' started at 2026-01-02 04:41:00.000.
+@passing KappaTests.Suite350Tests 1227
+Test Suite 'Suite350Tests' passed at 2026-01-02 04:53:47.232.
+	 Executed 1227 tests, with 0 failures (0 unexpected) in 767.210 (767.402) seconds
+Test Suite 'Suite363Tests' started at 2026-01-02 04:54:14.657.
+@passing KappaTests.Suite363Tests 30
+Test Case '-[KappaTests.Suite363Tests test4308]' started.
+/work/project/Tests/KappaTests/Suite363Tests.swift:440: error: -[KappaTests.Suite363Tests test4308] : XCTAssertEqual failed: ("1") is not equal to ("2")
+/work/project/Tests/KappaTests/Suite363Tests.swift:441: error: -[KappaTests.Suite363Tests test4308] : XCTAssertEqual failed: ("1") is not equal to ("2")
+/work/project/Tests/KappaTests/Suite363Tests.swift:444: error: -[KappaTests.Suite363Tests test4308] : XCTAssertEqual failed: ("1") is not equal to ("2")
+/work/project/Tests/KappaTests/Suite363Tests.swift:447: error: -[KappaTests.Suite363Tests test4308] : XCTAssertEqual failed: ("1") is not equal to ("2")
+/work/project/Tests/KappaTests/Suite363Tests.swift:448: error: -[KappaTests.Suite363Tests test4308] : XCTAssertEqual failed: ("1") is not equal to ("2")
+Test Case '-[KappaTests.Suite363Tests test4308]' failed (0.104 seconds).
+2026-01-02 04:54:27.907 xctest[1000:2000] ERROR: Negative values for setRowHeight: not allowed (0.000)
+@passing KappaTests.Suite363Tests 30
+Test Suite 'Suite363Tests' failed at 2026-01-02 04:54:54.074.
+	 Executed 61 tests, with 5 failures (0 unexpected) in 39.410 (39.417) seconds
+Test Suite 'KappaTests.xctest' failed at 2026-01-02 04:58:40.426.
+	 Executed 2350 tests, with 4 tests skipped and 5 failures (0 unexpected) in 1261.117 (1261.425) seconds
+Test Suite 'Selected tests' failed at 2026-01-02 04:58:40.427.
+	 Executed 2350 tests, with 4 tests skipped and 5 failures (0 unexpected) in 1261.117 (1261.427) seconds
+note: output of the code under test
+note: output of the code under test

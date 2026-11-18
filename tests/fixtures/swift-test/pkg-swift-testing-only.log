@@ -1,0 +1,16 @@
+◇ Test run started.
+↳ Testing Library Version: 2403
+↳ Target Platform: arm64e-apple-macos14.0
+◇ Suite Grouped started.
+➜ Test skipped() skipped: "not today"
+◇ Test passes() started.
+◇ Test known() started.
+◇ Test inner() started.
+✔ Test passes() passed after 0.001 seconds.
+✔ Test inner() passed after 0.001 seconds.
+✔ Suite Grouped passed after 0.001 seconds.
+━ Test known() recorded a known issue at ST.swift:6:39: Expectation failed: one() == 3
+↳ one() == 3 → false
+↳   one() → 1
+━ Test known() passed after 0.001 seconds with 1 known issue.
+━ Test run with 4 tests in 1 suite passed after 0.001 seconds with 1 known issue.

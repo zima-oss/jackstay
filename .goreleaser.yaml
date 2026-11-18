@@ -1,0 +1,68 @@
+# jackstay's release build (docs/design/implementation.md, section 6), run by
+# .github/workflows/release.yml when a version tag is pushed (W-020, W-075), which then publishes
+# what it built: one archive per platform holding the binary and the licences (jackstay's LICENSE,
+# the third-party modules' under licenses/), plus checksums.txt. The macOS binaries are signed with Developer ID and notarised by GoReleaser
+# itself (quill), from secrets the release environment gives. Without MACOS_SIGN_P12 (a local
+# snapshot: `just release-snapshot`) nothing is signed; the workflow refuses to run without it.
+version: 2
+project_name: jackstay
+before:
+  hooks:
+    # The licence files of the third-party modules compiled into jst (MIT and BSD-3-Clause ask that
+    # they go with the binary; docs/licences.md), from the module cache, written into a new folder
+    # this run owns, which JST_LICENCES names (the release workflow and `just release-snapshot` make
+    # it with mktemp; jst-licences refuses a folder that exists), and archived as
+    # licenses/<module>/<file>. GoReleaser wants dist/ empty after these hooks.
+    - go run ./cmd/jst-licences "{{ .Env.JST_LICENCES }}"
+builds:
+  - id: jst
+    main: ./cmd/jst
+    binary: jst
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X github.com/zima-oss/jackstay/internal/version.Commit={{ .ShortCommit }}
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+archives:
+  - id: jackstay
+    formats: [tar.gz]
+    name_template: "jackstay_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    wrap_in_directory: false
+    # The binary, jackstay's LICENSE (Apache-2.0) and the modules' licence files; not goreleaser's
+    # default README.
+    files:
+      - LICENSE
+      - src: "{{ .Env.JST_LICENCES }}/**/*"
+        dst: licenses
+checksum:
+  name_template: checksums.txt
+notarize:
+  macos:
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids: [jst]
+      sign:
+        # The Developer ID Application certificate as a base64'd .p12, and its password. quill signs
+        # with the binary's name, `jst`, as the identifier (`jst install` signs with
+        # the same identifier on a machine that names an identity, W-070, W-075).
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        # The App Store Connect API key: the whole .p8 file base64'd (PEM markers included; quill
+        # decodes it), its id and its issuer.
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        # Nothing is archived or published before Apple accepts the binaries. Apple refuses an API
+        # token that lives longer than 20 minutes, and quill makes the token live this timeout plus
+        # 2 minutes, so 18 minutes is the longest wait that works; most answers come within a few
+        # minutes. A slower answer fails the release before anything is uploaded, and the workflow
+        # is run again.
+        wait: true
+        timeout: 18m
+changelog:
+  disable: true
+release:
+  # GoReleaser publishes nothing: the release workflow runs it with --skip=publish and creates,
+  # fills, checks and publishes the release itself, by its id (.github/workflows/release.yml).
+  disable: true

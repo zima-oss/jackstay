@@ -1,0 +1,42 @@
+{
+  "jackstay_profile": 1,
+  "name": "example",
+  "about": "An organisation whose projects run their recipes with just, land pull requests on GitHub and check a Card line",
+  "files": {
+    "required": [
+      {"path": "justfile", "why": "the recipes the test scopes run"},
+      {"path": "CHANGELOG.md", "why": "where jst changes collects the entries"}
+    ],
+    "forbidden": [
+      {"path": "Makefile", "why": "one runner per project", "instead": "the same recipes in the justfile"},
+      {"path": ".changeset", "why": "a second changelog tool", "instead": "jst changes new --slug S for each entry"}
+    ]
+  },
+  "scopes": {
+    "required": ["gate"],
+    "run_with": ["just"]
+  },
+  "jackstay_json": {
+    "required": ["github.account", "cards"],
+    "defaults": {
+      "procs": {"default_minutes": 30, "max_minutes": 240},
+      "review": {"round_limit": 6}
+    }
+  },
+  "workflows": {
+    "card-line": {
+      "file": "workflows/card-line.yml",
+      "when": ["cards", "changes"]
+    }
+  },
+  "values": {
+    "runner_labels": "self-hosted"
+  },
+  "agents": {
+    "rules": [
+      "`just gate` is this organisation's gate; `jst test gate` runs it and is what a pull request needs.",
+      "`jst gh pr-land` only where the project's own rules let a session merge."
+    ],
+    "leave_out": ["owner"]
+  }
+}

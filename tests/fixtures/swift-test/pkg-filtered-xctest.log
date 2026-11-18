@@ -1,0 +1,24 @@
+Test Suite 'Selected tests' started at 2026-01-02 12:52:16.831.
+Test Suite 'OtherTests.xctest' started at 2026-01-02 12:52:16.832.
+Test Suite 'AlphaTests' started at 2026-01-02 12:52:16.832.
+Test Case '-[OtherTests.AlphaTests testExpected]' started.
+XCTExpectFailure: matcher accepted Assertion Failure at XC.swift:6: XCTAssertEqual failed: ("1") is not equal to ("2")
+XC.swift:6: Expected failure in -[OtherTests.AlphaTests testExpected]: XCTAssertEqual failed: ("1") is not equal to ("2")Reason: (known)
+Test Case '-[OtherTests.AlphaTests testExpected]' passed (0.019 seconds).
+Test Case '-[OtherTests.AlphaTests testOne]' started.
+Test Case '-[OtherTests.AlphaTests testOne]' passed (0.000 seconds).
+Test Case '-[OtherTests.AlphaTests testSkip]' started.
+/tmp/pkg/Tests/OtherTests/XC.swift:5: -[OtherTests.AlphaTests testSkip] : Test skipped - no
+Test Case '-[OtherTests.AlphaTests testSkip]' skipped (0.001 seconds).
+Test Suite 'AlphaTests' passed at 2026-01-02 12:52:16.853.
+	 Executed 3 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.020 (0.021) seconds
+Test Suite 'OtherTests.xctest' passed at 2026-01-02 12:52:16.854.
+	 Executed 3 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.020 (0.021) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 12:52:16.854.
+	 Executed 3 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.020 (0.022) seconds
+Test Suite 'Selected tests' started at 2026-01-02 12:52:16.942.
+Test Suite 'LibTests.xctest' started at 2026-01-02 12:52:16.943.
+Test Suite 'LibTests.xctest' passed at 2026-01-02 12:52:16.943.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 12:52:16.944.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds

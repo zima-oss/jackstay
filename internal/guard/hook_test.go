@@ -1,0 +1,255 @@
+package guard
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/zima-oss/jackstay/internal/telemetry"
+	"github.com/zima-oss/jackstay/internal/telemetry/telemetrytest"
+)
+
+// runHook runs the hook as the guard command runs it, its span written to home's journal.
+func runHook(t *testing.T, home string, payload any, raw string) (map[string]any, string) {
+	t.Helper()
+	t.Setenv("JACKSTAY_HOME", home)
+	telemetry.Reset()
+	t.Cleanup(telemetry.Reset)
+	telemetry.Begin("guard", nil)
+	defer telemetry.Finish(0)
+	text := raw
+	if payload != nil {
+		data, err := json.Marshal(payload)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text = string(data)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Hook(strings.NewReader(text), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if stdout.Len() == 0 {
+		return nil, stderr.String()
+	}
+	var out map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("stdout %q: %v", stdout.String(), err)
+	}
+	return out, stderr.String()
+}
+
+func bashCall(command, cwd string) map[string]any {
+	return map[string]any{"session_id": "s", "cwd": cwd, "hook_event_name": "PreToolUse", "tool_name": "Bash",
+		"tool_input": map[string]any{"command": command}, "tool_use_id": "t"}
+}
+
+func decisionOf(out map[string]any) string {
+	specific, _ := out["hookSpecificOutput"].(map[string]any)
+	text, _ := specific["permissionDecision"].(string)
+	return text
+}
+
+// readLog is the guard's decisions in home's journal, one per call, as records: the event (the
+// outcome), its rules, the project, the tool and the config error.
+func readLog(t *testing.T, home string) []map[string]any {
+	t.Helper()
+	events := map[string]string{outcomeRefused: "refused", outcomeWarned: "warned", outcomeFailedOpen: "failed-open",
+		outcomeIgnoredTool: "ignored-tool", outcomeAllowed: "allowed"}
+	var records []map[string]any
+	for _, span := range telemetrytest.Named(telemetrytest.Spans(t, home), "jst guard") {
+		record := map[string]any{"event": events[span.Text(telemetry.AttrGuardOutcome)], "project": span.ResourceText(telemetry.AttrProject),
+			"tool_name": span.Text(telemetry.AttrGuardTool), "config_error": span.Text(telemetry.AttrGuardConfigError)}
+		if rules, ok := span.Attributes[telemetry.AttrGuardRules].([]any); ok {
+			record["rules"] = rules
+			if len(rules) > 0 {
+				record["rule"] = rules[0]
+			}
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func writeConfig(t *testing.T, folder, text string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(folder, "jackstay.json"), []byte(text), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHookRefusesWithTheDocumentedAnswer(t *testing.T) {
+	home := t.TempDir()
+	out, _ := runHook(t, home, bashCall("git reset --hard", t.TempDir()), "")
+	if decisionOf(out) != "deny" {
+		t.Fatalf("answer %v", out)
+	}
+	specific := out["hookSpecificOutput"].(map[string]any)
+	if specific["hookEventName"] != "PreToolUse" || !strings.Contains(specific["permissionDecisionReason"].(string), "jst discard <path>") {
+		t.Fatalf("reason %v", specific)
+	}
+}
+
+func TestHookSaysNothingForAnAllowedCommand(t *testing.T) {
+	home := t.TempDir()
+	if out, _ := runHook(t, home, bashCall("git status", t.TempDir()), ""); out != nil {
+		t.Fatalf("answer %v", out)
+	}
+}
+
+func TestHookDoesNotLookAtAnotherTool(t *testing.T) {
+	home := t.TempDir()
+	out, _ := runHook(t, home, map[string]any{"tool_name": "Write", "tool_input": map[string]any{"command": "git reset --hard"}}, "")
+	if out != nil {
+		t.Fatalf("answer %v", out)
+	}
+}
+
+func TestHookFailsOpenVisiblyOnInputItCannotRead(t *testing.T) {
+	home := t.TempDir()
+	out, stderr := runHook(t, home, nil, "{not json")
+	if !strings.Contains(out["systemMessage"].(string), "did NOT check") || !strings.Contains(stderr, "did NOT check") {
+		t.Fatalf("answer %v %q", out, stderr)
+	}
+}
+
+func TestHookRefusesAToolInputItCannotRead(t *testing.T) {
+	home := t.TempDir()
+	folder := t.TempDir()
+	given := bashCall("git reset --hard", folder)
+	given["tool_input"] = `{"command": "git reset --hard"}`
+	if out, _ := runHook(t, home, given, ""); decisionOf(out) != "deny" {
+		t.Fatalf("text JSON: %v", out)
+	}
+	given["tool_input"] = "git reset --hard"
+	out, _ := runHook(t, home, given, "")
+	if decisionOf(out) != "deny" || !strings.Contains(out["hookSpecificOutput"].(map[string]any)["permissionDecisionReason"].(string), "cannot be read") {
+		t.Fatalf("not JSON: %v", out)
+	}
+	given["tool_input"] = map[string]any{"command": []string{"git", "reset", "--hard"}}
+	if out, _ := runHook(t, home, given, ""); decisionOf(out) != "deny" {
+		t.Fatalf("not text: %v", out)
+	}
+}
+
+func TestHookKeepsTheBuiltInRulesWhenJackstayJSONCannotBeUsed(t *testing.T) {
+	for _, text := range []string{"{broken", "[1, 2]", `{"jackstay_schema": 1, "gaurd": {}}`,
+		`{"jackstay_schema": 1, "project": "demo", "guard": {"deny": [{"id": "x", "command": "("}]}}`} {
+		home, folder := t.TempDir(), t.TempDir()
+		writeConfig(t, folder, text)
+		out, _ := runHook(t, home, bashCall("git reset --hard", folder), "")
+		if decisionOf(out) != "deny" || !strings.Contains(out["systemMessage"].(string), "jackstay.json cannot be used") ||
+			strings.Contains(out["systemMessage"].(string), "did NOT check") {
+			t.Fatalf("%s: %v", text, out)
+		}
+		out, _ = runHook(t, home, bashCall("git status", folder), "")
+		if !strings.Contains(out["systemMessage"].(string), "jackstay.json cannot be used") || !toldTheAgentOnly(out, "jackstay.json cannot be used") {
+			t.Fatalf("%s: %v", text, out)
+		}
+		var events []string
+		for _, record := range readLog(t, home) {
+			events = append(events, record["event"].(string))
+			if record["config_error"] == "" {
+				t.Fatalf("%s: a call without its config error: %v", text, record)
+			}
+		}
+		if strings.Join(events, " ") != "refused allowed" {
+			t.Fatalf("%s: events %v", text, events)
+		}
+	}
+}
+
+func TestHookStillRefusesWhenTheLogCannotBeWritten(t *testing.T) {
+	notAFolder := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notAFolder, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, _ := runHook(t, notAFolder, bashCall("git reset --hard", t.TempDir()), ""); decisionOf(out) != "deny" {
+		t.Fatalf("answer %v", out)
+	}
+	if out, _ := runHook(t, "relative-home", bashCall("git reset --hard", t.TempDir()), ""); decisionOf(out) != "deny" {
+		t.Fatalf("answer %v", out)
+	}
+}
+
+func TestHookWarnsOfANearWildcardAndKeepsTheOtherRules(t *testing.T) {
+	home, folder := t.TempDir(), t.TempDir()
+	writeConfig(t, folder, `{"jackstay_schema": 1, "guard": {"regenerable": ["?*", "out-*"]}}`)
+	out, _ := runHook(t, home, bashCall("git reset --hard", folder), "")
+	if decisionOf(out) != "deny" || !strings.Contains(out["systemMessage"].(string), "would match nearly every name") {
+		t.Fatalf("answer %v", out)
+	}
+	out, _ = runHook(t, home, bashCall("git status", folder), "")
+	if !toldTheAgentOnly(out, "would match nearly every name") || !strings.Contains(out["systemMessage"].(string), "would match nearly every name") {
+		t.Fatalf("answer %v", out)
+	}
+	var events []string
+	for _, record := range readLog(t, home) {
+		events = append(events, record["event"].(string))
+	}
+	if strings.Join(events, " ") != "refused warned" {
+		t.Fatalf("events %v", events)
+	}
+}
+
+func TestHookMarksEveryCallWithASessionAndOnlyThose(t *testing.T) {
+	home, folder := t.TempDir(), t.TempDir()
+	writeConfig(t, folder, `{"jackstay_schema": 1, "project": "demo"}`)
+	given := bashCall("git reset --hard", folder)
+	delete(given, "session_id")
+	runHook(t, home, given, "")
+	if _, err := os.Stat(filepath.Join(home, "demo", "guard-seen")); err == nil {
+		t.Fatal("a probe without a session left a mark")
+	}
+	runHook(t, home, bashCall("git status", folder), "")
+	if _, err := os.Stat(filepath.Join(home, "demo", "guard-seen")); err != nil {
+		t.Fatal("no mark")
+	}
+	runHook(t, home, map[string]any{"tool_name": "Write", "cwd": folder, "session_id": "s", "tool_input": map[string]any{"file_path": "x"}}, "")
+	log := readLog(t, home)
+	last := log[len(log)-1]
+	if len(log) != 3 || last["event"] != "ignored-tool" || last["tool_name"] != "Write" || last["project"] != "demo" {
+		t.Fatalf("log %v", log)
+	}
+}
+
+func TestHookFindsTheProjectFromTheWorkingFolder(t *testing.T) {
+	home, folder := t.TempDir(), t.TempDir()
+	writeConfig(t, folder, `{"jackstay_schema": 1, "project": "demo", "guard": {"deny": [{"id": "rec", "env": {"REC": "1"}, "why": "it rewrites every reference image", "instead": "i"}]}}`)
+	sub := filepath.Join(folder, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := runHook(t, home, bashCall("REC=1 swift test", sub), "")
+	if !strings.Contains(out["hookSpecificOutput"].(map[string]any)["permissionDecisionReason"].(string), "rewrites every reference image") {
+		t.Fatalf("answer %v", out)
+	}
+	if log := readLog(t, home); log[0]["project"] != "demo" {
+		t.Fatalf("log %v", log)
+	}
+}
+
+func TestCheckCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := check([]string{"--cwd", "/tmp", "--", "git clean -fd"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "git clean -n") {
+		t.Fatalf("%d %q", code, stderr.String())
+	}
+	if code := check([]string{"--cwd", "/tmp", "--", "git clean -n"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("%d", code)
+	}
+}
+
+// toldTheAgentOnly says the answer gives the agent the text (additionalContext) and makes no
+// permission decision: the person's own permission flow is unchanged (W-053).
+func toldTheAgentOnly(out map[string]any, text string) bool {
+	specific, ok := out["hookSpecificOutput"].(map[string]any)
+	if !ok {
+		return false
+	}
+	_, decided := specific["permissionDecision"]
+	context, _ := specific["additionalContext"].(string)
+	return !decided && specific["hookEventName"] == "PreToolUse" && strings.Contains(context, text)
+}

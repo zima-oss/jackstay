@@ -1,0 +1,62 @@
+{{- /*
+  Links in the documents are written for the repository: relative paths to other files
+  (`../design/guard.md#3-rules`). A link to a guide file becomes a link to the page made from it
+  (the page whose `jackstay_source` names it); a link to any other file of the repository the site
+  mounts (the design, the decision records, docs/profiles, CONTRIBUTING.md) leads to that file on
+  GitHub, as the site carries only the guide (W-077). A relative link that leads nowhere, or to a
+  heading its page or Markdown file does not have, stops the build: the site never publishes a
+  broken link of its own (`just docs`). Absolute links are left as written.
+
+  A heading of a Markdown file on GitHub is named as GitHub names it: its text without the
+  Markdown of its links and code, lower-cased, punctuation dropped and spaces made hyphens, which is
+  what `anchorize` does with the site's default heading IDs (`github`); a line in a fenced code
+  block is no heading. internal/docs checks the same for every document, repeated headings
+  included (TestFragmentsLeadToHeadings).
+*/ -}}
+{{- $url := urls.Parse .Destination -}}
+{{- $href := .Destination -}}
+{{- $source := .Page.Params.jackstay_source -}}
+{{- if and $source (not $url.Scheme) (not $url.Host) $url.Path (not (hasPrefix $url.Path "/")) -}}
+  {{- $target := path.Clean (path.Join (path.Dir $source) $url.Path) -}}
+  {{- $file := resources.Get $target -}}
+  {{- if not $file -}}
+    {{- errorf "%s: the link %q leads nowhere (%s is no file the site mounts)" $source .Destination $target -}}
+  {{- end -}}
+  {{- with where site.Pages "Params.jackstay_source" $target -}}
+    {{- $page := index . 0 -}}
+    {{- $href = $page.RelPermalink -}}
+    {{- with $url.Fragment -}}
+      {{- if not ($page.Fragments.Identifiers.Contains .) -}}
+        {{- errorf "%s: the link %q leads to no heading %q on %s" $source $.Destination . $page.RelPermalink -}}
+      {{- end -}}
+      {{- $href = printf "%s#%s" $href . -}}
+    {{- end -}}
+  {{- else -}}
+    {{- $href = printf "%s/blob/main/%s" site.Params.repository $target -}}
+    {{- with $url.Fragment -}}
+      {{- if strings.HasSuffix $target ".md" -}}
+        {{- $headings := slice -}}
+        {{- $text := replaceRE "(?ms)^ {0,3}```.*?^ {0,3}```[^\n]*$" "" $file.Content -}}
+        {{- $text = replaceRE `(?ms)^ {0,3}~~~.*?^ {0,3}~~~[^\n]*$` "" $text -}}
+        {{- range findRE `(?m)^#{1,6} [^\n]+$` $text -}}
+          {{- $text := replaceRE `^#+ +` "" . -}}
+          {{- $text = replaceRE `\[([^\]]*)\]\([^)]*\)` "$1" $text -}}
+          {{- $headings = $headings | append (anchorize (replace $text "`" "")) -}}
+        {{- end -}}
+        {{- if not (in $headings .) -}}
+          {{- errorf "%s: the link %q leads to no heading %q of %s" $source $.Destination . $target -}}
+        {{- end -}}
+      {{- end -}}
+      {{- $href = printf "%s#%s" $href . -}}
+    {{- end -}}
+  {{- end -}}
+{{- else if and $source (not $url.Scheme) (not $url.Host) (not $url.Path) $url.Fragment -}}
+  {{- if not (.Page.Fragments.Identifiers.Contains $url.Fragment) -}}
+    {{- errorf "%s: the link %q leads to no heading on its own page" $source .Destination -}}
+  {{- end -}}
+{{- end -}}
+<a href="{{ $href | safeURL }}"
+  {{- with .Title }} title="{{ . }}"{{ end -}}
+  {{- if $url.IsAbs }} target="_blank" rel="noopener"{{ end -}}
+>{{ .Text }}</a>
+{{- /* chomp trailing newline */ -}}

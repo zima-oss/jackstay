@@ -1,0 +1,55 @@
+[
+  {
+    "name": "jst guard",
+    "kind": 1,
+    "parent": "",
+    "status": 2,
+    "scope": "jackstay",
+    "attributes": {
+      "error.type": "failed_open",
+      "jackstay.args": "<x>",
+      "jackstay.caller.argv": "<x>",
+      "jackstay.command": "guard",
+      "jackstay.cwd": "<x>",
+      "jackstay.exit_code": 0,
+      "jackstay.guard.answer_ms": "<x>",
+      "jackstay.guard.outcome": "failed_open",
+      "jackstay.outcome": "failed_open"
+    },
+    "events": [
+      {
+        "name": "jackstay.guard.decision",
+        "attributes": {
+          "jackstay.guard.outcome": "failed_open",
+          "jackstay.reason": "standard input is not a JSON object (0 bytes)"
+        }
+      }
+    ]
+  },
+  {
+    "name": "jst golden-boom",
+    "kind": 1,
+    "parent": "",
+    "status": 2,
+    "scope": "jackstay",
+    "attributes": {
+      "error.type": "panic",
+      "jackstay.args": "<x>",
+      "jackstay.command": "golden-boom",
+      "jackstay.cwd": "<x>",
+      "jackstay.exit_code": 2,
+      "jackstay.outcome": "crashed"
+    },
+    "events": [
+      {
+        "name": "exception",
+        "attributes": {
+          "exception.message": "golden fault",
+          "exception.stacktrace": "<x>",
+          "exception.type": "*errors.errorString"
+        }
+      }
+    ]
+  }
+]
+

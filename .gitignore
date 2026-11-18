@@ -1,0 +1,7 @@
+.omc/
+.idea/
+.claude/worktrees/
+.claude/.cc-writes/
+.build/
+dist/
+/CLAUDE.local.md

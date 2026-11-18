@@ -1,0 +1,140 @@
+note: output of the code under test
+note: output of the code under test
+note: output of the code under test
+
+note: output of the code under test
+note: output of the code under test
+
+note: output of the code under test
+Test Suite 'Selected tests' started at 2026-01-02 11:14:40.228.
+Test Suite 'AlphaTests.xctest' started at 2026-01-02 11:14:40.229.
+Test Suite 'Suite001Tests' started at 2026-01-02 11:14:40.229.
+@passing AlphaTests.Suite001Tests 31
+Test Suite 'Suite001Tests' passed at 2026-01-02 11:14:41.857.
+	 Executed 31 tests, with 0 failures (0 unexpected) in 1.623 (1.628) seconds
+Test Suite 'Suite002Tests' started at 2026-01-02 11:14:41.857.
+note: output of the code under test
+note: output of the code under test
+@passing AlphaTests.Suite002Tests 736
+Test Suite 'Suite002Tests' passed at 2026-01-02 11:15:21.110.
+	 Executed 736 tests, with 0 failures (0 unexpected) in 39.151 (39.253) seconds
+Test Suite 'AlphaTests.xctest' passed at 2026-01-02 11:15:21.110.
+	 Executed 767 tests, with 0 failures (0 unexpected) in 40.774 (40.881) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:15:21.110.
+	 Executed 767 tests, with 0 failures (0 unexpected) in 40.774 (40.882) seconds
+Test Suite 'Selected tests' started at 2026-01-02 11:15:21.616.
+Test Suite 'BetaTests.xctest' started at 2026-01-02 11:15:21.617.
+Test Suite 'Suite026Tests' started at 2026-01-02 11:15:21.617.
+@passing BetaTests.Suite026Tests 35
+Test Suite 'Suite026Tests' passed at 2026-01-02 11:15:28.926.
+	 Executed 35 tests, with 0 failures (0 unexpected) in 7.304 (7.309) seconds
+Test Suite 'BetaTests.xctest' passed at 2026-01-02 11:15:28.926.
+	 Executed 35 tests, with 0 failures (0 unexpected) in 7.304 (7.309) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:15:28.926.
+	 Executed 35 tests, with 0 failures (0 unexpected) in 7.304 (7.310) seconds
+Test Suite 'Selected tests' started at 2026-01-02 11:15:29.398.
+Test Suite 'GammaTests.xctest' started at 2026-01-02 11:15:29.399.
+Test Suite 'Suite031Tests' started at 2026-01-02 11:15:29.399.
+@passing GammaTests.Suite031Tests 3
+Test Suite 'Suite031Tests' passed at 2026-01-02 11:15:29.402.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'Suite032Tests' started at 2026-01-02 11:15:29.402.
+@passing GammaTests.Suite032Tests 20
+Test Suite 'Suite032Tests' passed at 2026-01-02 11:15:29.503.
+	 Executed 20 tests, with 0 failures (0 unexpected) in 0.097 (0.101) seconds
+Test Suite 'GammaTests.xctest' passed at 2026-01-02 11:15:29.503.
+	 Executed 23 tests, with 0 failures (0 unexpected) in 0.100 (0.104) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:15:29.503.
+	 Executed 23 tests, with 0 failures (0 unexpected) in 0.100 (0.105) seconds
+Test Suite 'Selected tests' started at 2026-01-02 11:15:29.786.
+Test Suite 'DeltaTests.xctest' started at 2026-01-02 11:15:29.787.
+Test Suite 'Suite040Tests' started at 2026-01-02 11:15:29.787.
+@passing DeltaTests.Suite040Tests 17
+Test Suite 'Suite040Tests' passed at 2026-01-02 11:15:30.025.
+	 Executed 17 tests, with 0 failures (0 unexpected) in 0.235 (0.238) seconds
+Test Suite 'Suite048Tests' started at 2026-01-02 11:15:30.025.
+@passing DeltaTests.Suite048Tests 9
+Test Case '-[DeltaTests.Suite048Tests test0882]' started.
+/work/project/Tests/DeltaTests/Suite048Tests.swift:70: -[DeltaTests.Suite048Tests test0882] : Test skipped - not on this machine
+Test Case '-[DeltaTests.Suite048Tests test0882]' skipped (0.001 seconds).
+Test Suite 'Suite048Tests' passed at 2026-01-02 11:15:30.039.
+	 Executed 10 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.013 (0.014) seconds
+Test Suite 'Suite049Tests' started at 2026-01-02 11:15:30.039.
+@passing DeltaTests.Suite049Tests 302
+Test Suite 'Suite049Tests' passed at 2026-01-02 11:15:32.979.
+	 Executed 302 tests, with 0 failures (0 unexpected) in 2.908 (2.940) seconds
+Test Suite 'DeltaTests.xctest' passed at 2026-01-02 11:15:32.979.
+	 Executed 329 tests, with 1 test skipped and 0 failures (0 unexpected) in 3.156 (3.192) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:15:32.979.
+	 Executed 329 tests, with 1 test skipped and 0 failures (0 unexpected) in 3.156 (3.194) seconds
+Test Suite 'Selected tests' started at 2026-01-02 11:15:33.439.
+Test Suite 'EpsilonTests.xctest' started at 2026-01-02 11:15:33.440.
+Test Suite 'Suite060Tests' started at 2026-01-02 11:15:33.440.
+@passing EpsilonTests.Suite060Tests 25
+2026-01-02 11:15:36.102 xctest[1000:2000] ERROR: Negative values for setRowHeight: not allowed (0.000)
+2026-01-02 11:15:36.102 xctest[1000:2000] ERROR: Negative values for setRowHeight: not allowed (0.000)
+@passing EpsilonTests.Suite060Tests 26
+Test Suite 'Suite060Tests' passed at 2026-01-02 11:15:39.603.
+	 Executed 51 tests, with 0 failures (0 unexpected) in 6.156 (6.163) seconds
+Test Suite 'EpsilonTests.xctest' passed at 2026-01-02 11:15:39.603.
+	 Executed 51 tests, with 0 failures (0 unexpected) in 6.156 (6.163) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:15:39.603.
+	 Executed 51 tests, with 0 failures (0 unexpected) in 6.156 (6.164) seconds
+
+note: output of the code under test
+Test Suite 'Selected tests' started at 2026-01-02 11:15:39.907.
+Test Suite 'ZetaTests.xctest' started at 2026-01-02 11:15:39.908.
+Test Suite 'Suite070Tests' started at 2026-01-02 11:15:39.908.
+@passing ZetaTests.Suite070Tests 58
+Test Suite 'Suite070Tests' passed at 2026-01-02 11:15:41.148.
+	 Executed 58 tests, with 0 failures (0 unexpected) in 1.232 (1.240) seconds
+Test Suite 'ZetaTests.xctest' passed at 2026-01-02 11:15:41.148.
+	 Executed 58 tests, with 0 failures (0 unexpected) in 1.232 (1.240) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:15:41.148.
+	 Executed 58 tests, with 0 failures (0 unexpected) in 1.232 (1.241) seconds
+Test Suite 'Selected tests' started at 2026-01-02 11:15:41.422.
+Test Suite 'EtaTests.xctest' started at 2026-01-02 11:15:41.423.
+Test Suite 'EtaTests.xctest' passed at 2026-01-02 11:15:41.423.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:15:41.423.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'Selected tests' started at 2026-01-02 11:15:41.694.
+Test Suite 'ThetaTests.xctest' started at 2026-01-02 11:15:41.695.
+Test Suite 'ThetaTests.xctest' passed at 2026-01-02 11:15:41.695.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:15:41.695.
+	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'Selected tests' started at 2026-01-02 11:15:42.091.
+Test Suite 'IotaTests.xctest' started at 2026-01-02 11:15:42.093.
+Test Suite 'Suite094Tests' started at 2026-01-02 11:15:42.093.
+@passing IotaTests.Suite094Tests 500
+Test Suite 'Suite094Tests' passed at 2026-01-02 11:18:50.112.
+	 Executed 500 tests, with 0 failures (0 unexpected) in 188.010 (188.019) seconds
+Test Suite 'Suite141Tests' started at 2026-01-02 11:18:50.112.
+Test Case '-[IotaTests.Suite141Tests test1505]' started.
+XCTExpectFailure: matcher accepted Assertion Failure at Suite141Tests.swift:19: failed - a known failure
+Suite141Tests.swift:19: Expected failure in -[IotaTests.Suite141Tests test1505]: failed - a known failure
+Test Case '-[IotaTests.Suite141Tests test1505]' passed (0.004 seconds).
+Test Case '-[IotaTests.Suite141Tests test1506]' started.
+Test Case '-[IotaTests.Suite141Tests test1506]' passed (0.002 seconds).
+Test Case '-[IotaTests.Suite141Tests test1507]' started.
+XCTExpectFailure: matcher accepted Assertion Failure at Suite141Tests.swift:39: failed - a known failure
+Suite141Tests.swift:39: Expected failure in -[IotaTests.Suite141Tests test1507]: failed - a known failure
+Test Case '-[IotaTests.Suite141Tests test1507]' passed (0.003 seconds).
+Test Case '-[IotaTests.Suite141Tests test1508]' started.
+XCTExpectFailure: matcher accepted Assertion Failure at Suite141Tests.swift:46: failed - a known failure
+Suite141Tests.swift:46: Expected failure in -[IotaTests.Suite141Tests test1508]: failed - a known failure
+Test Case '-[IotaTests.Suite141Tests test1508]' passed (0.003 seconds).
+@passing IotaTests.Suite141Tests 2
+Test Suite 'Suite141Tests' passed at 2026-01-02 11:18:50.127.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.014 (0.015) seconds
+Test Suite 'Suite150Tests' started at 2026-01-02 11:18:50.127.
+@passing IotaTests.Suite150Tests 522
+Test Suite 'Suite150Tests' passed at 2026-01-02 11:21:56.059.
+	 Executed 522 tests, with 0 failures (0 unexpected) in 185.812 (185.932) seconds
+Test Suite 'IotaTests.xctest' passed at 2026-01-02 11:21:56.059.
+	 Executed 1028 tests, with 0 failures (0 unexpected) in 373.836 (373.966) seconds
+Test Suite 'Selected tests' passed at 2026-01-02 11:21:56.060.
+	 Executed 1028 tests, with 0 failures (0 unexpected) in 373.836 (373.968) seconds
+note: output of the code under test
+note: output of the code under test
