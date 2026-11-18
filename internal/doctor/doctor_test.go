@@ -3,6 +3,7 @@ package doctor
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -383,6 +384,23 @@ func checkVerified(t *testing.T, given Inputs, verifies bool) {
 	}
 	if got := kinds(Diagnose(given).Problems); got != want {
 		t.Fatalf("verifies %v: problems %s, want %s", verifies, got, want)
+	}
+}
+
+// #12: binary-not-signed says the next install replaces the binary and signs the replacement only
+// when it does not keep its own signature (a release's).
+func TestBinaryNotSignedSaysWhatTheNextInstallDoes(t *testing.T) {
+	const owner = "Apple Development: Max Example (ABCDE12345)"
+	listed := `  1) 0123456789ABCDEF0123456789ABCDEF01234567 "` + owner + `"` + "\n     1 valid identities found\n"
+	report := Diagnose(signing(t, owner, listed, "Identifier=a.out\nSignature=adhoc\n"))
+	if len(report.Problems) != 1 {
+		t.Fatalf("problems %+v", report.Problems)
+	}
+	text := fmt.Sprintf("%+v", report.Problems[0])
+	for _, want := range []string{"the next install replaces it", "unless it keeps its own signature", "install a newer version"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("%q is not in %s", want, text)
+		}
 	}
 }
 
