@@ -3,6 +3,7 @@ package doctor
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -352,6 +353,57 @@ func signing(t *testing.T, identity, listed, display string) Inputs {
 	return given
 }
 
+// #12: doctor judges the live binary by install's rule (install.KeepsItsSignature): a binary signed
+// by the configured identity or by another certificate (a release's) is no problem only while its
+// signature verifies strictly; one that does not is reported, as install would sign it again.
+func TestACertifiedBinaryThatDoesNotVerifyIsAProblem(t *testing.T) {
+	const owner = "Apple Development: Max Example (ABCDE12345)"
+	listed := `  1) 0123456789ABCDEF0123456789ABCDEF01234567 "` + owner + `"` + "\n     1 valid identities found\n"
+	for _, display := range []string{
+		"Identifier=jst\nAuthority=" + owner + "\n",
+		"Identifier=jst\nAuthority=Developer ID Application: Someone Else (ZZZZZ99999)\n",
+	} {
+		for _, verifies := range []bool{true, false} {
+			checkVerified(t, signing(t, owner, listed, display), verifies)
+		}
+	}
+}
+
+func checkVerified(t *testing.T, given Inputs, verifies bool) {
+	t.Helper()
+	answer := given.Run
+	given.Run = func(argv []string, input []byte) (supervise.Captured, error) {
+		if argv[0] == "codesign" && argv[1] == "--verify" && !verifies {
+			return supervise.Captured{Status: 1, Stderr: []byte("invalid signature\n")}, nil
+		}
+		return answer(argv, input)
+	}
+	want := ""
+	if !verifies {
+		want = "binary-not-signed"
+	}
+	if got := kinds(Diagnose(given).Problems); got != want {
+		t.Fatalf("verifies %v: problems %s, want %s", verifies, got, want)
+	}
+}
+
+// #12: binary-not-signed says the next install replaces the binary and signs the replacement only
+// when it does not keep its own signature (a release's).
+func TestBinaryNotSignedSaysWhatTheNextInstallDoes(t *testing.T) {
+	const owner = "Apple Development: Max Example (ABCDE12345)"
+	listed := `  1) 0123456789ABCDEF0123456789ABCDEF01234567 "` + owner + `"` + "\n     1 valid identities found\n"
+	report := Diagnose(signing(t, owner, listed, "Identifier=a.out\nSignature=adhoc\n"))
+	if len(report.Problems) != 1 {
+		t.Fatalf("problems %+v", report.Problems)
+	}
+	text := fmt.Sprintf("%+v", report.Problems[0])
+	for _, want := range []string{"the next install replaces it", "unless it keeps its own signature", "jst install --binary FILE", "prints exactly what the live one prints", "install a newer version"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("%q is not in %s", want, text)
+		}
+	}
+}
+
 // W-070: a configured identity that the keychain lacks (or that expired), and a live binary not signed
 // by it, are problems; the signature is a fact either way.
 func TestSigning(t *testing.T) {
@@ -366,6 +418,8 @@ func TestSigning(t *testing.T) {
 		{"installed before the setting", owner, listed, adHoc, "binary-not-signed"},
 		// W-075: an install of 0.5.4-0.5.8 carries the earlier identifier; the next install signs it again.
 		{"signed with the earlier identifier", owner, listed, "Identifier=dev.jackstay.jst\nAuthority=" + owner + "\n", "binary-not-signed"},
+		// #12: a release's binary, signed by a Developer ID and notarised, is kept as it is by install.
+		{"a release's binary, another certificate", owner, listed, "Identifier=jst\nAuthority=Developer ID Application: Someone Else (ZZZZZ99999)\n", ""},
 		{"the identity is not in the keychain", owner, "     0 valid identities found\n", signed, "codesign-identity-invalid"},
 		{"no identity configured", "", "", adHoc, ""},
 	} {

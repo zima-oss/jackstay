@@ -19,8 +19,11 @@ signing identity and identifier, so they kept asking about `jst` after every ins
   installed.
 - The identity is a setting of the machine, not of a project: one line in
   `~/.jackstay/.all/codesign-identity`. Without it, and always on Linux, nothing is signed.
-- An install of the version already live re-signs it safely when its signature is not the
-  configured identity's.
+- A binary already signed by a certificate with the identifier `jst` whose signature verifies (a
+  release archive's, notarised) is installed as it is: signing it again would lose its
+  notarisation. Only an unsigned or ad-hoc signed binary is signed.
+- An install of the version already live re-signs it safely when it is neither the configured
+  identity's nor keeps its signature that way.
 - `jst doctor` reports a configured identity that is missing, expired or revoked, and a live binary
   not signed by it.
 - Development builds are not signed.
