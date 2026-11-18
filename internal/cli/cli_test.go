@@ -65,6 +65,20 @@ func TestMain_(t *testing.T) {
 	}
 }
 
+// #7: --version and -V, as the first word, are the version command (Dispatch: no child, no journal).
+func TestVersionFlags(t *testing.T) {
+	for _, word := range []string{"--version", "-V"} {
+		var stdout, stderr strings.Builder
+		if code := Dispatch([]string{word}, nil, &stdout, &stderr); code != 0 || !strings.HasPrefix(stdout.String(), "jackstay ") {
+			t.Fatalf("%s: %d %q %q", word, code, stdout.String(), stderr.String())
+		}
+	}
+	var stdout, stderr strings.Builder
+	if code := Dispatch([]string{"--version", "extra"}, nil, &stdout, &stderr); code != 2 {
+		t.Fatalf("--version with a word after it: %d", code)
+	}
+}
+
 func TestHelpFlags(t *testing.T) {
 	for _, flag := range []string{"-h", "--help"} {
 		if entry, _, found := Find([]string{"help"}); !found || entry.Name != "help" {
