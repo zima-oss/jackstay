@@ -229,7 +229,7 @@ func (work *session) prLand(options landOptions) (int, error) {
 		plan = append(plan, "open a pull request")
 	}
 	if options.wait {
-		plan = append(plan, "wait for every check on the resulting head")
+		plan = append(plan, work.requiredChecks(&options, open, pull, base))
 	}
 	if options.merge {
 		plan = append(plan, "squash-merge at the head that was checked, then delete the remote branch "+
@@ -281,6 +281,26 @@ func (work *session) prLand(options landOptions) (int, error) {
 		return exitFine, nil
 	}
 	return work.mergeAndDelete(number, branch, base, options)
+}
+
+// requiredChecks reads the checks the pull request's base requires into the wait's options, and
+// is the plan's line for the wait. Rules that cannot be read, or that require none, leave every
+// check waited for, as before.
+func (work *session) requiredChecks(options *landOptions, open bool, pull githubapi.PullRequest, base string) string {
+	target := base
+	if open && pull.Base != "" {
+		target = pull.Base
+	}
+	required, err := work.github.RequiredChecks(work.ctx, target)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("wait for every check on the resulting head (the rules of %s cannot be read: %v)", target, err)
+	case len(required) == 0:
+		return fmt.Sprintf("wait for every check on the resulting head (the rules of %s require none)", target)
+	}
+	options.waiting.required = required
+	return fmt.Sprintf("wait for the checks the rules of %s require on the resulting head (%s); a failure of another check "+
+		"also stops the merge, one still pending does not", target, strings.Join(required, ", "))
 }
 
 // newDescription is the new pull request's description (nil-like "" when there is none to give),

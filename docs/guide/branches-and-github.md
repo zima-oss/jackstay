@@ -91,7 +91,11 @@ jst gh pr-land [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-
 - `pr-find` finds one pull request by head branch or search text; none found is exit 1.
 - `pr-status` says where this branch and its pull request stand.
 - `pr-land` pushes, opens the pull request, waits for its checks, squash-merges the head that was
-  checked and deletes the remote branch. The plan is printed first; `--dry-run` stops there. It
+  checked and deletes the remote branch. The checks it waits for are the ones the base branch's
+  rules (rulesets and branch protection) require; another check that fails still stops it, one
+  still pending does not. When the rules require none, it waits for every check. A run cancelled
+  by its `concurrency` group for a newer run is superseded: the newer run is judged. The plan is
+  printed first; `--dry-run` stops there. It
   never switches, pulls or deletes anything in your checkout; `jst tidy` removes the local branch
   afterwards.
 

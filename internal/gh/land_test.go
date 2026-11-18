@@ -410,3 +410,49 @@ func TestPRStatus(t *testing.T) {
 		t.Fatal("pr-status only reads, once")
 	}
 }
+
+// Issue #14: pr-land waits for the checks the base's rules require; another check still pending
+// (a job no runner picked up) is reported and does not hold the merge.
+func TestPRLandWaitsOnlyForTheRequiredChecks(t *testing.T) {
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), pending("gate-macos"),
+		checkRun("extra", "COMPLETED", "CANCELLED", 3)}})
+	bench.hub.required = []string{"gate"}
+	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "wait for the checks the rules of main require on the resulting head (gate)")
+	contains(t, stdout, "not required: gate-macos pending (not waited for)")
+	contains(t, stdout, "not required: extra cancel (not waited for)")
+	contains(t, stdout, "GREEN: 1 checks")
+	if len(bench.hub.Merges()) != 1 {
+		t.Fatal("not merged")
+	}
+}
+
+func TestAFailedCheckNotRequiredStillStopsTheMerge(t *testing.T) {
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), failed("lint", 0)}})
+	bench.hub.required = []string{"gate"}
+	stdout, _ := bench.expect(exitNotFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "not merging #7")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on red")
+	}
+}
+
+func TestARequiredCheckNotRegisteredIsWaitedFor(t *testing.T) {
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("lint")}})
+	bench.hub.required = []string{"gate"}
+	_, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stderr, "gate (not registered yet)")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged without the required check")
+	}
+}
+
+func TestRulesThatCannotBeReadMeanEveryCheckIsWaitedFor(t *testing.T) {
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), pending("gate-macos")}})
+	bench.hub.requiredErr = errors.New("403 Resource not accessible")
+	stdout, _ := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stdout, "wait for every check on the resulting head (the rules of main cannot be read: 403 Resource not accessible)")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged while a check was pending")
+	}
+}

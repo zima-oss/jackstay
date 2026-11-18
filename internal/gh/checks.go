@@ -23,6 +23,10 @@ type waitOptions struct {
 	interval time.Duration
 	lines    int
 	anyHead  bool
+	// required are the check names the base branch's rules require (pr-land reads them). Empty,
+	// every check is waited for and judged; else only these are waited for, and of the others only
+	// a failure stops (one pending, never started or cancelled is reported, not waited for).
+	required []string
 }
 
 func (work *session) waitFlags(name string, args []string, most int) ([]string, waitOptions, error) {
@@ -141,12 +145,8 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			}
 			continue
 		}
-		var pending []string
-		for _, row := range rows {
-			if !settled[row.Bucket()] {
-				pending = append(pending, row.Name)
-			}
-		}
+		weighed := weigh(rows, options.required)
+		pending := weighed.pending
 		if len(pending) > 0 {
 			names := strings.Join(pending[:min(4, len(pending))], ", ")
 			if len(pending) > 4 {
@@ -165,18 +165,15 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 		}
 		work.say("\n%s", summarise(rows))
 		work.say("\n(%d check runs attached to %s)", checkRuns(rows), short(head, 8))
-		var failed []githubapi.Check
-		for _, row := range rows {
-			if failing(row.Bucket()) {
-				failed = append(failed, row)
-			}
+		for _, line := range weighed.notes() {
+			work.say("%s", line)
 		}
-		if len(failed) > 0 {
-			work.say("%s", work.failureDetail(failed, options.lines))
-			work.say("\nRED: %d of %d checks did not pass.", len(failed), len(rows))
+		if len(weighed.failed) > 0 {
+			work.say("%s", work.failureDetail(weighed.failed, options.lines))
+			work.say("\nRED: %d of %d checks did not pass.", len(weighed.failed), weighed.judged)
 			return exitNotFine, nil
 		}
-		work.say("\nGREEN: %d checks, %s waiting.", len(rows), humanSeconds(work.deps.Clock.Now().Sub(started)))
+		work.say("\nGREEN: %d checks, %s waiting.", weighed.judged, humanSeconds(work.deps.Clock.Now().Sub(started)))
 		work.judged[number] = head
 		return exitFine, nil
 	}
@@ -207,17 +204,101 @@ func (work *session) ciStatus(number int) (int, error) {
 		return exitPending, nil
 	}
 	work.say("%s", summarise(rows))
-	pending := false
-	for _, row := range rows {
-		if failing(row.Bucket()) {
-			return exitNotFine, nil
-		}
-		pending = pending || !settled[row.Bucket()]
+	weighed := weigh(rows, nil)
+	for _, line := range weighed.notes() {
+		work.say("%s", line)
 	}
-	if pending {
+	if len(weighed.failed) > 0 {
+		return exitNotFine, nil
+	}
+	if len(weighed.pending) > 0 {
 		return exitPending, nil
 	}
 	return exitFine, nil
+}
+
+// weighed is a head's checks judged: the ones still to wait for, the ones that stop a merge, and
+// what is only reported.
+type weighed struct {
+	pending    []string          // names waited for: not settled, or required and not registered
+	failed     []githubapi.Check // failed or cancelled checks that count
+	judged     int               // how many checks count
+	superseded []githubapi.Check // cancelled runs a newer run of the same workflow replaced
+	ignored    []githubapi.Check // not required, and pending or cancelled: reported, not waited for
+}
+
+// weigh judges rows against the required names (none: every check counts). A cancelled check run
+// is superseded when a newer run of its workflow (a higher run id) has a check of the same name:
+// a concurrency group cancelled it for that run, which is judged instead.
+func weigh(rows []githubapi.Check, required []string) weighed {
+	var out weighed
+	var live []githubapi.Check
+	for _, row := range rows {
+		if replacedBy(row, rows) {
+			out.superseded = append(out.superseded, row)
+			continue
+		}
+		live = append(live, row)
+	}
+	isRequired := map[string]bool{}
+	for _, name := range required {
+		isRequired[name] = true
+	}
+	present := map[string]bool{}
+	for _, row := range live {
+		present[row.Name] = true
+		counts := len(required) == 0 || isRequired[row.Name]
+		bucket := row.Bucket()
+		switch {
+		case counts && !settled[bucket]:
+			out.pending = append(out.pending, row.Name)
+			out.judged++
+		case counts && failing(bucket), !counts && bucket == githubapi.Fail:
+			out.failed = append(out.failed, row)
+			out.judged++
+		case counts:
+			out.judged++
+		case bucket == githubapi.Pending || bucket == githubapi.Cancel:
+			out.ignored = append(out.ignored, row)
+		}
+	}
+	for _, name := range required {
+		if !present[name] {
+			out.pending = append(out.pending, name+" (not registered yet)")
+		}
+	}
+	return out
+}
+
+// replacedBy says whether row is a cancelled check run that a newer run of its workflow replaced.
+func replacedBy(row githubapi.Check, rows []githubapi.Check) bool {
+	if row.Kind != githubapi.CheckRun || row.Bucket() != githubapi.Cancel || row.Workflow == "" || row.RunID == 0 {
+		return false
+	}
+	for _, other := range rows {
+		if other.Kind == githubapi.CheckRun && other.Workflow == row.Workflow && other.Name == row.Name && other.RunID > row.RunID {
+			return true
+		}
+	}
+	return false
+}
+
+// notes are the lines that say what was set aside: superseded runs, checks not required, and
+// cancelled checks that count (a cancellation, not a failure).
+func (judged weighed) notes() []string {
+	var lines []string
+	for _, row := range judged.superseded {
+		lines = append(lines, fmt.Sprintf("superseded: %s (run %d of %s, cancelled; a newer run replaced it)", row.Name, row.RunID, row.Workflow))
+	}
+	for _, row := range judged.ignored {
+		lines = append(lines, fmt.Sprintf("not required: %s %s (not waited for)", row.Name, row.Bucket()))
+	}
+	for _, row := range judged.failed {
+		if row.Bucket() == githubapi.Cancel {
+			lines = append(lines, fmt.Sprintf("cancelled: %s (run %d of %s), and no newer run replaced it", row.Name, row.RunID, row.Workflow))
+		}
+	}
+	return lines
 }
 
 // checkRuns is how many of the rows are check runs (the rest are commit statuses), counted over

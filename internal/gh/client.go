@@ -3,6 +3,8 @@ package gh
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 
 	"github.com/google/go-github/v93/github"
 
@@ -48,6 +50,46 @@ func (api client) MergeableState(ctx context.Context, number int) (string, error
 		return "", err
 	}
 	return pull.GetMergeableState(), nil
+}
+
+// RequiredChecks are the check names a branch's rules require: the required_status_checks rules
+// of the rulesets that apply to it (GitHub lists the active ones), and its classic protection's
+// required contexts.
+func (api client) RequiredChecks(ctx context.Context, branch string) ([]string, error) {
+	rules, err := githubapi.Read(ctx, api.Retry(), func() (*github.BranchRules, error) {
+		rules, _, err := api.API().Repositories.ListRulesForBranch(ctx, api.Owner(), api.Name(), branch, &github.ListOptions{PerPage: 100})
+		return rules, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("the rules of %s: %w", branch, err)
+	}
+	var names []string
+	if rules != nil {
+		for _, rule := range rules.RequiredStatusChecks {
+			for _, check := range rule.Parameters.RequiredStatusChecks {
+				names = append(names, check.Context)
+			}
+		}
+	}
+	found, err := githubapi.Read(ctx, api.Retry(), func() (*github.Branch, error) {
+		found, _, err := api.API().Repositories.GetBranch(ctx, api.Owner(), api.Name(), branch, 1)
+		return found, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("the protection of %s: %w", branch, err)
+	}
+	if protection := found.GetProtection(); found.GetProtected() && protection != nil && protection.RequiredStatusChecks != nil {
+		if contexts := protection.RequiredStatusChecks.Contexts; contexts != nil {
+			names = append(names, *contexts...)
+		}
+		if checks := protection.RequiredStatusChecks.Checks; checks != nil {
+			for _, check := range *checks {
+				names = append(names, check.Context)
+			}
+		}
+	}
+	slices.Sort(names)
+	return slices.Compact(names), nil
 }
 
 // UpdateBranch asks GitHub to merge the base into the branch; GitHub answers 202 and does it in

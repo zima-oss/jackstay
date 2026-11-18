@@ -66,6 +66,9 @@ type fakeGitHub struct {
 	afterMerge  *githubapi.PullRequest
 	// onMerge runs inside Merge (what another session or GitHub does at that moment).
 	onMerge func()
+	// required and requiredErr are RequiredChecks' answer (default: no rule requires a check).
+	required    []string
+	requiredErr error
 }
 
 func newGitHub() *fakeGitHub {
@@ -93,6 +96,12 @@ func (hub *fakeGitHub) MergeableState(context.Context, int) (string, error) {
 		hub.mergeStates = hub.mergeStates[1:]
 	}
 	return state, nil
+}
+
+func (hub *fakeGitHub) RequiredChecks(context.Context, string) ([]string, error) {
+	hub.mutex.Lock()
+	defer hub.mutex.Unlock()
+	return hub.required, hub.requiredErr
 }
 
 func (hub *fakeGitHub) UpdateBranch(_ context.Context, _ int, headSHA string) error {

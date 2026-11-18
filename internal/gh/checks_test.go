@@ -148,6 +148,7 @@ func TestCancelIsSettledAndFailing(t *testing.T) {
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("lint"), checkRun("test", "COMPLETED", "CANCELLED", 4)})
 	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
 	contains(t, stdout, "RED: 1 of 2")
+	contains(t, stdout, "cancelled: test (run 4 of ci), and no newer run replaced it")
 	lacks(t, stdout, "pending")
 	if bench.hub.count("Jobs") != 0 {
 		t.Fatal("a cancelled check has no failed step to show")
@@ -305,4 +306,40 @@ func TestWaitDefaultsComeFromTheGitHubSectionAndFlagsWin(t *testing.T) {
 	contains(t, stderr, "within 3s")
 	_, stderr = bench.expect(exitPending, "ci-wait", "7", "--timeout", "1")
 	contains(t, stderr, "within 1s")
+}
+
+// Issue #13: a concurrency group cancels a run when a newer run of the workflow starts for the
+// same head; the newer run is judged, the cancelled one is reported as superseded.
+func TestACancelledRunANewerRunReplacedIsSuperseded(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA))
+	cancelled := checkRun("lint", "COMPLETED", "CANCELLED", 4)
+	onChecks(bench.hub, shaA,
+		[]githubapi.Check{cancelled, checkRun("lint", "IN_PROGRESS", "", 5)},
+		[]githubapi.Check{cancelled, checkRun("lint", "COMPLETED", "SUCCESS", 5)})
+	stdout, _ := bench.expect(exitFine, "ci-wait", "7", "--timeout", "30")
+	contains(t, stdout, "superseded: lint (run 4 of ci, cancelled; a newer run replaced it)")
+	contains(t, stdout, "GREEN: 1 checks")
+	bench.expect(exitFine, "ci-status", "7")
+}
+
+func TestTheRunThatReplacedACancelledOneIsJudged(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA))
+	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), failed("lint", 5)})
+	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
+	contains(t, stdout, "RED: 1 of 1")
+}
+
+func TestARunOfAnotherWorkflowDoesNotSupersedeACancelledOne(t *testing.T) {
+	other := checkRun("lint", "COMPLETED", "SUCCESS", 5)
+	other.Workflow = "nightly"
+	for _, rows := range [][]githubapi.Check{
+		{checkRun("lint", "COMPLETED", "CANCELLED", 4), other},
+		{checkRun("lint", "COMPLETED", "CANCELLED", 6), checkRun("lint", "COMPLETED", "SUCCESS", 5)}, // an older run
+	} {
+		if judged := weigh(rows, nil); len(judged.superseded) != 0 || len(judged.failed) != 1 {
+			t.Errorf("%+v: %+v", rows, judged)
+		}
+	}
 }
