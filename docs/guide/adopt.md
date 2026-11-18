@@ -7,8 +7,8 @@ it will not decide for you.
 ## `jst adopt`
 
 ```sh
-jst adopt [--plan] [--only PART] [--profile PATH] [--json] [DIR]
-jst adopt --apply [--accept ID]... [--pin] [--only PART] [--profile PATH] [DIR]
+jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
+jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
 jst adopt --block [--profile PATH] [DIR]
 ```
 
@@ -29,9 +29,9 @@ places and nothing else:
   `jackstay.json` so later runs need no flag.
 - `--pin` moves `adopt.pin`, the jackstay release the workflows download, to the running version.
   Without it the pin never moves.
-- `--only settings` or `--only files` plans or writes one part: `jackstay.json` alone, or every
-  other file. `jst lint pr` (rule D0) wants a change of `jackstay.json` in a pull request of its
-  own, so a change of both lands in two (below).
+- `--settings-only` plans or writes `jackstay.json` alone. `jst lint pr` (rule D0) wants a change
+  of `jackstay.json` in a pull request of its own, so a change of it and other files lands in two
+  (below).
 - `--block` prints the AGENTS block this project gets.
 - Exit: 0 adopted (nothing to change, or everything written); 1 conflicts left; 2 usage, or
   `jackstay.json` or the profile cannot be read; 3 (`--plan`) changes pending, no conflict.
@@ -205,13 +205,13 @@ When jackstay changes, a project's session can adopt the new version with this p
 > first time, if there is one). Settle each conflict it lists: do the migration as the project's
 > own work, or add an exception with its reason to `jackstay.json`'s `adopt.exceptions`. Before
 > `--accept …:edited`, move the project's own lines out of the text the plan shows will be
-> replaced; never edit inside the `jackstay-adopt` markers. If the plan changes `jackstay.json`
-> and other files, land them in two pull requests (rule D0): run `jst adopt --apply --only
-> settings` with every accepted ID (and `--pin`, `--profile` as needed), open a pull request of
-> `jackstay.json` alone for the owner to merge, and after it merges run the command `jst adopt`
-> printed as the next step. Otherwise run `jst adopt --apply` with the accepted IDs. Then
-> `jst adopt --plan` must exit 0. Run `jst doctor` and the project's gate, and list in each pull
-> request each conflict and how it was settled.
+> replaced; never edit inside the `jackstay-adopt` markers. If the pin is to move (`--pin`), or the
+> plan changes `jackstay.json` and other files, land two pull requests (rule D0): first
+> `jst adopt --apply --settings-only` (with `--pin`, `--profile` and the accepted IDs of
+> `jackstay.json`'s conflicts), `jackstay.json` alone, for the owner to merge; then, on the merged
+> base, `jst adopt --apply` with the other accepted IDs. Otherwise one `jst adopt --apply` with the
+> accepted IDs. Then `jst adopt --plan` must exit 0. Run `jst doctor` and the project's gate, and
+> list in each pull request each conflict and how it was settled.
 
 ## What can go wrong
 
@@ -220,11 +220,10 @@ When jackstay changes, a project's session can adopt the new version with this p
 - **A newer schema**: a file written for a newer jackstay is refused with the advice to upgrade.
 - **The workflows download a release you have not published**: they download `adopt.pin` from
   jackstay's public releases. Move the pin after installing a new version, in two pull requests:
-  1. `jst adopt --apply --pin --only settings`: `jackstay.json` alone, merged by the owner;
+  1. `jst adopt --apply --pin --settings-only`: `jackstay.json` alone, merged by the owner;
   2. then, on the merged base, `jst adopt --apply`: the workflows for the new pin, merged as usual.
 
-  Between the two, `jst adopt --plan` lists the workflows still to write. An `--apply` that changes
-  `jackstay.json` and other files together says so and names this order.
+  Between the two, `jst adopt --plan` lists the files still to write.
 - **A block fitted by hand without markers** is not recognised: remove it, and let `--apply` append
   the generated one.
 

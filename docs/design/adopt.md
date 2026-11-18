@@ -25,8 +25,8 @@ nothing. `jst doctor` reports a project that has drifted.
 ## 2. The command
 
 ```
-jst adopt [--plan] [--only PART] [--profile PATH] [--json] [DIR]
-jst adopt --apply [--accept ID]... [--pin] [--only PART] [--profile PATH] [DIR]
+jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
+jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
 jst adopt --block [DIR]           # the AGENTS block this project gets, printed; nothing written
 ```
 
@@ -39,13 +39,9 @@ jst adopt --block [DIR]           # the AGENTS block this project gets, printed;
   conflict `ID` protects (section 5). Accepting is for one run; nothing is remembered.
 - `--pin`: set `adopt.pin` (the jst release every jackstay-written workflow downloads) to this jackstay's
   version (section 7.3). Without it the pin is never moved.
-- `--only settings|files` (with `--plan` or `--apply`): one part of the changes. `settings` is
-  `jackstay.json` alone; `files` is every other file, rendered from the `jackstay.json` the run would
-  leave (so `--pin --only files` writes the workflows for the new pin and leaves the settings). The
-  conflicts are all kept: nothing is written while one is left, whichever part it is in. Rule D0 of
-  `jst lint pr` (settings alone, [release.md](release.md)) lands a change of `jackstay.json` in a
-  pull request of its own, so a run that changes both is landed in two: `--apply` without `--only`
-  that writes both says so and names the order.
+- `--settings-only` (with `--plan` or `--apply`): `jackstay.json` alone, its changes and its
+  conflicts; the other files' are planned again by the apply after it merges, and an `--accept` of
+  one of theirs is refused here ([W-085](../decisions/W-085-adopt-lands-settings-and-files-apart.md)).
 - `--json`: the plan as one object `{"project", "profile", "changes": [...], "conflicts": [...],
   "exceptions": [...], "notes": [...]}`; each change `{"id", "path", "what"}`, each conflict
   `{"id", "path", "what", "settle"}`.
@@ -359,12 +355,11 @@ and jackstay's templates alone: a newer jackstay does not make every project dri
 workflow renders it with the same pin, and a project moves its pin on purpose (`--pin`), in a pull
 request of its own.
 
-**A pin move lands in two pull requests**, settings first: `jst adopt --apply --pin --only settings`
-writes `jackstay.json` alone (rule D0; the owner merges it); then `jst adopt --apply` on the merged
-base writes the workflows from it, an ordinary pull request. Between the two, `jst adopt --plan` on
-the base lists exactly those workflows: the settings are the decision, the files follow them. The
-other order (`--pin --only files`, then `--pin --only settings`) also lands, but between the two
-`--plan` without `--pin` would render the workflows back to the old pin.
+**A change of `jackstay.json` and other files lands in two pull requests**, settings first: rule D0
+of `jst lint pr` lands `jackstay.json` alone. `jst adopt --apply --pin --settings-only` writes it
+(the owner merges it); then `jst adopt --apply` on the merged base writes the workflows from it, an
+ordinary pull request. Between the two, `jst adopt --plan` on the base lists exactly the files left.
+An `--apply` that writes both says so.
 
 ## 8. The AGENTS block
 

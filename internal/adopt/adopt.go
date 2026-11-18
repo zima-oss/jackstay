@@ -46,8 +46,9 @@ type Options struct {
 	Accept []string
 	// Pin moves adopt.pin to this jackstay's version.
 	Pin bool
-	// Only keeps one part of the changes (PartSettings or PartFiles); "" keeps both.
-	Only string
+	// SettingsOnly keeps the plan to jackstay.json: its changes and its conflicts (rule D0 lands a
+	// change of jackstay.json in a pull request of its own; the other files follow it).
+	SettingsOnly bool
 	// Has says a command of that name is in this jackstay; Version is this jackstay's version.
 	Has     func(command string) bool
 	Version string
@@ -58,16 +59,9 @@ type Options struct {
 	GuardCommand string
 }
 
-// The two parts of a plan that rule D0 lands apart: jackstay.json in a pull request of its own,
-// every other file in another.
-const (
-	PartSettings = "settings"
-	PartFiles    = "files"
-)
-
-// SplitsAcrossParts says whether the plan's changes touch jackstay.json and another file: one
-// pull request of them all is refused by rule D0 (settings alone).
-func (plan *Plan) SplitsAcrossParts() bool {
+// SplitsSettings says whether the plan's changes touch jackstay.json and another file: one pull
+// request of them all is refused by rule D0 (settings alone).
+func (plan *Plan) SplitsSettings() bool {
 	settings, files := false, false
 	for _, change := range plan.Changes {
 		if change.Path == config.Name {
@@ -79,29 +73,36 @@ func (plan *Plan) SplitsAcrossParts() bool {
 	return settings && files
 }
 
-// keepPart leaves the changes of one part; "" leaves both. The conflicts are all kept: nothing is
-// written while one is left, whichever part it is in.
-func (plan *Plan) keepPart(part string, accepted []string) {
-	if part == "" {
-		return
-	}
-	inPart := func(path string) bool { return (path == config.Name) == (part == PartSettings) }
+// settingsOnly keeps jackstay.json's changes, writes and conflicts; the other files' are left to
+// the apply after the settings merge, which plans them again. An --accept of another file's
+// conflict is refused: it is given in that apply.
+func (planner *planner) settingsOnly(accepted []string) error {
+	plan := planner.plan
 	changes := []Change{}
 	for _, change := range plan.Changes {
-		switch {
-		case inPart(change.Path):
+		if change.Path == config.Name {
 			changes = append(changes, change)
-		case slices.Contains(accepted, change.ID):
-			plan.Deferred = append(plan.Deferred, change.ID)
+			continue
+		}
+		if slices.Contains(accepted, change.ID) {
+			return &UsageError{fmt.Sprintf("--accept %s is for %s, not %s: give it to the apply after the settings merge",
+				change.ID, change.Path, config.Name)}
 		}
 	}
 	var writes []write
 	for _, pending := range plan.writes {
-		if inPart(pending.path) {
+		if pending.path == config.Name {
 			writes = append(writes, pending)
 		}
 	}
-	plan.Changes, plan.writes = changes, writes
+	var conflicts []Conflict
+	for _, conflict := range plan.Conflicts {
+		if conflict.Path == config.Name {
+			conflicts = append(conflicts, conflict)
+		}
+	}
+	plan.Changes, plan.writes, plan.Conflicts = changes, writes, conflicts
+	return nil
 }
 
 // Change is one write the plan makes.
@@ -143,9 +144,6 @@ type Plan struct {
 	Conflicts   []Conflict  `json:"conflicts"`
 	Exceptions  []Exception `json:"exceptions"`
 	Notes       []string    `json:"notes"`
-	// Deferred are the --accept IDs whose writes belong to the part --only left out: they are
-	// passed again when that part is applied.
-	Deferred []string `json:"deferred,omitempty"`
 
 	writes []write
 }
@@ -229,7 +227,11 @@ func Make(options Options) (*Plan, error) {
 		return nil, err
 	}
 	planner.sort()
-	planner.plan.keepPart(options.Only, options.Accept)
+	if options.SettingsOnly {
+		if err := planner.settingsOnly(options.Accept); err != nil {
+			return nil, err
+		}
+	}
 	return planner.plan, nil
 }
 
