@@ -2156,8 +2156,9 @@ one gate run each, not every edit ([W-040](../decisions/W-040-python-frozen-test
 **The workflow** `.github/workflows/gate.yml` runs `just gate` on GitHub's `ubuntu-latest` for every
 pull request, every push to `main` and by hand: Go from `go.mod`'s toolchain line, read-only
 permissions, the checkout's credentials not kept, a 30-minute limit, a pull request's older run
-cancelled. There is no macOS job: the macOS-only files are checked by `just gate` on a Mac before
-a push.
+cancelled. It is the only CI check, and the one `main` requires. There is no macOS job
+([W-083](../decisions/W-083-no-macos-job-in-ci.md)): the macOS-only files (`*_darwin.go`) are
+checked by the maintainers' `just gate` on a Mac before an install and a release.
 
 **Practices**, and why:
 - `cmd/<binary>` + `internal/<concern>` — the layout of section 1.
