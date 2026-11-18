@@ -308,17 +308,24 @@ func TestWaitDefaultsComeFromTheGitHubSectionAndFlagsWin(t *testing.T) {
 	contains(t, stderr, "within 1s")
 }
 
+// concurrencyCancelled is a check run a concurrency group cancelled, with GitHub's annotation.
+func concurrencyCancelled(name string, runID int64) githubapi.Check {
+	row := checkRun(name, "COMPLETED", "CANCELLED", runID)
+	row.Annotations = []string{"Canceling since a higher priority waiting request for 'ci-feat' exists"}
+	return row
+}
+
 // Issue #13: a concurrency group cancels a run when a newer run of the workflow starts for the
 // same head; the newer run is judged, the cancelled one is reported as superseded.
 func TestACancelledRunANewerRunReplacedIsSuperseded(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
-	cancelled := checkRun("lint", "COMPLETED", "CANCELLED", 4)
+	cancelled := concurrencyCancelled("lint", 4)
 	onChecks(bench.hub, shaA,
 		[]githubapi.Check{cancelled, checkRun("lint", "IN_PROGRESS", "", 5)},
 		[]githubapi.Check{cancelled, checkRun("lint", "COMPLETED", "SUCCESS", 5)})
 	stdout, _ := bench.expect(exitFine, "ci-wait", "7", "--timeout", "30")
-	contains(t, stdout, "superseded: lint (run 4 of ci, cancelled; a newer run replaced it)")
+	contains(t, stdout, `superseded: lint (run 4 of ci, cancelled by its concurrency group "ci-feat"; a newer run replaced it)`)
 	contains(t, stdout, "GREEN: 1 checks")
 	bench.expect(exitFine, "ci-status", "7")
 }
@@ -326,29 +333,30 @@ func TestACancelledRunANewerRunReplacedIsSuperseded(t *testing.T) {
 func TestTheRunThatReplacedACancelledOneIsJudged(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
-	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), failed("lint", 5)})
+	onChecks(bench.hub, shaA, []githubapi.Check{concurrencyCancelled("lint", 4), failed("lint", 5)})
 	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
 	contains(t, stdout, "RED: 1 of 1")
 }
 
-func TestARunOfAnotherWorkflowDoesNotSupersedeACancelledOne(t *testing.T) {
+// Without GitHub's annotation the cause of a cancellation is unknown: two runs of one workflow on
+// one head may be independent (a pull request opened, then labelled), so the cancellation stands.
+// With it, the replacement is still only a newer run of the same workflow, event and branch.
+func TestACancellationStandsWithoutEvidenceOfAReplacement(t *testing.T) {
 	other := checkRun("lint", "COMPLETED", "SUCCESS", 5)
-	other.Workflow, other.WorkflowID = "nightly", 12
-	sameName := checkRun("lint", "COMPLETED", "SUCCESS", 5)
-	sameName.WorkflowID = 12 // another workflow file with the same display name
+	other.WorkflowID = 12 // another workflow file, perhaps with the same display name
 	dispatched := checkRun("lint", "COMPLETED", "SUCCESS", 5)
-	dispatched.Event = "workflow_dispatch" // an independent run beside the cancelled one
+	dispatched.Event = "workflow_dispatch"
 	elsewhere := checkRun("lint", "COMPLETED", "SUCCESS", 5)
-	elsewhere.Branch = "copy" // the same commit pushed to another branch: an independent run
-	firstDispatch, secondDispatch := checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)
-	firstDispatch.Event, secondDispatch.Event = "workflow_dispatch", "workflow_dispatch" // inputs may differ
+	elsewhere.Branch = "copy"
+	byHand := checkRun("lint", "COMPLETED", "CANCELLED", 4)
+	byHand.Annotations = []string{"The run was canceled by @someone."}
 	for _, rows := range [][]githubapi.Check{
-		{firstDispatch, secondDispatch},
-		{checkRun("lint", "COMPLETED", "CANCELLED", 4), elsewhere},
-		{checkRun("lint", "COMPLETED", "CANCELLED", 4), other},
-		{checkRun("lint", "COMPLETED", "CANCELLED", 4), sameName},
-		{checkRun("lint", "COMPLETED", "CANCELLED", 4), dispatched},
-		{checkRun("lint", "COMPLETED", "CANCELLED", 6), checkRun("lint", "COMPLETED", "SUCCESS", 5)}, // an older run
+		{checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)}, // no annotation
+		{byHand, checkRun("lint", "COMPLETED", "SUCCESS", 5)},
+		{concurrencyCancelled("lint", 4), other},
+		{concurrencyCancelled("lint", 4), dispatched},
+		{concurrencyCancelled("lint", 4), elsewhere},
+		{concurrencyCancelled("lint", 6), checkRun("lint", "COMPLETED", "SUCCESS", 5)}, // an older run
 	} {
 		if judged := weigh(rows, nil); len(judged.superseded) != 0 || len(judged.failed) != 1 {
 			t.Errorf("%+v: %+v", rows, judged)

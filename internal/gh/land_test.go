@@ -501,18 +501,19 @@ func TestARetargetSeenBeforeTheBranchUpdateWritesNothing(t *testing.T) {
 	}
 }
 
-// A required check GitHub takes from the test merge commit (a status reported there) is found.
-func TestARequiredCheckOnTheTestMergeCommitIsFound(t *testing.T) {
+// GitHub judges the required checks by commit: when the test merge commit has results, all of them
+// are judged there, so one only on the head is still waited for.
+func TestRequiredChecksAreNotSplitAcrossTheTwoCommits(t *testing.T) {
 	open := pull(7, "feat", shaA)
 	open.MergeCommitSHA = shaC
-	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{passed("test")}})
-	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "SUCCESS"},
-		{Name: "unrelated", Kind: githubapi.StatusContext, State: "FAILURE"}})
-	bench.hub.required = []RequiredCheck{{Name: "external"}}
-	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
-	contains(t, stdout, "GREEN: 1 checks")
-	if len(bench.hub.Merges()) != 1 {
-		t.Fatal("not merged")
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{passed("lint")}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "build", Kind: githubapi.StatusContext, State: "SUCCESS"}})
+	bench.hub.required = []RequiredCheck{{Name: "build"}, {Name: "lint"}}
+	stdout, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stdout, "the required checks are judged on it")
+	contains(t, stderr, "lint (not registered yet)")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on checks taken from two commits")
 	}
 }
 
