@@ -1437,8 +1437,10 @@ the binary keeps the Go linker's ad-hoc signature.
 identity configured, a problem `codesign-identity-invalid` when the keychain does not list it as
 valid (missing, expired, revoked) and `binary-not-signed` when the live binary does not keep its
 signature by install's own rule (above, the same function: an install made before the setting, an
-earlier identifier, or a signature that does not verify strictly), which `jst install` from a checkout at
-the live commit mends (above), as an install of a newer version does.
+earlier identifier, or a signature that does not verify strictly), which `jst install --binary` with
+a binary whose `jst version` prints exactly what the live one prints mends (above: a tagged
+`go install` build and a checkout's build of the same commit print different commits), as an
+install of a newer version does.
 
 Not covered: development builds (`.build/jst`, the gate's `go run` tools). Release archives are
 signed and notarised by the release workflow, not here (section 6). The guard's answer time is unchanged by the signature

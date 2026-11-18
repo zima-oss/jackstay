@@ -397,7 +397,7 @@ func TestBinaryNotSignedSaysWhatTheNextInstallDoes(t *testing.T) {
 		t.Fatalf("problems %+v", report.Problems)
 	}
 	text := fmt.Sprintf("%+v", report.Problems[0])
-	for _, want := range []string{"the next install replaces it", "unless it keeps its own signature", "install a newer version"} {
+	for _, want := range []string{"the next install replaces it", "unless it keeps its own signature", "jst install --binary FILE", "prints exactly what the live one prints", "install a newer version"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("%q is not in %s", want, text)
 		}
