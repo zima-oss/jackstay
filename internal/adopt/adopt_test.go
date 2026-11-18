@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -593,5 +594,42 @@ func TestOnlyTakesAPartAndNotBlock(t *testing.T) {
 	options, mode, _, err := parseArgs([]string{"--apply", "--pin", "--only", "settings"})
 	if err != nil || mode != "apply" || options.Only != PartSettings {
 		t.Fatalf("%+v %s %v", options, mode, err)
+	}
+}
+
+// An --accept whose write is in the part --only leaves out is named, to be passed again with it.
+func TestAnAcceptOfTheOtherPartIsDeferred(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}, ` +
+		`"release": {"merge": "owner", "first": "0.1.0", "files": [{"path": "VERSION", "match": "^(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"}]}}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	applyTwice(t, optionsFor(root))
+	release := filepath.Join(root, ".github/workflows/release.yml")
+	if err := os.WriteFile(release, []byte(read(t, root, ".github/workflows/release.yml")+"# edit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newer := optionsFor(root)
+	newer.Version, newer.Pin, newer.Only = "0.6.0", true, PartSettings
+	newer.Accept = []string{"workflow:release:edited"}
+	made := plan(t, newer)
+	if !slices.Equal(made.Deferred, []string{"workflow:release:edited"}) || !slices.Equal(changeIDs(made.Changes), []string{"jackstay.json"}) {
+		t.Fatalf("deferred %v, changes %v", made.Deferred, changeIDs(made.Changes))
+	}
+	apply(t, newer)
+	if !strings.Contains(read(t, root, ".github/workflows/release.yml"), "# edit") {
+		t.Fatal("the deferred accept was written")
+	}
+}
+
+// A part with nothing to write is still an array in the JSON plan.
+func TestAnEmptyPartIsAnEmptyArray(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	applyTwice(t, optionsFor(root))
+	options := optionsFor(root)
+	options.Only = PartSettings
+	encoded, err := json.Marshal(plan(t, options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"changes":[]`) {
+		t.Fatalf("%s", encoded)
 	}
 }

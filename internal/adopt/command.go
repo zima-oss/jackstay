@@ -90,11 +90,18 @@ func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stdout, "jst adopt: %d change(s) written: %s alone. Land it in a pull request of its own (rule D0, "+
 					"merged by the owner); then `jst adopt --apply` on the merged base writes the other files\n", len(plan.Changes), config.Name)
 			case PartFiles:
-				fmt.Fprintf(stdout, "jst adopt: %d change(s) written, %s left as it is; `jst adopt --plan` shows what is left "+
-					"in it\n", len(plan.Changes), config.Name)
+				next := "`jst adopt --plan` shows what is left in it"
+				if options.Pin {
+					next = "the pin moves there with `jst adopt --apply --pin --only settings`, in a pull request of its own"
+				}
+				fmt.Fprintf(stdout, "jst adopt: %d change(s) written, %s left as it is; %s\n", len(plan.Changes), config.Name, next)
 			default:
 				fmt.Fprintf(stdout, "jst adopt: %d change(s) written; `jst adopt --plan` should now find nothing\n", len(plan.Changes))
 			}
+		}
+		if len(plan.Deferred) > 0 {
+			fmt.Fprintf(stdout, "jst adopt: accepted, but in the part --only left out: %s; pass `--accept` with them again "+
+				"when that part is applied\n", strings.Join(plan.Deferred, ", "))
 		}
 		if options.Only == "" && plan.SplitsAcrossParts() {
 			fmt.Fprintf(stdout, "jst adopt: %[1]s and other files changed together, and rule D0 refuses them in one pull request: "+

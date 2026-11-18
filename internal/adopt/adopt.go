@@ -81,15 +81,18 @@ func (plan *Plan) SplitsAcrossParts() bool {
 
 // keepPart leaves the changes of one part; "" leaves both. The conflicts are all kept: nothing is
 // written while one is left, whichever part it is in.
-func (plan *Plan) keepPart(part string) {
+func (plan *Plan) keepPart(part string, accepted []string) {
 	if part == "" {
 		return
 	}
 	inPart := func(path string) bool { return (path == config.Name) == (part == PartSettings) }
-	var changes []Change
+	changes := []Change{}
 	for _, change := range plan.Changes {
-		if inPart(change.Path) {
+		switch {
+		case inPart(change.Path):
 			changes = append(changes, change)
+		case slices.Contains(accepted, change.ID):
+			plan.Deferred = append(plan.Deferred, change.ID)
 		}
 	}
 	var writes []write
@@ -140,6 +143,9 @@ type Plan struct {
 	Conflicts   []Conflict  `json:"conflicts"`
 	Exceptions  []Exception `json:"exceptions"`
 	Notes       []string    `json:"notes"`
+	// Deferred are the --accept IDs whose writes belong to the part --only left out: they are
+	// passed again when that part is applied.
+	Deferred []string `json:"deferred,omitempty"`
 
 	writes []write
 }
@@ -223,7 +229,7 @@ func Make(options Options) (*Plan, error) {
 		return nil, err
 	}
 	planner.sort()
-	planner.plan.keepPart(options.Only)
+	planner.plan.keepPart(options.Only, options.Accept)
 	return planner.plan, nil
 }
 
