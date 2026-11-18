@@ -235,11 +235,11 @@ const resignPartial = "resign" + layout.PartialSuffix
 type Replacement int
 
 const (
-	// LeftAlone: the live binary keeps its signature.
+	// LeftAlone means the live binary keeps its signature.
 	LeftAlone Replacement = iota
-	// SignedAgain: a copy of the binary being installed was signed and put in its place.
+	// SignedAgain means a copy of the binary being installed was signed and put in its place.
 	SignedAgain
-	// ReplacedAsSigned: the binary being installed keeps its own signature (a release's), so it was
+	// ReplacedAsSigned means the binary being installed keeps its own signature (a release's), so it was
 	// put in its place unsigned by this machine.
 	ReplacedAsSigned
 )
