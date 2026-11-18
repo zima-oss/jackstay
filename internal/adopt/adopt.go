@@ -95,7 +95,7 @@ func (planner *planner) settingsOnly(accepted []string) error {
 			writes = append(writes, pending)
 		}
 	}
-	var conflicts []Conflict
+	conflicts := []Conflict{}
 	for _, conflict := range plan.Conflicts {
 		if conflict.Path == config.Name {
 			conflicts = append(conflicts, conflict)

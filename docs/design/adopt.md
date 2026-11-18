@@ -488,7 +488,11 @@ agent; the same for every project and every jackstay version:
 > 3. Run `jst adopt --apply` with the `--accept` IDs you decided on (and the `--profile` of step
 >    1); then `jst adopt --plan` must print nothing to change, name the profile, and exit 0.
 > 4. Run `jst doctor`: no problem for this project. Run the project's gate.
-> 5. Open one pull request with the result, listing each conflict and how it was settled.
+> 5. Open a pull request with the result, listing each conflict and how it was settled. When its
+>    diff against the base changes `jackstay.json` and other files (adopt's writes, or your own
+>    exceptions), rule D0 wants two: `jackstay.json` alone first (`jst adopt --apply
+>    --settings-only`, with `--pin` and `jackstay.json`'s `--accept` IDs), merged by the owner; then,
+>    on the merged base, steps 3 to 5 again for the other files.
 >
 > Done means `jst adopt --plan` exits 0 and `jst doctor` reports no adoption problem — not your
 > word.

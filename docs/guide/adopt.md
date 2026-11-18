@@ -206,7 +206,8 @@ When jackstay changes, a project's session can adopt the new version with this p
 > own work, or add an exception with its reason to `jackstay.json`'s `adopt.exceptions`. Before
 > `--accept …:edited`, move the project's own lines out of the text the plan shows will be
 > replaced; never edit inside the `jackstay-adopt` markers. If the pin is to move (`--pin`), or the
-> plan changes `jackstay.json` and other files, land two pull requests (rule D0): first
+> change against the base would touch `jackstay.json` and other files (adopt's writes or your own
+> exceptions), land two pull requests (rule D0): first
 > `jst adopt --apply --settings-only` (with `--pin`, `--profile` and the accepted IDs of
 > `jackstay.json`'s conflicts), `jackstay.json` alone, for the owner to merge; then, on the merged
 > base, `jst adopt --apply` with the other accepted IDs. Otherwise one `jst adopt --apply` with the

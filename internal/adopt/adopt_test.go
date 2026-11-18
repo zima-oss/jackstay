@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -594,5 +595,22 @@ func TestSettingsOnlyGoesWithPlanOrApply(t *testing.T) {
 	options, mode, _, err := parseArgs([]string{"--apply", "--pin", "--settings-only"})
 	if err != nil || mode != "apply" || !options.SettingsOnly || !options.Pin {
 		t.Fatalf("%+v %s %v", options, mode, err)
+	}
+}
+
+// A settings-only plan with nothing left is empty arrays in JSON, as the documented shape says.
+func TestASettingsOnlyPlanIsArraysInJSON(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	applyTwice(t, optionsFor(root))
+	options := optionsFor(root)
+	options.SettingsOnly = true
+	encoded, err := json.Marshal(plan(t, options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"changes":[]`, `"conflicts":[]`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("no %s in %s", want, encoded)
+		}
 	}
 }
