@@ -1,8 +1,8 @@
 ==> jst adopt --help
 jst adopt: bring this project to jackstay's reference: jackstay.json, the AGENTS block, the guard hook, workflows
 
-usage: jst adopt [--plan] [--profile PATH] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--profile PATH] [DIR]
+usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
        jst adopt --block [--profile PATH] [DIR]
 
 Brings the project around DIR (default: here) to jackstay's reference: jackstay.json, the AGENTS block
@@ -14,6 +14,9 @@ changes anything else; what it must not decide is a conflict (docs/design/adopt.
   --accept ID      with --apply: let jackstay overwrite what the conflict ID protects (repeatable;
                    only for the conflicts whose settlement says --accept)
   --pin            with --apply: move adopt.pin, the jst release the workflows download, to this jackstay
+  --settings-only  plan or write jackstay.json alone (its conflicts alone block). Rule D0 lands a
+                   change of jackstay.json in a pull request of its own: land it first, then run
+                   --apply again on the merged base for the other files
   --profile PATH   an organisation's profile; recorded in jackstay.json by --apply, used later without
                    the flag
   --json           the plan as one JSON object

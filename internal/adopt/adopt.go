@@ -46,6 +46,9 @@ type Options struct {
 	Accept []string
 	// Pin moves adopt.pin to this jackstay's version.
 	Pin bool
+	// SettingsOnly keeps the plan to jackstay.json: its changes and its conflicts (rule D0 lands a
+	// change of jackstay.json in a pull request of its own; the other files follow it).
+	SettingsOnly bool
 	// Has says a command of that name is in this jackstay; Version is this jackstay's version.
 	Has     func(command string) bool
 	Version string
@@ -54,6 +57,52 @@ type Options struct {
 	// GuardCommand is the hook command a new guard hook gets; "" is GuardCommand(), the launcher of
 	// the install this jst runs from.
 	GuardCommand string
+}
+
+// SplitsSettings says whether the plan's changes touch jackstay.json and another file: one pull
+// request of them all is refused by rule D0 (settings alone).
+func (plan *Plan) SplitsSettings() bool {
+	settings, files := false, false
+	for _, change := range plan.Changes {
+		if change.Path == config.Name {
+			settings = true
+		} else {
+			files = true
+		}
+	}
+	return settings && files
+}
+
+// settingsOnly keeps jackstay.json's changes, writes and conflicts; the other files' are left to
+// the apply after the settings merge, which plans them again. An --accept of another file's
+// conflict is refused: it is given in that apply.
+func (planner *planner) settingsOnly(accepted []string) error {
+	plan := planner.plan
+	changes := []Change{}
+	for _, change := range plan.Changes {
+		if change.Path == config.Name {
+			changes = append(changes, change)
+			continue
+		}
+		if slices.Contains(accepted, change.ID) {
+			return &UsageError{fmt.Sprintf("--accept %s is for %s, not %s: give it to the apply after the settings merge",
+				change.ID, change.Path, config.Name)}
+		}
+	}
+	var writes []write
+	for _, pending := range plan.writes {
+		if pending.path == config.Name {
+			writes = append(writes, pending)
+		}
+	}
+	conflicts := []Conflict{}
+	for _, conflict := range plan.Conflicts {
+		if conflict.Path == config.Name {
+			conflicts = append(conflicts, conflict)
+		}
+	}
+	plan.Changes, plan.writes, plan.Conflicts = changes, writes, conflicts
+	return nil
 }
 
 // Change is one write the plan makes.
@@ -178,6 +227,11 @@ func Make(options Options) (*Plan, error) {
 		return nil, err
 	}
 	planner.sort()
+	if options.SettingsOnly {
+		if err := planner.settingsOnly(options.Accept); err != nil {
+			return nil, err
+		}
+	}
 	return planner.plan, nil
 }
 

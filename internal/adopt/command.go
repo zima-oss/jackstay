@@ -14,8 +14,8 @@ import (
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
-const usage = `usage: jst adopt [--plan] [--profile PATH] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--profile PATH] [DIR]
+const usage = `usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
        jst adopt --block [--profile PATH] [DIR]
 
 Brings the project around DIR (default: here) to jackstay's reference: jackstay.json, the AGENTS block
@@ -27,6 +27,9 @@ changes anything else; what it must not decide is a conflict (docs/design/adopt.
   --accept ID      with --apply: let jackstay overwrite what the conflict ID protects (repeatable;
                    only for the conflicts whose settlement says --accept)
   --pin            with --apply: move adopt.pin, the jst release the workflows download, to this jackstay
+  --settings-only  plan or write jackstay.json alone (its conflicts alone block). Rule D0 lands a
+                   change of jackstay.json in a pull request of its own: land it first, then run
+                   --apply again on the merged base for the other files
   --profile PATH   an organisation's profile; recorded in jackstay.json by --apply, used later without
                    the flag
   --json           the plan as one JSON object
@@ -73,14 +76,7 @@ func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "jst adopt: %v\n", err)
 			return 2
 		}
-		if len(plan.Changes) == 0 {
-			fmt.Fprintf(stdout, "jst adopt: %s is up to date: nothing written\n", plan.Project)
-		} else {
-			for _, change := range plan.Changes {
-				fmt.Fprintf(stdout, "wrote  %-24s %s: %s\n", change.ID, change.Path, change.What)
-			}
-			fmt.Fprintf(stdout, "jst adopt: %d change(s) written; `jst adopt --plan` should now find nothing\n", len(plan.Changes))
-		}
+		writeApplied(stdout, plan, options.SettingsOnly)
 		return 0
 	}
 	if asJSON {
@@ -126,6 +122,8 @@ func parseArgs(args []string) (Options, string, bool, error) {
 			asJSON = true
 		case "--pin":
 			options.Pin = true
+		case "--settings-only":
+			options.SettingsOnly = true
 		case "--accept":
 			id, err := value()
 			if err != nil {
@@ -155,6 +153,8 @@ func parseArgs(args []string) (Options, string, bool, error) {
 		return options, "", false, errors.New("one DIR at most")
 	case mode != "apply" && (len(options.Accept) > 0 || options.Pin):
 		return options, "", false, errors.New("--accept and --pin go with --apply")
+	case mode == "block" && options.SettingsOnly:
+		return options, "", false, errors.New("--settings-only goes with --plan or --apply")
 	case mode != "plan" && asJSON:
 		return options, "", false, errors.New("--json goes with --plan")
 	}
@@ -250,4 +250,33 @@ func Check(dir string) (inProject bool, problems, notes []string) {
 		notes = append(notes, fmt.Sprintf("%s keeps %s: %s", plan.Project, exception.ID, exception.Why))
 	}
 	return true, problems, notes
+}
+
+// writeApplied says what an apply wrote and what is left: after --settings-only, the apply of the
+// other files once jackstay.json has merged; after an apply that wrote jackstay.json and other
+// files, that rule D0 lands them in two pull requests.
+func writeApplied(out io.Writer, plan *Plan, settingsOnly bool) {
+	switch {
+	case len(plan.Changes) == 0 && settingsOnly:
+		fmt.Fprintf(out, "jst adopt: %s: nothing to write in %s; `jst adopt --apply` writes the other files\n", plan.Project, config.Name)
+		return
+	case len(plan.Changes) == 0:
+		fmt.Fprintf(out, "jst adopt: %s is up to date: nothing written\n", plan.Project)
+		return
+	}
+	for _, change := range plan.Changes {
+		fmt.Fprintf(out, "wrote  %-24s %s: %s\n", change.ID, change.Path, change.What)
+	}
+	switch {
+	case settingsOnly:
+		fmt.Fprintf(out, "jst adopt: %d change(s) written to %s alone. Land it in a pull request of its own (rule D0, merged "+
+			"by the owner); then, on the merged base, run `jst adopt --apply` as before (the same folder and profile, "+
+			"without --settings-only) for the other files\n", len(plan.Changes), config.Name)
+	case plan.SplitsSettings():
+		fmt.Fprintf(out, "jst adopt: %d change(s) written, to %s and other files: rule D0 refuses them in one pull request. "+
+			"Commit %s alone first, in a pull request of its own merged by the owner, then the other files in another "+
+			"(`--settings-only` writes the first part alone)\n", len(plan.Changes), config.Name, config.Name)
+	default:
+		fmt.Fprintf(out, "jst adopt: %d change(s) written; `jst adopt --plan` should now find nothing\n", len(plan.Changes))
+	}
 }

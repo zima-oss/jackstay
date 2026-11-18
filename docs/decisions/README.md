@@ -53,3 +53,4 @@ is added in a pull request.
 | [W-077](W-077-docs-site-for-users-only.md) | The documentation site carries only what a user needs; design documents and decision records stay in the repository |
 | [W-078](W-078-setup-after-install.md) | After an install, `install.sh` prints the remaining steps and every `jst doctor` problem names its fix |
 | [W-083](W-083-no-macos-job-in-ci.md) | CI runs the gate on Linux only; the macOS-only code is checked by `just gate` on a Mac before an install and a release |
+| [W-085](W-085-adopt-lands-settings-and-files-apart.md) | `jst adopt --settings-only`: a change of `jackstay.json` and other files lands in two pull requests, settings first (rule D0) |

@@ -25,8 +25,8 @@ nothing. `jst doctor` reports a project that has drifted.
 ## 2. The command
 
 ```
-jst adopt [--plan] [--profile PATH] [--json] [DIR]
-jst adopt --apply [--accept ID]... [--pin] [--profile PATH] [DIR]
+jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
+jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
 jst adopt --block [DIR]           # the AGENTS block this project gets, printed; nothing written
 ```
 
@@ -39,6 +39,9 @@ jst adopt --block [DIR]           # the AGENTS block this project gets, printed;
   conflict `ID` protects (section 5). Accepting is for one run; nothing is remembered.
 - `--pin`: set `adopt.pin` (the jst release every jackstay-written workflow downloads) to this jackstay's
   version (section 7.3). Without it the pin is never moved.
+- `--settings-only` (with `--plan` or `--apply`): `jackstay.json` alone, its changes and its
+  conflicts; the other files' are planned again by the apply after it merges, and an `--accept` of
+  one of theirs is refused here ([W-085](../decisions/W-085-adopt-lands-settings-and-files-apart.md)).
 - `--json`: the plan as one object `{"project", "profile", "changes": [...], "conflicts": [...],
   "exceptions": [...], "notes": [...]}`; each change `{"id", "path", "what"}`, each conflict
   `{"id", "path", "what", "settle"}`.
@@ -352,6 +355,12 @@ and jackstay's templates alone: a newer jackstay does not make every project dri
 workflow renders it with the same pin, and a project moves its pin on purpose (`--pin`), in a pull
 request of its own.
 
+**A change of `jackstay.json` and other files lands in two pull requests**, settings first: rule D0
+of `jst lint pr` lands `jackstay.json` alone. `jst adopt --apply --pin --settings-only` writes it
+(the owner merges it); then `jst adopt --apply` on the merged base writes the workflows from it, an
+ordinary pull request. Between the two, `jst adopt --plan` on the base lists exactly the files left.
+An `--apply` that writes both says so.
+
 ## 8. The AGENTS block
 
 Short and led by the task an agent has in hand, one line per task, the details left to `jst <command> --help` (section 9). It is printed
@@ -479,7 +488,11 @@ agent; the same for every project and every jackstay version:
 > 3. Run `jst adopt --apply` with the `--accept` IDs you decided on (and the `--profile` of step
 >    1); then `jst adopt --plan` must print nothing to change, name the profile, and exit 0.
 > 4. Run `jst doctor`: no problem for this project. Run the project's gate.
-> 5. Open one pull request with the result, listing each conflict and how it was settled.
+> 5. Open a pull request with the result, listing each conflict and how it was settled. When its
+>    diff against the base changes `jackstay.json` and other files (adopt's writes, or your own
+>    exceptions), rule D0 wants two: `jackstay.json` alone first (`jst adopt --apply
+>    --settings-only`, with `--pin` and `jackstay.json`'s `--accept` IDs), merged by the owner; then,
+>    on the merged base, steps 3 to 5 again for the other files.
 >
 > Done means `jst adopt --plan` exits 0 and `jst doctor` reports no adoption problem — not your
 > word.

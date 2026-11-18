@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -523,5 +524,93 @@ func TestAnEmptyExceptionReasonIsRefused(t *testing.T) {
 	var usage *UsageError
 	if _, err := Make(optionsFor(root)); !errors.As(err, &usage) || !strings.Contains(err.Error(), "adopt.exceptions") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// Issue #10: rule D0 lands jackstay.json alone, so a pin move goes in two pull requests: the
+// settings (--settings-only), then, once they merged, a plain apply for the files.
+func TestAPinMoveLandsSettingsFirst(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}, ` +
+		`"release": {"merge": "owner", "first": "0.1.0", "files": [{"path": "VERSION", "match": "^(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"}]}}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	applyTwice(t, optionsFor(root))
+	release := filepath.Join(root, ".github/workflows/release.yml")
+	if err := os.WriteFile(release, []byte(read(t, root, ".github/workflows/release.yml")+"# edit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newer := optionsFor(root)
+	newer.Version, newer.Pin = "0.6.0", true
+	if made := plan(t, newer); len(made.Conflicts) == 0 {
+		t.Fatal("the edited workflow is not a conflict")
+	}
+	// A file's conflict does not block the settings, and its --accept belongs to the second apply.
+	newer.SettingsOnly, newer.Accept = true, []string{"workflow:release:edited"}
+	if _, err := Make(newer); err == nil || !strings.Contains(err.Error(), "give it to the apply after the settings merge") {
+		t.Fatalf("an --accept of a file with --settings-only: %v", err)
+	}
+	newer.Accept = nil
+	made := plan(t, newer)
+	if got := changeIDs(made.Changes); !slices.Equal(got, []string{"jackstay.json"}) || len(made.Conflicts) != 0 {
+		t.Fatalf("--settings-only plans %v, conflicts %v", got, made.Conflicts)
+	}
+	var out bytes.Buffer
+	apply(t, newer)
+	writeApplied(&out, made, true)
+	if !strings.Contains(out.String(), "then, on the merged base, run `jst adopt --apply` as before") {
+		t.Fatalf("no next step:\n%s", out.String())
+	}
+	if !strings.Contains(read(t, root, "jackstay.json"), `"v0.6.0"`) || !strings.Contains(read(t, root, ".github/workflows/release.yml"), "# edit") {
+		t.Fatal("--settings-only wrote more than jackstay.json")
+	}
+	// The settings merged: the apply of the files finds the conflict again and settles it.
+	after := optionsFor(root)
+	after.Version = "0.6.0"
+	if made := plan(t, after); slices.Contains(changeIDs(made.Changes), "jackstay.json") || len(made.Conflicts) != 1 {
+		t.Fatalf("after the settings: changes %v, conflicts %v", changeIDs(made.Changes), made.Conflicts)
+	}
+	after.Accept = []string{"workflow:release:edited"}
+	applyTwice(t, after)
+	if text := read(t, root, ".github/workflows/release.yml"); strings.Contains(text, "# edit") || !strings.Contains(text, `JACKSTAY_VERSION: "v0.6.0"`) {
+		t.Fatal("the files did not follow the settings")
+	}
+}
+
+func TestAnApplyOfBothPartsSaysToSplitThem(t *testing.T) {
+	both := &Plan{Changes: []Change{{ID: "jackstay.json", Path: "jackstay.json"}, {ID: "workflow:release", Path: ".github/workflows/release.yml"}}}
+	var out bytes.Buffer
+	writeApplied(&out, both, false)
+	if !both.SplitsSettings() || !strings.Contains(out.String(), "rule D0 refuses them in one pull request") {
+		t.Fatalf("%s", out.String())
+	}
+	out.Reset()
+	writeApplied(&out, &Plan{Project: "p", Changes: []Change{}}, true)
+	if !strings.Contains(out.String(), "nothing to write in jackstay.json; `jst adopt --apply` writes the other files") {
+		t.Fatalf("%s", out.String())
+	}
+}
+
+func TestSettingsOnlyGoesWithPlanOrApply(t *testing.T) {
+	if _, _, _, err := parseArgs([]string{"--block", "--settings-only"}); err == nil {
+		t.Fatal("--block --settings-only: no error")
+	}
+	options, mode, _, err := parseArgs([]string{"--apply", "--pin", "--settings-only"})
+	if err != nil || mode != "apply" || !options.SettingsOnly || !options.Pin {
+		t.Fatalf("%+v %s %v", options, mode, err)
+	}
+}
+
+// A settings-only plan with nothing left is empty arrays in JSON, as the documented shape says.
+func TestASettingsOnlyPlanIsArraysInJSON(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	applyTwice(t, optionsFor(root))
+	options := optionsFor(root)
+	options.SettingsOnly = true
+	encoded, err := json.Marshal(plan(t, options))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"changes":[]`, `"conflicts":[]`} {
+		if !strings.Contains(string(encoded), want) {
+			t.Fatalf("no %s in %s", want, encoded)
+		}
 	}
 }
