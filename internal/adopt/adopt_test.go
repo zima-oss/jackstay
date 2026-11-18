@@ -525,3 +525,73 @@ func TestAnEmptyExceptionReasonIsRefused(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// Issue #10: rule D0 lands jackstay.json alone, so a pin move goes in two parts: the settings, then
+// the files written from them (or the files first, then the settings).
+func TestAPinMoveLandsInTwoParts(t *testing.T) {
+	files := map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}, ` +
+		`"release": {"merge": "owner", "first": "0.1.0", "files": [{"path": "VERSION", "match": "^(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"}]}}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"}
+	pinned := func(root, path, version string) bool {
+		return strings.Contains(read(t, root, path), version)
+	}
+	t.Run("settings first", func(t *testing.T) {
+		root := project(t, files)
+		applyTwice(t, optionsFor(root))
+		newer := optionsFor(root)
+		newer.Version, newer.Pin = "0.6.0", true
+		if !plan(t, newer).SplitsAcrossParts() {
+			t.Fatal("a pin move that changes jackstay.json and the workflows is not said to split")
+		}
+		newer.Only = PartSettings
+		if got := changeIDs(plan(t, newer).Changes); !slices.Equal(got, []string{"jackstay.json"}) {
+			t.Fatalf("--only settings plans %v", got)
+		}
+		apply(t, newer)
+		if !pinned(root, "jackstay.json", `"v0.6.0"`) || !pinned(root, ".github/workflows/release.yml", `JACKSTAY_VERSION: "v0.5.0"`) {
+			t.Fatal("--only settings did not move the pin alone")
+		}
+		// The settings merged: a plain apply writes the files from them.
+		after := optionsFor(root)
+		after.Version = "0.6.0"
+		made := plan(t, after)
+		if made.SplitsAcrossParts() || len(made.Changes) == 0 || slices.Contains(changeIDs(made.Changes), "jackstay.json") {
+			t.Fatalf("after the settings, the plan is %v", changeIDs(made.Changes))
+		}
+		applyTwice(t, after)
+		if !pinned(root, ".github/workflows/release.yml", `JACKSTAY_VERSION: "v0.6.0"`) {
+			t.Fatal("the files did not follow the settings")
+		}
+	})
+	t.Run("files first", func(t *testing.T) {
+		root := project(t, files)
+		applyTwice(t, optionsFor(root))
+		newer := optionsFor(root)
+		newer.Version, newer.Pin, newer.Only = "0.6.0", true, PartFiles
+		made := plan(t, newer)
+		if len(made.Changes) == 0 || slices.Contains(changeIDs(made.Changes), "jackstay.json") {
+			t.Fatalf("--only files plans %v", changeIDs(made.Changes))
+		}
+		apply(t, newer)
+		if pinned(root, "jackstay.json", `"v0.6.0"`) || !pinned(root, ".github/workflows/release.yml", `JACKSTAY_VERSION: "v0.6.0"`) {
+			t.Fatal("--only files did not write the workflows alone")
+		}
+		newer.Only = PartSettings
+		applyTwice(t, newer)
+		newer.Only = ""
+		if made := plan(t, newer); len(made.Changes) != 0 {
+			t.Fatalf("after both parts, the plan is %v", changeIDs(made.Changes))
+		}
+	})
+}
+
+func TestOnlyTakesAPartAndNotBlock(t *testing.T) {
+	for _, args := range [][]string{{"--apply", "--only", "agents"}, {"--block", "--only", "settings"}, {"--apply", "--only"}} {
+		if _, _, _, err := parseArgs(args); err == nil {
+			t.Errorf("%v: no error", args)
+		}
+	}
+	options, mode, _, err := parseArgs([]string{"--apply", "--pin", "--only", "settings"})
+	if err != nil || mode != "apply" || options.Only != PartSettings {
+		t.Fatalf("%+v %s %v", options, mode, err)
+	}
+}

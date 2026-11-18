@@ -14,8 +14,8 @@ import (
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
-const usage = `usage: jst adopt [--plan] [--profile PATH] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--profile PATH] [DIR]
+const usage = `usage: jst adopt [--plan] [--only PART] [--profile PATH] [--json] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--only PART] [--profile PATH] [DIR]
        jst adopt --block [--profile PATH] [DIR]
 
 Brings the project around DIR (default: here) to jackstay's reference: jackstay.json, the AGENTS block
@@ -27,6 +27,9 @@ changes anything else; what it must not decide is a conflict (docs/design/adopt.
   --accept ID      with --apply: let jackstay overwrite what the conflict ID protects (repeatable;
                    only for the conflicts whose settlement says --accept)
   --pin            with --apply: move adopt.pin, the jst release the workflows download, to this jackstay
+  --only PART      one part of the changes: settings (jackstay.json alone) or files (every other
+                   file, written from the settings the apply would leave). Rule D0 lands a change
+                   of jackstay.json in a pull request of its own: settings first, then files
   --profile PATH   an organisation's profile; recorded in jackstay.json by --apply, used later without
                    the flag
   --json           the plan as one JSON object
@@ -73,13 +76,30 @@ func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "jst adopt: %v\n", err)
 			return 2
 		}
-		if len(plan.Changes) == 0 {
+		switch {
+		case len(plan.Changes) == 0 && options.Only != "":
+			fmt.Fprintf(stdout, "jst adopt: %s: nothing to write in the %s part\n", plan.Project, options.Only)
+		case len(plan.Changes) == 0:
 			fmt.Fprintf(stdout, "jst adopt: %s is up to date: nothing written\n", plan.Project)
-		} else {
+		default:
 			for _, change := range plan.Changes {
 				fmt.Fprintf(stdout, "wrote  %-24s %s: %s\n", change.ID, change.Path, change.What)
 			}
-			fmt.Fprintf(stdout, "jst adopt: %d change(s) written; `jst adopt --plan` should now find nothing\n", len(plan.Changes))
+			switch options.Only {
+			case PartSettings:
+				fmt.Fprintf(stdout, "jst adopt: %d change(s) written: %s alone. Land it in a pull request of its own (rule D0, "+
+					"merged by the owner); then `jst adopt --apply` on the merged base writes the other files\n", len(plan.Changes), config.Name)
+			case PartFiles:
+				fmt.Fprintf(stdout, "jst adopt: %d change(s) written, %s left as it is; `jst adopt --plan` shows what is left "+
+					"in it\n", len(plan.Changes), config.Name)
+			default:
+				fmt.Fprintf(stdout, "jst adopt: %d change(s) written; `jst adopt --plan` should now find nothing\n", len(plan.Changes))
+			}
+		}
+		if options.Only == "" && plan.SplitsAcrossParts() {
+			fmt.Fprintf(stdout, "jst adopt: %[1]s and other files changed together, and rule D0 refuses them in one pull request: "+
+				"commit %[1]s alone first, in a pull request of its own merged by the owner, then the other files in another "+
+				"(`--only settings` and `--only files` write each part alone)\n", config.Name)
 		}
 		return 0
 	}
@@ -126,6 +146,15 @@ func parseArgs(args []string) (Options, string, bool, error) {
 			asJSON = true
 		case "--pin":
 			options.Pin = true
+		case "--only":
+			part, err := value()
+			if err != nil {
+				return options, "", false, err
+			}
+			if part != PartSettings && part != PartFiles {
+				return options, "", false, fmt.Errorf("--only is %s or %s, not %q", PartSettings, PartFiles, part)
+			}
+			options.Only = part
 		case "--accept":
 			id, err := value()
 			if err != nil {
@@ -155,6 +184,8 @@ func parseArgs(args []string) (Options, string, bool, error) {
 		return options, "", false, errors.New("one DIR at most")
 	case mode != "apply" && (len(options.Accept) > 0 || options.Pin):
 		return options, "", false, errors.New("--accept and --pin go with --apply")
+	case mode == "block" && options.Only != "":
+		return options, "", false, errors.New("--only goes with --plan or --apply")
 	case mode != "plan" && asJSON:
 		return options, "", false, errors.New("--json goes with --plan")
 	}

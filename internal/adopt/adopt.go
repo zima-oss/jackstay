@@ -46,6 +46,8 @@ type Options struct {
 	Accept []string
 	// Pin moves adopt.pin to this jackstay's version.
 	Pin bool
+	// Only keeps one part of the changes (PartSettings or PartFiles); "" keeps both.
+	Only string
 	// Has says a command of that name is in this jackstay; Version is this jackstay's version.
 	Has     func(command string) bool
 	Version string
@@ -54,6 +56,49 @@ type Options struct {
 	// GuardCommand is the hook command a new guard hook gets; "" is GuardCommand(), the launcher of
 	// the install this jst runs from.
 	GuardCommand string
+}
+
+// The two parts of a plan that rule D0 lands apart: jackstay.json in a pull request of its own,
+// every other file in another.
+const (
+	PartSettings = "settings"
+	PartFiles    = "files"
+)
+
+// SplitsAcrossParts says whether the plan's changes touch jackstay.json and another file: one
+// pull request of them all is refused by rule D0 (settings alone).
+func (plan *Plan) SplitsAcrossParts() bool {
+	settings, files := false, false
+	for _, change := range plan.Changes {
+		if change.Path == config.Name {
+			settings = true
+		} else {
+			files = true
+		}
+	}
+	return settings && files
+}
+
+// keepPart leaves the changes of one part; "" leaves both. The conflicts are all kept: nothing is
+// written while one is left, whichever part it is in.
+func (plan *Plan) keepPart(part string) {
+	if part == "" {
+		return
+	}
+	inPart := func(path string) bool { return (path == config.Name) == (part == PartSettings) }
+	var changes []Change
+	for _, change := range plan.Changes {
+		if inPart(change.Path) {
+			changes = append(changes, change)
+		}
+	}
+	var writes []write
+	for _, pending := range plan.writes {
+		if inPart(pending.path) {
+			writes = append(writes, pending)
+		}
+	}
+	plan.Changes, plan.writes = changes, writes
 }
 
 // Change is one write the plan makes.
@@ -178,6 +223,7 @@ func Make(options Options) (*Plan, error) {
 		return nil, err
 	}
 	planner.sort()
+	planner.plan.keepPart(options.Only)
 	return planner.plan, nil
 }
 
