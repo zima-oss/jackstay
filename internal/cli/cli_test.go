@@ -60,8 +60,13 @@ func TestMain_(t *testing.T) {
 	if code, stdout, _ := child(t, nil, "help"); code != 0 || !strings.Contains(stdout, "jst version") {
 		t.Fatalf("help: %d %q", code, stdout)
 	}
-	if code, stdout, _ := child(t, nil, "version"); code != 0 || !strings.HasPrefix(stdout, "jackstay ") {
-		t.Fatalf("version: %d %q", code, stdout)
+	for _, word := range []string{"version", "--version", "-V"} {
+		if code, stdout, _ := child(t, nil, word); code != 0 || !strings.HasPrefix(stdout, "jackstay ") {
+			t.Fatalf("%s: %d %q", word, code, stdout)
+		}
+	}
+	if code, _, _ := child(t, nil, "--version", "extra"); code != 2 {
+		t.Fatalf("--version with a word after it: %d", code)
 	}
 }
 

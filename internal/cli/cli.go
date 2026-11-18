@@ -48,7 +48,7 @@ func Register(entries ...Command) {
 func init() {
 	Register(
 		Command{Name: "version", Summary: "the version and the commit it was built from", Run: versionCommand,
-			Usage: "usage: jst version\n\nIt takes no options.\n\nexit: 0 printed; 2 any word after it.\n\nexample: jst version\n"},
+			Usage: "usage: jst version\n       jst --version (or -V), the same\n\nIt takes no options.\n\nexit: 0 printed; 2 any word after it.\n\nexample: jst --version\n"},
 		Command{Name: "help", Summary: "the commands", Run: helpCommand,
 			Usage: "usage: jst help                  every command with its summary\n" +
 				"       jst help COMMAND [WORD]   the same as `jst COMMAND [WORD] --help`\n\n" +
@@ -98,7 +98,23 @@ func Main(programPath string, args []string) int {
 		// The projects' hooks name `jst-guard`: it is `jst guard`.
 		args = append([]string{"guard"}, args...)
 	}
+	args = withCommandWords(args)
 	return run(args, func() int { return Dispatch(args, os.Stdin, os.Stdout, os.Stderr) })
+}
+
+// withCommandWords is args with the options most tools take in place of a command, given as the first
+// word, turned into that command: `--help` or `-h` is `help`, `--version` or `-V` is `version`.
+func withCommandWords(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	switch args[0] {
+	case "-h", "--help":
+		return append([]string{"help"}, args[1:]...)
+	case "-V", "--version":
+		return append([]string{"version"}, args[1:]...)
+	}
+	return args
 }
 
 // run runs the binary's command inside its span (docs/design/observability.md): begun before it
@@ -130,9 +146,7 @@ func Dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		writeUsage(stderr)
 		return 2
 	}
-	if args[0] == "-h" || args[0] == "--help" {
-		args = append([]string{"help"}, args[1:]...)
-	}
+	args = withCommandWords(args)
 	entry, words, found := Find(args)
 	if !found {
 		if len(args) == 2 && isHelpWord(args[1]) && writeGroup(stdout, args[0]) {

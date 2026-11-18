@@ -60,10 +60,15 @@ curl -q --proto '=https' --tlsv1.2 -fsSL -o "$dir/install.sh" https://raw.github
 Then, with `~/.local/bin` on your `PATH`:
 
 ```sh
+jst --version           # what was installed
 jst doctor              # is this machine ready
 cd your-project
 jst adopt --plan        # what jackstay would write here; `jst adopt --apply` writes it
 ```
+
+On a new machine `jst doctor` exits 1 with `guard-never-called` ("the guard has never been called
+on this machine"). That is expected: it reports it until a project is adopted and a session has run
+its guard hook once. Every other problem it reports names its fix.
 
 The [install guide](docs/guide/install.md) has the same steps by hand, `go install`, a build from
 source, and what can go wrong.
@@ -77,6 +82,7 @@ echo hello > notes.txt && git add . && git commit -m "first commit"
 jst adopt               # the plan: what jackstay would write (exit 3: changes pending)
 jst adopt --apply       # jackstay.json, AGENTS.md with the tools block, CLAUDE.md, the guard hook
 jst adopt               # nothing left to change: exit 0
+git add . && git commit -m "Adopt jackstay"   # what adopt wrote belongs to the project
 ```
 
 Ask the guard about a command, as the hook would:
