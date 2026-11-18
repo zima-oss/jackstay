@@ -982,12 +982,13 @@ example: jst uninstall
 jst version: the version and the commit it was built from
 
 usage: jst version
+       jst --version (or -V), the same
 
 It takes no options.
 
 exit: 0 printed; 2 any word after it.
 
-example: jst version
+example: jst --version
 
 ==> jst view --help
 jst view: SERIES: the records' table, printed (never committed)

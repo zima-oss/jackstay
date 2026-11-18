@@ -121,3 +121,13 @@ func TestNewProcessesAloneDoNotMakeTheListingReadAgain(t *testing.T) {
 		t.Fatalf("readings %d err %v", readings, err)
 	}
 }
+
+// A parent, group or session beyond 32 bits is refused rather than cut down to another number.
+func TestParseStatRefusesAProcessNumberBeyondThirtyTwoBits(t *testing.T) {
+	const tail = " 0 -1 4194304 1 0 0 0 0 0 0 0 20 0 1 0 250 0 0\n"
+	for _, numbers := range []string{"4294967303 4242 4000", "7 4294967303 4000", "7 4242 4294967303", "7 4242 -2147483649"} {
+		if _, _, err := parseStat([]byte("4242 (x) S "+numbers+tail), 0); err == nil {
+			t.Errorf("%q: no error", numbers)
+		}
+	}
+}
