@@ -60,7 +60,7 @@ curl -q --proto '=https' --tlsv1.2 -fsSL -o "$dir/install.sh" https://raw.github
 Then, with `~/.local/bin` on your `PATH`:
 
 ```sh
-jst --version           # what was installed
+jst version             # what was installed
 jst doctor              # is this machine ready
 cd your-project
 jst adopt --plan        # what jackstay would write here; `jst adopt --apply` writes it
