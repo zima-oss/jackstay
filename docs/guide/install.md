@@ -23,10 +23,10 @@ reads none of your own curl settings.
 Two settings, given to the `sh` that runs the script, as in this line (in sh, bash or zsh):
 
 ```sh
-script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && JACKSTAY_VERSION=0.5.10 JACKSTAY_PREFIX="$HOME/tools" sh -c "$script"
+script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && JACKSTAY_VERSION=0.5.11 JACKSTAY_PREFIX="$HOME/tools" sh -c "$script"
 ```
 
-- `JACKSTAY_VERSION=0.5.10` (or `v0.5.10`) installs that release instead of the newest.
+- `JACKSTAY_VERSION=0.5.11` (or `v0.5.11`) installs that release instead of the newest.
 - `JACKSTAY_PREFIX=DIR` installs under `DIR` instead of `~/.local`.
 - It needs `curl`, `tar` and `sha256sum` or `shasum`, and names the one missing.
 - Exit: 0 installed; 1 nothing was installed (the message says why); otherwise `jst install`'s own.
@@ -76,7 +76,7 @@ of the modules compiled into it; `checksums.txt` covers them.
 ```sh
 (
   set -eu
-  VERSION=0.5.10                                # the release you want, without the v
+  VERSION=0.5.11                                # the release you want, without the v
   PLATFORM=darwin_arm64                        # or darwin_amd64, linux_amd64, linux_arm64
   ARCHIVE="jackstay_${VERSION}_${PLATFORM}.tar.gz"
   BASE="https://github.com/zima-oss/jackstay/releases/download/v$VERSION"
@@ -120,12 +120,12 @@ from a checkout elsewhere, use `jst install --checkout DIR`.
 (
   set -eu
   dir=$(mktemp -d)                             # a folder of its own, whatever GOBIN says
-  GOBIN="$dir" go install github.com/zima-oss/jackstay/cmd/jst@v0.5.10
+  GOBIN="$dir" go install github.com/zima-oss/jackstay/cmd/jst@v0.5.11
   "$dir/jst" install --binary "$dir/jst"
 )
 ```
 
-Install at a version tag (`@v0.5.10`), not a branch or a commit: `jst version` then names the tag.
+Install at a version tag (`@v0.5.11`), not a branch or a commit: `jst version` then names the tag.
 
 ## Update
 

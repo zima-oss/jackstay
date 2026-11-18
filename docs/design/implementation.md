@@ -1323,7 +1323,7 @@ The binary's own `jst version` must print `jackstay <version> (<commit>)`; that 
 `VERSION`.
 
 **A `go install` build** records no commit, but it records the module version. Built at a version
-tag, `jst version` says `jackstay 0.5.10 (v0.5.10)`: the tag stands for the one commit it names (tags
+tag, `jst version` says `jackstay 0.5.11 (v0.5.11)`: the tag stands for the one commit it names (tags
 are never moved, and Go's checksum database ties the module's content to the tag). Built at a
 branch or a commit (`@main`, `@<hash>`), it names the commit from the pseudo-version. Install takes
 either. A build named by its tag and one named by a hash are, to install, two commits of one

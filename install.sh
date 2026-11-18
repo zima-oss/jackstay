@@ -6,7 +6,7 @@
 #   script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && sh -c "$script"
 #
 # Settings, from the environment:
-#   JACKSTAY_VERSION   the release to install, such as 0.5.10 (default: the newest release)
+#   JACKSTAY_VERSION   the release to install, such as 0.5.11 (default: the newest release)
 #   JACKSTAY_PREFIX    where `jst install` puts it (default: ~/.local; the binary is PREFIX/bin/jst)
 #   JACKSTAY_RELEASES  the releases page the archives come from
 #                      (default: https://github.com/zima-oss/jackstay/releases)
