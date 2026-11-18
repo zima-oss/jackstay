@@ -344,9 +344,9 @@ func checkSigning(report *Report, inputs Inputs, live *layout.Folder) {
 		keeps = err == nil && kept
 	}
 	if !keeps {
-		report.problem("binary-not-signed", fmt.Sprintf("%s does not keep its signature, so the next install signs it again with %q (identifier %q, authority %q): unsigned or ad-hoc (installed before the setting), an identifier other than %s, or a signature that does not verify strictly.",
-			binary, inputs.CodesignIdentity, signature.Identifier, facts["authority"], install.SigningIdentifier),
-			"`jst install` signs it again: run it from a checkout at the live version's commit, or install a newer version")
+		report.problem("binary-not-signed", fmt.Sprintf("%s does not keep its signature, so the next install replaces it (identifier %q, authority %q): unsigned or ad-hoc (installed before the setting), an identifier other than %s, or a signature that does not verify strictly. The binary that replaces it is signed with %q unless it keeps its own signature (a release's).",
+			binary, signature.Identifier, facts["authority"], install.SigningIdentifier, inputs.CodesignIdentity),
+			"`jst install` replaces it: run it from a checkout at the live version's commit, or with that version's release binary, or install a newer version")
 	}
 }
 
