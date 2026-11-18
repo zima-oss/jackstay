@@ -86,7 +86,7 @@ menu:
       pageRef: /guide
       weight: 2
     - name: More on GitHub
-      pageRef: /more-on-github
+      pageRef: /guide/more-on-github
       weight: 3
     - name: Search
       weight: 4

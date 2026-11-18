@@ -15,11 +15,16 @@
     groups   an optional dict, file name -> a group under the section ("codex.md": "integrations"):
              the page goes to section/group/name, where the group's page is a content file of the
              site (content/guide/integrations/_index.md)
+    type     an optional content type for the section and every page under it, its groups'
+             pages included: "docs" gives the guide Hextra's docs layout, with the sidebar
+             always beside the page and the previous and next pages below it
 */ -}}
 {{- $adapter := .adapter -}}
 {{- $section := .section -}}
 {{- $folder := .folder -}}
 {{- $groups := .groups | default dict -}}
+{{- $cascade := dict -}}
+{{- with .type }}{{ $cascade = dict "type" . }}{{ end -}}
 {{- $readme := resources.Get (printf "%s/README.md" $folder) -}}
 {{- $order := "" -}}
 {{- with $readme }}{{ $order = .Content }}{{ end -}}
@@ -39,6 +44,7 @@
       "path" $section
       "title" $title
       "params" $params
+      "cascade" $cascade
       "content" (dict "mediaType" "text/markdown" "value" $body)
     ) -}}
   {{- else -}}

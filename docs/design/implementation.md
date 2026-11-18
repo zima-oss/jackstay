@@ -1216,7 +1216,7 @@ The lock is advisory: a test command typed without it is not stopped.
   one-line install; the guide, its getting-started page first and its pages in the order of
   `docs/guide/README.md`, with the integrations (Claude Code, Codex) as a group of their own,
   `guide/integrations`; and one page pointing to the design, the decision records and
-  CONTRIBUTING on GitHub (`site/content/more-on-github.md`). The design and the decision records
+  CONTRIBUTING on GitHub, the guide's last page (`site/content/guide/more-on-github.md`). The design and the decision records
   are not published. The guide's pages are not copied: `site/hugo.yaml` mounts `docs/` (and
   `CONTRIBUTING.md`) as assets, and one content adapter (`site/content/_content.gotmpl`, with
   `site/layouts/_partials/jackstay/pages-from-docs.html`) adds a page for each Markdown file of
