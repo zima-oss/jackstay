@@ -476,11 +476,9 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 	default:
 		return 0, failf(exitNotFine, "#%d is %s: resolve that first", number, state.Mergeable)
 	}
-	mergeState, err := work.github.MergeableState(work.ctx, number)
-	if err != nil {
-		return 0, fmt.Errorf("pull request #%d: %w", number, err)
-	}
-	if strings.EqualFold(mergeState, "behind") {
+	// Whether it is behind comes from the same answer as its base and head, checked above: a
+	// retarget between two reads cannot make the update merge another base in.
+	if strings.EqualFold(state.MergeableState, "behind") {
 		code, err := work.updateBehind(number, state.HeadSHA, options)
 		if err != nil || code != exitFine {
 			return code, err

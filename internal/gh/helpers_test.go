@@ -121,7 +121,16 @@ func (hub *fakeGitHub) PullRequest(ctx context.Context, number int) (githubapi.P
 	if afterUpdate != nil && updated {
 		return *afterUpdate, nil
 	}
-	return hub.Fake.PullRequest(ctx, number)
+	pull, err := hub.Fake.PullRequest(ctx, number)
+	if err == nil && pull.MergeableState == "" {
+		hub.mutex.Lock()
+		pull.MergeableState = "clean"
+		if len(hub.mergeStates) > 0 {
+			pull.MergeableState = hub.mergeStates[0]
+		}
+		hub.mutex.Unlock()
+	}
+	return pull, err
 }
 
 func (hub *fakeGitHub) Merge(ctx context.Context, number int, headSHA, title, body string) (githubapi.MergeResult, error) {

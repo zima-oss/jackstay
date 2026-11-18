@@ -340,7 +340,10 @@ func TestARunOfAnotherWorkflowDoesNotSupersedeACancelledOne(t *testing.T) {
 	dispatched.Event = "workflow_dispatch" // an independent run beside the cancelled one
 	elsewhere := checkRun("lint", "COMPLETED", "SUCCESS", 5)
 	elsewhere.Branch = "copy" // the same commit pushed to another branch: an independent run
+	firstDispatch, secondDispatch := checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)
+	firstDispatch.Event, secondDispatch.Event = "workflow_dispatch", "workflow_dispatch" // inputs may differ
 	for _, rows := range [][]githubapi.Check{
+		{firstDispatch, secondDispatch},
 		{checkRun("lint", "COMPLETED", "CANCELLED", 4), elsewhere},
 		{checkRun("lint", "COMPLETED", "CANCELLED", 4), other},
 		{checkRun("lint", "COMPLETED", "CANCELLED", 4), sameName},

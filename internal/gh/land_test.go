@@ -515,3 +515,29 @@ func TestARequiredCheckOnTheTestMergeCommitIsFound(t *testing.T) {
 		t.Fatal("not merged")
 	}
 }
+
+// With nothing on the head, a required check on the test merge commit is found.
+func TestARequiredCheckOnlyOnTheTestMergeCommitIsFound(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "SUCCESS"}})
+	bench.hub.required = []RequiredCheck{{Name: "external"}}
+	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "GREEN: 1 checks")
+}
+
+// When the test merge commit has a result for a required check, it is the one that must pass.
+func TestTheTestMergeCommitsResultTakesPrecedence(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open},
+		checks: []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "SUCCESS"}}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "FAILURE"}})
+	bench.hub.required = []RequiredCheck{{Name: "external"}}
+	stdout, _ := bench.expect(exitNotFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "RED: 1 of 1")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on the head's green over the merge commit's red")
+	}
+}

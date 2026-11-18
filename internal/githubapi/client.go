@@ -114,6 +114,8 @@ type PullRequest struct {
 	Mergeable string
 	// MergeCommitSHA is, while the pull request is open, GitHub's test merge commit of it.
 	MergeCommitSHA string
+	// MergeableState is REST's mergeable_state: "behind", "clean", "blocked", … ("" when not given).
+	MergeableState string
 }
 
 // PullRequestOf is jackstay's view of go-github's pull request.
@@ -129,7 +131,7 @@ func PullRequestOf(pull *github.PullRequest) PullRequest {
 		Author: pull.GetUser().GetLogin(),
 		Head:   pull.GetHead().GetRef(), HeadSHA: pull.GetHead().GetSHA(), HeadRepository: pull.GetHead().GetRepo().GetFullName(),
 		Base: pull.GetBase().GetRef(), BaseSHA: pull.GetBase().GetSHA(), BaseRepository: pull.GetBase().GetRepo().GetFullName(),
-		Mergeable: mergeable, MergeCommitSHA: pull.GetMergeCommitSHA(),
+		Mergeable: mergeable, MergeCommitSHA: pull.GetMergeCommitSHA(), MergeableState: pull.GetMergeableState(),
 	}
 }
 

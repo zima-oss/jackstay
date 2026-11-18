@@ -1598,9 +1598,12 @@ newest run of each check name in each check suite (so a re-run does not leave a 
 commit statuses of other apps. Each workflow run is a suite of its own, so a run a `concurrency`
 group cancelled for a newer run of the same workflow on the same head is still listed: a cancelled
 check run with a check of the same name in a newer run (a higher run id) of the same workflow (by
-its id), started by the same event for the same branch (the context a concurrency group is keyed
-on), is **superseded**, reported and not judged; the newer run is. Anything less is an independent
-run (a manual dispatch beside a push, the same commit pushed to another branch) and hides nothing. Buckets: SUCCESS → pass; SKIPPED,
+its id), for the same branch and event, is **superseded**, reported and not judged; the newer run
+is. Only for events whose run those fix (`push`, `pull_request`, `pull_request_target`,
+`merge_group`): the newer run is the same job run again. GitHub records no marker of a concurrency
+cancellation in its documented API, so the rule rests on the runs' inputs, not on the cause. A
+manual dispatch (it takes inputs), a scheduled run, or the same commit pushed to another branch is
+an independent run and hides nothing. Buckets: SUCCESS → pass; SKIPPED,
 NEUTRAL → skipping; FAILURE, ERROR, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE → fail; CANCELLED →
 cancel (settled, failing, and named as a cancellation); STALE, PENDING, EXPECTED and anything else
 → pending. No checks registered is waiting, not a pass. The head is compared after the rows are
@@ -1669,10 +1672,12 @@ It waits for the checks the base branch's rules require: the `required_status_ch
 rulesets that apply to it and its classic protection's required contexts (REST
 `rules/branches/BRANCH`, paged, and `branches/BRANCH`). A check required from an app (a ruleset's
 `integration_id`, a protection's `app_id`) is only that app's check run of the name. A required
-check not registered on the head is also looked for on GitHub's test merge commit of the pull
-request (where GitHub may take it from), and waited for while on neither. The base whose rules were
+check is judged as GitHub judges it: when the pull request's test merge commit has a result for it,
+that result must pass; else the head's (GitHub's "conflicts between head commit and test merge
+commit"). One on neither is waited for. The base whose rules were
 read is bound to the pull request: every look of the wait, the branch update, the description's
-judgement and a last read just before the merge refuse a base that changed, with exit 4.
+judgement and a last read just before the merge refuse a base that changed, with exit 4; whether
+the branch is behind comes from the same answer as the base it is checked against.
 Of the other checks only a failure stops the merge; one pending, never started or cancelled is
 reported and not waited for (a job no runner picks up does not hold a merge GitHub would accept).
 Rules that require none, or that cannot be read, leave every check waited for, as `ci-wait` does;

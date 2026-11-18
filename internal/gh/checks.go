@@ -3,6 +3,7 @@ package gh
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -152,6 +153,11 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			}
 			continue
 		}
+		if len(options.required) > 0 && now.MergeCommitSHA != "" {
+			if rows, err = work.withMergeCommitRows(rows, options.required, now.MergeCommitSHA); err != nil {
+				return 0, err
+			}
+		}
 		if len(rows) == 0 {
 			// Queued but nothing registered: the state four hand-rolled loops took for "finished".
 			if !announced {
@@ -170,14 +176,6 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			continue
 		}
 		weighed := weigh(rows, options.required)
-		if len(weighed.missing) > 0 && now.MergeCommitSHA != "" {
-			// GitHub may take a required check from its test merge commit (a status reported
-			// there): the missing ones are looked for on it too.
-			if rows, err = work.withMergeCommitRows(rows, weighed.missing, now.MergeCommitSHA); err != nil {
-				return 0, err
-			}
-			weighed = weigh(rows, options.required)
-		}
 		pending := weighed.pending
 		if len(pending) > 0 {
 			names := strings.Join(pending[:min(4, len(pending))], ", ")
@@ -249,9 +247,11 @@ func (work *session) ciStatus(number int) (int, error) {
 	return exitFine, nil
 }
 
-// withMergeCommitRows adds to rows the rows of the test merge commit that are required checks
-// missing on the head. A merge commit GitHub has not made yet adds nothing.
-func (work *session) withMergeCommitRows(rows []githubapi.Check, missing []RequiredCheck, mergeSHA string) ([]githubapi.Check, error) {
+// withMergeCommitRows applies GitHub's rule for a required check: when the test merge commit
+// has a result for it, that result is the one that must pass; else the head's. So the head's rows
+// of a required check the merge commit reports are replaced by the merge commit's. A merge
+// commit GitHub has not made yet changes nothing.
+func (work *session) withMergeCommitRows(rows []githubapi.Check, required []RequiredCheck, mergeSHA string) ([]githubapi.Check, error) {
 	merged, err := work.github.Checks(work.ctx, mergeSHA)
 	var notFound *githubapi.CommitNotFoundError
 	if errors.As(err, &notFound) {
@@ -260,13 +260,19 @@ func (work *session) withMergeCommitRows(rows []githubapi.Check, missing []Requi
 	if err != nil {
 		return nil, fmt.Errorf("the checks of the test merge commit %s: %w", short(mergeSHA, 8), err)
 	}
-	out := append([]githubapi.Check(nil), rows...)
-	for _, row := range merged {
-		for _, check := range missing {
+	var fromMerge []RequiredCheck
+	var out []githubapi.Check
+	for _, check := range required {
+		for _, row := range merged {
 			if check.satisfiedBy(row) {
+				fromMerge = append(fromMerge, check)
 				out = append(out, row)
-				break
 			}
+		}
+	}
+	for _, row := range rows {
+		if !slices.ContainsFunc(fromMerge, func(check RequiredCheck) bool { return check.satisfiedBy(row) }) {
+			out = append(out, row)
 		}
 	}
 	return out, nil
@@ -287,7 +293,6 @@ func (work *session) sameBase(pull githubapi.PullRequest) error {
 // what is only reported.
 type weighed struct {
 	pending    []string          // names waited for: not settled, or required and not registered
-	missing    []RequiredCheck   // required checks with no row
 	failed     []githubapi.Check // failed or cancelled checks that count
 	judged     int               // how many checks count
 	superseded []githubapi.Check // cancelled runs a newer run of the same workflow replaced
@@ -331,21 +336,26 @@ func weigh(rows []githubapi.Check, required []RequiredCheck) weighed {
 	}
 	for index, check := range required {
 		if !present[index] {
-			out.missing = append(out.missing, check)
 			out.pending = append(out.pending, check.String()+" (not registered yet)")
 		}
 	}
 	return out
 }
 
+// fixedInputs are the events whose run is fixed by its workflow, branch, head commit and event:
+// two such runs are the same job run twice. A dispatch takes inputs and a schedule is its own
+// occasion, so their runs are independent of each other.
+var fixedInputs = map[string]bool{"push": true, "pull_request": true, "pull_request_target": true, "merge_group": true}
+
 // replacedBy says whether row is a cancelled check run that a newer run replaced: a run of the same
-// workflow (by id), started by the same event for the same branch, on the same head — the context
-// a concurrency group is keyed on, and the run GitHub itself takes as the check's newest result.
-// Anything less is an independent run (a manual dispatch beside a push, a push of the same commit
-// to another branch): it does not hide the cancellation.
+// workflow (by id), for the same branch and event, on the same head, of an event whose inputs those
+// fix. The newer run is then the same job run again, and is judged in its place (issue #13: a
+// concurrency group cancels the first when a pull request is edited right after a push). Anything
+// else is an independent run (a manual dispatch, a scheduled run, the same commit pushed to
+// another branch) and does not hide the cancellation.
 func replacedBy(row githubapi.Check, rows []githubapi.Check) bool {
 	if row.Kind != githubapi.CheckRun || row.Bucket() != githubapi.Cancel || row.WorkflowID == 0 || row.RunID == 0 ||
-		row.Event == "" || row.Branch == "" {
+		!fixedInputs[row.Event] || row.Branch == "" {
 		return false
 	}
 	for _, other := range rows {
