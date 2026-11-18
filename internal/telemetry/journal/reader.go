@@ -252,18 +252,15 @@ type wireValue struct {
 	} `json:"arrayValue"`
 }
 
-// wireNumber is an int64 the JSON encoding writes as a string or a number.
+// wireNumber is an int64 the JSON encoding writes as a string or a number. The encoding allows
+// unsigned 64-bit times too; one beyond the int64 range (after the year 2262) is refused, not
+// wrapped round to a negative time.
 type wireNumber int64
 
 func (number *wireNumber) UnmarshalJSON(data []byte) error {
-	text := string(bytes.Trim(data, `"`))
-	parsed, err := strconv.ParseInt(text, 10, 64)
+	parsed, err := strconv.ParseInt(string(bytes.Trim(data, `"`)), 10, 64)
 	if err != nil {
-		unsigned, problem := strconv.ParseUint(text, 10, 64)
-		if problem != nil {
-			return err
-		}
-		parsed = int64(unsigned) // #nosec G115 -- times of this century fit
+		return err
 	}
 	*number = wireNumber(parsed)
 	return nil
