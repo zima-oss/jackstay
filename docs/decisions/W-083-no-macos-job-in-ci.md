@@ -15,7 +15,8 @@ starts later than a Linux one, for code that is mostly the same on both systems.
 - `.github/workflows/gate.yml` has one job, `gate`, on `ubuntu-latest`. It is the only CI check
   and the one `main` requires.
 - There is no macOS job. The macOS-only code (`*_darwin.go`) is checked by the maintainers'
-  `just gate` on a Mac before an install and before a release.
+  `just gate` on a Mac before an install and before a release: a release is approved only after
+  the gate has passed on a Mac on the tagged commit.
 
 ## Consequences
 
