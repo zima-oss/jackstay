@@ -259,7 +259,7 @@ func TestBuildChangedReadsOnlyTheBuildInputs(t *testing.T) {
 
 // signingHome is a jackstay home whose setting names identity; off macOS the test is skipped (nothing
 // is ever signed there).
-func signingHome(t *testing.T, identity string) {
+func signingHome(t *testing.T, identity string) string {
 	t.Helper()
 	if runtime.GOOS != "darwin" {
 		t.Skip("signing is macOS's (W-070)")
@@ -273,16 +273,35 @@ func signingHome(t *testing.T, identity string) {
 	if err := os.WriteFile(place, []byte(identity+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	return place
 }
 
-// A signature that fails refuses the install: exit 2, the new folder removed, nothing live.
+// adHocUntilSigned is fakeCodesign whose display says ad-hoc until a --sign call: a local build.
+func adHocUntilSigned(fail string, calls *[][]string) Runner {
+	signing := fakeCodesign(fail, signedDisplay, calls)
+	signed := false
+	return func(argv []string) (supervise.Captured, error) {
+		if argv[1] == "--sign" {
+			signed = true
+		}
+		if argv[1] == "--display" && !signed {
+			*calls = append(*calls, argv)
+			return supervise.Captured{Stderr: []byte(adHocDisplay)}, nil
+		}
+		return signing(argv)
+	}
+}
+
+// A signature that fails refuses the install: exit 2, the new folder removed, nothing live, and the
+// message names the fix (#8).
 func TestAFailedSignatureRefusesTheInstall(t *testing.T) {
-	signingHome(t, owner)
+	setting := signingHome(t, owner)
 	prefix := filepath.Join(t.TempDir(), "prefix")
 	run, _, stderr := options(prefix, binaries["1111111"])
 	var calls [][]string
-	run.Codesign = fakeCodesign("--sign", signedDisplay, &calls)
-	if code := Install(run); code != 2 || !strings.Contains(stderr.String(), "could not be signed") {
+	run.Codesign = adHocUntilSigned("--sign", &calls)
+	if code := Install(run); code != 2 || !strings.Contains(stderr.String(), "could not be signed") ||
+		!strings.Contains(stderr.String(), "to fix it, put") || !strings.Contains(stderr.String(), setting) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	state, _ := layout.Read(prefix)
@@ -297,7 +316,7 @@ func TestTheNewBinaryIsSignedBeforeItIsLive(t *testing.T) {
 	prefix := filepath.Join(t.TempDir(), "prefix")
 	run, stdout, stderr := options(prefix, binaries["1111111"])
 	var calls [][]string
-	signing := fakeCodesign("", signedDisplay, &calls)
+	signing := adHocUntilSigned("", &calls)
 	run.Codesign = func(argv []string) (supervise.Captured, error) {
 		if state, _ := layout.Read(prefix); state.Live != nil {
 			t.Errorf("%v ran with a live folder", argv)
@@ -308,11 +327,67 @@ func TestTheNewBinaryIsSignedBeforeItIsLive(t *testing.T) {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	state, _ := layout.Read(prefix)
-	if len(calls) != 3 || calls[0][len(calls[0])-1] != filepath.Join(state.Live.Path, layout.Program) ||
+	live := filepath.Join(state.Live.Path, layout.Program)
+	if want := [][]string{DisplayArgs(live), SignArgs(owner, live), VerifyArgs(live), DisplayArgs(live)}; !slices.EqualFunc(calls, want, slices.Equal[[]string]) ||
 		!strings.Contains(stdout.String(), "signed with") {
 		t.Fatalf("calls %q\n%s", calls, stdout)
 	}
 	launchersRun(t, prefix)
+}
+
+// #12: a binary signed by a certificate with the identifier jst whose signature verifies (a release's,
+// notarised) is installed as it is, whatever identity the setting names: signing it again would lose
+// its notarisation. Installed again as the live version, it is still not signed again.
+func TestACertifiedBinaryKeepsItsSignature(t *testing.T) {
+	signingHome(t, "Apple Development: Someone Else (ZZZZZ99999)")
+	prefix := filepath.Join(t.TempDir(), "prefix")
+	run, stdout, stderr := options(prefix, binaries["1111111"])
+	var calls [][]string
+	run.Codesign = fakeCodesign("", signedDisplay, &calls)
+	if code := Install(run); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	binary, before := liveBinary(t, prefix)
+	if want := [][]string{DisplayArgs(binary), VerifyArgs(binary)}; !slices.EqualFunc(calls, want, slices.Equal[[]string]) ||
+		!strings.Contains(stdout.String(), "kept the binary's own signature by \""+owner+"\"") {
+		t.Fatalf("calls %q\n%s", calls, stdout)
+	}
+	again, stdout, stderr := options(prefix, binaries["1111111"])
+	calls = nil
+	again.Codesign = fakeCodesign("", signedDisplay, &calls)
+	if code := Install(again); code != 0 || slices.ContainsFunc(calls, func(argv []string) bool { return argv[1] == "--sign" }) ||
+		strings.Contains(stdout.String(), "signed again") {
+		t.Fatalf("exit %d, calls %q: %s %s", code, calls, stdout, stderr)
+	}
+	if _, after := liveBinary(t, prefix); !os.SameFile(before, after) {
+		t.Fatal("a certified live binary was replaced")
+	}
+}
+
+// A certified binary whose signature does not verify strictly is signed, as an unsigned one is.
+func TestACertifiedBinaryThatDoesNotVerifyIsSigned(t *testing.T) {
+	signingHome(t, owner)
+	prefix := filepath.Join(t.TempDir(), "prefix")
+	run, stdout, stderr := options(prefix, binaries["1111111"])
+	var calls [][]string
+	signing := fakeCodesign("", signedDisplay, &calls)
+	verified := 0
+	run.Codesign = func(argv []string) (supervise.Captured, error) {
+		if argv[1] == "--verify" {
+			verified++
+			if verified == 1 {
+				calls = append(calls, argv)
+				return supervise.Captured{Status: 1, Stderr: []byte("invalid signature\n")}, nil
+			}
+		}
+		return signing(argv)
+	}
+	if code := Install(run); code != 0 || !strings.Contains(stdout.String(), "signed with") {
+		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
+	}
+	if !slices.ContainsFunc(calls, func(argv []string) bool { return argv[1] == "--sign" }) {
+		t.Fatalf("calls %q", calls)
+	}
 }
 
 // Real codesign, ad-hoc (any Mac): the identifier is set, the signature verifies, and the binary and

@@ -366,6 +366,8 @@ func TestSigning(t *testing.T) {
 		{"installed before the setting", owner, listed, adHoc, "binary-not-signed"},
 		// W-075: an install of 0.5.4-0.5.8 carries the earlier identifier; the next install signs it again.
 		{"signed with the earlier identifier", owner, listed, "Identifier=dev.jackstay.jst\nAuthority=" + owner + "\n", "binary-not-signed"},
+		// #12: a release's binary, signed by a Developer ID and notarised, is kept as it is by install.
+		{"a release's binary, another certificate", owner, listed, "Identifier=jst\nAuthority=Developer ID Application: Someone Else (ZZZZZ99999)\n", ""},
 		{"the identity is not in the keychain", owner, "     0 valid identities found\n", signed, "codesign-identity-invalid"},
 		{"no identity configured", "", "", adHoc, ""},
 	} {

@@ -119,6 +119,43 @@ func SignedBy(signature Signature, identity string) bool {
 	return !signature.AdHoc && signature.Identifier == SigningIdentifier && signature.Authority == identity
 }
 
+// Certified says whether a signature is a signing certificate's with jst's identifier: a release's
+// binary (signed with a Developer ID and notarised, W-075) or one an install signed. Such a binary
+// is installed as it is, whatever identity the setting names: signing it again would change its
+// code directory, and Gatekeeper would no longer find its notarisation. Only an unsigned or ad-hoc
+// signed binary (a local `go build`), or one with another identifier, is signed at install.
+func Certified(signature Signature) bool {
+	return !signature.AdHoc && signature.Authority != "" && signature.Identifier == SigningIdentifier
+}
+
+// KeepsItsSignature says whether file is Certified and its signature verifies strictly, and what
+// its signature is. A display that fails (codesign finds the file unsigned) is no signature to keep.
+func KeepsItsSignature(run Runner, file string) (bool, Signature, error) {
+	said, err := run(DisplayArgs(file))
+	if err != nil {
+		return false, Signature{}, fmt.Errorf("codesign --display did not run: %w", err)
+	}
+	if said.Status != 0 {
+		return false, Signature{}, nil
+	}
+	signature := ReadSignature(string(said.Stderr) + string(said.Stdout))
+	if !Certified(signature) {
+		return false, signature, nil
+	}
+	verified, err := run(VerifyArgs(file))
+	if err != nil {
+		return false, signature, fmt.Errorf("codesign --verify did not run: %w", err)
+	}
+	return verified.Status == 0, signature, nil
+}
+
+// SigningFix is what to do when the binary cannot be signed with identity, the setting's at path.
+func SigningFix(identity, path string) string {
+	return fmt.Sprintf("put %q back in the keychain (`security find-identity -v -p codesigning` lists the valid ones), "+
+		"or write another identity's name into %s, or remove that file to install without signing; "+
+		"`jst doctor` checks the setting (docs/design/implementation.md section 7.4)", identity, path)
+}
+
 // IdentityValid says whether `security find-identity -v -p codesigning` lists identity among the
 // valid (present, unexpired, unrevoked) code-signing identities, by its exact name. A line whose
 // quoted name is followed by anything (`"…" (CSSMERR_TP_CERT_REVOKED)`, which -v still lists) is not
@@ -194,29 +231,17 @@ func firstLine(said supervise.Captured) string {
 // `.partial` name (layout), removed when the signing ends and before the next one starts.
 const resignPartial = "resign" + layout.PartialSuffix
 
-// Resign signs the binary of the live version folder again when its signature is not identity's
-// (the setting changed after the version was installed: W-070, W-075) or does not verify strictly,
-// and says whether it did. candidate is the binary being installed, which names the live version
+// Resign signs the binary of the live version folder again when it does not keep its signature
+// (KeepsItsSignature: it is unsigned or ad-hoc, was installed before the setting, has an earlier
+// identifier (W-075) or does not verify strictly), and says whether it did. candidate is the binary being installed, which names the live version
 // and commit: it, not the live file, is what is copied. The live file is never signed in place: the
 // copy in the folder is signed, verified and read back (Sign), proved through its own links as a
 // new folder is (prove.Folder), and only then renamed over the live binary, so an error leaves the
 // live binary as it was.
 func Resign(ctx context.Context, run Runner, identity, folder, candidate, versionText string) (bool, error) {
 	live := filepath.Join(folder, layout.Program)
-	said, err := run(DisplayArgs(live))
-	if err != nil {
-		return false, fmt.Errorf("codesign --display did not run: %w", err)
-	}
-	// A display that fails (a binary codesign finds unsigned) is a signature that is not identity's;
-	// one that names identity must also verify, or the file is damaged.
-	if said.Status == 0 && SignedBy(ReadSignature(string(said.Stderr)+string(said.Stdout)), identity) {
-		verified, err := run(VerifyArgs(live))
-		if err != nil {
-			return false, fmt.Errorf("codesign --verify did not run: %w", err)
-		}
-		if verified.Status == 0 {
-			return false, nil
-		}
+	if kept, _, err := KeepsItsSignature(run, live); err != nil || kept {
+		return false, err
 	}
 	work := filepath.Join(folder, resignPartial)
 	if err := os.RemoveAll(work); err != nil {

@@ -335,12 +335,15 @@ usage: jst install [--prefix DIR] [--checkout DIR | --binary FILE]
 Without --checkout or --binary: the checkout around the working folder, else the running binary.
 
 On a Mac whose ~/.jackstay/.all/codesign-identity names a code-signing identity (one line, the name
-as `security find-identity -v -p codesigning` prints it), the new binary is signed with it and the
-identifier jst before it becomes live, and verified; a failure refuses the install.
-An install of the version already live whose binary is not signed by that identity (installed before
-the setting, or by another identity), or whose signature does not verify, signs it again: a copy of
-the binary being installed is signed in its folder, verified, proved and renamed over it.
-Without that file, and off macOS, the binary keeps its ad-hoc signature.
+as `security find-identity -v -p codesigning` prints it), a new binary that is unsigned or ad-hoc
+signed (a local build) is signed with it and the identifier jst before it becomes live, and verified;
+a failure refuses the install and names the fix. A binary already signed by a certificate with the
+identifier jst whose signature verifies strictly (a release's, notarised) is kept as it is: signing it
+again would lose its notarisation.
+An install of the version already live whose binary does not keep its signature that way (installed
+before the setting, an earlier identifier, or a signature that does not verify) signs it again: a
+copy of the binary being installed is signed in its folder, verified, proved and renamed over it.
+Without that file, and off macOS, the binary keeps the signature it has.
 
 exit: 0 installed; 1 a step failed half-way (the message says what is left); 2 refused, nothing
 was changed.

@@ -335,8 +335,10 @@ func checkSigning(report *Report, inputs Inputs, live *layout.Folder) {
 	if signature.AdHoc {
 		facts["authority"] = "ad-hoc"
 	}
-	if inputs.CodesignIdentity != "" && !install.SignedBy(signature, inputs.CodesignIdentity) {
-		report.problem("binary-not-signed", fmt.Sprintf("%s is not signed by %q with the identifier %s (identifier %q, authority %q): installed before the setting, by another identity, or with an earlier identifier.",
+	// A binary signed by a certificate with jst's identifier (a release's) is kept as it is by
+	// install (install.Certified), whatever the setting names.
+	if inputs.CodesignIdentity != "" && !install.SignedBy(signature, inputs.CodesignIdentity) && !install.Certified(signature) {
+		report.problem("binary-not-signed", fmt.Sprintf("%s is not signed by %q with the identifier %s (identifier %q, authority %q): unsigned or ad-hoc (installed before the setting) or with an earlier identifier.",
 			binary, inputs.CodesignIdentity, install.SigningIdentifier, signature.Identifier, facts["authority"]),
 			"`jst install` signs it again: run it from a checkout at the live version's commit, or install a newer version")
 	}

@@ -158,6 +158,7 @@ jst version                     # jackstay <version> (<commit>)
 
 On macOS, `jst install` can sign the binary with your own code-signing identity, so a firewall's
 rule for `jst` survives an update: see [signing at install](../design/implementation.md#74-signing-at-install-w-070).
+It signs only a binary you built; a release's binary, already signed and notarised, is kept as it is.
 
 ## What can go wrong
 

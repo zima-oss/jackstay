@@ -156,7 +156,9 @@ func Install(options Options) int {
 		if identity != "" {
 			resigned, err := Resign(ctx, options.codesign(), identity, target, binary, versionText)
 			if err != nil {
-				return refuse("the live binary could not be signed again with %q (the identity in %s): %v", identity, setting, err)
+				code := refuse("the live binary could not be signed again with %q (the identity in %s): %v", identity, setting, err)
+				fmt.Fprintf(options.Stderr, "jst install: to fix it, %s\n", SigningFix(identity, setting))
+				return code
 			}
 			if resigned {
 				fmt.Fprintf(options.Stdout, "jst install: the live %s was signed again with %q, identifier %s\n",
@@ -169,11 +171,24 @@ func Install(options Options) int {
 			return refuse("the version folder could not be made: %v", err)
 		}
 		if identity != "" {
-			if err := Sign(options.codesign(), identity, filepath.Join(target, layout.Program)); err != nil {
+			newBinary := filepath.Join(target, layout.Program)
+			kept, signature, err := KeepsItsSignature(options.codesign(), newBinary)
+			switch {
+			case err != nil:
 				layout.RemoveFolder(target)
-				return refuse("the binary could not be signed with %q (the identity in %s): %v", identity, setting, err)
+				return refuse("the binary's signature could not be read: %v", err)
+			case kept:
+				fmt.Fprintf(options.Stdout, "jst install: kept the binary's own signature by %q, identifier %s (signing it again would lose its notarisation)\n",
+					signature.Authority, signature.Identifier)
+			default:
+				if err := Sign(options.codesign(), identity, newBinary); err != nil {
+					layout.RemoveFolder(target)
+					code := refuse("the binary could not be signed with %q (the identity in %s): %v", identity, setting, err)
+					fmt.Fprintf(options.Stderr, "jst install: to fix it, %s\n", SigningFix(identity, setting))
+					return code
+				}
+				fmt.Fprintf(options.Stdout, "jst install: signed with %q, identifier %s\n", identity, SigningIdentifier)
 			}
-			fmt.Fprintf(options.Stdout, "jst install: signed with %q, identifier %s\n", identity, SigningIdentifier)
 		}
 		if err := prove.Folder(ctx, target, versionText); err != nil {
 			layout.RemoveFolder(target)

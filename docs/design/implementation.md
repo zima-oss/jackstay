@@ -1392,22 +1392,33 @@ folder (`MakeFolder`) and proving it (section 7.3), so before any rename makes i
 3. `codesign --display --verbose=2 <folder>/jst` reads back the identifier and the first authority,
    which must be the identity.
 
-Any step failing refuses the install (exit 2): the new folder is removed and nothing live changes.
+Any step failing refuses the install (exit 2): the new folder is removed and nothing live changes,
+and the message names the fix: put the identity back in the keychain, or name another identity in
+the setting, or remove the setting to install without signing.
+
+**A binary that keeps its signature.** Before step 1, the binary's signature is read
+(`codesign --display`, then `codesign --verify --strict`). A binary signed by a certificate (not
+ad-hoc) with the identifier `jst` whose signature verifies, as a release archive's is (signed with a
+Developer ID and notarised, section 6), is installed as it is, whatever identity the setting names:
+signing it again would change its code directory, and Gatekeeper would no longer find its
+notarisation. Only an unsigned or ad-hoc signed binary (a local `go build`), or one with another
+identifier, is signed.
+
 `jackstay` and `jst-guard` are links to `jst` in the folder, so the proof of section 7.3, which runs
 `jst`, `jackstay` and the guard, runs the signed binary through each link.
 
 **The version already live.** An install of the version already live makes no folder. With an
 identity configured, it reads the live binary's signature (`codesign --display`, then `codesign
---verify --strict`); when that is not the identity's with the identifier (installed before the
-setting, by another identity, or with an earlier identifier: `dev.jackstay.jst` until W-075 made it
-`jst`) or does not verify, it signs the live binary again the same safe
+--verify --strict`); when it does not keep its signature (above: installed before the setting,
+unsigned or ad-hoc, or with an earlier identifier, `dev.jackstay.jst` until W-075 made it `jst`, or
+a signature that does not verify), it signs the live binary again the same safe
 way, under the prefix's lock: the binary being installed (which names the live version and commit)
 is copied into `<folder>/resign.partial/` with two links to it, the copy is signed, verified and
 read back (steps 1–3), proved through its links as a new folder is (section 7.3), and only then
 renamed over `<folder>/jst` (one rename in one folder, so every launcher runs either the old binary
 or the new one). Any step failing refuses the install (exit 2) and leaves the live binary as it was;
-`resign.partial` is removed when the signing ends and before the next one starts. A binary already
-signed by the identity, whose signature verifies, is left alone.
+`resign.partial` is removed when the signing ends and before the next one starts. A live binary
+that keeps its signature (the identity's, or a release's) is left alone.
 
 **The identity setting is a file of this machine's jackstay home**, `~/.jackstay/.all/codesign-identity`
 (under `JACKSTAY_HOME` when that is set): one line, the identity's name
@@ -1420,8 +1431,9 @@ the binary keeps the Go linker's ad-hoc signature.
 
 `jst doctor` (section 7.7), on macOS: the live binary's identifier and authority as facts; with an
 identity configured, a problem `codesign-identity-invalid` when the keychain does not list it as
-valid (missing, expired, revoked) and `binary-not-signed` when the live binary is not signed by it
-(an install made before the setting, by another identity, or with an earlier identifier), which `jst install` from a checkout at
+valid (missing, expired, revoked) and `binary-not-signed` when the live binary is neither signed by
+it nor keeps its signature (an install made before the setting, or with an earlier identifier),
+which `jst install` from a checkout at
 the live commit mends (above), as an install of a newer version does.
 
 Not covered: development builds (`.build/jst`, the gate's `go run` tools). Release archives are
