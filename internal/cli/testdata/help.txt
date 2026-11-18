@@ -341,8 +341,9 @@ a failure refuses the install and names the fix. A binary already signed by a ce
 identifier jst whose signature verifies strictly (a release's, notarised) is kept as it is: signing it
 again would lose its notarisation.
 An install of the version already live whose binary does not keep its signature that way (installed
-before the setting, an earlier identifier, or a signature that does not verify) signs it again: a
-copy of the binary being installed is signed in its folder, verified, proved and renamed over it.
+before the setting, an earlier identifier, or a signature that does not verify) replaces it: a copy
+of the binary being installed is signed in its folder (unless it keeps its own signature, a
+release's), verified, proved and renamed over it.
 Without that file, and off macOS, the binary keeps the signature it has.
 
 exit: 0 installed; 1 a step failed half-way (the message says what is left); 2 refused, nothing

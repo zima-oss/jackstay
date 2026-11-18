@@ -352,28 +352,37 @@ func signing(t *testing.T, identity, listed, display string) Inputs {
 	return given
 }
 
-// #12, review F3: a release's binary is no problem only while its signature verifies strictly; one
-// that does not is reported, as install would sign it again.
+// #12: doctor judges the live binary by install's rule (install.KeepsItsSignature): a binary signed
+// by the configured identity or by another certificate (a release's) is no problem only while its
+// signature verifies strictly; one that does not is reported, as install would sign it again.
 func TestACertifiedBinaryThatDoesNotVerifyIsAProblem(t *testing.T) {
 	const owner = "Apple Development: Max Example (ABCDE12345)"
 	listed := `  1) 0123456789ABCDEF0123456789ABCDEF01234567 "` + owner + `"` + "\n     1 valid identities found\n"
-	release := "Identifier=jst\nAuthority=Developer ID Application: Someone Else (ZZZZZ99999)\n"
-	for _, verifies := range []bool{true, false} {
-		given := signing(t, owner, listed, release)
-		answer := given.Run
-		given.Run = func(argv []string, input []byte) (supervise.Captured, error) {
-			if argv[0] == "codesign" && argv[1] == "--verify" && !verifies {
-				return supervise.Captured{Status: 1, Stderr: []byte("invalid signature\n")}, nil
-			}
-			return answer(argv, input)
+	for _, display := range []string{
+		"Identifier=jst\nAuthority=" + owner + "\n",
+		"Identifier=jst\nAuthority=Developer ID Application: Someone Else (ZZZZZ99999)\n",
+	} {
+		for _, verifies := range []bool{true, false} {
+			checkVerified(t, signing(t, owner, listed, display), verifies)
 		}
-		want := ""
-		if !verifies {
-			want = "binary-not-signed"
+	}
+}
+
+func checkVerified(t *testing.T, given Inputs, verifies bool) {
+	t.Helper()
+	answer := given.Run
+	given.Run = func(argv []string, input []byte) (supervise.Captured, error) {
+		if argv[0] == "codesign" && argv[1] == "--verify" && !verifies {
+			return supervise.Captured{Status: 1, Stderr: []byte("invalid signature\n")}, nil
 		}
-		if got := kinds(Diagnose(given).Problems); got != want {
-			t.Fatalf("verifies %v: problems %s, want %s", verifies, got, want)
-		}
+		return answer(argv, input)
+	}
+	want := ""
+	if !verifies {
+		want = "binary-not-signed"
+	}
+	if got := kinds(Diagnose(given).Problems); got != want {
+		t.Fatalf("verifies %v: problems %s, want %s", verifies, got, want)
 	}
 }
 

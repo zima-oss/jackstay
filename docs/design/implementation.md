@@ -1413,10 +1413,12 @@ identifier, is signed.
 identity configured, it reads the live binary's signature (`codesign --display`, then `codesign
 --verify --strict`); when it does not keep its signature (above: installed before the setting,
 unsigned or ad-hoc, or with an earlier identifier, `dev.jackstay.jst` until W-075 made it `jst`, or
-a signature that does not verify), it signs the live binary again the same safe
+a signature that does not verify), it replaces the live binary the same safe
 way, under the prefix's lock: the binary being installed (which names the live version and commit)
 is copied into `<folder>/resign.partial/` with two links to it, the copy is signed, verified and
-read back (steps 1–3), proved through its links as a new folder is (section 7.3), and only then
+read back (steps 1–3) unless it keeps its own signature (a release's binary installed over an
+ad-hoc build of the same version, which then needs no usable identity and keeps its notarisation),
+proved through its links as a new folder is (section 7.3), and only then
 renamed over `<folder>/jst` (one rename in one folder, so every launcher runs either the old binary
 or the new one). Any step failing refuses the install (exit 2) and leaves the live binary as it was;
 `resign.partial` is removed when the signing ends and before the next one starts. A live binary
@@ -1433,9 +1435,9 @@ the binary keeps the Go linker's ad-hoc signature.
 
 `jst doctor` (section 7.7), on macOS: the live binary's identifier and authority as facts; with an
 identity configured, a problem `codesign-identity-invalid` when the keychain does not list it as
-valid (missing, expired, revoked) and `binary-not-signed` when the live binary is neither signed by
-it nor keeps its signature (an install made before the setting, or with an earlier identifier),
-which `jst install` from a checkout at
+valid (missing, expired, revoked) and `binary-not-signed` when the live binary does not keep its
+signature by install's own rule (above, the same function: an install made before the setting, an
+earlier identifier, or a signature that does not verify strictly), which `jst install` from a checkout at
 the live commit mends (above), as an install of a newer version does.
 
 Not covered: development builds (`.build/jst`, the gate's `go run` tools). Release archives are

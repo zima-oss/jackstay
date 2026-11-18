@@ -335,16 +335,17 @@ func checkSigning(report *Report, inputs Inputs, live *layout.Folder) {
 	if signature.AdHoc {
 		facts["authority"] = "ad-hoc"
 	}
-	// A binary signed by a certificate with jst's identifier (a release's) whose signature verifies
-	// strictly is kept as it is by install (install.KeepsItsSignature), whatever the setting names.
-	keeps := false
-	if inputs.CodesignIdentity != "" && !install.SignedBy(signature, inputs.CodesignIdentity) && install.Certified(signature) {
-		verified, err := inputs.Run(install.VerifyArgs(binary), nil)
-		keeps = err == nil && verified.Status == 0
+	// The live binary is judged by install's own rule (install.KeepsItsSignature): a problem exactly
+	// when the next install would sign it again.
+	keeps := true
+	if inputs.CodesignIdentity != "" {
+		run := func(argv []string) (supervise.Captured, error) { return inputs.Run(argv, nil) }
+		kept, _, err := install.KeepsItsSignature(run, binary)
+		keeps = err == nil && kept
 	}
-	if inputs.CodesignIdentity != "" && !install.SignedBy(signature, inputs.CodesignIdentity) && !keeps {
-		report.problem("binary-not-signed", fmt.Sprintf("%s is not signed by %q with the identifier %s (identifier %q, authority %q): unsigned or ad-hoc (installed before the setting), with an earlier identifier, or with a signature that does not verify.",
-			binary, inputs.CodesignIdentity, install.SigningIdentifier, signature.Identifier, facts["authority"]),
+	if !keeps {
+		report.problem("binary-not-signed", fmt.Sprintf("%s does not keep its signature, so the next install signs it again with %q (identifier %q, authority %q): unsigned or ad-hoc (installed before the setting), an identifier other than %s, or a signature that does not verify strictly.",
+			binary, inputs.CodesignIdentity, signature.Identifier, facts["authority"], install.SigningIdentifier),
 			"`jst install` signs it again: run it from a checkout at the live version's commit, or install a newer version")
 	}
 }
