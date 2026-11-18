@@ -485,3 +485,33 @@ func TestARetargetedPullRequestStopsTheWait(t *testing.T) {
 		t.Fatal("merged into another base")
 	}
 }
+
+// A pull request retargeted after the wait stops before anything is written on GitHub: no branch
+// update, no merge.
+func TestARetargetSeenBeforeTheBranchUpdateWritesNothing(t *testing.T) {
+	moved := pull(7, "feat", shaA)
+	moved.Base = "release"
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{pull(7, "feat", shaA), pull(7, "feat", shaA), moved}})
+	bench.hub.required = []RequiredCheck{{Name: "test"}}
+	bench.hub.mergeStates = []string{"behind"}
+	_, stderr := bench.expect(exitMoved, "pr-land", "--timeout", "30")
+	contains(t, stderr, "the base of #7 changed from main to release")
+	if len(bench.hub.updates) != 0 || len(bench.hub.Merges()) != 0 {
+		t.Fatalf("wrote after the retarget: updates %v merges %v", bench.hub.updates, bench.hub.Merges())
+	}
+}
+
+// A required check GitHub takes from the test merge commit (a status reported there) is found.
+func TestARequiredCheckOnTheTestMergeCommitIsFound(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{passed("test")}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "SUCCESS"},
+		{Name: "unrelated", Kind: githubapi.StatusContext, State: "FAILURE"}})
+	bench.hub.required = []RequiredCheck{{Name: "external"}}
+	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "GREEN: 1 checks")
+	if len(bench.hub.Merges()) != 1 {
+		t.Fatal("not merged")
+	}
+}

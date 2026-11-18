@@ -99,6 +99,9 @@ func (work *session) judgeMerge(number int, head, branch string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("pull request #%d: %w", number, err)
 	}
+	if err := work.sameBase(pull); err != nil {
+		return "", err
+	}
 	base := pull.Base // the pull request's own base, which need not be the default branch
 	remoteName, err := work.pushRemote(branch)
 	if err != nil {

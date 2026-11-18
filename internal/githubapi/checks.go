@@ -29,6 +29,7 @@ type Check struct {
 	WorkflowID  int64  // its workflow's id
 	RunID       int64  // its workflow run
 	Event       string // the event that started the run: push, pull_request, …
+	Branch      string // the branch its check suite ran for
 	AppID       int64  // the app whose check suite holds a check run (GitHub Actions: 15368)
 	Description string // a status's
 	StartedAt   time.Time
@@ -83,7 +84,7 @@ const checksQuery = `query($owner: String!, $name: String!, $oid: GitObjectID!, 
         nodes {
           __typename
           ... on CheckRun { name status conclusion detailsUrl startedAt completedAt
-            checkSuite { app { databaseId } workflowRun { databaseId event workflow { databaseId name } } } }
+            checkSuite { app { databaseId } branch { name } workflowRun { databaseId event workflow { databaseId name } } } }
           ... on StatusContext { context state targetUrl description createdAt }
         }
       } }
@@ -103,6 +104,9 @@ type checkNode struct {
 		App *struct {
 			DatabaseID int64 `json:"databaseId"`
 		} `json:"app"`
+		Branch *struct {
+			Name string `json:"name"`
+		} `json:"branch"`
 		WorkflowRun *struct {
 			DatabaseID int64  `json:"databaseId"`
 			Event      string `json:"event"`
@@ -136,6 +140,9 @@ func (node checkNode) check() Check {
 	}
 	if node.CheckSuite != nil && node.CheckSuite.App != nil {
 		check.AppID = node.CheckSuite.App.DatabaseID
+	}
+	if node.CheckSuite != nil && node.CheckSuite.Branch != nil {
+		check.Branch = node.CheckSuite.Branch.Name
 	}
 	if node.CheckSuite != nil && node.CheckSuite.WorkflowRun != nil {
 		check.Workflow = node.CheckSuite.WorkflowRun.Workflow.Name

@@ -197,6 +197,8 @@ type session struct {
 	repository string
 	// judged is the head each pull request's checks were seen green on: pr-land merges that one.
 	judged map[int]string
+	// rulesOf is the base whose rules pr-land read for each pull request: one retargeted since stops.
+	rulesOf map[int]string
 }
 
 // commandBound bounds a whole call, for the client's rate-limit waits; a wait's own deadline is
@@ -211,7 +213,7 @@ func newSession(deps Deps, need []string) (*session, error) {
 	settings, _ := loaded.GitHub()
 	ctx, cancel := context.WithTimeout(context.Background(), commandBound)
 	return &session{deps: deps, ctx: ctx, cancel: cancel, git: deps.Git(deps.Dir), config: loaded,
-		settings: settings, judged: map[int]string{}}, nil
+		settings: settings, judged: map[int]string{}, rulesOf: map[int]string{}}, nil
 }
 
 func (work *session) say(format string, values ...any) {

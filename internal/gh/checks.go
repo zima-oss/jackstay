@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -27,8 +28,6 @@ type waitOptions struct {
 	// check is waited for and judged; else only these are waited for, and of the others only a
 	// failure stops (one pending, never started or cancelled is reported, not waited for).
 	required []RequiredCheck
-	// rulesOf is the base whose rules were read: a pull request retargeted while waiting stops.
-	rulesOf string
 }
 
 // RequiredCheck is a check a branch's rules require: its name, and the app that must report it
@@ -138,9 +137,8 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("pull request #%d: %w", number, err)
 		}
-		if options.rulesOf != "" && now.Base != options.rulesOf {
-			return 0, failf(exitMoved, "the base of #%d changed from %s to %s while waiting: the checks waited for are the ones "+
-				"%s requires. Run it again.", number, options.rulesOf, now.Base, options.rulesOf)
+		if err := work.sameBase(now); err != nil {
+			return 0, err
 		}
 		if now.HeadSHA != head {
 			if !options.anyHead {
@@ -172,6 +170,14 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			continue
 		}
 		weighed := weigh(rows, options.required)
+		if len(weighed.missing) > 0 && now.MergeCommitSHA != "" {
+			// GitHub may take a required check from its test merge commit (a status reported
+			// there): the missing ones are looked for on it too.
+			if rows, err = work.withMergeCommitRows(rows, weighed.missing, now.MergeCommitSHA); err != nil {
+				return 0, err
+			}
+			weighed = weigh(rows, options.required)
+		}
 		pending := weighed.pending
 		if len(pending) > 0 {
 			names := strings.Join(pending[:min(4, len(pending))], ", ")
@@ -243,10 +249,45 @@ func (work *session) ciStatus(number int) (int, error) {
 	return exitFine, nil
 }
 
+// withMergeCommitRows adds to rows the rows of the test merge commit that are required checks
+// missing on the head. A merge commit GitHub has not made yet adds nothing.
+func (work *session) withMergeCommitRows(rows []githubapi.Check, missing []RequiredCheck, mergeSHA string) ([]githubapi.Check, error) {
+	merged, err := work.github.Checks(work.ctx, mergeSHA)
+	var notFound *githubapi.CommitNotFoundError
+	if errors.As(err, &notFound) {
+		return rows, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("the checks of the test merge commit %s: %w", short(mergeSHA, 8), err)
+	}
+	out := append([]githubapi.Check(nil), rows...)
+	for _, row := range merged {
+		for _, check := range missing {
+			if check.satisfiedBy(row) {
+				out = append(out, row)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+// sameBase refuses a pull request whose base is no longer the one whose rules pr-land read: the
+// checks waited for are the old base's. Asked before every write and in every look.
+func (work *session) sameBase(pull githubapi.PullRequest) error {
+	rulesOf := work.rulesOf[pull.Number]
+	if rulesOf == "" || pull.Base == rulesOf {
+		return nil
+	}
+	return failf(exitMoved, "the base of #%d changed from %s to %s: the checks waited for are the ones %s requires. "+
+		"Run it again.", pull.Number, rulesOf, pull.Base, rulesOf)
+}
+
 // weighed is a head's checks judged: the ones still to wait for, the ones that stop a merge, and
 // what is only reported.
 type weighed struct {
 	pending    []string          // names waited for: not settled, or required and not registered
+	missing    []RequiredCheck   // required checks with no row
 	failed     []githubapi.Check // failed or cancelled checks that count
 	judged     int               // how many checks count
 	superseded []githubapi.Check // cancelled runs a newer run of the same workflow replaced
@@ -290,22 +331,26 @@ func weigh(rows []githubapi.Check, required []RequiredCheck) weighed {
 	}
 	for index, check := range required {
 		if !present[index] {
+			out.missing = append(out.missing, check)
 			out.pending = append(out.pending, check.String()+" (not registered yet)")
 		}
 	}
 	return out
 }
 
-// replacedBy says whether row is a cancelled check run that a newer run of its workflow, started
-// by the same event, replaced. A run of another event (a manual dispatch beside a push) is an
-// independent run: it does not hide the cancellation.
+// replacedBy says whether row is a cancelled check run that a newer run replaced: a run of the same
+// workflow (by id), started by the same event for the same branch, on the same head — the context
+// a concurrency group is keyed on, and the run GitHub itself takes as the check's newest result.
+// Anything less is an independent run (a manual dispatch beside a push, a push of the same commit
+// to another branch): it does not hide the cancellation.
 func replacedBy(row githubapi.Check, rows []githubapi.Check) bool {
-	if row.Kind != githubapi.CheckRun || row.Bucket() != githubapi.Cancel || row.WorkflowID == 0 || row.RunID == 0 || row.Event == "" {
+	if row.Kind != githubapi.CheckRun || row.Bucket() != githubapi.Cancel || row.WorkflowID == 0 || row.RunID == 0 ||
+		row.Event == "" || row.Branch == "" {
 		return false
 	}
 	for _, other := range rows {
 		if other.Kind == githubapi.CheckRun && other.WorkflowID == row.WorkflowID && other.Event == row.Event &&
-			other.Name == row.Name && other.RunID > row.RunID {
+			other.Branch == row.Branch && other.Name == row.Name && other.RunID > row.RunID {
 			return true
 		}
 	}
