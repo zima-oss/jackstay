@@ -291,6 +291,7 @@ func (work *session) requiredChecks(options *landOptions, open bool, pull github
 	if open && pull.Base != "" {
 		target = pull.Base
 	}
+	options.waiting.rulesOf = target
 	required, err := work.github.RequiredChecks(work.ctx, target)
 	switch {
 	case err != nil:
@@ -299,8 +300,12 @@ func (work *session) requiredChecks(options *landOptions, open bool, pull github
 		return fmt.Sprintf("wait for every check on the resulting head (the rules of %s require none)", target)
 	}
 	options.waiting.required = required
+	names := make([]string, 0, len(required))
+	for _, check := range required {
+		names = append(names, check.String())
+	}
 	return fmt.Sprintf("wait for the checks the rules of %s require on the resulting head (%s); a failure of another check "+
-		"also stops the merge, one still pending does not", target, strings.Join(required, ", "))
+		"also stops the merge, one still pending does not", target, strings.Join(names, ", "))
 }
 
 // newDescription is the new pull request's description (nil-like "" when there is none to give),
@@ -478,6 +483,10 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 	viewed, err := work.github.PullRequest(work.ctx, number)
 	if err != nil {
 		return 0, fmt.Errorf("pull request #%d: %w", number, err)
+	}
+	if rulesOf := options.waiting.rulesOf; options.wait && rulesOf != "" && viewed.Base != rulesOf {
+		return 0, failf(exitMoved, "the base of #%d changed from %s to %s: the checks waited for are the ones %s requires. "+
+			"Run it again.", number, rulesOf, viewed.Base, rulesOf)
 	}
 	landing := work.judged[number]
 	if landing == "" {

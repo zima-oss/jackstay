@@ -333,9 +333,15 @@ func TestTheRunThatReplacedACancelledOneIsJudged(t *testing.T) {
 
 func TestARunOfAnotherWorkflowDoesNotSupersedeACancelledOne(t *testing.T) {
 	other := checkRun("lint", "COMPLETED", "SUCCESS", 5)
-	other.Workflow = "nightly"
+	other.Workflow, other.WorkflowID = "nightly", 12
+	sameName := checkRun("lint", "COMPLETED", "SUCCESS", 5)
+	sameName.WorkflowID = 12 // another workflow file with the same display name
+	dispatched := checkRun("lint", "COMPLETED", "SUCCESS", 5)
+	dispatched.Event = "workflow_dispatch" // an independent run beside the cancelled one
 	for _, rows := range [][]githubapi.Check{
 		{checkRun("lint", "COMPLETED", "CANCELLED", 4), other},
+		{checkRun("lint", "COMPLETED", "CANCELLED", 4), sameName},
+		{checkRun("lint", "COMPLETED", "CANCELLED", 4), dispatched},
 		{checkRun("lint", "COMPLETED", "CANCELLED", 6), checkRun("lint", "COMPLETED", "SUCCESS", 5)}, // an older run
 	} {
 		if judged := weigh(rows, nil); len(judged.superseded) != 0 || len(judged.failed) != 1 {

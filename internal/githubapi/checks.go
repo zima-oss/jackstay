@@ -26,7 +26,10 @@ type Check struct {
 	State       string // a status's: SUCCESS, PENDING, FAILURE, ERROR, EXPECTED
 	Link        string
 	Workflow    string // the workflow of an Actions check run
+	WorkflowID  int64  // its workflow's id
 	RunID       int64  // its workflow run
+	Event       string // the event that started the run: push, pull_request, …
+	AppID       int64  // the app whose check suite holds a check run (GitHub Actions: 15368)
 	Description string // a status's
 	StartedAt   time.Time
 	CompletedAt time.Time
@@ -80,7 +83,7 @@ const checksQuery = `query($owner: String!, $name: String!, $oid: GitObjectID!, 
         nodes {
           __typename
           ... on CheckRun { name status conclusion detailsUrl startedAt completedAt
-            checkSuite { workflowRun { databaseId workflow { name } } } }
+            checkSuite { app { databaseId } workflowRun { databaseId event workflow { databaseId name } } } }
           ... on StatusContext { context state targetUrl description createdAt }
         }
       } }
@@ -97,10 +100,15 @@ type checkNode struct {
 	StartedAt   *time.Time `json:"startedAt"`
 	CompletedAt *time.Time `json:"completedAt"`
 	CheckSuite  *struct {
-		WorkflowRun *struct {
+		App *struct {
 			DatabaseID int64 `json:"databaseId"`
+		} `json:"app"`
+		WorkflowRun *struct {
+			DatabaseID int64  `json:"databaseId"`
+			Event      string `json:"event"`
 			Workflow   struct {
-				Name string `json:"name"`
+				DatabaseID int64  `json:"databaseId"`
+				Name       string `json:"name"`
 			} `json:"workflow"`
 		} `json:"workflowRun"`
 	} `json:"checkSuite"`
@@ -126,9 +134,14 @@ func (node checkNode) check() Check {
 	if node.CompletedAt != nil {
 		check.CompletedAt = *node.CompletedAt
 	}
+	if node.CheckSuite != nil && node.CheckSuite.App != nil {
+		check.AppID = node.CheckSuite.App.DatabaseID
+	}
 	if node.CheckSuite != nil && node.CheckSuite.WorkflowRun != nil {
 		check.Workflow = node.CheckSuite.WorkflowRun.Workflow.Name
+		check.WorkflowID = node.CheckSuite.WorkflowRun.Workflow.DatabaseID
 		check.RunID = node.CheckSuite.WorkflowRun.DatabaseID
+		check.Event = node.CheckSuite.WorkflowRun.Event
 	}
 	return check
 }

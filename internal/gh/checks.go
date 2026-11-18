@@ -23,10 +23,32 @@ type waitOptions struct {
 	interval time.Duration
 	lines    int
 	anyHead  bool
-	// required are the check names the base branch's rules require (pr-land reads them). Empty,
-	// every check is waited for and judged; else only these are waited for, and of the others only
-	// a failure stops (one pending, never started or cancelled is reported, not waited for).
-	required []string
+	// required are the checks the base branch's rules require (pr-land reads them). Empty, every
+	// check is waited for and judged; else only these are waited for, and of the others only a
+	// failure stops (one pending, never started or cancelled is reported, not waited for).
+	required []RequiredCheck
+	// rulesOf is the base whose rules were read: a pull request retargeted while waiting stops.
+	rulesOf string
+}
+
+// RequiredCheck is a check a branch's rules require: its name, and the app that must report it
+// (0: any).
+type RequiredCheck struct {
+	Name  string
+	AppID int64
+}
+
+// satisfiedBy says whether a row is this required check: its name, and its app when one is named
+// (a commit status names no app, so it is not one that requires an app).
+func (check RequiredCheck) satisfiedBy(row githubapi.Check) bool {
+	return row.Name == check.Name && (check.AppID == 0 || (row.Kind == githubapi.CheckRun && row.AppID == check.AppID))
+}
+
+func (check RequiredCheck) String() string {
+	if check.AppID == 0 {
+		return check.Name
+	}
+	return fmt.Sprintf("%s (app %d)", check.Name, check.AppID)
 }
 
 func (work *session) waitFlags(name string, args []string, most int) ([]string, waitOptions, error) {
@@ -115,6 +137,10 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 		now, err := work.github.PullRequest(work.ctx, number)
 		if err != nil {
 			return 0, fmt.Errorf("pull request #%d: %w", number, err)
+		}
+		if options.rulesOf != "" && now.Base != options.rulesOf {
+			return 0, failf(exitMoved, "the base of #%d changed from %s to %s while waiting: the checks waited for are the ones "+
+				"%s requires. Run it again.", number, options.rulesOf, now.Base, options.rulesOf)
 		}
 		if now.HeadSHA != head {
 			if !options.anyHead {
@@ -227,10 +253,10 @@ type weighed struct {
 	ignored    []githubapi.Check // not required, and pending or cancelled: reported, not waited for
 }
 
-// weigh judges rows against the required names (none: every check counts). A cancelled check run
-// is superseded when a newer run of its workflow (a higher run id) has a check of the same name:
-// a concurrency group cancelled it for that run, which is judged instead.
-func weigh(rows []githubapi.Check, required []string) weighed {
+// weigh judges rows against the required checks (none: every check counts). A cancelled check run
+// is superseded when a newer run of its workflow for the same event (a higher run id) has a check
+// of the same name: a concurrency group cancelled it for that run, which is judged instead.
+func weigh(rows []githubapi.Check, required []RequiredCheck) weighed {
 	var out weighed
 	var live []githubapi.Check
 	for _, row := range rows {
@@ -240,14 +266,14 @@ func weigh(rows []githubapi.Check, required []string) weighed {
 		}
 		live = append(live, row)
 	}
-	isRequired := map[string]bool{}
-	for _, name := range required {
-		isRequired[name] = true
-	}
-	present := map[string]bool{}
+	present := make([]bool, len(required))
 	for _, row := range live {
-		present[row.Name] = true
-		counts := len(required) == 0 || isRequired[row.Name]
+		counts := len(required) == 0
+		for index, check := range required {
+			if check.satisfiedBy(row) {
+				present[index], counts = true, true
+			}
+		}
 		bucket := row.Bucket()
 		switch {
 		case counts && !settled[bucket]:
@@ -262,21 +288,24 @@ func weigh(rows []githubapi.Check, required []string) weighed {
 			out.ignored = append(out.ignored, row)
 		}
 	}
-	for _, name := range required {
-		if !present[name] {
-			out.pending = append(out.pending, name+" (not registered yet)")
+	for index, check := range required {
+		if !present[index] {
+			out.pending = append(out.pending, check.String()+" (not registered yet)")
 		}
 	}
 	return out
 }
 
-// replacedBy says whether row is a cancelled check run that a newer run of its workflow replaced.
+// replacedBy says whether row is a cancelled check run that a newer run of its workflow, started
+// by the same event, replaced. A run of another event (a manual dispatch beside a push) is an
+// independent run: it does not hide the cancellation.
 func replacedBy(row githubapi.Check, rows []githubapi.Check) bool {
-	if row.Kind != githubapi.CheckRun || row.Bucket() != githubapi.Cancel || row.Workflow == "" || row.RunID == 0 {
+	if row.Kind != githubapi.CheckRun || row.Bucket() != githubapi.Cancel || row.WorkflowID == 0 || row.RunID == 0 || row.Event == "" {
 		return false
 	}
 	for _, other := range rows {
-		if other.Kind == githubapi.CheckRun && other.Workflow == row.Workflow && other.Name == row.Name && other.RunID > row.RunID {
+		if other.Kind == githubapi.CheckRun && other.WorkflowID == row.WorkflowID && other.Event == row.Event &&
+			other.Name == row.Name && other.RunID > row.RunID {
 			return true
 		}
 	}

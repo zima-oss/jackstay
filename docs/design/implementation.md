@@ -1597,8 +1597,9 @@ secondary limit honours `Retry-After`.
 newest run of each check name in each check suite (so a re-run does not leave a false red) and
 commit statuses of other apps. Each workflow run is a suite of its own, so a run a `concurrency`
 group cancelled for a newer run of the same workflow on the same head is still listed: a cancelled
-check run with a check of the same name in a newer run (a higher run id) of the same workflow is
-**superseded**, reported and not judged; the newer run is. Buckets: SUCCESS → pass; SKIPPED,
+check run with a check of the same name in a newer run (a higher run id) of the same workflow (by
+its id), started by the same event, is **superseded**, reported and not judged; the newer run is. A
+run of another event (a manual dispatch beside a push) is independent and hides nothing. Buckets: SUCCESS → pass; SKIPPED,
 NEUTRAL → skipping; FAILURE, ERROR, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE → fail; CANCELLED →
 cancel (settled, failing, and named as a cancellation); STALE, PENDING, EXPECTED and anything else
 → pending. No checks registered is waiting, not a pass. The head is compared after the rows are
@@ -1665,7 +1666,11 @@ local branch has commits the pull request lacks: they would not land.
 
 It waits for the checks the base branch's rules require: the `required_status_checks` rules of the
 rulesets that apply to it and its classic protection's required contexts (REST
-`rules/branches/BRANCH` and `branches/BRANCH`). A required check not registered yet is waited for.
+`rules/branches/BRANCH`, paged, and `branches/BRANCH`). A check required from an app (a ruleset's
+`integration_id`, a protection's `app_id`) is only that app's check run of the name. A required
+check not registered yet on the head is waited for (one reported only on GitHub's test merge commit
+is not seen: the wait ends at its deadline, exit 3, and nothing merges). A pull request whose base
+changes while it waits, or before the merge, stops with exit 4: the rules read were the old base's.
 Of the other checks only a failure stops the merge; one pending, never started or cancelled is
 reported and not waited for (a job no runner picks up does not hold a merge GitHub would accept).
 Rules that require none, or that cannot be read, leave every check waited for, as `ci-wait` does;

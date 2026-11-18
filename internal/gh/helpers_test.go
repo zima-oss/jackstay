@@ -67,7 +67,7 @@ type fakeGitHub struct {
 	// onMerge runs inside Merge (what another session or GitHub does at that moment).
 	onMerge func()
 	// required and requiredErr are RequiredChecks' answer (default: no rule requires a check).
-	required    []string
+	required    []RequiredCheck
 	requiredErr error
 }
 
@@ -98,7 +98,7 @@ func (hub *fakeGitHub) MergeableState(context.Context, int) (string, error) {
 	return state, nil
 }
 
-func (hub *fakeGitHub) RequiredChecks(context.Context, string) ([]string, error) {
+func (hub *fakeGitHub) RequiredChecks(context.Context, string) ([]RequiredCheck, error) {
 	hub.mutex.Lock()
 	defer hub.mutex.Unlock()
 	return hub.required, hub.requiredErr
@@ -284,8 +284,8 @@ func merged(number int, head, sha string) *githubapi.PullRequest {
 }
 
 func checkRun(name string, status, conclusion string, runID int64) githubapi.Check {
-	return githubapi.Check{Name: name, Kind: githubapi.CheckRun, Status: status, Conclusion: conclusion, Workflow: "ci", RunID: runID,
-		Link: "https://github.com/owner/checkout/actions/runs/1/job/1"}
+	return githubapi.Check{Name: name, Kind: githubapi.CheckRun, Status: status, Conclusion: conclusion, Workflow: "ci", WorkflowID: 11,
+		RunID: runID, Event: "pull_request", AppID: 15368, Link: "https://github.com/owner/checkout/actions/runs/1/job/1"}
 }
 
 func passed(name string) githubapi.Check  { return checkRun(name, "COMPLETED", "SUCCESS", 0) }

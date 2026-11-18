@@ -69,9 +69,9 @@ type GitHub interface {
 	// UpdateBranch merges the base into the pull request's branch on GitHub, while its head is
 	// headSHA; a write, never retried.
 	UpdateBranch(ctx context.Context, number int, headSHA string) error
-	// RequiredChecks are the check names a branch's rules require before a merge: its rulesets'
-	// and its classic protection's; none is an empty list.
-	RequiredChecks(ctx context.Context, branch string) ([]string, error)
+	// RequiredChecks are the checks a branch's rules require before a merge: its rulesets' and its
+	// classic protection's; none is an empty list.
+	RequiredChecks(ctx context.Context, branch string) ([]RequiredCheck, error)
 }
 
 // Git asks git a question in the checkout (internal/gitcli.Git is one).

@@ -416,7 +416,7 @@ func TestPRStatus(t *testing.T) {
 func TestPRLandWaitsOnlyForTheRequiredChecks(t *testing.T) {
 	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), pending("gate-macos"),
 		checkRun("extra", "COMPLETED", "CANCELLED", 3)}})
-	bench.hub.required = []string{"gate"}
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
 	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
 	contains(t, stdout, "wait for the checks the rules of main require on the resulting head (gate)")
 	contains(t, stdout, "not required: gate-macos pending (not waited for)")
@@ -429,7 +429,7 @@ func TestPRLandWaitsOnlyForTheRequiredChecks(t *testing.T) {
 
 func TestAFailedCheckNotRequiredStillStopsTheMerge(t *testing.T) {
 	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), failed("lint", 0)}})
-	bench.hub.required = []string{"gate"}
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
 	stdout, _ := bench.expect(exitNotFine, "pr-land", "--timeout", "30")
 	contains(t, stdout, "not merging #7")
 	if len(bench.hub.Merges()) != 0 {
@@ -439,7 +439,7 @@ func TestAFailedCheckNotRequiredStillStopsTheMerge(t *testing.T) {
 
 func TestARequiredCheckNotRegisteredIsWaitedFor(t *testing.T) {
 	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("lint")}})
-	bench.hub.required = []string{"gate"}
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
 	_, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
 	contains(t, stderr, "gate (not registered yet)")
 	if len(bench.hub.Merges()) != 0 {
@@ -454,5 +454,34 @@ func TestRulesThatCannotBeReadMeanEveryCheckIsWaitedFor(t *testing.T) {
 	contains(t, stdout, "wait for every check on the resulting head (the rules of main cannot be read: 403 Resource not accessible)")
 	if len(bench.hub.Merges()) != 0 {
 		t.Fatal("merged while a check was pending")
+	}
+}
+
+// A check required from an app is not satisfied by a commit status of the same name.
+func TestARequiredChecksAppIsMatched(t *testing.T) {
+	status := githubapi.Check{Name: "gate", Kind: githubapi.StatusContext, State: "SUCCESS"}
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{status}})
+	bench.hub.required = []RequiredCheck{{Name: "gate", AppID: 15368}}
+	_, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stderr, "gate (app 15368) (not registered yet)")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on a status from another source")
+	}
+	if judged := weigh([]githubapi.Check{passed("gate")}, bench.hub.required); len(judged.pending) != 0 || judged.judged != 1 {
+		t.Fatalf("the app's own check run does not satisfy it: %+v", judged)
+	}
+}
+
+// The rules read are the base's: a pull request retargeted while pr-land waits stops it.
+func TestARetargetedPullRequestStopsTheWait(t *testing.T) {
+	moved := pull(7, "feat", shaA)
+	moved.Base = "release"
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{pull(7, "feat", shaA), pull(7, "feat", shaA), moved},
+		checks: []githubapi.Check{pending("gate")}})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	_, stderr := bench.expect(exitMoved, "pr-land", "--timeout", "30", "--interval", "1")
+	contains(t, stderr, "the base of #7 changed from main to release")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged into another base")
 	}
 }
