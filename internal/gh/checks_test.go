@@ -148,6 +148,7 @@ func TestCancelIsSettledAndFailing(t *testing.T) {
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("lint"), checkRun("test", "COMPLETED", "CANCELLED", 4)})
 	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
 	contains(t, stdout, "RED: 1 of 2")
+	contains(t, stdout, "cancelled: test (run 4 of ci): a cancellation is not a pass")
 	lacks(t, stdout, "pending")
 	if bench.hub.count("Jobs") != 0 {
 		t.Fatal("a cancelled check has no failed step to show")
@@ -305,4 +306,15 @@ func TestWaitDefaultsComeFromTheGitHubSectionAndFlagsWin(t *testing.T) {
 	contains(t, stderr, "within 3s")
 	_, stderr = bench.expect(exitPending, "ci-wait", "7", "--timeout", "1")
 	contains(t, stderr, "within 1s")
+}
+
+// No run metadata, nor GitHub's concurrency annotation, ties a cancelled run to the run that
+// replaced it (issue #13 is open), so a cancellation beside a newer passing run still counts, and
+// is named as a cancellation, not a failure.
+func TestACancellationBesideANewerPassingRunStillCounts(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA))
+	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)})
+	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
+	contains(t, stdout, "cancelled: lint (run 4 of ci): a cancellation is not a pass")
 }

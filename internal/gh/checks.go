@@ -1,7 +1,9 @@
 package gh
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,6 +25,30 @@ type waitOptions struct {
 	interval time.Duration
 	lines    int
 	anyHead  bool
+	// required are the checks the base branch's rules require (pr-land reads them). Empty, every
+	// check is waited for and judged; else only these are waited for, and of the others only a
+	// failure stops (one pending, never started or cancelled is reported, not waited for).
+	required []RequiredCheck
+}
+
+// RequiredCheck is a check a branch's rules require: its name, and the app that must report it
+// (0: any).
+type RequiredCheck struct {
+	Name  string
+	AppID int64
+}
+
+// satisfiedBy says whether a row is this required check: its name, and its app when one is named
+// (a commit status names no app, so it is not one that requires an app).
+func (check RequiredCheck) satisfiedBy(row githubapi.Check) bool {
+	return row.Name == check.Name && (check.AppID == 0 || (row.Kind == githubapi.CheckRun && row.AppID == check.AppID))
+}
+
+func (check RequiredCheck) String() string {
+	if check.AppID == 0 {
+		return check.Name
+	}
+	return fmt.Sprintf("%s (app %d)", check.Name, check.AppID)
 }
 
 func (work *session) waitFlags(name string, args []string, most int) ([]string, waitOptions, error) {
@@ -100,7 +126,7 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 	work.say("PR #%d (%s) head %s in %s", number, pull.Head, short(head, 8), work.repository)
 	started := work.deps.Clock.Now()
 	deadline := started.Add(options.timeout)
-	announced := false
+	announced, mergeSaid := false, false
 	for {
 		rows, err := work.github.Checks(work.ctx, head)
 		if err != nil {
@@ -111,6 +137,9 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 		now, err := work.github.PullRequest(work.ctx, number)
 		if err != nil {
 			return 0, fmt.Errorf("pull request #%d: %w", number, err)
+		}
+		if err := work.sameBase(now); err != nil {
+			return 0, err
 		}
 		if now.HeadSHA != head {
 			if !options.anyHead {
@@ -124,8 +153,19 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			}
 			continue
 		}
-		if len(rows) == 0 {
-			// Queued but nothing registered: the state four hand-rolled loops took for "finished".
+		if len(options.required) > 0 && now.MergeCommitSHA != "" {
+			var onMerge bool
+			if rows, onMerge, err = work.withMergeCommitRows(rows, options.required, now.MergeCommitSHA); err != nil {
+				return 0, err
+			}
+			if onMerge && !mergeSaid {
+				work.say("the test merge commit %s has results: the required checks are judged on it, as GitHub judges them",
+					short(now.MergeCommitSHA, 8))
+				mergeSaid = true
+			}
+		}
+		if len(rows) == 0 && len(options.required) == 0 {
+			// Queued but nothing registered (with required checks, weigh names the ones missing): the state four hand-rolled loops took for "finished".
 			if !announced {
 				work.say("no checks registered for this commit yet — waiting for the run to appear (this is not a pass)")
 				announced = true
@@ -141,12 +181,8 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			}
 			continue
 		}
-		var pending []string
-		for _, row := range rows {
-			if !settled[row.Bucket()] {
-				pending = append(pending, row.Name)
-			}
-		}
+		weighed := weigh(rows, options.required)
+		pending := weighed.pending
 		if len(pending) > 0 {
 			names := strings.Join(pending[:min(4, len(pending))], ", ")
 			if len(pending) > 4 {
@@ -165,18 +201,15 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 		}
 		work.say("\n%s", summarise(rows))
 		work.say("\n(%d check runs attached to %s)", checkRuns(rows), short(head, 8))
-		var failed []githubapi.Check
-		for _, row := range rows {
-			if failing(row.Bucket()) {
-				failed = append(failed, row)
-			}
+		for _, line := range weighed.notes() {
+			work.say("%s", line)
 		}
-		if len(failed) > 0 {
-			work.say("%s", work.failureDetail(failed, options.lines))
-			work.say("\nRED: %d of %d checks did not pass.", len(failed), len(rows))
+		if len(weighed.failed) > 0 {
+			work.say("%s", work.failureDetail(weighed.failed, options.lines))
+			work.say("\nRED: %d of %d checks did not pass.", len(weighed.failed), weighed.judged)
 			return exitNotFine, nil
 		}
-		work.say("\nGREEN: %d checks, %s waiting.", len(rows), humanSeconds(work.deps.Clock.Now().Sub(started)))
+		work.say("\nGREEN: %d checks, %s waiting.", weighed.judged, humanSeconds(work.deps.Clock.Now().Sub(started)))
 		work.judged[number] = head
 		return exitFine, nil
 	}
@@ -207,17 +240,119 @@ func (work *session) ciStatus(number int) (int, error) {
 		return exitPending, nil
 	}
 	work.say("%s", summarise(rows))
-	pending := false
-	for _, row := range rows {
-		if failing(row.Bucket()) {
-			return exitNotFine, nil
-		}
-		pending = pending || !settled[row.Bucket()]
+	weighed := weigh(rows, nil)
+	for _, line := range weighed.notes() {
+		work.say("%s", line)
 	}
-	if pending {
+	if len(weighed.failed) > 0 {
+		return exitNotFine, nil
+	}
+	if len(weighed.pending) > 0 {
 		return exitPending, nil
 	}
 	return exitFine, nil
+}
+
+// withMergeCommitRows applies GitHub's rule for the required checks, which is by commit: when the
+// pull request's test merge commit has any result, the required checks are judged on it; else on
+// the head. On the merge commit, the head's rows of required checks are dropped (one the merge
+// commit lacks is then waited for), and the merge commit's rows of required checks are judged in
+// their place. A merge commit GitHub has not made yet, or that has no result, changes nothing.
+func (work *session) withMergeCommitRows(rows []githubapi.Check, required []RequiredCheck, mergeSHA string) ([]githubapi.Check, bool, error) {
+	merged, err := work.github.Checks(work.ctx, mergeSHA)
+	var notFound *githubapi.CommitNotFoundError
+	if errors.As(err, &notFound) {
+		return rows, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("the checks of the test merge commit %s: %w", short(mergeSHA, 8), err)
+	}
+	if len(merged) == 0 {
+		return rows, false, nil
+	}
+	isRequired := func(row githubapi.Check) bool {
+		return slices.ContainsFunc(required, func(check RequiredCheck) bool { return check.satisfiedBy(row) })
+	}
+	var out []githubapi.Check
+	for _, row := range rows {
+		if !isRequired(row) {
+			out = append(out, row)
+		}
+	}
+	for _, row := range merged {
+		if isRequired(row) {
+			out = append(out, row)
+		}
+	}
+	return out, true, nil
+}
+
+// sameBase refuses a pull request whose base is no longer the one whose rules pr-land read: the
+// checks waited for are the old base's. Asked before every write and in every look.
+func (work *session) sameBase(pull githubapi.PullRequest) error {
+	rulesOf := work.rulesOf[pull.Number]
+	if rulesOf == "" || pull.Base == rulesOf {
+		return nil
+	}
+	return failf(exitMoved, "the base of #%d changed from %s to %s: the checks waited for are the ones %s requires. "+
+		"Run it again.", pull.Number, rulesOf, pull.Base, rulesOf)
+}
+
+// weighed is a head's checks judged: the ones still to wait for, the ones that stop a merge, and
+// what is only reported.
+type weighed struct {
+	pending []string          // names waited for: not settled, or required and not registered
+	failed  []githubapi.Check // failed or cancelled checks that count
+	judged  int               // how many checks count
+	ignored []githubapi.Check // not required, and pending or cancelled: reported, not waited for
+}
+
+// weigh judges rows against the required checks (none: every check counts).
+func weigh(rows []githubapi.Check, required []RequiredCheck) weighed {
+	var out weighed
+	present := make([]bool, len(required))
+	for _, row := range rows {
+		counts := len(required) == 0
+		for index, check := range required {
+			if check.satisfiedBy(row) {
+				present[index], counts = true, true
+			}
+		}
+		bucket := row.Bucket()
+		switch {
+		case counts && !settled[bucket]:
+			out.pending = append(out.pending, row.Name)
+			out.judged++
+		case counts && failing(bucket), !counts && bucket == githubapi.Fail:
+			out.failed = append(out.failed, row)
+			out.judged++
+		case counts:
+			out.judged++
+		case bucket == githubapi.Pending || bucket == githubapi.Cancel:
+			out.ignored = append(out.ignored, row)
+		}
+	}
+	for index, check := range required {
+		if !present[index] {
+			out.pending = append(out.pending, check.String()+" (not registered yet)")
+		}
+	}
+	return out
+}
+
+// notes are the lines that say what was set aside: checks not required, and
+// cancelled checks that count (a cancellation, not a failure).
+func (judged weighed) notes() []string {
+	var lines []string
+	for _, row := range judged.ignored {
+		lines = append(lines, fmt.Sprintf("not required: %s %s (not waited for)", row.Name, row.Bucket()))
+	}
+	for _, row := range judged.failed {
+		if row.Bucket() == githubapi.Cancel {
+			lines = append(lines, fmt.Sprintf("cancelled: %s (run %d of %s): a cancellation is not a pass", row.Name, row.RunID, row.Workflow))
+		}
+	}
+	return lines
 }
 
 // checkRuns is how many of the rows are check runs (the rest are commit statuses), counted over

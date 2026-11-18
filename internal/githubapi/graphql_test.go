@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -89,7 +90,7 @@ func TestChecksArePagedToTheEnd(t *testing.T) {
 			"pageInfo": {"hasNextPage": true, "endCursor": "C1"},
 			"nodes": [{"__typename": "CheckRun", "name": "test", "status": "COMPLETED", "conclusion": "SUCCESS", "detailsUrl": "d1",
 				"startedAt": "2026-11-16T10:00:00Z", "completedAt": "2026-11-16T10:01:00Z",
-				"checkSuite": {"workflowRun": {"databaseId": 9, "workflow": {"name": "ci"}}}}]}}}}}}`),
+				"checkSuite": {"app": {"databaseId": 15368}, "workflowRun": {"databaseId": 9, "workflow": {"name": "ci"}}}}]}}}}}}`),
 		jsonAnswer(http.StatusBadGateway, `{}`), // a read: retried
 		jsonAnswer(http.StatusOK, `{"data": {"repository": {"object": {"statusCheckRollup": {"contexts": {
 			"pageInfo": {"hasNextPage": false, "endCursor": "C2"},
@@ -101,7 +102,7 @@ func TestChecksArePagedToTheEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Check{
-		{Name: "test", Kind: CheckRun, Status: "COMPLETED", Conclusion: "SUCCESS", Link: "d1", Workflow: "ci", RunID: 9,
+		{Name: "test", Kind: CheckRun, Status: "COMPLETED", Conclusion: "SUCCESS", Link: "d1", Workflow: "ci", RunID: 9, AppID: 15368,
 			StartedAt: checks[0].StartedAt, CompletedAt: checks[0].CompletedAt},
 		{Name: "deploy/preview", Kind: StatusContext, State: "PENDING", Link: "t1", Description: "building"},
 		{Name: "lint", Kind: CheckRun, Status: "IN_PROGRESS"},
@@ -110,7 +111,7 @@ func TestChecksArePagedToTheEnd(t *testing.T) {
 		t.Fatalf("checks %+v", checks)
 	}
 	for index := range want {
-		if checks[index] != want[index] {
+		if !reflect.DeepEqual(checks[index], want[index]) {
 			t.Errorf("check %d: %+v, want %+v", index, checks[index], want[index])
 		}
 	}

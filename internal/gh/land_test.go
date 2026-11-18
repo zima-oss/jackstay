@@ -410,3 +410,147 @@ func TestPRStatus(t *testing.T) {
 		t.Fatal("pr-status only reads, once")
 	}
 }
+
+// Issue #14: pr-land waits for the checks the base's rules require; another check still pending
+// (a job no runner picked up) is reported and does not hold the merge.
+func TestPRLandWaitsOnlyForTheRequiredChecks(t *testing.T) {
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), pending("gate-macos"),
+		checkRun("extra", "COMPLETED", "CANCELLED", 3)}})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "wait for the checks the rules of main require on the resulting head (gate)")
+	contains(t, stdout, "not required: gate-macos pending (not waited for)")
+	contains(t, stdout, "not required: extra cancel (not waited for)")
+	contains(t, stdout, "GREEN: 1 checks")
+	if len(bench.hub.Merges()) != 1 {
+		t.Fatal("not merged")
+	}
+}
+
+func TestAFailedCheckNotRequiredStillStopsTheMerge(t *testing.T) {
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), failed("lint", 0)}})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	stdout, _ := bench.expect(exitNotFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "not merging #7")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on red")
+	}
+}
+
+func TestARequiredCheckNotRegisteredIsWaitedFor(t *testing.T) {
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("lint")}})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	_, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stderr, "gate (not registered yet)")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged without the required check")
+	}
+}
+
+func TestRulesThatCannotBeReadMeanEveryCheckIsWaitedFor(t *testing.T) {
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), pending("gate-macos")}})
+	bench.hub.requiredErr = errors.New("403 Resource not accessible")
+	stdout, _ := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stdout, "wait for every check on the resulting head (the rules of main cannot be read: 403 Resource not accessible)")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged while a check was pending")
+	}
+}
+
+// A check required from an app is not satisfied by a commit status of the same name.
+func TestARequiredChecksAppIsMatched(t *testing.T) {
+	status := githubapi.Check{Name: "gate", Kind: githubapi.StatusContext, State: "SUCCESS"}
+	bench, _ := landing(t, landSetup{checks: []githubapi.Check{status}})
+	bench.hub.required = []RequiredCheck{{Name: "gate", AppID: 15368}}
+	_, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stderr, "gate (app 15368) (not registered yet)")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on a status from another source")
+	}
+	if judged := weigh([]githubapi.Check{passed("gate")}, bench.hub.required); len(judged.pending) != 0 || judged.judged != 1 {
+		t.Fatalf("the app's own check run does not satisfy it: %+v", judged)
+	}
+}
+
+// The rules read are the base's: a pull request retargeted while pr-land waits stops it.
+func TestARetargetedPullRequestStopsTheWait(t *testing.T) {
+	moved := pull(7, "feat", shaA)
+	moved.Base = "release"
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{pull(7, "feat", shaA), pull(7, "feat", shaA), moved},
+		checks: []githubapi.Check{pending("gate")}})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	_, stderr := bench.expect(exitMoved, "pr-land", "--timeout", "30", "--interval", "1")
+	contains(t, stderr, "the base of #7 changed from main to release")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged into another base")
+	}
+}
+
+// A pull request retargeted after the wait stops before anything is written on GitHub: no branch
+// update, no merge.
+func TestARetargetSeenBeforeTheBranchUpdateWritesNothing(t *testing.T) {
+	moved := pull(7, "feat", shaA)
+	moved.Base = "release"
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{pull(7, "feat", shaA), pull(7, "feat", shaA), moved}})
+	bench.hub.required = []RequiredCheck{{Name: "test"}}
+	bench.hub.mergeStates = []string{"behind"}
+	_, stderr := bench.expect(exitMoved, "pr-land", "--timeout", "30")
+	contains(t, stderr, "the base of #7 changed from main to release")
+	if len(bench.hub.updates) != 0 || len(bench.hub.Merges()) != 0 {
+		t.Fatalf("wrote after the retarget: updates %v merges %v", bench.hub.updates, bench.hub.Merges())
+	}
+}
+
+// GitHub judges the required checks by commit: when the test merge commit has results, all of them
+// are judged there, so one only on the head is still waited for.
+func TestRequiredChecksAreNotSplitAcrossTheTwoCommits(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{passed("lint")}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "build", Kind: githubapi.StatusContext, State: "SUCCESS"}})
+	bench.hub.required = []RequiredCheck{{Name: "build"}, {Name: "lint"}}
+	stdout, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stdout, "the required checks are judged on it")
+	contains(t, stderr, "lint (not registered yet)")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on checks taken from two commits")
+	}
+}
+
+// With nothing on the head, a required check on the test merge commit is found.
+func TestARequiredCheckOnlyOnTheTestMergeCommitIsFound(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "SUCCESS"}})
+	bench.hub.required = []RequiredCheck{{Name: "external"}}
+	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "GREEN: 1 checks")
+}
+
+// When the test merge commit has a result for a required check, it is the one that must pass.
+func TestTheTestMergeCommitsResultTakesPrecedence(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open},
+		checks: []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "SUCCESS"}}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "FAILURE"}})
+	bench.hub.required = []RequiredCheck{{Name: "external"}}
+	stdout, _ := bench.expect(exitNotFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "RED: 1 of 1")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on the head's green over the merge commit's red")
+	}
+}
+
+// A merge commit with results, none of them required, and nothing on the head: the timeout names
+// the required checks missing, not a workflow that never ran.
+func TestAnEmptyJudgedCommitNamesTheMissingRequiredChecks(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{}})
+	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "unrelated", Kind: githubapi.StatusContext, State: "SUCCESS"}})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	_, stderr := bench.expect(exitPending, "pr-land", "--timeout", "10", "--interval", "5")
+	contains(t, stderr, "gate (not registered yet)")
+}

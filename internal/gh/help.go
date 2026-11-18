@@ -21,7 +21,9 @@ const help = usage + `
     --state STATE    open (default), closed, merged or all
   pr-status          where this branch and its pull request stand
   pr-land            push, open the pull request, wait for its checks, squash-merge the head that
-                     was checked, delete the remote branch; the plan is printed first
+                     was checked, delete the remote branch; the plan is printed first. It waits
+                     for the checks the base's rules require (every check when they require
+                     none); another check that fails stops it, one still pending does not
     --title T        the new pull request's title
     --body-file F    its description, from a file
     --card ID        the card the change is for (repeatable), or none with --reason

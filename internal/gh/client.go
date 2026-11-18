@@ -1,8 +1,12 @@
 package gh
 
 import (
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/google/go-github/v93/github"
 
@@ -48,6 +52,61 @@ func (api client) MergeableState(ctx context.Context, number int) (string, error
 		return "", err
 	}
 	return pull.GetMergeableState(), nil
+}
+
+// RequiredChecks are the checks a branch's rules require: the required_status_checks rules of the
+// rulesets that apply to it (GitHub lists the active ones, paged), and its classic protection's
+// required checks, each with the app that must report it when one is named.
+func (api client) RequiredChecks(ctx context.Context, branch string) ([]RequiredCheck, error) {
+	var required []RequiredCheck
+	listing := &github.ListOptions{PerPage: 100}
+	for {
+		var response *github.Response
+		rules, err := githubapi.Read(ctx, api.Retry(), func() (*github.BranchRules, error) {
+			rules, answer, err := api.API().Repositories.ListRulesForBranch(ctx, api.Owner(), api.Name(), branch, listing)
+			response = answer
+			return rules, err
+		})
+		if err != nil {
+			return nil, fmt.Errorf("the rules of %s: %w", branch, err)
+		}
+		if rules != nil {
+			for _, rule := range rules.RequiredStatusChecks {
+				for _, check := range rule.Parameters.RequiredStatusChecks {
+					required = append(required, RequiredCheck{Name: check.Context, AppID: check.GetIntegrationID()})
+				}
+			}
+		}
+		if response == nil || response.NextPage == 0 {
+			break
+		}
+		listing.Page = response.NextPage
+	}
+	found, err := githubapi.Read(ctx, api.Retry(), func() (*github.Branch, error) {
+		found, _, err := api.API().Repositories.GetBranch(ctx, api.Owner(), api.Name(), branch, 1)
+		return found, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("the protection of %s: %w", branch, err)
+	}
+	if protection := found.GetProtection(); found.GetProtected() && protection != nil && protection.RequiredStatusChecks != nil {
+		if checks := protection.RequiredStatusChecks.Checks; checks != nil && len(*checks) > 0 {
+			for _, check := range *checks {
+				required = append(required, RequiredCheck{Name: check.Context, AppID: max(check.GetAppID(), 0)}) // -1: any app
+			}
+		} else if contexts := protection.RequiredStatusChecks.Contexts; contexts != nil {
+			for _, name := range *contexts {
+				required = append(required, RequiredCheck{Name: name})
+			}
+		}
+	}
+	slices.SortFunc(required, func(left, right RequiredCheck) int {
+		if left.Name != right.Name {
+			return strings.Compare(left.Name, right.Name)
+		}
+		return cmp.Compare(left.AppID, right.AppID)
+	})
+	return slices.Compact(required), nil
 }
 
 // UpdateBranch asks GitHub to merge the base into the branch; GitHub answers 202 and does it in

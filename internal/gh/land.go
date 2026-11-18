@@ -228,8 +228,10 @@ func (work *session) prLand(options landOptions) (int, error) {
 	if options.create && !open {
 		plan = append(plan, "open a pull request")
 	}
+	bindRules := func(int) {}
 	if options.wait {
-		plan = append(plan, "wait for every check on the resulting head")
+		line, bind := work.requiredChecks(&options, open, pull, base)
+		plan, bindRules = append(plan, line), bind
 	}
 	if options.merge {
 		plan = append(plan, "squash-merge at the head that was checked, then delete the remote branch "+
@@ -266,6 +268,7 @@ func (work *session) prLand(options landOptions) (int, error) {
 		return exitFine, nil
 	}
 	number := pull.Number
+	bindRules(number)
 
 	if options.wait {
 		code, err := work.ciWait(number, options.waiting)
@@ -281,6 +284,31 @@ func (work *session) prLand(options landOptions) (int, error) {
 		return exitFine, nil
 	}
 	return work.mergeAndDelete(number, branch, base, options)
+}
+
+// requiredChecks reads the checks the pull request's base requires into the wait's options, and
+// is the plan's line for the wait. Rules that cannot be read, or that require none, leave every
+// check waited for, as before.
+func (work *session) requiredChecks(options *landOptions, open bool, pull githubapi.PullRequest, base string) (string, func(int)) {
+	target := base
+	if open && pull.Base != "" {
+		target = pull.Base
+	}
+	bind := func(number int) { work.rulesOf[number] = target }
+	required, err := work.github.RequiredChecks(work.ctx, target)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("wait for every check on the resulting head (the rules of %s cannot be read: %v)", target, err), bind
+	case len(required) == 0:
+		return fmt.Sprintf("wait for every check on the resulting head (the rules of %s require none)", target), bind
+	}
+	options.waiting.required = required
+	names := make([]string, 0, len(required))
+	for _, check := range required {
+		names = append(names, check.String())
+	}
+	return fmt.Sprintf("wait for the checks the rules of %s require on the resulting head (%s); a failure of another check "+
+		"also stops the merge, one still pending does not", target, strings.Join(names, ", ")), bind
 }
 
 // newDescription is the new pull request's description (nil-like "" when there is none to give),
@@ -437,6 +465,9 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 	if err != nil {
 		return 0, err
 	}
+	if err := work.sameBase(state); err != nil {
+		return 0, err
+	}
 	switch state.Mergeable {
 	case "MERGEABLE":
 	case "UNKNOWN":
@@ -445,11 +476,9 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 	default:
 		return 0, failf(exitNotFine, "#%d is %s: resolve that first", number, state.Mergeable)
 	}
-	mergeState, err := work.github.MergeableState(work.ctx, number)
-	if err != nil {
-		return 0, fmt.Errorf("pull request #%d: %w", number, err)
-	}
-	if strings.EqualFold(mergeState, "behind") {
+	// Whether it is behind comes from the same answer as its base and head, checked above: a
+	// retarget between two reads cannot make the update merge another base in.
+	if strings.EqualFold(state.MergeableState, "behind") {
 		code, err := work.updateBehind(number, state.HeadSHA, options)
 		if err != nil || code != exitFine {
 			return code, err
@@ -458,6 +487,9 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 	viewed, err := work.github.PullRequest(work.ctx, number)
 	if err != nil {
 		return 0, fmt.Errorf("pull request #%d: %w", number, err)
+	}
+	if err := work.sameBase(viewed); err != nil {
+		return 0, err
 	}
 	landing := work.judged[number]
 	if landing == "" {
@@ -477,8 +509,16 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 			return 0, err
 		}
 	}
-	// GitHub refuses the merge if the head is no longer the commit whose checks passed, or, with
-	// --no-wait, the one seen here.
+	// The base is asked once more just before the merge (GitHub's merge holds the head, not the
+	// base). GitHub refuses the merge if the head is no longer the commit whose checks passed, or,
+	// with --no-wait, the one seen here.
+	last, err := work.github.PullRequest(work.ctx, number)
+	if err != nil {
+		return 0, fmt.Errorf("pull request #%d: %w", number, err)
+	}
+	if err := work.sameBase(last); err != nil {
+		return 0, err
+	}
 	_, mergeErr := work.github.Merge(work.ctx, number, landing, "", body)
 	// A merge queue or auto-merge may hold it, and an answer may be lost: asked, not assumed.
 	landed, err := work.github.PullRequest(work.ctx, number)

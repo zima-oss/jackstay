@@ -66,6 +66,9 @@ type fakeGitHub struct {
 	afterMerge  *githubapi.PullRequest
 	// onMerge runs inside Merge (what another session or GitHub does at that moment).
 	onMerge func()
+	// required and requiredErr are RequiredChecks' answer (default: no rule requires a check).
+	required    []RequiredCheck
+	requiredErr error
 }
 
 func newGitHub() *fakeGitHub {
@@ -95,6 +98,12 @@ func (hub *fakeGitHub) MergeableState(context.Context, int) (string, error) {
 	return state, nil
 }
 
+func (hub *fakeGitHub) RequiredChecks(context.Context, string) ([]RequiredCheck, error) {
+	hub.mutex.Lock()
+	defer hub.mutex.Unlock()
+	return hub.required, hub.requiredErr
+}
+
 func (hub *fakeGitHub) UpdateBranch(_ context.Context, _ int, headSHA string) error {
 	hub.mutex.Lock()
 	defer hub.mutex.Unlock()
@@ -112,7 +121,16 @@ func (hub *fakeGitHub) PullRequest(ctx context.Context, number int) (githubapi.P
 	if afterUpdate != nil && updated {
 		return *afterUpdate, nil
 	}
-	return hub.Fake.PullRequest(ctx, number)
+	pull, err := hub.Fake.PullRequest(ctx, number)
+	if err == nil && pull.MergeableState == "" {
+		hub.mutex.Lock()
+		pull.MergeableState = "clean"
+		if len(hub.mergeStates) > 0 {
+			pull.MergeableState = hub.mergeStates[0]
+		}
+		hub.mutex.Unlock()
+	}
+	return pull, err
 }
 
 func (hub *fakeGitHub) Merge(ctx context.Context, number int, headSHA, title, body string) (githubapi.MergeResult, error) {
@@ -275,8 +293,8 @@ func merged(number int, head, sha string) *githubapi.PullRequest {
 }
 
 func checkRun(name string, status, conclusion string, runID int64) githubapi.Check {
-	return githubapi.Check{Name: name, Kind: githubapi.CheckRun, Status: status, Conclusion: conclusion, Workflow: "ci", RunID: runID,
-		Link: "https://github.com/owner/checkout/actions/runs/1/job/1"}
+	return githubapi.Check{Name: name, Kind: githubapi.CheckRun, Status: status, Conclusion: conclusion, Workflow: "ci",
+		RunID: runID, AppID: 15368, Link: "https://github.com/owner/checkout/actions/runs/1/job/1"}
 }
 
 func passed(name string) githubapi.Check  { return checkRun(name, "COMPLETED", "SUCCESS", 0) }

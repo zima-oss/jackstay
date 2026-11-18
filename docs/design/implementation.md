@@ -1610,11 +1610,15 @@ limit waits until its reset when that is inside the deadline, else exit 1 naming
 secondary limit honours `Retry-After`.
 
 **Checks** are one GraphQL query of the head commit's `statusCheckRollup`, paged to the end: the
-newest run of each check name (so a re-run, or a cancelled earlier run, does not leave a false
-red) and commit statuses of other apps. Buckets: SUCCESS → pass; SKIPPED, NEUTRAL → skipping;
-FAILURE, ERROR, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE → fail; CANCELLED → cancel (settled,
-failing); STALE, PENDING, EXPECTED and anything else → pending. No checks registered is waiting,
-not a pass. The head is compared after the rows are read.
+newest run of each check name in each check suite (so a re-run does not leave a false red) and
+commit statuses of other apps. Each workflow run is a suite of its own, so a run a `concurrency`
+group cancelled for a newer run is still listed and still counts: neither the run's metadata nor
+GitHub's cancellation annotation ties it to the run that replaced it (issue #13).
+Buckets: SUCCESS → pass; SKIPPED,
+NEUTRAL → skipping; FAILURE, ERROR, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE → fail; CANCELLED →
+cancel (settled, failing, and named as a cancellation); STALE, PENDING, EXPECTED and anything else
+→ pending. No checks registered is waiting, not a pass. The head is compared after the rows are
+read.
 
 **Finding a pull request by its tip** is GraphQL `search`. REST traps are written into the code and
 tested: the `head` filter is `owner:branch`; "merged" is closed with `merged_at`; `mergeable` is
@@ -1674,6 +1678,21 @@ judged is the squash commit's body (section 4.1). Before the merge it waits up t
 says `mergeable: UNKNOWN` (still unknown: exit 3; not mergeable: exit 1); a pull request that is
 behind its base is updated on GitHub and its new head waited for. It refuses to merge when the
 local branch has commits the pull request lacks: they would not land.
+
+It waits for the checks the base branch's rules require: the `required_status_checks` rules of the
+rulesets that apply to it and its classic protection's required contexts (REST
+`rules/branches/BRANCH`, paged, and `branches/BRANCH`). A check required from an app (a ruleset's
+`integration_id`, a protection's `app_id`) is only that app's check run of the name. A required
+checks are judged as GitHub judges them, by commit: when the pull request's test merge commit has
+any result, they are judged on it; else on the head (GitHub's "conflicts between head commit and
+test merge commit"). One absent from the commit judged is waited for. The base whose rules were
+read is bound to the pull request: every look of the wait, the branch update, the description's
+judgement and a last read just before the merge refuse a base that changed, with exit 4; whether
+the branch is behind comes from the same answer as the base it is checked against.
+Of the other checks only a failure stops the merge; one pending, never started or cancelled is
+reported and not waited for (a job no runner picks up does not hold a merge GitHub would accept).
+Rules that require none, or that cannot be read, leave every check waited for, as `ci-wait` does;
+the plan line says which.
 
 It merges with the head that was checked (or, with `--no-wait`, the one seen) as the expected
 head, so GitHub refuses the merge if the head moved. Afterwards GitHub is asked whether the pull
