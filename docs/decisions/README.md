@@ -52,3 +52,4 @@ is added in a pull request.
 | [W-076](W-076-quick-install-and-docs-site.md) | A quick install script and a documentation site on GitHub Pages built from the same Markdown; no unfilled placeholders |
 | [W-077](W-077-docs-site-for-users-only.md) | The documentation site carries only what a user needs; design documents and decision records stay in the repository |
 | [W-078](W-078-setup-after-install.md) | After an install, `install.sh` prints the remaining steps and every `jst doctor` problem names its fix |
+| [W-083](W-083-no-macos-job-in-ci.md) | CI runs the gate on Linux only; the macOS-only code is checked by `just gate` on a Mac before an install and a release |

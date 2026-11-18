@@ -1142,7 +1142,9 @@ The lock is advisory: a test command typed without it is not stopped.
   owner's approval), with `permissions: contents: write` and nothing else; every action is pinned by
   its full commit hash, and GoReleaser is run pinned from Go's checksum database
   (`go run github.com/goreleaser/goreleaser/v2@<version>`), with Go's build cache off (no cache a pull
-  request could have written reaches a release). In order:
+  request could have written reaches a release). Before the owner approves the run, `just gate` has
+  passed on a Mac on the tagged commit: CI runs the gate on Linux only, so this is where the
+  macOS-only code is checked ([W-083](../decisions/W-083-no-macos-job-in-ci.md)). In order:
   1. It refuses a tag that is not annotated (W-020's `git tag -a`), not the commit checked out, not
      on main, or not naming the source's version (`v` and `internal/version`'s `Version`), and a
      run without all five secrets.
@@ -2156,8 +2158,9 @@ one gate run each, not every edit ([W-040](../decisions/W-040-python-frozen-test
 **The workflow** `.github/workflows/gate.yml` runs `just gate` on GitHub's `ubuntu-latest` for every
 pull request, every push to `main` and by hand: Go from `go.mod`'s toolchain line, read-only
 permissions, the checkout's credentials not kept, a 30-minute limit, a pull request's older run
-cancelled. There is no macOS job: the macOS-only files are checked by `just gate` on a Mac before
-a push.
+cancelled. It is the only CI check, and the one `main` requires. There is no macOS job
+([W-083](../decisions/W-083-no-macos-job-in-ci.md)): the macOS-only files (`*_darwin.go`) are
+checked by the maintainers' `just gate` on a Mac before an install and a release.
 
 **Practices**, and why:
 - `cmd/<binary>` + `internal/<concern>` — the layout of section 1.

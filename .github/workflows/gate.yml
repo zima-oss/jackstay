@@ -1,9 +1,10 @@
 name: gate
 
 # jackstay's gate (`just gate`: the Go checks, every test with the race detector, the integration
-# tests, govulncheck and gosec, the docs check) on GitHub-hosted runners. jackstay supports macOS
-# and Linux (W-069): `gate` runs on Linux and is the check `main` requires; `gate-macos` runs the
-# same gate on macOS in the public repository, where macOS runners are free.
+# tests, govulncheck and gosec, the docs check) on GitHub's Linux runner: the only CI check, and the
+# one `main` requires. jackstay supports macOS and Linux (W-069); there is no macOS job (W-083): the
+# macOS-only code (`*_darwin.go`) is checked by the maintainers' `just gate` on a Mac before an
+# install and a release.
 
 on:
   pull_request:
@@ -37,35 +38,6 @@ jobs:
           cache: true
       - name: just
         uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-      - name: Git identity and default branch for the integration tests
-        run: |
-          git config --global user.name "gate"
-          git config --global user.email "gate@example.invalid"
-          git config --global init.defaultBranch main
-      - name: just gate
-        run: just gate
-
-  gate-macos:
-    if: github.repository == 'zima-oss/jackstay'
-    runs-on: macos-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Check out
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Go from go.mod's toolchain line
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: true
-      - name: just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-      - name: ShellCheck
-        run: command -v shellcheck >/dev/null || brew install shellcheck
       - name: Git identity and default branch for the integration tests
         run: |
           git config --global user.name "gate"
