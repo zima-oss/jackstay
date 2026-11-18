@@ -231,48 +231,72 @@ func firstLine(said supervise.Captured) string {
 // `.partial` name (layout), removed when the signing ends and before the next one starts.
 const resignPartial = "resign" + layout.PartialSuffix
 
-// Resign signs the binary of the live version folder again when it does not keep its signature
+// Replacement is what Resign did to the live binary.
+type Replacement int
+
+const (
+	// LeftAlone: the live binary keeps its signature.
+	LeftAlone Replacement = iota
+	// SignedAgain: a copy of the binary being installed was signed and put in its place.
+	SignedAgain
+	// ReplacedAsSigned: the binary being installed keeps its own signature (a release's), so it was
+	// put in its place unsigned by this machine.
+	ReplacedAsSigned
+)
+
+// Resign replaces the binary of the live version folder when it does not keep its signature
 // (KeepsItsSignature: it is unsigned or ad-hoc, was installed before the setting, has an earlier
-// identifier (W-075) or does not verify strictly), and says whether it did. candidate is the binary being installed, which names the live version
+// identifier (W-075) or does not verify strictly), and says what it did. The copy that replaces it
+// is signed with identity unless it keeps its own signature: a release's binary installed over an
+// ad-hoc build of the same version keeps its notarisation. candidate is the binary being installed, which names the live version
 // and commit: it, not the live file, is what is copied. The live file is never signed in place: the
 // copy in the folder is signed, verified and read back (Sign), proved through its own links as a
 // new folder is (prove.Folder), and only then renamed over the live binary, so an error leaves the
 // live binary as it was.
-func Resign(ctx context.Context, run Runner, identity, folder, candidate, versionText string) (bool, error) {
+func Resign(ctx context.Context, run Runner, identity, folder, candidate, versionText string) (Replacement, error) {
 	live := filepath.Join(folder, layout.Program)
 	if kept, _, err := KeepsItsSignature(run, live); err != nil || kept {
-		return false, err
+		return LeftAlone, err
 	}
 	work := filepath.Join(folder, resignPartial)
 	if err := os.RemoveAll(work); err != nil {
-		return false, err
+		return LeftAlone, err
 	}
 	if err := os.Mkdir(work, 0o755); err != nil { // #nosec G301 -- read by every shell of the account
-		return false, err
+		return LeftAlone, err
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 	signed := filepath.Join(work, layout.Program)
 	if err := layout.CopyBinary(candidate)(signed); err != nil {
-		return false, fmt.Errorf("%s could not be copied: %w", candidate, err)
+		return LeftAlone, fmt.Errorf("%s could not be copied: %w", candidate, err)
 	}
 	if err := os.Chmod(signed, 0o755); err != nil { // #nosec G302 -- an executable for every shell of the account
-		return false, err
+		return LeftAlone, err
 	}
 	for _, name := range layout.Launchers {
 		if name != layout.Program {
 			if err := os.Symlink(layout.Program, filepath.Join(work, name)); err != nil {
-				return false, err
+				return LeftAlone, err
 			}
 		}
 	}
-	if err := Sign(run, identity, signed); err != nil {
-		return false, err
+	done := SignedAgain
+	kept, _, err := KeepsItsSignature(run, signed)
+	switch {
+	case err != nil:
+		return LeftAlone, err
+	case kept:
+		done = ReplacedAsSigned
+	default:
+		if err := Sign(run, identity, signed); err != nil {
+			return LeftAlone, err
+		}
 	}
 	if err := prove.Folder(ctx, work, versionText); err != nil {
-		return false, fmt.Errorf("the signed copy does not work: %w", err)
+		return LeftAlone, fmt.Errorf("the copy does not work: %w", err)
 	}
 	if err := os.Rename(signed, live); err != nil {
-		return false, err
+		return LeftAlone, err
 	}
-	return true, nil
+	return done, nil
 }

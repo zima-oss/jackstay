@@ -154,15 +154,19 @@ func Install(options Options) int {
 	if already {
 		target = state.Live.Path
 		if identity != "" {
-			resigned, err := Resign(ctx, options.codesign(), identity, target, binary, versionText)
+			replaced, err := Resign(ctx, options.codesign(), identity, target, binary, versionText)
 			if err != nil {
 				code := refuse("the live binary could not be signed again with %q (the identity in %s): %v", identity, setting, err)
 				fmt.Fprintf(options.Stderr, "jst install: to fix it, %s\n", SigningFix(identity, setting))
 				return code
 			}
-			if resigned {
+			switch replaced {
+			case SignedAgain:
 				fmt.Fprintf(options.Stdout, "jst install: the live %s was signed again with %q, identifier %s\n",
 					filepath.Join(target, layout.Program), identity, SigningIdentifier)
+			case ReplacedAsSigned:
+				fmt.Fprintf(options.Stdout, "jst install: the live %s was replaced by the binary being installed, which keeps its own signature\n",
+					filepath.Join(target, layout.Program))
 			}
 		}
 	} else {

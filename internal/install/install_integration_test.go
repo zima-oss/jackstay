@@ -423,16 +423,33 @@ func TestAnAdHocSignatureWithTheIdentifierRuns(t *testing.T) {
 	}
 }
 
-// resignCodesign answers display with adHoc for the live binary and with signedDisplay for the copy
-// being signed again: the live version was installed before the setting named owner.
+// resignCodesign answers display with adHoc for the live binary and for the copy being signed again
+// until it is signed, then with signedDisplay: the live version was installed before the setting
+// named owner, and the binary being installed is a local build.
 func resignCodesign(fail string, calls *[][]string) Runner {
-	signing := fakeCodesign(fail, signedDisplay, calls)
+	signing := copyAdHocUntilSigned(fakeCodesign(fail, signedDisplay, calls), calls)
 	return func(argv []string) (supervise.Captured, error) {
 		if argv[1] == "--display" && !strings.Contains(argv[len(argv)-1], resignPartial) {
 			*calls = append(*calls, argv)
 			return supervise.Captured{Stderr: []byte(adHocDisplay)}, nil
 		}
 		return signing(argv)
+	}
+}
+
+// copyAdHocUntilSigned answers display of the copy in resign.partial with adHoc until a --sign call
+// (the binary being installed is a local build), and passes everything else to next.
+func copyAdHocUntilSigned(next Runner, calls *[][]string) Runner {
+	signed := false
+	return func(argv []string) (supervise.Captured, error) {
+		if argv[1] == "--sign" {
+			signed = true
+		}
+		if argv[1] == "--display" && strings.Contains(argv[len(argv)-1], resignPartial) && !signed {
+			*calls = append(*calls, argv)
+			return supervise.Captured{Stderr: []byte(adHocDisplay)}, nil
+		}
+		return next(argv)
 	}
 }
 
@@ -465,7 +482,7 @@ func TestTheLiveVersionIsSignedAgainWhenItsSignatureIsNotTheIdentitys(t *testing
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
 	copied := filepath.Join(filepath.Dir(binary), resignPartial, layout.Program)
-	want := [][]string{DisplayArgs(binary), SignArgs(owner, copied), VerifyArgs(copied), DisplayArgs(copied)}
+	want := [][]string{DisplayArgs(binary), DisplayArgs(copied), SignArgs(owner, copied), VerifyArgs(copied), DisplayArgs(copied)}
 	if !slices.EqualFunc(calls, want, slices.Equal[[]string]) || !strings.Contains(stdout.String(), "signed again with") {
 		t.Fatalf("calls %q\n%s", calls, stdout)
 	}
@@ -487,6 +504,39 @@ func TestTheLiveVersionIsSignedAgainWhenItsSignatureIsNotTheIdentitys(t *testing
 	if _, now := liveBinary(t, prefix); !os.SameFile(after, now) {
 		t.Fatal("a binary signed by the identity was replaced")
 	}
+}
+
+// Review F1 of #12: the live binary is an ad-hoc build and the binary being installed is the release's
+// of the same version, signed and notarised: it replaces the live binary as it is, never signed by
+// this machine.
+func TestAReleaseOverAnAdHocLiveBinaryKeepsItsSignature(t *testing.T) {
+	prefix := filepath.Join(t.TempDir(), "prefix")
+	first, _, stderr := options(prefix, binaries["1111111"])
+	if code := Install(first); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	signingHome(t, owner)
+	binary, before := liveBinary(t, prefix)
+	again, stdout, stderr := options(prefix, binaries["1111111"])
+	var calls [][]string
+	signing := fakeCodesign("", signedDisplay, &calls)
+	again.Codesign = func(argv []string) (supervise.Captured, error) {
+		if argv[1] == "--display" && argv[len(argv)-1] == binary {
+			calls = append(calls, argv)
+			return supervise.Captured{Stderr: []byte(adHocDisplay)}, nil
+		}
+		return signing(argv)
+	}
+	if code := Install(again); code != 0 || !strings.Contains(stdout.String(), "keeps its own signature") {
+		t.Fatalf("exit %d: %s %s", code, stdout, stderr)
+	}
+	if slices.ContainsFunc(calls, func(argv []string) bool { return argv[1] == "--sign" }) {
+		t.Fatalf("the release's binary was signed: %q", calls)
+	}
+	if _, after := liveBinary(t, prefix); os.SameFile(before, after) {
+		t.Fatal("the ad-hoc live binary was kept")
+	}
+	launchersRun(t, prefix)
 }
 
 // A step of signing again that fails refuses the install and leaves the live binary as it was.
@@ -530,7 +580,7 @@ func TestALiveSignatureThatDoesNotVerifyIsSignedAgain(t *testing.T) {
 	}
 	again, stdout, stderr := options(prefix, binaries["1111111"])
 	var calls [][]string
-	signing := fakeCodesign("", signedDisplay, &calls)
+	signing := copyAdHocUntilSigned(fakeCodesign("", signedDisplay, &calls), &calls)
 	again.Codesign = func(argv []string) (supervise.Captured, error) {
 		if argv[1] == "--verify" && argv[len(argv)-1] == binary {
 			calls = append(calls, argv)
@@ -538,7 +588,7 @@ func TestALiveSignatureThatDoesNotVerifyIsSignedAgain(t *testing.T) {
 		}
 		return signing(argv)
 	}
-	if code := Install(again); code != 0 || !strings.Contains(stdout.String(), "signed again") || len(calls) != 5 {
+	if code := Install(again); code != 0 || !strings.Contains(stdout.String(), "signed again") || len(calls) != 6 {
 		t.Fatalf("exit %d, calls %q: %s %s", code, calls, stdout, stderr)
 	}
 	if _, after := liveBinary(t, prefix); os.SameFile(before, after) {
@@ -573,7 +623,7 @@ func TestALiveBinaryWithTheEarlierIdentifierIsSignedAgain(t *testing.T) {
 	earlier := strings.ReplaceAll(signedDisplay, "Identifier="+SigningIdentifier, "Identifier=dev.jackstay.jst")
 	again, stdout, stderr := options(prefix, binaries["1111111"])
 	var calls [][]string
-	signing := fakeCodesign("", signedDisplay, &calls)
+	signing := copyAdHocUntilSigned(fakeCodesign("", signedDisplay, &calls), &calls)
 	again.Codesign = func(argv []string) (supervise.Captured, error) {
 		if argv[1] == "--display" && argv[len(argv)-1] == binary {
 			calls = append(calls, argv)

@@ -352,6 +352,31 @@ func signing(t *testing.T, identity, listed, display string) Inputs {
 	return given
 }
 
+// #12, review F3: a release's binary is no problem only while its signature verifies strictly; one
+// that does not is reported, as install would sign it again.
+func TestACertifiedBinaryThatDoesNotVerifyIsAProblem(t *testing.T) {
+	const owner = "Apple Development: Max Example (ABCDE12345)"
+	listed := `  1) 0123456789ABCDEF0123456789ABCDEF01234567 "` + owner + `"` + "\n     1 valid identities found\n"
+	release := "Identifier=jst\nAuthority=Developer ID Application: Someone Else (ZZZZZ99999)\n"
+	for _, verifies := range []bool{true, false} {
+		given := signing(t, owner, listed, release)
+		answer := given.Run
+		given.Run = func(argv []string, input []byte) (supervise.Captured, error) {
+			if argv[0] == "codesign" && argv[1] == "--verify" && !verifies {
+				return supervise.Captured{Status: 1, Stderr: []byte("invalid signature\n")}, nil
+			}
+			return answer(argv, input)
+		}
+		want := ""
+		if !verifies {
+			want = "binary-not-signed"
+		}
+		if got := kinds(Diagnose(given).Problems); got != want {
+			t.Fatalf("verifies %v: problems %s, want %s", verifies, got, want)
+		}
+	}
+}
+
 // W-070: a configured identity that the keychain lacks (or that expired), and a live binary not signed
 // by it, are problems; the signature is a fact either way.
 func TestSigning(t *testing.T) {

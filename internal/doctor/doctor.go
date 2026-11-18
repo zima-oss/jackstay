@@ -315,7 +315,7 @@ func checkSigning(report *Report, inputs Inputs, live *layout.Folder) {
 				inputs.CodesignIdentity, failure(listed, err)),
 				"run `security find-identity -v -p codesigning` in your own terminal (unlock the keychain if it asks), then `jst doctor` again")
 		} else if !install.IdentityValid(string(listed.Stdout), inputs.CodesignIdentity) {
-			report.problem("codesign-identity-invalid", fmt.Sprintf("%s names %q, which is not a valid code-signing identity in the keychain (missing or expired): the next install is refused until it is.",
+			report.problem("codesign-identity-invalid", fmt.Sprintf("%s names %q, which is not a valid code-signing identity in the keychain (missing or expired): an install that has to sign (a binary you built) is refused until it is.",
 				inputs.CodesignSetting, inputs.CodesignIdentity),
 				fmt.Sprintf("write into %s a name `security find-identity -v -p codesigning` lists as valid, or remove the file to sign nothing", inputs.CodesignSetting))
 		}
@@ -335,10 +335,15 @@ func checkSigning(report *Report, inputs Inputs, live *layout.Folder) {
 	if signature.AdHoc {
 		facts["authority"] = "ad-hoc"
 	}
-	// A binary signed by a certificate with jst's identifier (a release's) is kept as it is by
-	// install (install.Certified), whatever the setting names.
-	if inputs.CodesignIdentity != "" && !install.SignedBy(signature, inputs.CodesignIdentity) && !install.Certified(signature) {
-		report.problem("binary-not-signed", fmt.Sprintf("%s is not signed by %q with the identifier %s (identifier %q, authority %q): unsigned or ad-hoc (installed before the setting) or with an earlier identifier.",
+	// A binary signed by a certificate with jst's identifier (a release's) whose signature verifies
+	// strictly is kept as it is by install (install.KeepsItsSignature), whatever the setting names.
+	keeps := false
+	if inputs.CodesignIdentity != "" && !install.SignedBy(signature, inputs.CodesignIdentity) && install.Certified(signature) {
+		verified, err := inputs.Run(install.VerifyArgs(binary), nil)
+		keeps = err == nil && verified.Status == 0
+	}
+	if inputs.CodesignIdentity != "" && !install.SignedBy(signature, inputs.CodesignIdentity) && !keeps {
+		report.problem("binary-not-signed", fmt.Sprintf("%s is not signed by %q with the identifier %s (identifier %q, authority %q): unsigned or ad-hoc (installed before the setting), with an earlier identifier, or with a signature that does not verify.",
 			binary, inputs.CodesignIdentity, install.SigningIdentifier, signature.Identifier, facts["authority"]),
 			"`jst install` signs it again: run it from a checkout at the live version's commit, or install a newer version")
 	}
