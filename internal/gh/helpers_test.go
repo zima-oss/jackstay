@@ -291,6 +291,7 @@ func pull(number int, head, sha string) githubapi.PullRequest {
 func merged(number int, head, sha string) *githubapi.PullRequest {
 	landed := pull(number, head, sha)
 	landed.State, landed.Merged = "closed", true
+	landed.MergeCommitSHA = shaC
 	return &landed
 }
 

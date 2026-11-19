@@ -305,7 +305,19 @@ func (service Service) Prepare(ctx context.Context) (*State, error) {
 			}
 		}
 		if state.Candidate != "" {
-			return state, nil
+			_, err := service.git().Run(ctx, "rev-parse", "--verify", "--quiet", state.Candidate+"^{commit}")
+			if err == nil {
+				return state, nil
+			}
+			var gitExit *gitcli.ExitError
+			if !errors.As(err, &gitExit) || gitExit.Code != 1 {
+				return nil, fmt.Errorf("cannot inspect queue candidate: %w", err)
+			}
+			state.Candidate, state.Tree, state.GateRunID, state.Receipts = "", "", "", nil
+			state.Attempt++
+			if err := save(place, state); err != nil {
+				return nil, err
+			}
 		}
 		tree, err := service.git().Line(ctx, "merge-tree", "--write-tree", base, head)
 		if err != nil {

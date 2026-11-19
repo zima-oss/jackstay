@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSnapshotDoesNotCreateOrChangeQueueFiles(t *testing.T) {
@@ -56,5 +57,16 @@ func TestSnapshotDoesNotCreateOrChangeQueueFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(place + ".lock"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("snapshot created a lock after a ref moved: %v", err)
+	}
+}
+
+func TestStatusShowsStaleHandoff(t *testing.T) {
+	state := &State{Candidate: "candidate", GateRunID: "gate", HandoffAt: time.Now(), Stale: true}
+	if got := queueStatus(state); got != "stale" {
+		t.Fatalf("stale handoff shown as %q", got)
+	}
+	state.Stale = false
+	if got := queueStatus(state); got != "handed-off" {
+		t.Fatalf("fresh handoff shown as %q", got)
 	}
 }

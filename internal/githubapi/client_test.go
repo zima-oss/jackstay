@@ -332,7 +332,7 @@ func TestWorkflowRunsJobsAndTheJobLog(t *testing.T) {
 		_, _ = io.WriteString(w, "2026-11-16T10:00:01.0000000Z line one\n")
 	})
 	rec, server := serve(t,
-		jsonAnswer(http.StatusOK, `{"total_count": 1, "workflow_runs": [{"id": 9, "name": "ci", "workflow_id": 3, "status": "completed", "conclusion": "failure", "head_sha": "h1", "head_branch": "feature", "event": "pull_request", "html_url": "u", "run_attempt": 2}]}`),
+		jsonAnswer(http.StatusOK, `{"total_count": 1, "workflow_runs": [{"id": 9, "name": "ci", "workflow_id": 3, "status": "completed", "conclusion": "failure", "head_sha": "h1", "head_branch": "feature", "event": "pull_request", "pull_requests": [{"number": 7}], "html_url": "u", "run_attempt": 2}]}`),
 		jsonAnswer(http.StatusOK, `{"total_count": 1, "jobs": [{"id": 11, "run_id": 9, "name": "test", "status": "completed", "conclusion": "failure",
 			"started_at": "2026-11-16T10:00:00Z", "completed_at": "2026-11-16T10:05:00Z",
 			"steps": [{"number": 1, "name": "Run tests", "status": "completed", "conclusion": "failure", "started_at": "2026-11-16T10:00:01Z", "completed_at": "2026-11-16T10:04:00Z"}]}]}`),
@@ -342,7 +342,7 @@ func TestWorkflowRunsJobsAndTheJobLog(t *testing.T) {
 	client := newClient(t, server, &clock{now: epoch})
 	ctx := context.Background()
 	runs, err := client.WorkflowRuns(ctx, RunFilter{Workflow: "ci.yml", Branch: "feature", HeadSHA: "h1"})
-	if err != nil || len(runs) != 1 || runs[0].ID != 9 || runs[0].Conclusion != "failure" || runs[0].Attempt != 2 {
+	if err != nil || len(runs) != 1 || runs[0].ID != 9 || runs[0].Conclusion != "failure" || runs[0].Attempt != 2 || len(runs[0].PullRequests) != 1 || runs[0].PullRequests[0] != 7 {
 		t.Fatalf("runs %+v %v", runs, err)
 	}
 	query := rec.requests[0].URL.Query()

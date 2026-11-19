@@ -70,7 +70,7 @@ func (land *landRepo) lands(tip, body string) {
 	land.bench.hub.OnPullRequestsByHead("owner:feat", "open", answer([]githubapi.PullRequest{open}))
 	land.bench.hub.OnPullRequest(7, answer(open))
 	onChecks(land.bench.hub, tip, []githubapi.Check{passed("test")})
-	land.bench.hub.OnMerge(7, answer(githubapi.MergeResult{Merged: true}))
+	land.bench.hub.OnMerge(7, answer(githubapi.MergeResult{Merged: true, SHA: shaC}))
 	land.bench.hub.afterMerge = merged(7, "feat", tip)
 }
 
@@ -122,7 +122,7 @@ func TestLandPushesOpensMergesDeletesTheRemoteBranchAndLeavesTheCheckout(t *test
 	hub.OnCreatePullRequest("feat", answer(pull(7, "feat", tip)))
 	hub.OnPullRequest(7, answer(pull(7, "feat", tip)))
 	onChecks(hub, tip, []githubapi.Check{passed("test")})
-	hub.OnMerge(7, answer(githubapi.MergeResult{Merged: true}))
+	hub.OnMerge(7, answer(githubapi.MergeResult{Merged: true, SHA: shaC}))
 	pushedTip := ""
 	hub.onMerge = func() { pushedTip = land.remoteBranch("feat") }
 	hub.afterMerge = merged(7, "feat", tip)

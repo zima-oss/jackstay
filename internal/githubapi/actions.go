@@ -17,17 +17,18 @@ type RunFilter struct {
 
 // WorkflowRun is what jackstay reads of a workflow run.
 type WorkflowRun struct {
-	ID         int64
-	Name       string
-	WorkflowID int64
-	Status     string // queued, in_progress, completed, …
-	Conclusion string // success, failure, cancelled, … once completed
-	HeadSHA    string
-	HeadBranch string
-	Event      string
-	URL        string
-	Attempt    int
-	CreatedAt  time.Time
+	ID           int64
+	Name         string
+	WorkflowID   int64
+	Status       string // queued, in_progress, completed, …
+	Conclusion   string // success, failure, cancelled, … once completed
+	HeadSHA      string
+	HeadBranch   string
+	Event        string
+	PullRequests []int
+	URL          string
+	Attempt      int
+	CreatedAt    time.Time
 }
 
 // runsPerCall is how many runs WorkflowRuns reads: the newest, in one page.
@@ -52,9 +53,15 @@ func (client *Client) WorkflowRuns(ctx context.Context, filter RunFilter) ([]Wor
 	}
 	out := make([]WorkflowRun, 0, len(runs.WorkflowRuns))
 	for _, run := range runs.WorkflowRuns {
+		associated := make([]int, 0, len(run.PullRequests))
+		for _, pull := range run.PullRequests {
+			if pull.GetNumber() > 0 {
+				associated = append(associated, pull.GetNumber())
+			}
+		}
 		out = append(out, WorkflowRun{ID: run.GetID(), Name: run.GetName(), WorkflowID: run.GetWorkflowID(),
 			Status: run.GetStatus(), Conclusion: run.GetConclusion(), HeadSHA: run.GetHeadSHA(), HeadBranch: run.GetHeadBranch(),
-			Event: run.GetEvent(), URL: run.GetHTMLURL(), Attempt: run.GetRunAttempt(), CreatedAt: run.GetCreatedAt().Time})
+			Event: run.GetEvent(), PullRequests: associated, URL: run.GetHTMLURL(), Attempt: run.GetRunAttempt(), CreatedAt: run.GetCreatedAt().Time})
 	}
 	return out, nil
 }

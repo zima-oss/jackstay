@@ -258,7 +258,7 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 		if onMerge {
 			candidateSHAs = append(candidateSHAs, now.MergeCommitSHA)
 		}
-		rows, replacements, err := work.reconcileCancelled(rows, candidateSHAs)
+		rows, replacements, err := work.reconcileCancelled(rows, candidateSHAs, number)
 		if err != nil {
 			return 0, err
 		}
@@ -336,7 +336,7 @@ func (work *session) ciStatus(number int) (int, error) {
 		return 0, failf(exitMoved, "the head of #%d moved from %s to %s while its checks were read. Checks for the old "+
 			"commit say nothing about the new one; run it again.", number, short(pull.HeadSHA, 8), short(now.HeadSHA, 8))
 	}
-	rows, replacements, err := work.reconcileCancelled(rows, []string{pull.HeadSHA})
+	rows, replacements, err := work.reconcileCancelled(rows, []string{pull.HeadSHA}, number)
 	if err != nil {
 		return 0, err
 	}
@@ -374,7 +374,8 @@ func (work *session) ciStatus(number int) (int, error) {
 // pull request's test merge commit has any result, the required checks are judged on it; else on
 // the head. On the merge commit, the head's rows of required checks are dropped (one the merge
 // commit lacks is then waited for), and the merge commit's rows of required checks are judged in
-// their place. A merge commit GitHub has not made yet, or that has no result, changes nothing.
+// their place. Its optional checks are also read so their failures are not missed. A merge
+// commit GitHub has not made yet, or that has no result, changes nothing.
 func (work *session) withMergeCommitRows(rows []githubapi.Check, required []RequiredCheck, mergeSHA string) ([]githubapi.Check, bool, error) {
 	merged, err := work.github.Checks(work.ctx, mergeSHA)
 	var notFound *githubapi.CommitNotFoundError
@@ -396,11 +397,7 @@ func (work *session) withMergeCommitRows(rows []githubapi.Check, required []Requ
 			out = append(out, row)
 		}
 	}
-	for _, row := range merged {
-		if isRequired(row) {
-			out = append(out, row)
-		}
-	}
+	out = append(out, merged...)
 	return out, true, nil
 }
 
@@ -416,9 +413,10 @@ func (work *session) sameBase(pull githubapi.PullRequest) error {
 }
 
 // reconcileCancelled replaces a cancelled job only when the repository's run listing proves a
-// newer run of the same workflow and commit. A replacement without this job's result stays
-// pending; the workflow's success alone cannot satisfy a required check.
-func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string) ([]githubapi.Check, []string, error) {
+// newer run of the same workflow and commit. Pull request runs must also name this PR in both
+// runs. A replacement without this job's result stays pending; the workflow's success alone
+// cannot satisfy a required check.
+func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string, pullNumber int) ([]githubapi.Check, []string, error) {
 	needsLookup := false
 	for _, row := range rows {
 		needsLookup = needsLookup || (row.Bucket() == githubapi.Cancel && row.RunID > 0)
@@ -460,6 +458,7 @@ func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string
 				if run.WorkflowID != original.WorkflowID || run.HeadSHA != sha ||
 					(original.Event != "" && run.Event != original.Event) ||
 					(original.HeadBranch != "" && run.HeadBranch != original.HeadBranch) ||
+					!samePullRequestRun(original, run, pullNumber) ||
 					!newerWorkflowRun(run, original) {
 					continue
 				}
@@ -485,12 +484,26 @@ func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string
 		}
 		row.RunID = replacement.ID
 		row.Status, row.Conclusion = "IN_PROGRESS", ""
-		if replacement.Status == "completed" && replacement.Conclusion != "success" && replacement.Conclusion != "skipped" && replacement.Conclusion != "neutral" {
-			row.Status, row.Conclusion = "COMPLETED", "FAILURE"
+		if replacement.Status == "completed" {
+			switch replacement.Conclusion {
+			case "cancelled":
+				row.Status, row.Conclusion = "COMPLETED", "CANCELLED"
+			case "success", "skipped", "neutral":
+				// Wait for the replacement job's own result.
+			default:
+				row.Status, row.Conclusion = "COMPLETED", "FAILURE"
+			}
 		}
 		updated = append(updated, row)
 	}
 	return updated, notes, nil
+}
+
+func samePullRequestRun(original, candidate githubapi.WorkflowRun, pullNumber int) bool {
+	if original.Event != "pull_request" && original.Event != "pull_request_target" {
+		return true
+	}
+	return slices.Contains(original.PullRequests, pullNumber) && slices.Contains(candidate.PullRequests, pullNumber)
 }
 
 func newerWorkflowRun(candidate, previous githubapi.WorkflowRun) bool {
