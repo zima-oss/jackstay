@@ -20,6 +20,8 @@
   surprising failure, before asking.
 - **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
+- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
+- **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.

@@ -1,10 +1,11 @@
 # Backlog assessment and implementation briefs
 
-This assessment reflects the eight open issues in `zima-oss/jackstay` read on 2026-11-19 and
+This assessment began with the eight open issues in `zima-oss/jackstay` read on 2026-11-19 and
 the local audit plan at commit `83673ea`. GitHub Issues remains the public backlog. The A1–A5
 briefs below are proposals from that local plan and have no issue number yet. The issue links
-are the source for requested behavior. Code and design links show the implementation baseline.
-Priorities here are recommendations for scheduling, not issue labels.
+are the source for requested behavior. Priorities here are recommendations for scheduling, not
+issue labels. The briefs retain their original acceptance contracts; the delivery audit below
+records what is implemented now.
 
 ## Current baseline
 
@@ -14,6 +15,34 @@ tree also has optional Codex and Claude Code review adapters. The current test c
 multi-runner proposal are described in [testing](../design/testing.md) and the
 [test evidence plan](../design/testing-multirunner-proposal.md). Each next slice below starts
 from those shipped interfaces and must preserve readable older records.
+
+## Delivery audit, 2026-11-19
+
+The original issue briefs below are historical implementation plans, not a list of unstarted
+work. The current tree has these independently checkable local slices:
+
+| Brief | Delivered slice | Remaining boundary |
+|---|---|---|
+| B1 / #13 | [Check reconciliation](../../internal/gh/checks.go) selects a newer compatible run; fake-provider tests cover supersession. | GitHub still decides which checks branch rules require at landing. |
+| B2 / #20 | The [process integration fixture](../../internal/procs/background/background_integration_test.go) waits for observable readiness. | The original intermittent Linux failure cannot be declared impossible from a local pass; keep CI observation. |
+| B3 / #11, #1 | [Release attestation](../guide/install.md) and strict verification supplement checksums. Repository intake templates and a [tap preparation path](../guide/homebrew-tap.md) exist. | The Homebrew tap is not published; Homebrew core eligibility is external. |
+| B4 / #5 | [`jst test auto` and `changed`](../guide/tests.md) choose a configured scope from committed paths. | Project-specific path rules remain configuration data. |
+| B5 / #4 | [`jst setup`](../guide/install.md#plan-machine-setup) plans and applies reversible PATH and Claude sandbox repairs. | App credentials and optional Codex integration are separate setup work; do not present this as complete machine provisioning. |
+| B6 / #3 | A [local single-PR queue](merge-queue-pilot.md) prepares a tested candidate, checks remote freshness and records a manually landed tree. The Free organization pilot verified reconciliation. | Explicit operator decision recording, protected automatic landing proof, ordered batches and bisection remain open. |
+| B7 / #2 | The [GitHub App pilot](github-app-pilot.md) verified organization registration, installation and scoped token use. | A general interactive setup, rotation and doctor readiness flow are not shipped. The remaining pilot matrix needs evidence before those claims. |
+| B8 / chat | [Local MCP session chat](session-chat.md) has durable inboxes and ACK recovery, with managed Codex delivery and Claude lifecycle notification. | Claude active-turn delivery is not yet established; a lifecycle notice is a weaker guarantee. |
+| TST-1–TST-8 | Shared verdict, bounded report transport, Go/JUnit/Jest/TRX producer evidence, retry and partition checks, typed Go/Jest selection and durations are [documented](../guide/tests.md). | Generic JUnit cannot promise a runner-specific selector. |
+| TST-9 | [SwiftPM and Xcode pilots](../design/swift-structured-pilot.md) establish distinct contracts; Xcode can consume verified XCResult JSON. | SwiftPM's mixed XCTest/Swift Testing output lacks a complete structured source; the text judge remains supported. |
+
+The remaining boundaries are tracked product work or evidence gaps, rather than abandoned local
+implementations. A1 policy explanation, A2 remote reconciliation, A3 trusted receipts and A4
+workspace aggregation have initial slices; [profile staging](../guide/adopt.md) implements the
+first A5 rollout path. Each still needs the end-to-end proof stated in its direction below.
+
+The audit also found an independent correctness gap in existing trash handling: a restored entry
+could be replaced by another entry with the same second-based ID. New
+[trash entries](../../internal/trash/trash.go) now have a random ID suffix so a stale restore or
+prune reference cannot name a later entry. Existing counter-only IDs remain readable.
 
 ## Issues and proposals
 
@@ -180,12 +209,21 @@ works. It must report the observed delivery boundary for each host.
    each host can demonstrate addressed injection, reconnect and acknowledgment.
 
 
+## Verified integration work
+
+- [Protected signed CI evidence](../guide/tests.md#protected-workflow-pilot) was verified
+  from a separate environment. Changing the downloaded bytes or expected run attempt failed.
+- [Digest-pinned profiles](../guide/adopt.md) were upgraded and restored in two independent
+  repositories. Both kept their local settings and refused a modified bundle.
+- [Manual queue recovery](merge-queue-pilot.md) was exercised with GitHub provider faults
+  and checked persisted attempts and observed outcomes after retry.
+
 ## Next integration work
 
 1. Extend the [managed chat pilot](session-chat.md#managed-codex-pilot) to a shared test
    workspace and measure discovery, delivery and acknowledgment on live agent turns.
 2. Extend the [GitHub Free queue pilot](merge-queue-pilot.md#github-free-manual-pilot)
-   with ambiguous provider responses and recovery before piloting automatic landing or batching.
-3. Exercise [signed CI receipts](../guide/tests.md#verify-a-report-produced-by-ci) in a
-   protected signing job and verify the report in a second environment. Stage
-   [digest-pinned profile upgrades](../guide/adopt.md) across repositories and measure rollback.
+   with provider-side exact-candidate enforcement before piloting automatic landing or batching.
+3. Follow the acceptance steps in the [compaction brief](context-brief.md),
+   [workspace board](workspace-board.md), and [reviewer pool](reviewer-pool.md)
+   specifications before adding more hosts or managed scheduling.

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,7 +48,25 @@ func TestChild(t *testing.T) {
 	if words != "" {
 		args = strings.Split(words, "\x1f")
 	}
+	Register(Command{Name: "read-only-sample", SkipTelemetry: true, Run: func([]string, io.Reader, io.Writer, io.Writer) int { return 0 }})
 	os.Exit(Main("jst", args))
+}
+
+func TestReadOnlyCommandDoesNotCreateAJournal(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "uncreated-state")
+	env := []string{"JACKSTAY_HOME=" + home, "JACKSTAY_TELEMETRY=on"}
+	if code, _, diagnostics := child(t, env, "read-only-sample"); code != 0 {
+		t.Fatalf("read-only command exit %d: %s", code, diagnostics)
+	}
+	if _, err := os.Stat(home); !os.IsNotExist(err) {
+		t.Fatalf("read-only command touched jackstay home: %v", err)
+	}
+	if code, _, diagnostics := child(t, env, "version"); code != 0 {
+		t.Fatalf("ordinary command exit %d: %s", code, diagnostics)
+	}
+	if _, err := os.Stat(home); err != nil {
+		t.Fatalf("control command did not initialize telemetry: %v", err)
+	}
 }
 
 func TestMain_(t *testing.T) {

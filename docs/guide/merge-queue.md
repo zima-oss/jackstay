@@ -53,6 +53,15 @@ unconfirmed merge is being investigated. Record the IDs printed by `status` and 
 exports in your normal audit system before removing the lane. No automated merge decision is
 implied.
 
+If GitHub is unavailable before `handoff`, leave the lane in place and retry after the provider
+recovers. No handoff marker is saved until the PR, target ref, checks and reviews have all been
+verified. If the command has already recorded a handoff, `status` retains its candidate and
+attempt across a process restart. Do not prepare a new candidate or remove the lane while the
+manual merge result is uncertain. Fetch the target ref, inspect the PR, then retry `reconcile`
+with the observed full commit ID. A failed GitHub confirmation leaves the outcome empty; a
+successful reconciliation records the commit and tree once. Retrying that same commit returns
+the recorded result even during a later provider outage.
+
 The [pilot plan](../roadmap/merge-queue-pilot.md) tracks landing verification, recovery after
 ambiguous effects and the conditions for adding batching or automatic landing.
 

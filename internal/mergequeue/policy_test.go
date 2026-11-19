@@ -10,24 +10,31 @@ import (
 )
 
 type fakeProvider struct {
-	pull           githubapi.PullRequest
-	pullSecond     *githubapi.PullRequest
-	baseHead       string
-	baseSecond     string
-	baseReads      int
-	required       []gh.RequiredCheck
-	requiredSecond []gh.RequiredCheck
-	requiredReads  int
-	checks         []githubapi.Check
-	reviews        []Review
-	tree           string
-	parents        []string
-	decision       string
-	read           int
+	pull            githubapi.PullRequest
+	pullSecond      *githubapi.PullRequest
+	baseHead        string
+	baseSecond      string
+	baseReads       int
+	required        []gh.RequiredCheck
+	requiredSecond  []gh.RequiredCheck
+	requiredReads   int
+	checks          []githubapi.Check
+	reviews         []Review
+	tree            string
+	parents         []string
+	decision        string
+	read            int
+	pullFailureAt   int
+	pullFailure     error
+	targetFailureAt int
+	targetFailure   error
 }
 
 func (fake *fakeProvider) PullRequest(_ context.Context, _ int) (githubapi.PullRequest, error) {
 	fake.read++
+	if fake.pullFailure != nil && fake.read == fake.pullFailureAt {
+		return githubapi.PullRequest{}, fake.pullFailure
+	}
 	if fake.pullSecond != nil && fake.read == 2 {
 		return *fake.pullSecond, nil
 	}
@@ -35,6 +42,9 @@ func (fake *fakeProvider) PullRequest(_ context.Context, _ int) (githubapi.PullR
 }
 func (fake *fakeProvider) TargetHead(context.Context, string) (string, error) {
 	fake.baseReads++
+	if fake.targetFailure != nil && fake.baseReads == fake.targetFailureAt {
+		return "", fake.targetFailure
+	}
 	if fake.baseSecond != "" && fake.baseReads == 2 {
 		return fake.baseSecond, nil
 	}

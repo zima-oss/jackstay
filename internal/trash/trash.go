@@ -5,6 +5,7 @@
 package trash
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -272,7 +273,11 @@ func newEntry(folder string, entry *Entry, now time.Time) (string, *os.File, err
 	stamp := now.UTC().Format("20060102-150405")
 	var place string
 	for number := 1; ; number++ {
-		place = filepath.Join(folder, fmt.Sprintf("%s-%d", stamp, number))
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return "", nil, fmt.Errorf("make trash entry ID: %w", err)
+		}
+		place = filepath.Join(folder, fmt.Sprintf("%s-%d-%x", stamp, number, nonce))
 		err := os.Mkdir(place, 0o700)
 		if err == nil {
 			break

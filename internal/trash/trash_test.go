@@ -2,6 +2,7 @@ package trash
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,55 @@ func TestMoveListRestore(t *testing.T) {
 	}
 	if len(Entries(folder)) != 0 {
 		t.Fatal("the entry stays after a restore")
+	}
+}
+
+func TestEntryIDIsNotReusedAfterRestoreInSameSecond(t *testing.T) {
+	work := t.TempDir()
+	folder := filepath.Join(t.TempDir(), ".trash")
+	item := filepath.Join(work, "edits")
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	if err := os.WriteFile(item, []byte("first"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := Move(folder, item, "jackstay", "", DefaultKeepDays, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := restore(folder, []string{first.ID}, io.Discard, io.Discard); code != 0 {
+		t.Fatalf("restore first = %d", code)
+	}
+	if err := os.WriteFile(item, []byte("second"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := Move(folder, item, "jackstay", "", DefaultKeepDays, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID {
+		t.Fatalf("reused %q after restoring its prior entry", first.ID)
+	}
+	if code := restore(folder, []string{first.ID}, io.Discard, io.Discard); code != 1 {
+		t.Fatalf("stale restore ID found a new entry: %d", code)
+	}
+	if entries := Entries(folder); len(entries) != 1 || entries[0].ID != second.ID {
+		t.Fatalf("new entry lost after stale restore: %+v", entries)
+	}
+}
+
+func TestLegacyCounterOnlyEntryIDRemainsReadable(t *testing.T) {
+	folder := filepath.Join(t.TempDir(), ".trash")
+	legacyID := "20261116-120000-1"
+	place := filepath.Join(folder, legacyID)
+	if err := os.MkdirAll(place, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	entry := Entry{Path: filepath.Join(t.TempDir(), "old"), MovedAt: "2026-11-16T12:00:00Z", Kind: "file"}
+	if err := writeRecord(place, entry); err != nil {
+		t.Fatal(err)
+	}
+	if entries := Entries(folder); len(entries) != 1 || entries[0].ID != legacyID {
+		t.Fatalf("legacy entry not readable: %+v", entries)
 	}
 }
 

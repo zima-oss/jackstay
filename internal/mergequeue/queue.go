@@ -237,20 +237,34 @@ func (service Service) Enqueue(ctx context.Context, headRef string, pullRequest 
 // Status reads state and reports whether either ref moved, without changing local state.
 func (service Service) Status(ctx context.Context) (*State, error) {
 	return service.withLock(ctx, func(place, common string) (*State, error) {
-		state, err := read(place)
-		if err != nil {
-			return nil, err
-		}
-		if state.Repository != common {
-			return nil, errors.New("queue state belongs to another repository")
-		}
-		if state.Outcome != nil {
-			return state, nil
-		}
-		fresh, err := service.fresh(ctx, state)
-		state.Stale = !fresh
-		return state, err
+		return service.snapshot(ctx, place, common)
 	})
+}
+
+// Snapshot reports the queue state without creating a lock or changing local files.
+// It is suitable for read-only inspection; writers may change the state immediately afterward.
+func (service Service) Snapshot(ctx context.Context) (*State, error) {
+	place, common, err := service.place(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return service.snapshot(ctx, place, common)
+}
+
+func (service Service) snapshot(ctx context.Context, place, common string) (*State, error) {
+	state, err := read(place)
+	if err != nil {
+		return nil, err
+	}
+	if state.Repository != common {
+		return nil, errors.New("queue state belongs to another repository")
+	}
+	if state.Outcome != nil {
+		return state, nil
+	}
+	fresh, err := service.fresh(ctx, state)
+	state.Stale = !fresh
+	return state, err
 }
 
 // Prepare recomputes a candidate when an input ref moved. Git merge-tree refuses conflicts;
@@ -389,7 +403,10 @@ func (service Service) handoff(ctx context.Context, verifyReceipts func(*State) 
 	}
 	confirmed, err := service.Status(ctx)
 	if err != nil || confirmed.Stale || confirmed.Attempt != state.Attempt || confirmed.Candidate != state.Candidate ||
-		confirmed.PullRequest != state.PullRequest || confirmed.GateRunID != state.GateRunID ||
+		confirmed.Repository != state.Repository || confirmed.BaseRef != state.BaseRef ||
+		confirmed.HeadRef != state.HeadRef || confirmed.Base != state.Base || confirmed.Head != state.Head ||
+		confirmed.PullRequest != state.PullRequest || confirmed.Tree != state.Tree ||
+		confirmed.GateRunID != state.GateRunID ||
 		!slices.Equal(confirmed.Receipts, state.Receipts) {
 		return nil, errors.New("queue inputs or policy changed while handoff evidence was read")
 	}
@@ -405,6 +422,9 @@ func (service Service) recordHandoff(ctx context.Context, checked *State) (*Stat
 		}
 		fresh, err := service.fresh(ctx, state)
 		if err != nil || !fresh || state.Repository != common || state.Outcome != nil ||
+			state.Repository != checked.Repository || state.BaseRef != checked.BaseRef ||
+			state.HeadRef != checked.HeadRef || state.Base != checked.Base || state.Head != checked.Head ||
+			state.PullRequest != checked.PullRequest ||
 			state.Attempt != checked.Attempt || state.Candidate != checked.Candidate || state.Tree != checked.Tree ||
 			state.GateRunID != checked.GateRunID || !slices.Equal(state.Receipts, checked.Receipts) {
 			return nil, errors.New("queue inputs or evidence changed before handoff could be recorded")
@@ -470,7 +490,10 @@ func (service Service) Reconcile(ctx context.Context, commit string) (*State, er
 				return nil, fmt.Errorf("pull request landing cannot be confirmed: %w", err)
 			}
 			pull, err := provider.PullRequest(ctx, state.PullRequest)
-			if err != nil || pull.Number != state.PullRequest || !pull.Merged || pull.MergeCommitSHA != commit ||
+			if err != nil {
+				return nil, fmt.Errorf("GitHub cannot confirm PR landing; retry reconciliation: %w", err)
+			}
+			if pull.Number != state.PullRequest || !pull.Merged || pull.MergeCommitSHA != commit ||
 				pull.HeadSHA != state.Head || pull.Base != strings.TrimPrefix(state.BaseRef, "refs/heads/") ||
 				(repository != "" && reposDiffer(repository, pull.BaseRepository)) {
 				return nil, errors.New("GitHub has not confirmed this exact PR landing commit")
