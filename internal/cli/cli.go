@@ -32,6 +32,8 @@ type Command struct {
 	Run func(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	// PrivateArgs omits the command's arguments from its telemetry span.
 	PrivateArgs bool
+	// SkipTelemetry keeps a read-only or private command out of the local journal.
+	SkipTelemetry bool
 }
 
 // commands is the table, filled by Register from each command's package (cmd/jst imports them).
@@ -125,6 +127,9 @@ func withCommandWords(args []string) []string {
 func run(args []string, dispatch func() int) (status int) {
 	name, rest := "", args
 	if entry, words, found := Find(args); found {
+		if entry.SkipTelemetry {
+			return dispatch()
+		}
 		name, rest = entry.Name, args[words:]
 		if entry.PrivateArgs {
 			rest = nil

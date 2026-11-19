@@ -27,6 +27,7 @@
 - **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
   `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
   `jackstay.json` (`github.account`).
+- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/trunk..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a
@@ -38,6 +39,8 @@
   surprising failure, before asking.
 - **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
+- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
+- **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
 - **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`
   for the operator's landing decision. After landing, run `jst queue reconcile --commit SHA`.

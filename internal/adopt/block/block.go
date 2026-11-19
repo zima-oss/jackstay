@@ -77,6 +77,8 @@ var items = []item{
 		"- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.\n" +
 			"  Pick `codex` or `claude-code`, or use the project's `review.use`.\n" +
 			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
+	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
+		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(
@@ -91,6 +93,10 @@ var items = []item{
 		"- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.")},
 	{id: "inventory", commands: []string{"inventory"}, wanted: always, text: fixed(
 		"- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.")},
+	{id: "workspace-board", commands: []string{"workspace board"}, wanted: always, text: fixed(
+		"- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.")},
+	{id: "context-brief", commands: []string{"brief save", "brief show"}, wanted: always, text: fixed(
+		"- **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.")},
 	{id: "owner", commands: []string{"owner"}, wanted: always, text: fixed(
 		"- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.")},
 	{id: "profiles", commands: []string{"profile export", "profile verify"}, wanted: hasSection("adopt"), text: fixed(

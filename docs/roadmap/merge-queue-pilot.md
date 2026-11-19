@@ -78,6 +78,22 @@ tree and the tree read back from GitHub after landing. A fresh Jackstay invocati
 left the default branch untouched and exercised manual handoff on a plan without private
 branch protection.
 
+## Local recovery fault pilot
+
+An isolated Git fixture exercises the queue with a scripted GitHub provider. The provider fails
+on the first PR read, the final PR reread, and the final target-ref reread in separate attempts.
+Each failure blocks handoff without writing its marker. A later successful read records the
+exact tested candidate; a new service instance loads that attempt from disk. After a manual
+merge in the fixture, a provider confirmation failure leaves the outcome empty and reports the
+read error. Repeating reconciliation after recovery records the observed commit and matching
+tree. Subsequent retries preserve its timestamp and reject a different commit, even when the
+provider is unavailable again. A replacement lane with the same candidate and gate identities
+cannot inherit a handoff checked for another PR.
+
+This is local fault injection and real Git object/ref testing. It does not exercise a live
+GitHub outage or an automated merge request. Manual merge remains an external operator action,
+so the queue never retries an unknown remote write effect.
+
 ## Disposable private organization pilot
 
 The pilot uses synthetic commits and checks. Repository creation, rule changes and merge requests require an explicit operator handoff. The local plan and dry-run should be reviewable before those external effects.

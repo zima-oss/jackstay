@@ -33,10 +33,13 @@ from a verified release.
 - [Numbers, records and cards](records.md) covers shared IDs and project records.
 - [Changelogs and releases](releases.md) covers collection, preparation and publication steps.
 - [What jackstay did](observability.md) covers the local timeline, inventory, journal and diagnostics.
+- [Workspace board](workspace-board.md) compares local task, queue, test and chat evidence across named repositories.
+- [Reviewer pool](../roadmap/reviewer-pool.md) defines the local queue and its explicit worker.
 
 ## Agent integrations
 
 [Session chat](session-chat.md) connects parallel local agents through MCP.
+[Compaction briefs](context-brief.md) restore an explicitly maintained task note at a supported boundary.
 
 - [Claude Code](claude-code.md) covers the project guard hook, sandbox and reviewer setup.
 - [Codex](codex.md) covers the optional reviewer and guard hook.

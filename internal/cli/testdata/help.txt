@@ -82,6 +82,61 @@ succeeded. Stopped by a signal, jst bg ends by that signal.
 
 example: jst bg --for 20 --name server -- npm run dev
 
+==> jst brief --help
+jst brief: these commands (each answers --help)
+
+  jst brief claude-hook  restore a brief after Claude Code compaction
+  jst brief clear        clear this worktree's brief while preserving its revision
+  jst brief save         save a task brief for this worktree
+  jst brief show         show this worktree's saved task brief
+
+exit: 0 this list; 2 `jst brief` alone, or with a word that is no command under it (nothing
+is run); each command's --help names its own.
+
+==> jst brief claude-hook --help
+jst brief claude-hook: restore a brief after Claude Code compaction
+
+usage: jst brief claude-hook
+
+Use in an opt-in Claude Code SessionStart hook with matcher compact. Emits context only for this exact worktree and a fresh brief.
+
+exit: 0 context or no context; 2 invalid arguments.
+
+example: jst brief claude-hook
+
+==> jst brief clear --help
+jst brief clear: clear this worktree's brief while preserving its revision
+
+usage: jst brief clear --expect REV
+
+Leave a revision tombstone, so stale writers cannot overwrite a later task.
+
+exit: 0 cleared; 2 invalid arguments, conflict or unavailable state.
+
+example: jst brief clear --expect 1
+
+==> jst brief save --help
+jst brief save: save a task brief for this worktree
+
+usage: jst brief save --expect REV [--max-age DURATION] < brief.json
+
+Save explicit JSON with task_id, task, next (1–12 strings), optional decisions (up to 12 strings). REV is the current revision from `brief show`, initially 0. Max age defaults to 168h and must be 1h–720h. No transcript is read.
+
+exit: 0 saved; 2 invalid input, conflict or unavailable state.
+
+example: jst brief save --expect 0 < brief.json
+
+==> jst brief show --help
+jst brief show: show this worktree's saved task brief
+
+usage: jst brief show
+
+Print JSON with revision, freshness and brief (null after clear).
+
+exit: 0 printed; 2 invalid arguments or unavailable state.
+
+example: jst brief show
+
 ==> jst cards --help
 jst cards: what landed per card, read from history (--check, --stale, snapshot, compare)
 
@@ -1031,6 +1086,7 @@ commands under it (each answers --help):
   jst review check  [--task NAME] BASE..REV: is this change reviewed and clear?
   jst review last   [--task NAME] [--json]: the newest round's report, or the newest attempt's failure
   jst review list   [--task NAME] [--rebuild] [--json]: the reviews kept
+  jst review pool   add|list|next|retry: queue local reviews across sessions
   jst review prune  remove tasks past review.keep_days, now
   jst review show   TASK ROUND [--json]: one round's report
 
@@ -1073,6 +1129,24 @@ The reviews kept.
 exit: 0 the list; 2 the request or configuration, or the index cannot be read or written anew.
 
 example: jst review list --task parser-fix
+
+==> jst review pool --help
+jst review pool: add|list|next|retry: queue local reviews across sessions
+
+usage: jst review pool add --repo ABSOLUTE_PATH --base REF --head REF --task NAME --reviewer NAMES
+       jst review pool list [--json]
+       jst review pool next
+       jst review pool retry JOB_ID
+
+A local, persistent, opt-in queue shared by agent sessions. add pins both Git revisions now;
+NAMES is codex, claude-code, or both separated by a comma. next runs one queued review in
+the foreground from its saved repository. It starts no background daemon. retry requeues a
+failed attempt without changing its commits. list reads local state only.
+
+exit: 0 accepted, listed, retried, or no pending job; 1, 3, 4 a completed review verdict;
+2 invalid request or queue state; 5, 6 review failed; 2 when another worker holds the pool.
+
+example: jst review pool add --repo /path/to/repo --base main --head HEAD --task parser --reviewer codex
 
 ==> jst review prune --help
 jst review prune: remove tasks past review.keep_days, now
@@ -1380,4 +1454,26 @@ exit: 0 it happened; 1 it cannot happen any more, or the log ended the wait in f
 2 the request is wrong; 3 the deadline came first.
 
 example: jst wait --line 'listening on' --in server.log --fail 'error' --timeout 60
+
+==> jst workspace --help
+jst workspace: these commands (each answers --help)
+
+  jst workspace board  read local status across named repositories
+
+exit: 0 this list; 2 `jst workspace` alone, or with a word that is no command under it (nothing
+is run); each command's --help names its own.
+
+==> jst workspace board --help
+jst workspace board: read local status across named repositories
+
+usage: jst workspace board [--json] REPO [REPO...]
+
+Read a summary of each explicitly supplied Git checkout. Linked worktrees share queue and chat
+state; gate and receipt summaries are for the named checkout. No remote service is contacted.
+No message bodies, receipt contents, or card bodies are printed.
+At most 32 repositories may be supplied in one call.
+
+exit: 0 every requested source read; 1 at least one source is unknown or partial; 2 invalid use.
+
+example: jst workspace board --json ~/src/app ~/src/service
 

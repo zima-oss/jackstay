@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:c1f96bd47d17 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:4c998354e2ce — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed on this machine. Reach for it before a hand-written shell loop:
@@ -59,11 +59,14 @@ the same rules hold.
 - **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.
   Pick `codex` or `claude-code`, or use the project's `review.use`.
   `jst review check BASE..REV --task NAME` checks the saved round.
+- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
 - **Numbers** come from `jst id next SERIES`, never by hand.
 - **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a
   surprising failure, before asking.
 - **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
+- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
+- **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.

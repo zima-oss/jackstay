@@ -512,3 +512,13 @@ A changed report, source revision, policy key, manifest, repository, run identit
 invalidates verification. The signing key's security and the independent source of expected
 values determine whether the CI provenance is trustworthy. Keep signing keys outside the
 repository and out of command output.
+
+#### Protected-workflow pilot
+
+A synthetic GitHub Actions job signed a counted report after an operator approved its
+environment. The environment allowed only the fixture branch and disabled administrator
+bypass. The disposable private key was held in the environment secret and removed after the
+run. The verifier ran on a separate machine environment, without CI credentials, using the
+public key and expected revision, run attempt, policy and manifest from independent sources.
+It accepted the workflow artifact and rejected both changed receipt bytes and a changed run
+attempt. The fixture used OpenSSL to produce the versioned attestation and Jackstay to verify it.

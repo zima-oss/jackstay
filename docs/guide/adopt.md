@@ -239,6 +239,24 @@ bundle. To upgrade, independently verify the new bundle and give its expected di
 `--profile-sha256` on the first settings stage. The following files stage reads the pinned
 bundle again. Keep the bundle accessible at the recorded profile path in linked worktrees.
 
+Keep each released bundle at its own path so that the previous version remains available for
+rollback. For example, after adopting `policy-v1.bundle.json`, upgrade and then roll back with
+the same two stages:
+
+```sh
+jst profile verify --sha256 "$v2_digest" policy-v2.bundle.json
+jst adopt --apply --settings-only --profile policy-v2.bundle.json --profile-sha256 "$v2_digest"
+jst adopt --apply
+
+jst profile verify --sha256 "$v1_digest" policy-v1.bundle.json
+jst adopt --apply --settings-only --profile policy-v1.bundle.json --profile-sha256 "$v1_digest"
+jst adopt --apply
+```
+
+Review and land the `jackstay.json` settings stage before applying the remaining files when the
+project's pull request rules require that separation. Local settings outside the profile's
+defaults remain in `jackstay.json` through both changes.
+
 A profile is refused as a whole (exit 2) when a key is unknown, a path leaves its folder, a
 workflow's `uses:` is not pinned to a full commit hash, a template uses an undefined `@@name@@`, or a
 default would not pass `jst check`.

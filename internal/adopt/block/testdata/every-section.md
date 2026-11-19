@@ -30,6 +30,7 @@
 - **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.
   Pick `codex` or `claude-code`, or use the project's `review.use`.
   `jst review check BASE..REV --task NAME` checks the saved round.
+- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/trunk..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a
@@ -41,6 +42,8 @@
   surprising failure, before asking.
 - **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
+- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
+- **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
 - **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`
