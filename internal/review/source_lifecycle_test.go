@@ -187,3 +187,30 @@ func TestSourceSlotWaitDoesNotCreateAView(t *testing.T) {
 		t.Fatalf("slot failure has no report: %v", err)
 	}
 }
+
+func TestReviewerUsesTheSourceAdmissionQueueBudget(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	queue, cancelQueue := context.WithCancel(ctx)
+	defer cancelQueue()
+	view, err := h.round.takeSourceSlot(queue, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer view.Release()
+	occupied, err := h.round.takeSlot(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Release()
+	h.round.Settings.MaxConcurrent = 1
+	h.round.Machine.RunReviewer = func(context.Context, runner.Request) runner.Result {
+		t.Error("reviewer launched after the shared admission budget expired")
+		return runner.Result{}
+	}
+	cancelQueue()
+	run, _ := h.round.review(ctx, queue, h.round.Settings, plan{}, "codex", nil, t.TempDir(), "")
+	if run.Outcome != OutcomeNoSlot {
+		t.Fatalf("expired shared queue budget: %+v", run)
+	}
+}

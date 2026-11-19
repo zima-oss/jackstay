@@ -360,7 +360,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		reviewersDone.Add(1)
 		go func() {
 			defer reviewersDone.Done()
-			runs[position], answers[position] = round.review(ctx, settings, planned, name, prompt, folder, tree)
+			runs[position], answers[position] = round.review(ctx, queueContext, settings, planned, name, prompt, folder, tree)
 		}()
 	}
 	reviewersDone.Wait() // jackstay:not-a-process
@@ -490,7 +490,7 @@ func (round Round) promptData(ctx context.Context, settings Settings, planned pl
 }
 
 // review runs a provider under the same pinned source and verdict contract.
-func (round Round) review(ctx context.Context, settings Settings, planned plan, name string, prompt []byte,
+func (round Round) review(ctx, queueContext context.Context, settings Settings, planned plan, name string, prompt []byte,
 	folder, tree string) (ReviewerRun, Answer) {
 	reviewer := settings.Reviewers[name]
 	reviewerFolder := filepath.Join(folder, name)
@@ -517,9 +517,6 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 		return finish(runner.OutcomeFailed, err.Error())
 	}
 
-	queueUntil := round.Machine.Now().Add(time.Duration(settings.QueueMinutes) * time.Minute)
-	queueContext, cancelQueue := context.WithDeadline(ctx, queueUntil)
-	defer cancelQueue()
 	slot, err := round.takeSlot(queueContext, settings.MaxConcurrent)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -535,6 +532,10 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 			return finish(OutcomeNoSlot, "the start lock was not free within the queue's time")
 		}
 		return finish(runner.OutcomeFailed, "cannot acquire the start lock: "+err.Error())
+	}
+	if queueContext.Err() != nil {
+		startLock.Release()
+		return finish(OutcomeNoSlot, "the queue time elapsed before the reviewer could start")
 	}
 	agentCtx, agent := startAgent(ctx, name)
 	defer func() { endAgent(agent, run, reviewerFolder) }()
@@ -580,6 +581,10 @@ func (round Round) takeNamedSlot(ctx context.Context, most int, directory, name 
 		for slot := range most {
 			held, err := flock.TryFile(filepath.Join(directory, fmt.Sprintf("%d.lock", slot)))
 			if err == nil {
+				if err := ctx.Err(); err != nil {
+					held.Release()
+					return nil, err
+				}
 				return held, nil
 			}
 			if !errors.Is(err, flock.ErrBusy) {

@@ -83,7 +83,7 @@ on the command line is the exception (a file outside the tree, copied into the r
 | `triage` | W-048 on: each finding carries likelihood and consequence and jackstay sorts realistic from rare (section 4). Off: every finding of a blocking severity blocks | `true` |
 | `repeat_rounds` | W-019: how many rounds running a place must draw a finding (section 4) before jackstay says it is to be redesigned; at least 2 | 2 |
 | `repeat_severities` | which severities count for W-019's repeats, rare findings included (W-048) | every one but the last of `severities` (`blocker`, `major`) |
-| `queue_minutes` | how long one reviewer may wait for a slot and the start lock together (section 6); 1–120 | 15 |
+| `queue_minutes` | one admission budget for a source view, reviewer slots and the start lock (section 6); 1–120 | 15 |
 | `round_limit` | the round after which jackstay stops and the owner is asked (section 4); at least 2 | 6 |
 | `max_concurrent` | how many reviewer runs this project's reviews may hold at once on the machine (section 6); 1–16 | 4 |
 | `store` | where results are kept: an absolute path or one beginning `~/`; empty means `~/.jackstay/<project>/reviews` | empty |
@@ -462,7 +462,7 @@ A review takes minutes. A session runs it as it runs other long commands ([imple
 
 with the Bash tool's background flag; the session is told when the call ends and reads
 `jst review last`. `jst review` is a plain foreground command with **one budget** for the whole call:
-`queue_minutes` (waiting for a slot and the start lock together) plus the longest
+`queue_minutes` (one shared window for source admission, reviewer slots and the start lock) plus the longest
 `timeout_minutes` plus 2 (the tree, the probe, the report, stopping a group). It prints the budget
 on its first line, and the documented `--for` is that budget rounded up (45 with the defaults:
 15 + 20 + 2). `jst bg`'s deadline is only the backstop. `jst review` does not call `jst bg` itself and
