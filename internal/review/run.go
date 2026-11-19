@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/review/claude"
 	"github.com/zima-oss/jackstay/internal/review/codex"
 	"github.com/zima-oss/jackstay/internal/review/runner"
+	"github.com/zima-oss/jackstay/internal/review/sourceview"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 )
 
@@ -120,12 +122,13 @@ func RealMachine(shared func(parts ...string) (string, error)) (Machine, error) 
 
 // Round is one call of `jst review`: what it was asked, and where.
 type Round struct {
-	Settings Settings
-	Repo     Repository
-	Store    Store
-	Machine  Machine
-	Out      io.Writer // the three lines, and the budget first
-	Errors   io.Writer // warnings and waiting
+	RepositoryRoot string
+	Settings       Settings
+	Repo           Repository
+	Store          Store
+	Machine        Machine
+	Out            io.Writer // the three lines, and the budget first
+	Errors         io.Writer // warnings and waiting
 }
 
 // Result of a call: the exit status, the folder written, and the record when it became a round.
@@ -209,6 +212,9 @@ func (round Round) Run(ctx context.Context, options Options) Result {
 		return usage("the task's lock: %v", err)
 	}
 	defer releaseTask()
+	if err := round.Store.removeAbandonedSources(task); err != nil {
+		return Result{Status: ExitReviewer, Next: fmt.Sprintf("removing an abandoned source view: %v", err)}
+	}
 	if removed, err := round.Store.Prune(settings.KeepDays, round.Machine.Now()); err == nil && len(removed) > 0 {
 		fmt.Fprintf(round.Errors, "jst review: removed %d task(s) older than %d days\n", len(removed), settings.KeepDays)
 	}
@@ -297,7 +303,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		Commit: planned.commit, Base: planned.base, PoolAttempt: options.PoolAttempt}); err != nil {
 		return usage("the attempt's folder: %v", err)
 	}
-	data, refusal := round.promptData(ctx, settings, planned, options, folder)
+	data, brief, refusal := round.promptData(ctx, settings, planned, options, folder)
 	if refusal != nil {
 		return *refusal
 	}
@@ -317,6 +323,36 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		return usage("the attempt's folder: %v", err)
 	}
 
+	queueContext, cancelQueue := context.WithTimeout(ctx, time.Duration(settings.QueueMinutes)*time.Minute)
+	defer cancelQueue()
+	sourceSlot, err := round.takeSourceSlot(queueContext, settings.MaxConcurrent)
+	if err != nil {
+		return round.sourceFailure(planned, folder, fmt.Sprintf("waiting for a source view slot: %v", err))
+	}
+	tree := filepath.Join(folder, "source")
+	defer func() {
+		if tree != "" {
+			if err := os.RemoveAll(tree); err != nil {
+				fmt.Fprintf(round.Errors, "jst review: could not remove the temporary source view: %v\n", err)
+			}
+		}
+		sourceSlot.Release()
+	}()
+	if err := round.Repo.BuildSource(ctx, tree, sourceview.Revisions{Base: planned.base, Head: planned.commit, Previous: planned.previous}); err != nil {
+		return round.sourceFailure(planned, folder, fmt.Sprintf("preparing the pinned source view: %v", err))
+	}
+	if options.BriefFile != "" {
+		if err := writeFileWhole(filepath.Join(tree, "review-brief.md"), brief); err != nil {
+			return round.sourceFailure(planned, folder, fmt.Sprintf("writing the source view brief: %v", err))
+		}
+	}
+
+	if len(data.OpenFindings) != 0 {
+		if err := writeJSON(filepath.Join(tree, "open-findings.json"), data.OpenFindings); err != nil {
+			return round.sourceFailure(planned, folder, fmt.Sprintf("writing the open findings to the source view: %v", err))
+		}
+	}
+
 	runs := make([]ReviewerRun, len(names))
 	answers := make([]Answer, len(names))
 	var reviewersDone sync.WaitGroup
@@ -324,10 +360,14 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		reviewersDone.Add(1)
 		go func() {
 			defer reviewersDone.Done()
-			runs[position], answers[position] = round.review(ctx, settings, planned, name, prompt, folder)
+			runs[position], answers[position] = round.review(ctx, queueContext, settings, planned, name, prompt, folder, tree)
 		}()
 	}
 	reviewersDone.Wait() // jackstay:not-a-process
+	if err := os.RemoveAll(tree); err != nil {
+		return round.sourceFailure(planned, folder, fmt.Sprintf("removing the temporary source view: %v", err))
+	}
+	tree = ""
 
 	record := RoundRecord{Task: planned.task, PoolAttempt: options.PoolAttempt, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
 		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus, Policy: settings.policyID(),
@@ -377,6 +417,16 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	return Result{Status: status, Folder: roundFolder, Record: &record, Next: next}
 }
 
+func (round Round) sourceFailure(planned plan, folder, reason string) Result {
+	ended := round.Machine.Now().Format(time.RFC3339)
+	run := ReviewerRun{Reviewer: "source-view", Exit: -1, Started: ended, Ended: ended,
+		Outcome: runner.OutcomeFailed, Reason: reason}
+	_ = writeJSON(filepath.Join(folder, "source-view", "run.json"), run)
+	_ = writeFileWhole(filepath.Join(folder, "report.md"), []byte(FailureReport(planned.task, planned.attempt, []ReviewerRun{run})))
+	_ = round.Store.AppendIndex(failedLines(planned, []ReviewerRun{run}, folder))
+	return Result{Status: ExitReviewer, Folder: folder, Next: reason + "; read the report, then rerun"}
+}
+
 // Disposition is a round's exit status and next step (section 7: redesign before the owner).
 func Disposition(settings Settings, record RoundRecord) (int, string) {
 	switch {
@@ -390,19 +440,19 @@ func Disposition(settings Settings, record RoundRecord) (int, string) {
 	return ExitClear, "nothing blocks"
 }
 
-func (round Round) promptData(ctx context.Context, settings Settings, planned plan, options Options, folder string) (PromptData, *Result) {
-	fail := func(format string, values ...any) (PromptData, *Result) {
+func (round Round) promptData(ctx context.Context, settings Settings, planned plan, options Options, folder string) (PromptData, []byte, *Result) {
+	fail := func(format string, values ...any) (PromptData, []byte, *Result) {
 		result := usage(format, values...)
-		return PromptData{}, &result
+		return PromptData{}, nil, &result
 	}
-	var brief []string
+	var references []string
 	if settings.Brief != "" {
-		text, err := round.Repo.Show(ctx, planned.commit, settings.Brief)
-		if err != nil {
+		if !round.Repo.Exists(ctx, planned.commit, settings.Brief) {
 			return fail("`review.brief` %s is not in commit %s", settings.Brief, short(planned.commit))
 		}
-		brief = append(brief, strings.TrimSpace(string(text)))
+		references = append(references, "`"+path.Join("head", settings.Brief)+"`")
 	}
+	var brief []byte
 	if options.BriefFile != "" {
 		text, err := os.ReadFile(options.BriefFile)
 		if err != nil {
@@ -411,7 +461,8 @@ func (round Round) promptData(ctx context.Context, settings Settings, planned pl
 		if err := writeFileWhole(filepath.Join(folder, "brief.md"), text); err != nil {
 			return fail("the attempt's folder: %v", err)
 		}
-		brief = append(brief, strings.TrimSpace(string(text)))
+		brief = text
+		references = append(references, "`review-brief.md`")
 	}
 	cite := settings.Cite
 	if cite == nil {
@@ -425,26 +476,22 @@ func (round Round) promptData(ctx context.Context, settings Settings, planned pl
 			return fail("`review.cite` names %s, which is not in commit %s", path, short(planned.commit))
 		}
 	}
-	from := planned.base
+	diffPaths := "changes/base.paths"
 	if planned.previous != "" {
-		from = planned.previous
-	}
-	stat, err := round.Repo.DiffStat(ctx, from, planned.commit)
-	if err != nil {
-		return fail("git diff --stat: %v", err)
+		diffPaths = "changes/previous.paths"
 	}
 	subject, _ := round.Repo.Subject(ctx, planned.commit)
 	return PromptData{
-		Brief: strings.Join(brief, "\n\n"), Commit: planned.commit, Subject: subject, Base: planned.base,
-		DiffStat: stat, Cite: cite, Round: planned.number, Previous: planned.previous,
+		Brief: strings.Join(references, ", "), Commit: planned.commit, Subject: subject, Base: planned.base,
+		DiffStat: "Changed paths: " + diffPaths, Tree: "head", Cite: cite, Round: planned.number, Previous: planned.previous,
 		OpenFindings: Open(planned.ledger), Triage: settings.Triage, Severities: settings.Severities,
 		Blocking: settings.Blocking, Focus: options.Focus,
-	}, nil
+	}, brief, nil
 }
 
-// review runs a provider under the same pinned tree, scheduling and verdict contract.
-func (round Round) review(ctx context.Context, settings Settings, planned plan, name string, prompt []byte,
-	folder string) (ReviewerRun, Answer) {
+// review runs a provider under the same pinned source and verdict contract.
+func (round Round) review(ctx, queueContext context.Context, settings Settings, planned plan, name string, prompt []byte,
+	folder, tree string) (ReviewerRun, Answer) {
 	reviewer := settings.Reviewers[name]
 	reviewerFolder := filepath.Join(folder, name)
 	run := ReviewerRun{Reviewer: name, Model: reviewer.Model, Effort: reviewer.Effort, Exit: -1,
@@ -465,20 +512,11 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 		return finish(runner.OutcomeRefused, err.Error())
 	}
 	run.Version = version
-	if name == claude.Name {
-		prompt, err = round.claudePrompt(ctx, planned, prompt)
-		if err != nil {
-			return finish(runner.OutcomeFailed, err.Error())
-		}
-	}
 	schemaPath := filepath.Join(reviewerFolder, "schema.json")
 	if err := writeFileWhole(schemaPath, Schema(settings.Severities)); err != nil {
 		return finish(runner.OutcomeFailed, err.Error())
 	}
 
-	queueUntil := round.Machine.Now().Add(time.Duration(settings.QueueMinutes) * time.Minute)
-	queueContext, cancelQueue := context.WithDeadline(ctx, queueUntil)
-	defer cancelQueue()
 	slot, err := round.takeSlot(queueContext, settings.MaxConcurrent)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -488,18 +526,6 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 	}
 	defer slot.Release()
 
-	tree := treePath(round.Store, planned.task, planned.number, name)
-	// Removed on every way out, a half-made tree included (a checkout stopped at the deadline).
-	defer func() {
-		removeContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-		defer cancel()
-		_ = round.Repo.RemoveTree(removeContext, tree)
-		_ = os.RemoveAll(tree)
-	}()
-	if err := round.Repo.AddTree(ctx, tree, planned.commit, ownReason()); err != nil {
-		return finish(runner.OutcomeFailed, "the pinned tree could not be made: "+err.Error())
-	}
-
 	startLock, err := flock.WaitFile(queueContext, round.Machine.StartLockPath)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -507,12 +533,16 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 		}
 		return finish(runner.OutcomeFailed, "cannot acquire the start lock: "+err.Error())
 	}
+	if queueContext.Err() != nil {
+		startLock.Release()
+		return finish(OutcomeNoSlot, "the queue time elapsed before the reviewer could start")
+	}
 	agentCtx, agent := startAgent(ctx, name)
 	defer func() { endAgent(agent, run, reviewerFolder) }()
 	result := round.Machine.RunReviewer(agentCtx, runner.Request{
 		Reviewer: name, Command: reviewer.Command, Model: reviewer.Model, Effort: reviewer.Effort,
 		Timeout: time.Duration(reviewer.TimeoutMinutes) * time.Minute, Isolation: reviewer.Isolation,
-		Tree: tree, Folder: reviewerFolder, Prompt: prompt, SchemaPath: schemaPath, Answered: startLock.Release,
+		Tree: tree, PinnedSource: true, RepositoryRoot: round.RepositoryRoot, Folder: reviewerFolder, Prompt: prompt, SchemaPath: schemaPath, Answered: startLock.Release,
 	})
 	startLock.Release()
 	run.Argv, run.Exit = result.Argv, result.Exit
@@ -528,6 +558,9 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 	if problem := CheckAnswer(answer, settings, planned.ledger); problem != "" {
 		return finish(OutcomeInconsistent, problem)
 	}
+	if answer.Verdict == "incomplete" {
+		return finish(OutcomeIncomplete, strings.TrimSpace(answer.Summary))
+	}
 	run.Outcome = runner.OutcomeDone
 	_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
 	return run, answer
@@ -535,11 +568,23 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 
 // takeSlot takes a free slot k < most, waiting until the context ends (section 6).
 func (round Round) takeSlot(ctx context.Context, most int) (*flock.File, error) {
+	return round.takeNamedSlot(ctx, most, round.Machine.SlotsDir, "review")
+}
+
+func (round Round) takeSourceSlot(ctx context.Context, most int) (*flock.File, error) {
+	return round.takeNamedSlot(ctx, most, round.Machine.SlotsDir+"-source", "source view")
+}
+
+func (round Round) takeNamedSlot(ctx context.Context, most int, directory, name string) (*flock.File, error) {
 	said := time.Time{}
 	for {
 		for slot := range most {
-			held, err := flock.TryFile(filepath.Join(round.Machine.SlotsDir, fmt.Sprintf("%d.lock", slot)))
+			held, err := flock.TryFile(filepath.Join(directory, fmt.Sprintf("%d.lock", slot)))
 			if err == nil {
+				if err := ctx.Err(); err != nil {
+					held.Release()
+					return nil, err
+				}
 				return held, nil
 			}
 			if !errors.Is(err, flock.ErrBusy) {
@@ -547,7 +592,7 @@ func (round Round) takeSlot(ctx context.Context, most int) (*flock.File, error) 
 			}
 		}
 		if now := round.Machine.Now(); said.IsZero() || now.Sub(said) >= time.Minute {
-			fmt.Fprintf(round.Errors, "jst review: all %d review slots are taken; waiting\n", most)
+			fmt.Fprintf(round.Errors, "jst review: all %d %s slots are taken; waiting\n", most, name)
 			said = now
 		}
 		select {
@@ -627,5 +672,6 @@ func short(commit string) string {
 const (
 	OutcomeUnparsable   = "unparsable"
 	OutcomeInconsistent = "inconsistent"
+	OutcomeIncomplete   = "incomplete"
 	OutcomeNoSlot       = "no-slot"
 )

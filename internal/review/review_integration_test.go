@@ -16,9 +16,23 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/pinned"
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/testrepo"
 )
+
+func (repo gitRepository) DiffStat(ctx context.Context, from, to string) (string, error) {
+	out, err := repo.run(ctx, "diff", "--stat=120", from, to)
+	return strings.TrimRight(string(out), "\n"), err
+}
+
+func (repo gitRepository) AddTree(ctx context.Context, path, commit, reason string) error {
+	_, err := repo.run(ctx, "worktree", "add", "--detach", "--lock", "--reason", reason, path, commit)
+	return err
+}
+
+// ownReason is the lock reason naming this process: its id and its start.
+func ownReason() string { return pinned.OwnWords(reasonPrefix) }
 
 // processGone says a process no longer runs (a zombie no one reaped yet counts as gone).
 func processGone(pid int) bool {
@@ -32,7 +46,7 @@ func processGone(pid int) bool {
 func TestPinnedTreeWithRealGit(t *testing.T) {
 	repo := testrepo.New(t, map[string]string{"AGENTS.md": "rules\n", "a.go": "one\n"})
 	first := repo.Commit("first", nil)
-	git := RepositoryAt(repo.Root)
+	git := gitRepository{root: repo.Root}
 	ctx := context.Background()
 	store := Store{Root: filepath.Join(t.TempDir(), "store")}
 	if err := os.MkdirAll(store.TreesPath(), 0o700); err != nil {
@@ -172,7 +186,7 @@ func TestFirstParentUsesAFormatCorrectEmptyTreeAndRefusesAShallowBoundary(t *tes
 	repo := testrepo.New(t, map[string]string{"file": "contents\n"})
 	root := repo.Git("rev-parse", "HEAD")
 	child := repo.Commit("child", nil)
-	repository := RepositoryAt(repo.Root)
+	repository := gitRepository{root: repo.Root}
 	ctx := context.Background()
 	base, err := repository.FirstParent(ctx, root)
 	if want := repo.Git("hash-object", "-t", "tree", os.DevNull); err != nil || base != want {
@@ -217,14 +231,15 @@ case "$arguments" in
   *) exit 21 ;;
 esac
 case "$arguments" in *dangerously*|*Bash*|*--add-dir*) exit 22 ;; esac
-[ "$(cat reviewed.txt)" = pinned-after ]
+[ "$(cat head/reviewed.txt)" = pinned-after ]
+[ "$(cat base/reviewed.txt)" = before ]
+[ ! -e .git ] && [ ! -e head/.git ] && [ ! -e base/.git ]
 [ -z "${CLAUDECODE:-}" ] && [ -z "${UNRELATED_FIXTURE_MARKER:-}" ]
 prompt=$(cat)
-case "$prompt" in
-  *'diff --git a/reviewed.txt b/reviewed.txt'*'-before'*'+pinned-after'*) ;;
-  *) exit 23 ;;
-esac
-case "$prompt" in *uncommitted*) exit 24 ;; esac
+case "$prompt" in *'changes/base.patch'*) ;; *) exit 23 ;; esac
+case "$prompt" in *uncommitted*|*pinned-after*|*'diff --git'*) exit 24 ;; esac
+grep -q -- '^-before' changes/base.patch
+grep -q -- '^+pinned-after' changes/base.patch
 printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"verdict":"approve","summary":"pinned diff inspected","findings":[],"prior":[]},"usage":{"input_tokens":12,"output_tokens":4}}'
 `
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {

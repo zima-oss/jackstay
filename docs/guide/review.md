@@ -21,13 +21,20 @@ jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] 
   finding still open.
 - `--fresh`: start a new chain, a full review from `BASE`.
 - `--focus TEXT`: where to look hardest; it never narrows the round.
-- `--brief FILE`: a brief added to the prompt for this call.
+- `--brief FILE`: a brief made available as a file for this call.
 - `--model`, `--effort`, `--timeout`: override the configuration for this call.
 - `--reviewer codex`, `--reviewer claude-code` or `--reviewer codex,claude-code` selects the
   reviewers for this round. Without the flag, `review.use` supplies the choice. If neither is
   set, the command exits 2 and asks you to select a reviewer.
 
-Each reviewer reads a detached worktree at the reviewed commit and answers in a fixed JSON form. jackstay keeps every round under `~/.jackstay/<project>/reviews/`.
+Both reviewers get the same local, read-only snapshot of the review range. They can browse and
+search the reviewed commit under `head/`, compare files with `base/` and, for an incremental
+round, inspect `previous/`. The `changes/` directory contains changed-path indexes and patches
+for on-demand reading. The initial prompt contains instructions and references. The selected
+provider receives source excerpts when the reviewer reads them during the session.
+Jackstay keeps the result of each round under `~/.jackstay/<project>/reviews/`. If Git reports
+missing objects in a partial clone, fetch the required history and objects before retrying.
+A projection error or an incomplete verdict leaves a failed attempt visible through `jst review last`.
 
 | Exit | Meaning | What to do |
 |---|---|---|
@@ -36,7 +43,7 @@ Each reviewer reads a detached worktree at the reviewed commit and answers in a 
 | 2 | usage or configuration (also: this task busy with another run) | read the message |
 | 3 | a place drew findings two rounds running: it is due for redesign | redesign that place, not patch it |
 | 4 | the round limit is reached and it still blocks | the owner decides; `--past-limit` after that |
-| 5 | a reviewer gave no usable answer (timeout, no slot, unparsable) | rerun; `jst review last` says why |
+| 5 | a reviewer could not complete the review or gave no usable answer | rerun; `jst review last` says why |
 | 6 | the environment refuses: reviewer unavailable, sandbox or authentication issue | follow the diagnostic for the selected reviewer |
 
 Without `--json` it prints three lines: the outcome, the report's path, and the next step.
@@ -63,8 +70,9 @@ failure it refuses until `codex login` has been run again.
 ### Enabling Claude Code
 
 Install Claude Code 2.1.248 or newer. Check your existing login with `claude auth status` or
-provide `ANTHROPIC_API_KEY` through the environment. Starting a review never opens an interactive
-login. [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
+provide `ANTHROPIC_API_KEY` through the environment. With a desktop login on macOS, run `jst review`
+or `jst review pool next` from a context that can access the system credential store. Check
+`claude auth status` in that same context if the adapter reports an authentication failure. [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
 
 Select Claude Code directly for one round:
 
@@ -88,11 +96,11 @@ For a project that regularly asks both reviewers, configure them as the required
 default and required set. With an empty `review.use`, `jst review check` still requires a
 recorded round at the requested commits and checks its policy and findings.
 
-Claude Code receives the pinned patch and can read files in the detached tree using `Read`,
-`Glob` and `Grep`. The adapter disables regular local customizations and MCP tools. Managed
-Claude Code policies, including managed hooks, still apply. The full prompt, including both patches
-in an incremental review, has a 128 KiB limit. Use a smaller range if an attempt reports that
-limit. [Claude Code restricted mode](https://code.claude.com/docs/en/cli-reference)
+Claude Code uses its `Read`, `Glob` and `Grep` tools. Codex can use read-only shell navigation and
+search. Both start in the temporary snapshot and source is limited to tracked Git objects at the
+selected revisions. Files from the working checkout and submodule contents are excluded. Symlinks
+are available as plain files containing the link target. Managed Claude Code policies, including
+managed hooks, still apply. [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
 
 ## Reading the results
 

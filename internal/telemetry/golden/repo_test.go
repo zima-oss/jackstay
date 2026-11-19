@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"os"
-	"sync"
+
+	"github.com/zima-oss/jackstay/internal/review/sourceview"
 )
 
 // fakeRepo is the review's repository for the scenarios: commit c1 on c0, AGENTS.md in it.
-type fakeRepo struct {
-	mutex sync.Mutex
-}
+type fakeRepo struct{}
 
 func newFakeRepo() *fakeRepo { return &fakeRepo{} }
 
@@ -32,12 +31,6 @@ func (repo *fakeRepo) Branch(context.Context) (string, error)          { return 
 func (repo *fakeRepo) ValidBranchName(context.Context, string) bool    { return true }
 func (repo *fakeRepo) Dirty(context.Context) (bool, error)             { return false, nil }
 func (repo *fakeRepo) Subject(context.Context, string) (string, error) { return "subject", nil }
-func (repo *fakeRepo) DiffStat(_ context.Context, from, to string) (string, error) {
-	return from + ".." + to, nil
-}
-func (repo *fakeRepo) Diff(_ context.Context, from, to string) ([]byte, error) {
-	return []byte(from + ".." + to), nil
-}
 func (repo *fakeRepo) Show(_ context.Context, _, path string) ([]byte, error) {
 	if path == "AGENTS.md" {
 		return []byte("rules"), nil
@@ -45,14 +38,10 @@ func (repo *fakeRepo) Show(_ context.Context, _, path string) ([]byte, error) {
 	return nil, errors.New("missing")
 }
 func (repo *fakeRepo) Exists(_ context.Context, _, path string) bool { return path == "AGENTS.md" }
-func (repo *fakeRepo) AddTree(_ context.Context, path, _, _ string) error {
-	repo.mutex.Lock()
-	defer repo.mutex.Unlock()
+func (repo *fakeRepo) BuildSource(_ context.Context, path string, _ sourceview.Revisions) error {
 	return os.MkdirAll(path, 0o700)
 }
 func (repo *fakeRepo) RemoveTree(_ context.Context, path string) error {
-	repo.mutex.Lock()
-	defer repo.mutex.Unlock()
 	return os.RemoveAll(path)
 }
 func (repo *fakeRepo) LockedTrees(context.Context) (map[string]string, error) { return nil, nil }

@@ -18,8 +18,13 @@ import (
 // standard input (read to its end), then does what MODE in its folder says.
 const fakeCodex = `#!/bin/sh
 dir=$(dirname "$0")
-printf '%s\n' "$@" > "$dir/argv"
 env > "$dir/env"
+if [ "$1" = "--version" ]; then
+  echo 'codex-cli 9.9.9'
+  if [ "$(cat "$dir/mode")" = versionhang ]; then sleep 30 & fi
+  exit 0
+fi
+printf '%s\n' "$@" > "$dir/argv"
 cat > "$dir/stdin"
 answer=""
 while [ $# -gt 0 ]; do
@@ -120,6 +125,105 @@ func TestRunDone(t *testing.T) {
 	events, _ := os.ReadFile(filepath.Join(request.Folder, "events.jsonl"))
 	if !strings.Contains(string(events), "turn.completed") {
 		t.Fatal("events not kept")
+	}
+}
+
+func TestPinnedSourceUsesScopedReadProfile(t *testing.T) {
+	request := setup(t, "done")
+	request.PinnedSource = true
+	request.Isolation = append(request.Isolation, "--skip-git-repo-check")
+	result := Run(context.Background(), request)
+	if result.Outcome != OutcomeDone {
+		t.Fatalf("%+v", result)
+	}
+	argv := strings.Split(strings.TrimSpace(read(t, request, "argv")), "\n")
+	if count := strings.Count(strings.Join(argv, "\n"), "--skip-git-repo-check"); count != 1 {
+		t.Fatalf("skip-git-repo-check appears %d times: %v", count, argv)
+	}
+	if slices.Contains(argv, "--sandbox") {
+		t.Fatalf("legacy sandbox would override permission profile: %v", argv)
+	}
+	if !strings.Contains(pinnedFilesystem("", ""), `":slash_tmp"="deny"`) ||
+		!strings.Contains(pinnedFilesystem("", ""), `":tmpdir"="deny"`) {
+		t.Fatal("temporary directories must not retain ambient read access")
+	}
+	sourceDirectory, err := canonicalPath(request.Tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"--skip-git-repo-check", "--strict-config", `default_permissions="jackstay_review"`,
+		pinnedFilesystem(sourceDirectory, ""),
+		"permissions.jackstay_review.network.enabled=false",
+		"project_doc_max_bytes=0",
+		"shell_environment_policy.inherit=none",
+		`shell_environment_policy.set.PATH="/usr/bin:/bin"`,
+	} {
+		if !slices.Contains(argv, want) {
+			t.Errorf("missing %q in %v", want, argv)
+		}
+	}
+	if argv[len(argv)-1] != "-" {
+		t.Fatalf("prompt must arrive on stdin: %v", argv)
+	}
+}
+
+func TestPinnedVersionRequirement(t *testing.T) {
+	for version, supported := range map[string]bool{
+		"codex-cli 0.168.9": false,
+		"codex-cli 0.169.0": true,
+		"codex-cli 0.169.1": true,
+		"codex-cli 1.0.0":   true,
+		"unknown":           false,
+		"codex-cli 0.169":   false,
+	} {
+		if got := supportsPinnedSource(version); got != supported {
+			t.Errorf("version %q supported = %v", version, got)
+		}
+	}
+}
+
+func TestPinnedRuntimeDirectoryDoesNotExposeReviewOrRepository(t *testing.T) {
+	binaryDirectory := t.TempDir()
+	program := filepath.Join(binaryDirectory, "codex")
+	if err := os.WriteFile(program, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	request := Request{Command: program, Tree: t.TempDir(), Folder: t.TempDir(), RepositoryRoot: t.TempDir()}
+	canonicalBinary, err := canonicalPath(binaryDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pinnedRuntimeDirectory(request); got != canonicalBinary {
+		t.Fatalf("safe executable directory = %q, want %q", got, canonicalBinary)
+	}
+	if profile := pinnedFilesystem(request.Tree, canonicalBinary); !strings.Contains(profile, strconv.Quote(canonicalBinary)+`="read"`) {
+		t.Fatalf("runtime directory missing from %q", profile)
+	}
+	for name, change := range map[string]func(*Request){
+		"repository": func(value *Request) { value.RepositoryRoot = binaryDirectory },
+		"source":     func(value *Request) { value.Tree = filepath.Join(binaryDirectory, "projected") },
+		"artifacts":  func(value *Request) { value.Folder = filepath.Join(binaryDirectory, "attempt") },
+		"unknown":    func(value *Request) { value.RepositoryRoot = "" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := request
+			change(&candidate)
+			if got := pinnedRuntimeDirectory(candidate); got != "" {
+				t.Fatalf("unsafe directory granted: %q", got)
+			}
+		})
+	}
+
+	linkedDirectory := t.TempDir()
+	linked := filepath.Join(linkedDirectory, "codex")
+	if err := os.Symlink(program, linked); err != nil {
+		t.Fatal(err)
+	}
+	request.Command = linked
+	request.RepositoryRoot = binaryDirectory
+	if got := pinnedRuntimeDirectory(request); got != "" {
+		t.Fatalf("symlinked executable inside repository granted: %q", got)
 	}
 }
 

@@ -57,7 +57,7 @@ func Schema(severities []string) []byte {
 	})
 	prior := object(map[string]any{"id": stringType, "status": enum("fixed", "open")})
 	schema := object(map[string]any{
-		"verdict": enum("approve", "changes"), "summary": stringType,
+		"verdict": enum("approve", "changes", "incomplete"), "summary": stringType,
 		"findings": map[string]any{"type": "array", "items": finding},
 		"prior":    map[string]any{"type": "array", "items": prior},
 	})
@@ -152,8 +152,19 @@ func shapeOf(value any, members map[string]string, where string) (map[string]any
 func CheckAnswer(answer Answer, settings Settings, ledger []LedgerFinding) string {
 	var problems []string
 	problem := func(format string, values ...any) { problems = append(problems, fmt.Sprintf(format, values...)) }
-	if answer.Verdict != "approve" && answer.Verdict != "changes" {
-		problem("verdict %q is not approve or changes", answer.Verdict)
+	switch answer.Verdict {
+	case "incomplete":
+		if strings.TrimSpace(answer.Summary) == "" {
+			return "an incomplete verdict must summarize why the review could not finish"
+		}
+		return ""
+	case "changes":
+		if len(answer.Findings) == 0 && !slices.ContainsFunc(answer.Prior, func(prior PriorAnswer) bool { return prior.Status == StatusOpen }) {
+			problem("a changes verdict must identify a new or still-open finding")
+		}
+	case "approve":
+	default:
+		problem("verdict %q is not approve, changes or incomplete", answer.Verdict)
 	}
 	known := map[string]string{}
 	for _, finding := range ledger {

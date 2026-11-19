@@ -68,7 +68,11 @@ type lineReader struct {
 // file (the bound after the stop was over) is an error.
 func (reader *lineReader) read() error {
 	if reader.raw != nil {
-		return reader.copyRaw()
+		err := reader.copyRaw()
+		if done, ok := reader.raw.(interface{ StreamEnded() }); ok {
+			done.StreamEnded()
+		}
+		return err
 	}
 	buffered := bufio.NewReaderSize(reader.file, 64<<10)
 	var line []byte

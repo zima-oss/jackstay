@@ -12,7 +12,7 @@ func TestPromptFreshAndDelta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"git diff b c2", "`AGENTS.md`", "English", "## Your answer", "realistic"} {
+	for _, want := range []string{"changes/base.patch", "`AGENTS.md`", "English", "## Your answer", "realistic"} {
 		if !strings.Contains(string(fresh), want) {
 			t.Errorf("fresh prompt lacks %q", want)
 		}
@@ -24,10 +24,14 @@ func TestPromptFreshAndDelta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"git diff c1 c2", "r1-codex-F1", "the whole detail", "Look hardest at: the lock"} {
+	for _, want := range []string{"changes/previous.patch", "r1-codex-F1", "open-findings.json", "Look hardest at: the lock"} {
 		if !strings.Contains(string(delta), want) {
 			t.Errorf("delta prompt lacks %q", want)
 		}
+	}
+	custom, err := BuildPrompt("{{range .OpenFindings}}{{.Title}} {{.Detail}}{{end}}", data)
+	if err != nil || strings.Contains(string(delta)+string(custom), "the whole detail") || data.OpenFindings[0].Detail != "the whole detail" {
+		t.Fatal("finding text belongs in the local source view")
 	}
 }
 
