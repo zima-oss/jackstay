@@ -1138,6 +1138,8 @@ usage: jst review pool add --repo ABSOLUTE_PATH --base REF --head REF --task NAM
        jst review pool inspect [--json]
        jst review pool prune [--apply] [--json]
        jst review pool migrate [--apply] [--json]
+       jst review pool subscribers JOB_ID [--json]
+       jst review pool unsubscribe JOB_ID SESSION_ID --generation TOKEN [--apply] [--json]
        jst review pool next
        jst review pool retry JOB_ID
 
@@ -1148,6 +1150,8 @@ failed attempt without changing its commits. list reads local jobs; inspect repo
 health and notification handoffs without repository or session details. prune previews
 expired terminal history; migrate previews a queue schema upgrade. Both require --apply
 to write. prune retains active work and terminal outcomes awaiting chat delivery.
+subscribers shows recipient IDs and the job generation. unsubscribe previews closing
+one subscription, and requires --apply and that generation to make the change.
 
 exit: 0 request or maintenance succeeded, or no pending job; 1, 3, 4 a completed review verdict;
 2 invalid request or queue state; 5, 6 review failed; 2 when another worker holds the pool.

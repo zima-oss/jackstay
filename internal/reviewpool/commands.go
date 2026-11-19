@@ -25,6 +25,8 @@ const poolHelp = `usage: jst review pool add --repo ABSOLUTE_PATH --base REF --h
        jst review pool inspect [--json]
        jst review pool prune [--apply] [--json]
        jst review pool migrate [--apply] [--json]
+       jst review pool subscribers JOB_ID [--json]
+       jst review pool unsubscribe JOB_ID SESSION_ID --generation TOKEN [--apply] [--json]
        jst review pool next
        jst review pool retry JOB_ID
 
@@ -35,6 +37,8 @@ failed attempt without changing its commits. list reads local jobs; inspect repo
 health and notification handoffs without repository or session details. prune previews
 expired terminal history; migrate previews a queue schema upgrade. Both require --apply
 to write. prune retains active work and terminal outcomes awaiting chat delivery.
+subscribers shows recipient IDs and the job generation. unsubscribe previews closing
+one subscription, and requires --apply and that generation to make the change.
 
 exit: 0 request or maintenance succeeded, or no pending job; 1, 3, 4 a completed review verdict;
 2 invalid request or queue state; 5, 6 review failed; 2 when another worker holds the pool.
@@ -106,11 +110,17 @@ func runPool(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		}
 		for _, job := range jobs {
-			fmt.Fprintf(stdout, "%s  %-8s  attempts=%d  exit=%d  %s  %s\n", job.ID, job.Status, job.Attempts, job.Exit, job.Task, job.ReviewersText())
+			failure := ""
+			if job.Status == "failed" && job.FailureClass != "" || job.FailureClass == "unresolved" {
+				failure = "  reason=" + job.FailureClass
+			}
+			fmt.Fprintf(stdout, "%s  %-8s  attempts=%d  exit=%d  %s  %s%s\n", job.ID, job.Status, job.Attempts, job.Exit, job.Task, job.ReviewersText(), failure)
 		}
 		return 0
 	case "inspect", "prune", "migrate":
 		return runMaintenance(ctx, pool, args, stdout, stderr)
+	case "subscribers", "unsubscribe":
+		return runSubscriptionCommand(ctx, pool, args, stdout, stderr)
 	case "retry":
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, "usage: jst review pool retry JOB_ID")
@@ -134,15 +144,20 @@ func runPool(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 				return review.ExitEnvironment, err
 			}
 			environment := slices.DeleteFunc(os.Environ(), func(pair string) bool {
-				return strings.HasPrefix(pair, "JACKSTAY_REVIEW_POOL_ATTEMPT=")
+				return strings.HasPrefix(pair, "JACKSTAY_REVIEW_POOL_ATTEMPT=") ||
+					strings.HasPrefix(pair, review.PoolPolicyIDVariable+"=")
 			})
-			environment = append(environment, "JACKSTAY_REVIEW_POOL_ATTEMPT="+job.AttemptID)
+			environment = append(environment, "JACKSTAY_REVIEW_POOL_ATTEMPT="+job.AttemptID, review.PoolPolicyIDVariable+"="+job.PolicyID)
 			captured, err := supervise.Capture(ctx, []string{executable, "review", job.Base + ".." + job.Head,
 				"--task", job.Task, "--reviewer", job.ReviewersText()}, job.Repository, environment, nil)
 			_, _ = stdout.Write(captured.Stdout)
 			_, _ = stderr.Write(captured.Stderr)
 			if captured.Incomplete != "" {
 				return review.ExitReviewer, fmt.Errorf("review output incomplete: %s", captured.Incomplete)
+			}
+			if err == nil && captured.Status == review.ExitUsage &&
+				strings.TrimSpace(string(captured.Stderr)) == review.PoolPolicyStaleMarker {
+				return review.ExitUsage, review.ErrPoolPolicyStale
 			}
 			return captured.Status, err
 		})
@@ -190,6 +205,41 @@ func runMaintenance(ctx context.Context, pool Pool, args []string, stdout, stder
 	case "migrate":
 		report, err = pool.Migrate(ctx, apply)
 	}
+	return writePoolReport(command, report, err, asJSON, stdout, stderr)
+}
+
+func runSubscriptionCommand(ctx context.Context, pool Pool, args []string, stdout, stderr io.Writer) int {
+	command := args[0]
+	required := 2
+	if command == "unsubscribe" {
+		required = 3
+	}
+	if len(args) < required {
+		fmt.Fprintf(stderr, "jst review pool %s: missing required IDs\n", command)
+		return 2
+	}
+	flags := flag.NewFlagSet("jst review pool "+command, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	asJSON := flags.Bool("json", false, "write a JSON report")
+	var apply bool
+	var generation string
+	if command == "unsubscribe" {
+		flags.BoolVar(&apply, "apply", false, "close the subscription")
+		flags.StringVar(&generation, "generation", "", "generation shown by subscribers")
+	}
+	if err := flags.Parse(args[required:]); err != nil || flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "jst review pool %s: invalid arguments\n", command)
+		return 2
+	}
+	if command == "subscribers" {
+		report, err := pool.ListSubscriptions(ctx, args[1])
+		return writePoolReport(command, report, err, *asJSON, stdout, stderr)
+	}
+	report, err := pool.CloseSubscription(ctx, args[1], args[2], generation, apply)
+	return writePoolReport(command, report, err, *asJSON, stdout, stderr)
+}
+
+func writePoolReport(command string, report any, err error, asJSON bool, stdout, stderr io.Writer) int {
 	if err == nil {
 		if asJSON {
 			err = json.NewEncoder(stdout).Encode(report)
@@ -224,6 +274,21 @@ func printMaintenance(output io.Writer, report any) error {
 	case Migration:
 		_, err := fmt.Fprintf(output, "Review pool migration: v%d to v%d, needed: %t, applied: %t\n",
 			result.From, result.To, result.Needed, result.Applied)
+		return err
+	case SubscriptionOverview:
+		if _, err := fmt.Fprintf(output, "Review job %s (%s), generation %s\n", result.JobID, result.Status, result.Generation); err != nil {
+			return err
+		}
+		for _, subscriber := range result.Subscribers {
+			if _, err := fmt.Fprintf(output, "%s  closed=%t  undelivered=%d  delivered=%d\n", subscriber.SessionID,
+				subscriber.Closed, subscriber.Undelivered, subscriber.Materialized); err != nil {
+				return err
+			}
+		}
+		return nil
+	case SubscriptionClosure:
+		_, err := fmt.Fprintf(output, "Review subscription %s / %s, generation %s: %d awaiting delivery, %d delivered, already closed: %t, applied: %t\n",
+			result.JobID, result.SessionID, result.Generation, result.Undelivered, result.Materialized, result.AlreadyClosed, result.Applied)
 		return err
 	default:
 		return errors.New("unknown review pool report")

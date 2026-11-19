@@ -318,7 +318,7 @@ func (server *Server) call(raw json.RawMessage) any {
 func publicReviewJob(job reviewpool.Job) map[string]any {
 	return map[string]any{"id": job.ID, "base": job.Base, "head": job.Head, "task": job.Task,
 		"reviewers": job.Reviewers, "status": job.Status, "attempts": job.Attempts,
-		"exit": job.Exit, "not_before": job.NotBefore}
+		"exit": job.Exit, "not_before": job.NotBefore, "failure_class": job.FailureClass, "policy_id": job.PolicyID}
 }
 func toolFailure(reason string) map[string]any {
 	return map[string]any{"content": []map[string]string{{"type": "text", "text": reason}}, "isError": true}

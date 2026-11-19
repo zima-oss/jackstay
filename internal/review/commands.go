@@ -118,6 +118,10 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if !ok {
 		return ExitUsage
 	}
+	if expected := os.Getenv(PoolPolicyIDVariable); expected != "" && expected != found.settings.PoolPolicyID(options.Reviewers, found.store.Root) {
+		fmt.Fprintln(stderr, PoolPolicyStaleMarker)
+		return ExitUsage
+	}
 	machine, err := RealMachine(homedir.SharedPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "jst review: %v\n", err)

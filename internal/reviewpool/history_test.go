@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -14,17 +15,24 @@ import (
 )
 
 func TestPoolStateMigrationPreservesLegacyWorkAndDelivery(t *testing.T) {
+	for _, version := range []int{legacyStateVersion, previousStateVersion} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) { checkPoolStateMigration(t, version) })
+	}
+}
+
+func checkPoolStateMigration(t *testing.T, version int) {
+	t.Helper()
 	ctx := context.Background()
 	pool := Pool{Root: filepath.Join(t.TempDir(), "pool")}
 	preview, err := pool.Migrate(ctx, false)
-	if err != nil || preview != (Migration{From: 2, To: 2}) {
+	if err != nil || preview != (Migration{From: currentStateVersion, To: currentStateVersion}) {
 		t.Fatalf("empty pool migration: %+v, %v", preview, err)
 	}
 	if _, err := os.Stat(pool.Root); !os.IsNotExist(err) {
 		t.Fatalf("preview touched empty pool: %v", err)
 	}
 	legacy := state{
-		Version: 1,
+		Version: version,
 		Jobs: []Job{
 			{ID: "running", Status: "running", Attempts: 2, AttemptID: "existing-round-token"},
 			{ID: "terminal", Status: "complete", Attempts: 1, CommonDir: "/legacy/.git"},
@@ -45,19 +53,19 @@ func TestPoolStateMigrationPreservesLegacyWorkAndDelivery(t *testing.T) {
 	}
 	before := read()
 	preview, err = pool.Migrate(ctx, false)
-	if err != nil || preview != (Migration{From: 1, To: 2, Needed: true}) || !bytes.Equal(before, read()) {
+	if err != nil || preview != (Migration{From: version, To: currentStateVersion, Needed: true}) || !bytes.Equal(before, read()) {
 		t.Fatalf("legacy preview changed state: %+v, %v", preview, err)
 	}
 	applied, err := pool.Migrate(ctx, true)
-	if err != nil || applied != (Migration{From: 1, To: 2, Needed: true, Applied: true}) {
+	if err != nil || applied != (Migration{From: version, To: currentStateVersion, Needed: true, Applied: true}) {
 		t.Fatalf("migration apply: %+v, %v", applied, err)
 	}
 	upgraded := read()
-	if !bytes.Equal(upgraded, bytes.Replace(before, []byte(`"version": 1`), []byte(`"version": 2`), 1)) {
+	if !bytes.Equal(upgraded, bytes.Replace(before, []byte(`"version": `+strconv.Itoa(version)), []byte(`"version": `+strconv.Itoa(currentStateVersion)), 1)) {
 		t.Fatal("upgrade changed data beyond the version marker")
 	}
 	again, err := pool.Migrate(ctx, true)
-	if err != nil || again != (Migration{From: 2, To: 2}) || !bytes.Equal(upgraded, read()) {
+	if err != nil || again != (Migration{From: currentStateVersion, To: currentStateVersion}) || !bytes.Equal(upgraded, read()) {
 		t.Fatalf("second migration: %+v, %v", again, err)
 	}
 	pending, err := pool.Undelivered(ctx, "session", "/legacy/.git")
@@ -143,7 +151,7 @@ func TestPoolPruneProtectsActiveAndUndeliveredJobs(t *testing.T) {
 		t.Fatalf("after handoff: %+v, %v", report, err)
 	}
 	remaining, err := pool.load()
-	if err != nil || remaining.Version != 2 || len(remaining.Jobs) != 3 || len(remaining.Subscriptions) != 0 || len(remaining.Events) != 0 {
+	if err != nil || remaining.Version != currentStateVersion || len(remaining.Jobs) != 3 || len(remaining.Subscriptions) != 0 || len(remaining.Events) != 0 {
 		t.Fatalf("cleanup left inconsistent state: %+v, %v", remaining, err)
 	}
 	for index, want := range []string{"pending", "running", "fresh"} {

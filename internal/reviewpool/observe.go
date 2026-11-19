@@ -111,7 +111,9 @@ func (pool Pool) Inspect(ctx context.Context, now time.Time) (Overview, error) {
 	}
 	subscribers := make(map[string][]string, len(saved.Subscriptions))
 	for _, subscription := range saved.Subscriptions {
-		subscribers[subscription.JobID] = append(subscribers[subscription.JobID], subscription.SessionID)
+		if !subscription.Closed {
+			subscribers[subscription.JobID] = append(subscribers[subscription.JobID], subscription.SessionID)
+		}
 	}
 	for _, item := range saved.Events {
 		for _, sessionID := range subscribers[item.JobID] {
