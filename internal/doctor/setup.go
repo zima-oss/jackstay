@@ -85,11 +85,21 @@ func sameExecutableFolder(active, installed string) bool {
 }
 
 func shellProfile(home, shell string) string {
+	return shellProfileForOS(home, shell, runtime.GOOS)
+}
+
+func shellProfileForOS(home, shell, operatingSystem string) string {
 	switch filepath.Base(shell) {
 	case "zsh":
 		return filepath.Join(home, ".zshrc")
 	case "bash":
-		if runtime.GOOS == "darwin" {
+		if operatingSystem == "darwin" {
+			for _, name := range []string{".bash_profile", ".bash_login", ".profile"} {
+				path := filepath.Join(home, name)
+				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+					return path
+				}
+			}
 			return filepath.Join(home, ".bash_profile")
 		}
 		return filepath.Join(home, ".bashrc")
@@ -364,7 +374,15 @@ func promptSetup(reader *bufio.Reader, output io.Writer, item SetupItem) bool {
 }
 
 func readProfile(path string) ([]byte, os.FileMode, error) {
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, 0o600, nil
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = root.Close() }()
+	file, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0o600, nil
 	}

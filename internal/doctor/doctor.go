@@ -495,9 +495,26 @@ func checkLock(report *Report, inputs Inputs) {
 		return
 	}
 	report.Facts["lock"] = filepath.Join(inputs.LockFolder, flock.FileName)
-	if err := os.MkdirAll(inputs.LockFolder, 0o700); err != nil || unix.Access(inputs.LockFolder, unix.W_OK) != nil {
+	if !canWriteLockFolder(inputs.LockFolder) {
 		report.problem("lock-unwritable", fmt.Sprintf("%s is not writable here: no heavy run can start (inside an agent sandbox this is expected).", inputs.LockFolder),
 			fmt.Sprintf("let this account write %s; inside Claude Code's sandbox, add \"~/.jackstay\" to sandbox.filesystem.allowWrite in %s", inputs.LockFolder, inputs.Settings))
+	}
+}
+
+func canWriteLockFolder(folder string) bool {
+	for {
+		info, err := os.Stat(folder)
+		if err == nil {
+			return info.IsDir() && unix.Access(folder, unix.W_OK|unix.X_OK) == nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+		parent := filepath.Dir(folder)
+		if parent == folder {
+			return false
+		}
+		folder = parent
 	}
 }
 

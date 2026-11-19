@@ -255,8 +255,10 @@ func refreshLive(ctx context.Context, run Runner, identity, folder, candidate, v
 	preserveCertified := false
 	switch {
 	case identity != "":
-		if kept, _, err := KeepsItsSignature(run, live); err != nil || kept && healthy {
-			return LeftAlone, err
+		if info, statErr := os.Stat(live); statErr == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			if kept, _, err := KeepsItsSignature(run, live); err != nil || kept && healthy {
+				return LeftAlone, err
+			}
 		}
 	case !healthy:
 	case runtime.GOOS != "darwin":

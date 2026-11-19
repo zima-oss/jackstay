@@ -363,6 +363,7 @@ func Mark(folder, id, via string, replaced Replaced) error {
 // renameItem is os.Rename and removeOriginal os.RemoveAll; a test makes the one answer as across
 // volumes and runs a prune inside the other.
 var renameItem, removeOriginal = os.Rename, os.RemoveAll
+var exchangeRestore = exchangeFiles
 
 // moveItem renames; across volumes it copies, checks the copy, and only then removes the original.
 func moveItem(source, target string) error {
@@ -604,7 +605,7 @@ func restoreItem(source, target string, expected *Replaced) error {
 				return err
 			}
 			if current == *expected {
-				return renameItem(candidate, target)
+				return restoreOverReplacement(candidate, target, *expected)
 			}
 		}
 		return fmt.Errorf("%s is there already: nothing restored (use --to PATH)", target)
@@ -630,6 +631,44 @@ func restoreItem(source, target string, expected *Replaced) error {
 		return err
 	}
 	return install(candidate)
+}
+
+// restoreOverReplacement checks the displaced file after exchange. The trash copy
+// stays recoverable throughout, including if another editor changes the destination.
+func restoreOverReplacement(source, target string, expected Replaced) error {
+	staging, err := os.MkdirTemp(filepath.Dir(target), ".jackstay-restore-")
+	if err != nil {
+		return err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+	staged := filepath.Join(staging, "item")
+	if err := copyTree(source, staged); err != nil {
+		return err
+	}
+	if err := sameTree(source, staged); err != nil {
+		return err
+	}
+	if err := exchangeRestore(staged, target); err != nil {
+		return fmt.Errorf("cannot safely replace %s (use --to PATH): %w", target, err)
+	}
+	displaced, inspectErr := Describe(staged)
+	if inspectErr == nil && displaced == expected {
+		return nil
+	}
+	if err := exchangeRestore(staged, target); err != nil {
+		cleanup = false
+		return fmt.Errorf("the destination changed and could not be put back: %w; displaced contents kept at %s", err, staged)
+	}
+	if err := sameTree(source, staged); err != nil {
+		cleanup = false
+		return fmt.Errorf("the destination changed again during restore; the other version is kept at %s", staged)
+	}
+	return fmt.Errorf("%s changed during restore; its current contents and the trash entry were kept", target)
 }
 
 // Prune removes the entries older than the days each records (the `trash.keep_days` of the project it

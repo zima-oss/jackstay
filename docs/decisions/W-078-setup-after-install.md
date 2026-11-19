@@ -21,3 +21,8 @@ project adopted. A user who is not told these steps finds the tool silently half
 - The install script stays short enough to read before piping it from the web.
 - A setup command that makes these changes with the user's consent can be built later on top of
   `jst doctor`'s checks.
+
+Later setup work added that optional command. The install step itself still writes only within
+the prefix; with a terminal, the quick script may now offer interactive setup after installation.
+Those separate, chosen setup edits can update a shell profile or Claude Code settings. Without
+a terminal, the script only prints the remaining steps described above.

@@ -629,6 +629,65 @@ func TestSameVersionRepairsADamagedLiveBinaryWithoutSigning(t *testing.T) {
 	launchersRun(t, prefix)
 }
 
+func TestSameVersionRepairsMissingOrNonExecutableLiveBinary(t *testing.T) {
+	for _, damage := range []string{"missing", "not executable"} {
+		t.Run(damage, func(t *testing.T) {
+			prefix := t.TempDir()
+			first, _, stderr := options(prefix, binaries["1111111"])
+			if code := Install(first); code != 0 {
+				t.Fatalf("first install exited %d: %s", code, stderr)
+			}
+			state, err := layout.Read(prefix)
+			if err != nil || state.Live == nil {
+				t.Fatalf("live state: %+v, %v", state, err)
+			}
+			binary := filepath.Join(state.Live.Path, layout.Program)
+			switch damage {
+			case "missing":
+				err = os.Remove(binary)
+			case "not executable":
+				err = os.Chmod(binary, 0o644)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, stdout, stderr := options(prefix, binaries["1111111"])
+			if code := Install(again); code != 0 || !strings.Contains(stdout.String(), "repaired") {
+				t.Fatalf("repair exited %d: %s %s", code, stdout, stderr)
+			}
+			if got := launchersRun(t, prefix); got != identityOf("1111111") {
+				t.Fatalf("repaired binary: %s", got)
+			}
+		})
+	}
+}
+
+func TestSameVersionRefusesIncompleteLiveFolder(t *testing.T) {
+	prefix := t.TempDir()
+	first, _, stderr := options(prefix, binaries["1111111"])
+	if code := Install(first); code != 0 {
+		t.Fatalf("first install exited %d: %s", code, stderr)
+	}
+	state, err := layout.Read(prefix)
+	if err != nil || state.Live == nil {
+		t.Fatalf("live state: %+v, %v", state, err)
+	}
+	binary := filepath.Join(state.Live.Path, layout.Program)
+	if err := os.Remove(binary); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(state.Live.Path, layout.SourceFile)); err != nil {
+		t.Fatal(err)
+	}
+	again, _, diagnostics := options(prefix, binaries["1111111"])
+	if code := Install(again); code != 2 || !strings.Contains(diagnostics.String(), "not a version folder") {
+		t.Fatalf("incomplete folder was adopted: exit %d, %s", code, diagnostics.String())
+	}
+	if _, err := os.Stat(binary); !os.IsNotExist(err) {
+		t.Fatalf("incomplete folder was modified: %v", err)
+	}
+}
+
 func TestSameVersionCanReplaceAdHocWithACertifiedReleaseWithoutSigning(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("macOS signing")

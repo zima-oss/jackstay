@@ -355,8 +355,8 @@ func TestRestoreKeepsTheCurrentFileWhenTheMoveFails(t *testing.T) {
 	if err := Mark(folder, entry.ID, "discard", written); err != nil {
 		t.Fatal(err)
 	}
-	renameItem = func(string, string) error { return syscall.EIO }
-	t.Cleanup(func() { renameItem = os.Rename })
+	exchangeRestore = func(string, string) error { return syscall.EIO }
+	t.Cleanup(func() { exchangeRestore = exchangeFiles })
 	var out, errs strings.Builder
 	if code := restore(folder, []string{entry.ID}, &out, &errs); code != 1 {
 		t.Fatalf("restore = %d, want 1: %s", code, errs.String())
@@ -371,7 +371,7 @@ func TestRestoreKeepsTheCurrentFileWhenTheMoveFails(t *testing.T) {
 	}
 }
 
-func TestCrossVolumeRestoreKeepsAnEditWrittenBeforeInstallation(t *testing.T) {
+func TestRestoreKeepsAnEditWrittenBeforeExchange(t *testing.T) {
 	folder := filepath.Join(t.TempDir(), ".trash")
 	target := filepath.Join(t.TempDir(), "item")
 	if err := os.WriteFile(target, []byte("edit"), 0o600); err != nil {
@@ -391,18 +391,23 @@ func TestCrossVolumeRestoreKeepsAnEditWrittenBeforeInstallation(t *testing.T) {
 	if err := Mark(folder, entry.ID, "discard", written); err != nil {
 		t.Fatal(err)
 	}
-	renameItem = func(string, string) error {
+	injected := false
+	exchangeRestore = func(source, destination string) error {
+		if injected {
+			return exchangeFiles(source, destination)
+		}
+		injected = true
 		if removed := Prune(folder, time.Now().Add(time.Hour)); removed != 0 {
 			t.Errorf("pruned %d entries during restore", removed)
 		}
 		if err := os.WriteFile(target, []byte("new edit"), 0o600); err != nil {
 			return err
 		}
-		return syscall.EXDEV
+		return exchangeFiles(source, destination)
 	}
-	t.Cleanup(func() { renameItem = os.Rename })
+	t.Cleanup(func() { exchangeRestore = exchangeFiles })
 	var out, errs strings.Builder
-	if code := restore(folder, []string{entry.ID}, &out, &errs); code != 1 || !strings.Contains(errs.String(), "already") {
+	if code := restore(folder, []string{entry.ID}, &out, &errs); code != 1 || !strings.Contains(errs.String(), "changed during restore") {
 		t.Fatalf("restore = %d: %s, want the new edit to block installation", code, errs.String())
 	}
 	if data, err := os.ReadFile(target); err != nil || string(data) != "new edit" {

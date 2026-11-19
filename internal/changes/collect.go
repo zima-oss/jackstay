@@ -300,7 +300,11 @@ func removeCollectedEntries(ctx context.Context, project Project, plan collectPl
 		switch {
 		case exists && (actual != expected || !tracked[expected.Path]):
 			changed = append(changed, expected.Path)
-		case tracked[expected.Path]:
+		case !exists && tracked[expected.Path]:
+			// A missing worktree copy is not evidence that the indexed entry was removed.
+			// git rm permits missing paths even when their staged contents differ.
+			changed = append(changed, expected.Path)
+		case exists && tracked[expected.Path]:
 			remove = append(remove, expected.Path)
 		}
 	}
