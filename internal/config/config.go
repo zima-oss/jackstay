@@ -387,6 +387,9 @@ var Table = object(
 		"use", texts(), "brief", text(), "template", text(), "cite", texts(), "severities", texts(), "blocking", texts(),
 		"triage", boolean(), "repeat_rounds", integer(), "repeat_severities", texts(), "round_limit", integer(),
 		"max_concurrent", integer(), "queue_minutes", integer(), "store", text(), "keep_days", integer(),
+		"pool", object("accepting", boolean(), "history_days", boundedInteger(1, 3650, 30),
+			"max_pending", boundedInteger(1, 256, 32), "max_attempts", boundedInteger(1, 20, 5),
+			"retry_initial_seconds", boundedInteger(1, 3600, 30), "retry_cap_seconds", boundedInteger(1, 86400, 900)),
 	),
 	// docs/design/implementation.md, section 8.1: the account jackstay acts as on GitHub; the meaning checks are
 	// githubProblems'.

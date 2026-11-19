@@ -201,9 +201,13 @@ func (bridge CodexBridge) Deliver(ctx context.Context) (int, error) {
 	if bridge.SessionID == "" || bridge.ThreadID == "" {
 		return 0, errors.New("codex bridge requires recipient session and thread IDs")
 	}
+	notificationErr := syncReviewNotifications(ctx, bridge.Store, bridge.SessionID)
 	messages, err := bridge.Store.pending(bridge.SessionID, 0)
 	if err != nil || len(messages) == 0 {
-		return 0, err
+		if err != nil {
+			return 0, err
+		}
+		return 0, notificationErr
 	}
 	client, err := connectCodex(ctx, bridge.SocketPath)
 	if err != nil {

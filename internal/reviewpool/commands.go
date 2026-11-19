@@ -9,8 +9,10 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/flock"
@@ -20,22 +22,28 @@ import (
 
 const poolHelp = `usage: jst review pool add --repo ABSOLUTE_PATH --base REF --head REF --task NAME --reviewer NAMES
        jst review pool list [--json]
+       jst review pool inspect [--json]
+       jst review pool prune [--apply] [--json]
+       jst review pool migrate [--apply] [--json]
        jst review pool next
        jst review pool retry JOB_ID
 
 A local, persistent, opt-in queue shared by agent sessions. add pins both Git revisions now;
 NAMES is codex, claude-code, or both separated by a comma. next runs one queued review in
 the foreground from its saved repository. It starts no background daemon. retry requeues a
-failed attempt without changing its commits. list reads local state only.
+failed attempt without changing its commits. list reads local jobs; inspect reports queue
+health and notification handoffs without repository or session details. prune previews
+expired terminal history; migrate previews a queue schema upgrade. Both require --apply
+to write. prune retains active work and terminal outcomes awaiting chat delivery.
 
-exit: 0 accepted, listed, retried, or no pending job; 1, 3, 4 a completed review verdict;
+exit: 0 request or maintenance succeeded, or no pending job; 1, 3, 4 a completed review verdict;
 2 invalid request or queue state; 5, 6 review failed; 2 when another worker holds the pool.
 
 example: jst review pool add --repo /path/to/repo --base main --head HEAD --task parser --reviewer codex
 `
 
 func init() {
-	cli.Register(cli.Command{Name: "review pool", Summary: "add|list|next|retry: queue local reviews across sessions",
+	cli.Register(cli.Command{Name: "review pool", Summary: "queue, inspect and maintain local reviews across sessions",
 		Usage: poolHelp, Run: runPool, PrivateArgs: true, SkipTelemetry: true})
 }
 
@@ -101,6 +109,8 @@ func runPool(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "%s  %-8s  attempts=%d  exit=%d  %s  %s\n", job.ID, job.Status, job.Attempts, job.Exit, job.Task, job.ReviewersText())
 		}
 		return 0
+	case "inspect", "prune", "migrate":
+		return runMaintenance(ctx, pool, args, stdout, stderr)
 	case "retry":
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, "usage: jst review pool retry JOB_ID")
@@ -123,8 +133,12 @@ func runPool(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			if err != nil {
 				return review.ExitEnvironment, err
 			}
+			environment := slices.DeleteFunc(os.Environ(), func(pair string) bool {
+				return strings.HasPrefix(pair, "JACKSTAY_REVIEW_POOL_ATTEMPT=")
+			})
+			environment = append(environment, "JACKSTAY_REVIEW_POOL_ATTEMPT="+job.AttemptID)
 			captured, err := supervise.Capture(ctx, []string{executable, "review", job.Base + ".." + job.Head,
-				"--task", job.Task, "--reviewer", job.ReviewersText()}, job.Repository, nil, nil)
+				"--task", job.Task, "--reviewer", job.ReviewersText()}, job.Repository, environment, nil)
 			_, _ = stdout.Write(captured.Stdout)
 			_, _ = stderr.Write(captured.Stderr)
 			if captured.Incomplete != "" {
@@ -149,5 +163,69 @@ func runPool(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	default:
 		fmt.Fprint(stderr, poolHelp)
 		return 2
+	}
+}
+
+func runMaintenance(ctx context.Context, pool Pool, args []string, stdout, stderr io.Writer) int {
+	command := args[0]
+	flags := flag.NewFlagSet("jst review pool "+command, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var asJSON, apply bool
+	flags.BoolVar(&asJSON, "json", false, "write a JSON report")
+	if command != "inspect" {
+		flags.BoolVar(&apply, "apply", false, "write the proposed changes")
+	}
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+		fmt.Fprintf(stderr, "jst review pool %s: invalid arguments\n", command)
+		return 2
+	}
+
+	var report any
+	var err error
+	switch command {
+	case "inspect":
+		report, err = pool.Inspect(ctx, time.Now())
+	case "prune":
+		report, err = pool.Prune(ctx, time.Now(), apply)
+	case "migrate":
+		report, err = pool.Migrate(ctx, apply)
+	}
+	if err == nil {
+		if asJSON {
+			err = json.NewEncoder(stdout).Encode(report)
+		} else {
+			err = printMaintenance(stdout, report)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(stderr, "jst review pool %s: %v\n", command, err)
+		return 2
+	}
+	return 0
+}
+
+func printMaintenance(output io.Writer, report any) error {
+	switch result := report.(type) {
+	case Overview:
+		_, err := fmt.Fprintf(output, "Review pool state v%d\n"+
+			"Jobs: %d total, %d pending (%d eligible, %d delayed), %d running (%d recoverable, %d unresolved), %d complete, %d failed\n"+
+			"Work eligible: %t; oldest pending age: %ds\n"+
+			"Outcomes: %d clear, %d blocked, %d redesign, %d owner, %d other, %d retryable failures, %d operator failures\n"+
+			"Notifications: %d awaiting chat delivery, %d delivered to chat\n",
+			result.Version, result.Total, result.Pending, result.Eligible, result.Delayed, result.Running, result.Recoverable,
+			result.Unresolved, result.Complete, result.Failed, result.Ready, result.OldestPendingAgeSeconds,
+			result.Outcomes.Clear, result.Outcomes.Blocks, result.Outcomes.Redesign, result.Outcomes.Owner, result.Outcomes.Other,
+			result.Outcomes.Retryable, result.Outcomes.Operator, result.Notifications.Undelivered, result.Notifications.Materialized)
+		return err
+	case PruneReport:
+		_, err := fmt.Fprintf(output, "Review pool history: %d eligible, %d protected by pending delivery, %d removed\n",
+			result.Eligible, result.Protected, result.Removed)
+		return err
+	case Migration:
+		_, err := fmt.Fprintf(output, "Review pool migration: v%d to v%d, needed: %t, applied: %t\n",
+			result.From, result.To, result.Needed, result.Applied)
+		return err
+	default:
+		return errors.New("unknown review pool report")
 	}
 }

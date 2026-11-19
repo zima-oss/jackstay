@@ -44,6 +44,14 @@ func TestJSONSchemaDescribesRuntimeStructure(t *testing.T) {
 		t.Fatal("dynamic test scope names must be accepted")
 	}
 	chat := properties["chat"].(map[string]any)["properties"].(map[string]any)
+	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
+	if accepting := pool["accepting"].(map[string]any); accepting["type"] != "boolean" || accepting["default"] != true {
+		t.Fatalf("review pool admission schema: %+v", accepting)
+	}
+	if history := pool["history_days"].(map[string]any); history["minimum"] != float64(1) ||
+		history["maximum"] != float64(3650) || history["default"] != float64(30) {
+		t.Fatalf("review pool retention schema: %+v", history)
+	}
 	for key, wanted := range chatSection.keys {
 		if wanted.maximum == 0 {
 			continue

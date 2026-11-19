@@ -38,6 +38,16 @@ more than one agent, so use the recipient ID returned by discovery.
 - `chat.reply` sends a response linked to a received message.
 - `chat.ack` acknowledges that the current recipient processed a message.
 
+The same MCP connection offers `review.submit` and `review.status`. Submit `{ "base": "main", "head": "HEAD", "task": "feature-branch",
+"reviewers": ["codex", "claude-code"] }` to pin a review range in the local pool.
+`review.status` accepts the returned `job_id` and shows only requests submitted by this
+session in this repository. Repeating the same submission returns its original job. A
+foreground `jst review pool next` worker processes one request. When an attempt completes or
+fails, the submitter receives a `review-pool` message through `chat.inbox` or its configured
+active-turn host integration. Read `review.status` for the verdict, then call `chat.ack` with
+the notification's message ID. The event survives server restarts until chat accepts it;
+acknowledgment is still the recipient's separate processing decision.
+
 A successful send means the local service accepted and persisted the message. The recipient
 acknowledges processing separately. Use a reply with evidence when the requester needs to verify
 an action. An incoming request carries the sender's text and identity.

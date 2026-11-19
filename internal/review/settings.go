@@ -29,6 +29,7 @@ type ReviewerSettings struct {
 
 // Settings are a project's `review` section with every default filled in.
 type Settings struct {
+	Pool             PoolSettings
 	Reviewers        map[string]ReviewerSettings
 	Use              []string
 	Brief            string
@@ -44,6 +45,16 @@ type Settings struct {
 	QueueMinutes     int
 	Store            string // empty: ~/.jackstay/<project>/reviews
 	KeepDays         int
+}
+
+// PoolSettings bounds a repository's optional reviewer queue requests.
+type PoolSettings struct {
+	Accepting           bool
+	HistoryDays         int
+	MaxPending          int
+	MaxAttempts         int
+	RetryInitialSeconds int
+	RetryCapSeconds     int
 }
 
 // DefaultIsolation is the default set of isolation flags (docs/design/review.md section 1).
@@ -82,6 +93,7 @@ func Defaults() Settings {
 		reviewers[name] = defaultReviewer(name)
 	}
 	return Settings{
+		Pool:             PoolSettings{Accepting: true, HistoryDays: 30, MaxPending: 32, MaxAttempts: 5, RetryInitialSeconds: 30, RetryCapSeconds: 900},
 		Reviewers:        reviewers,
 		Severities:       []string{"blocker", "major", "minor"},
 		Blocking:         []string{"blocker"},
@@ -182,6 +194,32 @@ func SettingsOf(loaded config.Config) (Settings, []string) {
 	}
 	if value, ok := section["store"].(string); ok {
 		settings.Store = value
+	}
+	if pool, ok := section["pool"].(map[string]any); ok {
+		if accepting, ok := pool["accepting"].(bool); ok {
+			settings.Pool.Accepting = accepting
+		}
+		for _, field := range []struct {
+			name      string
+			target    *int
+			low, high int
+		}{
+			{"max_pending", &settings.Pool.MaxPending, 1, 256},
+			{"max_attempts", &settings.Pool.MaxAttempts, 1, 20},
+			{"retry_initial_seconds", &settings.Pool.RetryInitialSeconds, 1, 3600},
+			{"retry_cap_seconds", &settings.Pool.RetryCapSeconds, 1, 86400},
+			{"history_days", &settings.Pool.HistoryDays, 1, 3650},
+		} {
+			if value, ok := integerOf(pool[field.name]); ok {
+				*field.target = value
+			}
+			if *field.target < field.low || *field.target > field.high {
+				problem("`review.pool.%s` is %d: %d–%d", field.name, *field.target, field.low, field.high)
+			}
+		}
+		if settings.Pool.RetryCapSeconds < settings.Pool.RetryInitialSeconds {
+			problem("`review.pool.retry_cap_seconds` must be at least retry_initial_seconds")
+		}
 	}
 	problems = append(problems, settings.problems()...)
 	return settings, problems

@@ -37,16 +37,17 @@ const MaxSlots = 16
 
 // Options are one call's words (section 7).
 type Options struct {
-	Revision  string // REV or BASE..REV; "" is HEAD
-	Task      string
-	Reviewers []string
-	BriefFile string
-	Focus     string
-	Fresh     bool
-	PastLimit bool
-	Model     string
-	Effort    string
-	Timeout   int // minutes; 0 keeps the configuration
+	Revision    string // REV or BASE..REV; "" is HEAD
+	PoolAttempt string // internal correlation for a queued review
+	Task        string
+	Reviewers   []string
+	BriefFile   string
+	Focus       string
+	Fresh       bool
+	PastLimit   bool
+	Model       string
+	Effort      string
+	Timeout     int // minutes; 0 keeps the configuration
 }
 
 // Machine is what a round needs of the machine; Real gives the real one, tests their own.
@@ -293,7 +294,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	ctx, span := startAttempt(ctx, planned, folder)
 	defer func() { endAttempt(span, result.Record, result.Next, result.Status, result.Folder) }()
 	if err := writeJSON(filepath.Join(folder, AttemptName), AttemptRecord{Task: planned.task, Attempt: planned.attempt,
-		Commit: planned.commit, Base: planned.base}); err != nil {
+		Commit: planned.commit, Base: planned.base, PoolAttempt: options.PoolAttempt}); err != nil {
 		return usage("the attempt's folder: %v", err)
 	}
 	data, refusal := round.promptData(ctx, settings, planned, options, folder)
@@ -328,7 +329,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	}
 	reviewersDone.Wait() // jackstay:not-a-process
 
-	record := RoundRecord{Task: planned.task, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
+	record := RoundRecord{Task: planned.task, PoolAttempt: options.PoolAttempt, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
 		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus, Policy: settings.policyID(),
 		PastLimit: options.PastLimit, Made: round.Machine.Now().Format(time.RFC3339), Runs: runs,
 		Summaries: map[string]string{}}
@@ -360,6 +361,10 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	}
 	record.Outcome = Advance(settings, planned.ledger, planned.streaks, answered, planned.number, planned.commit)
 	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit
+	status, next := Disposition(settings, record)
+	if options.PoolAttempt != "" {
+		record.PoolExit = &status
+	}
 	if err := writeJSON(filepath.Join(folder, RecordName), record); err != nil {
 		return Result{Status: ExitReviewer, Folder: folder, Next: "the round's record could not be written: " + err.Error()}
 	}
@@ -369,7 +374,6 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		return Result{Status: ExitReviewer, Folder: folder, Next: "the attempt could not become a round: " + err.Error()}
 	}
 	_ = round.Store.AppendIndex(recordLines(record, roundFolder))
-	status, next := Disposition(settings, record)
 	return Result{Status: status, Folder: roundFolder, Record: &record, Next: next}
 }
 

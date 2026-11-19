@@ -35,8 +35,27 @@ func TestDefaults(t *testing.T) {
 		s.QueueMinutes != 15 || s.KeepDays != 30 || !s.Triage || s.Cite != nil {
 		t.Fatalf("defaults: %+v", s)
 	}
+	if !s.Pool.Accepting || s.Pool.HistoryDays != 30 {
+		t.Fatalf("pool defaults: %+v", s.Pool)
+	}
 	if s.Budget([]string{"codex"}) != 37 {
 		t.Fatalf("budget %d", s.Budget([]string{"codex"}))
+	}
+}
+
+func TestPoolAdmissionAndHistorySettings(t *testing.T) {
+	settings, problems := settingsFrom(t, `{"jackstay_schema":2,"review":{"pool":{"accepting":false,"history_days":90}}}`)
+	if len(problems) != 0 || settings.Pool.Accepting || settings.Pool.HistoryDays != 90 {
+		t.Fatalf("pool settings: %+v, problems %v", settings.Pool, problems)
+	}
+	for _, value := range []string{"0", "3651"} {
+		parsed, err := config.Parse([]byte(`{"jackstay_schema":2,"review":{"pool":{"history_days":` + value + `}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if problems := config.SectionProblems(parsed).Of("review"); len(problems) == 0 {
+			t.Fatalf("invalid history_days %s was accepted by configuration validation", value)
+		}
 	}
 }
 

@@ -9,9 +9,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
+	"github.com/zima-oss/jackstay/internal/gitcli"
+	"github.com/zima-oss/jackstay/internal/reviewpool"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 )
 
@@ -165,6 +168,8 @@ func toolDefinitions() []map[string]any {
 		{"chat.inbox", "Read pending messages addressed to this session", map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, nil, true},
 		{"chat.reply", "Reply to a message addressed to this session", map[string]any{"message_id": stringField(64), "body": stringField(16384), "idempotency_key": stringField(128)}, []string{"message_id", "body", "idempotency_key"}, false},
 		{"chat.ack", "Acknowledge one message addressed to this session", map[string]any{"message_id": stringField(64)}, []string{"message_id"}, false},
+		{"review.submit", "Queue a review of pinned commits in this repository and subscribe to the outcome", map[string]any{"base": stringField(200), "head": stringField(200), "task": stringField(200), "reviewers": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"codex", "claude-code"}}, "minItems": 1, "maxItems": 2}}, []string{"base", "head", "task", "reviewers"}, false},
+		{"review.status", "Read a request submitted by this session in this repository", map[string]any{"job_id": stringField(24)}, []string{"job_id"}, true},
 	}
 	result := make([]map[string]any, 0, len(fields))
 	for _, entry := range fields {
@@ -183,22 +188,29 @@ func (server *Server) call(raw json.RawMessage) any {
 		return toolFailure("invalid tool call")
 	}
 	var arguments struct {
-		To             string `json:"to"`
-		Kind           string `json:"kind"`
-		Body           string `json:"body"`
-		IdempotencyKey string `json:"idempotency_key"`
-		MessageID      string `json:"message_id"`
-		Limit          int    `json:"limit"`
+		To             string   `json:"to"`
+		Kind           string   `json:"kind"`
+		Body           string   `json:"body"`
+		IdempotencyKey string   `json:"idempotency_key"`
+		MessageID      string   `json:"message_id"`
+		Limit          int      `json:"limit"`
+		Base           string   `json:"base"`
+		Head           string   `json:"head"`
+		Task           string   `json:"task"`
+		Reviewers      []string `json:"reviewers"`
+		JobID          string   `json:"job_id"`
 	}
 	if len(envelope.Arguments) > 0 && strictjson.Unmarshal(envelope.Arguments, &arguments) != nil {
 		return toolFailure("invalid arguments")
 	}
 	allowed := map[string]map[string]bool{
 		"chat.self": {}, "chat.sessions": {},
-		"chat.send":  {"to": true, "kind": true, "body": true, "idempotency_key": true},
-		"chat.inbox": {"limit": true},
-		"chat.reply": {"message_id": true, "body": true, "idempotency_key": true},
-		"chat.ack":   {"message_id": true},
+		"chat.send":     {"to": true, "kind": true, "body": true, "idempotency_key": true},
+		"chat.inbox":    {"limit": true},
+		"chat.reply":    {"message_id": true, "body": true, "idempotency_key": true},
+		"chat.ack":      {"message_id": true},
+		"review.submit": {"base": true, "head": true, "task": true, "reviewers": true},
+		"review.status": {"job_id": true},
 	}
 	if permitted, found := allowed[envelope.Name]; found && len(envelope.Arguments) > 0 {
 		members, err := strictjson.Members(envelope.Arguments)
@@ -230,11 +242,17 @@ func (server *Server) call(raw json.RawMessage) any {
 		message.CodexAccepted = nil
 		result = map[string]any{"message": message, "duplicate": duplicate}
 	case "chat.inbox":
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		notificationErr := syncReviewNotifications(ctx, server.store, server.session.ID)
+		cancel()
 		if arguments.Limit == 0 {
 			arguments.Limit = 50
 		}
 		var messages []Message
 		messages, err = server.store.Inbox(server.session.ID, arguments.Limit)
+		if err == nil && len(messages) == 0 {
+			err = notificationErr
+		}
 		for index := range messages {
 			messages[index].CodexAccepted = nil
 		}
@@ -248,6 +266,42 @@ func (server *Server) call(raw json.RawMessage) any {
 	case "chat.ack":
 		err = server.store.Acknowledge(server.session.ID, arguments.MessageID)
 		result = map[string]any{"acknowledged": err == nil}
+	case "review.submit":
+		var here string
+		here, err = os.Getwd()
+		if err != nil {
+			break
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		var common string
+		common, err = (gitcli.Git{Dir: here}).CommonDir(ctx)
+		if err == nil {
+			common, err = filepath.EvalSymlinks(common)
+		}
+		if err == nil && common != server.store.commonDirectory {
+			err = errors.New("MCP session repository changed")
+		}
+		if err == nil {
+			var pool reviewpool.Pool
+			pool, err = reviewpool.Default()
+			if err == nil {
+				var job reviewpool.Job
+				var created bool
+				job, created, err = pool.EnqueueForSession(ctx, reviewpool.Request{Repository: here, Base: arguments.Base, Head: arguments.Head, Task: arguments.Task, Reviewers: arguments.Reviewers}, server.session.ID, server.store.commonDirectory)
+				result = map[string]any{"job": publicReviewJob(job), "created": created}
+			}
+		}
+		cancel()
+	case "review.status":
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		var pool reviewpool.Pool
+		pool, err = reviewpool.Default()
+		if err == nil {
+			var job reviewpool.Job
+			job, err = pool.StatusForSession(ctx, arguments.JobID, server.session.ID, server.store.commonDirectory)
+			result = map[string]any{"job": publicReviewJob(job)}
+		}
+		cancel()
 	default:
 		return toolFailure("unknown tool")
 	}
@@ -259,6 +313,12 @@ func (server *Server) call(raw json.RawMessage) any {
 		return toolFailure("chat result exceeds its size limit; retry with a smaller inbox limit")
 	}
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": string(encoded)}}, "structuredContent": result}
+}
+
+func publicReviewJob(job reviewpool.Job) map[string]any {
+	return map[string]any{"id": job.ID, "base": job.Base, "head": job.Head, "task": job.Task,
+		"reviewers": job.Reviewers, "status": job.Status, "attempts": job.Attempts,
+		"exit": job.Exit, "not_before": job.NotBefore}
 }
 func toolFailure(reason string) map[string]any {
 	return map[string]any{"content": []map[string]string{{"type": "text", "text": reason}}, "isError": true}
