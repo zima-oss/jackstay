@@ -30,6 +30,8 @@ type Command struct {
 	Usage string
 	// Run runs it with the words after Name; its result is the exit status.
 	Run func(args []string, stdin io.Reader, stdout, stderr io.Writer) int
+	// PrivateArgs omits the command's arguments from its telemetry span.
+	PrivateArgs bool
 }
 
 // commands is the table, filled by Register from each command's package (cmd/jst imports them).
@@ -124,6 +126,9 @@ func run(args []string, dispatch func() int) (status int) {
 	name, rest := "", args
 	if entry, words, found := Find(args); found {
 		name, rest = entry.Name, args[words:]
+		if entry.PrivateArgs {
+			rest = nil
+		}
 	} else if len(args) > 0 {
 		name, rest = args[0], args[1:]
 	}

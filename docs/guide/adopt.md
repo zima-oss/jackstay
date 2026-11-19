@@ -7,9 +7,9 @@ it will not decide for you.
 ## `jst adopt`
 
 ```sh
-jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
-jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
-jst adopt --block [--profile PATH] [DIR]
+jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
+jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 ```
 
 `jst adopt` brings the project around `DIR` (default: here) to jackstay's reference. It owns four
@@ -27,6 +27,7 @@ places and nothing else:
 - `--accept ID` lets `--apply` overwrite the one thing a conflict protects, for this run only.
 - `--profile PATH` uses an organisation's profile (below); `--apply` records it in
   `jackstay.json` so later runs need no flag.
+- `--profile-sha256 DIGEST` pins the exact portable profile bundle and records the digest for later runs.
 - `--pin` moves `adopt.pin`, the jackstay release the workflows download, to the running version.
   Without it the pin never moves.
 
@@ -220,6 +221,23 @@ jst adopt --profile ../org-profile/profile.json            # the plan with the p
 jst adopt --apply --profile ../org-profile/profile.json    # recorded in jackstay.json's adopt.profile
 jst adopt                                                   # later runs need no flag
 ```
+
+For a reviewed organization profile, export a portable bundle and obtain its SHA-256
+through a trusted channel independent of the bundle download. Verify the exact bytes before
+adopting them:
+
+```sh
+jst profile verify --sha256 "$expected" policy.bundle.json
+jst adopt --plan --profile policy.bundle.json --profile-sha256 "$expected"
+jst adopt --apply --settings-only --profile policy.bundle.json --profile-sha256 "$expected"
+jst adopt --apply
+```
+
+The settings stage records `adopt.profile` and `adopt.profile_sha256`. Later plans and
+applies reread the same artifact and reject a changed digest, a loose profile or a missing
+bundle. To upgrade, independently verify the new bundle and give its expected digest to
+`--profile-sha256` on the first settings stage. The following files stage reads the pinned
+bundle again. Keep the bundle accessible at the recorded profile path in linked worktrees.
 
 A profile is refused as a whole (exit 2) when a key is unknown, a path leaves its folder, a
 workflow's `uses:` is not pinned to a full commit hash, a template uses an undefined `@@name@@`, or a

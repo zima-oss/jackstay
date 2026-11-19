@@ -41,8 +41,9 @@ type Options struct {
 	// Dir is any folder of the project.
 	Dir string
 	// Profile is --profile as given ("": the one jackstay.json names); WorkingDir resolves it when relative.
-	Profile    string
-	WorkingDir string
+	Profile       string
+	ProfileSHA256 string
+	WorkingDir    string
 	// Accept are the conflicts --accept lets jackstay overwrite.
 	Accept []string
 	// Pin moves adopt.pin to this jackstay's version.
@@ -115,14 +116,15 @@ type Exception struct {
 
 // Plan is what jst adopt found.
 type Plan struct {
-	Project     string      `json:"project"`
-	Root        string      `json:"root"`
-	Profile     string      `json:"profile"`
-	ProfileName string      `json:"profile_name,omitempty"`
-	Changes     []Change    `json:"changes"`
-	Conflicts   []Conflict  `json:"conflicts"`
-	Exceptions  []Exception `json:"exceptions"`
-	Notes       []string    `json:"notes"`
+	Project       string      `json:"project"`
+	Root          string      `json:"root"`
+	Profile       string      `json:"profile"`
+	ProfileName   string      `json:"profile_name,omitempty"`
+	ProfileSHA256 string      `json:"profile_sha256,omitempty"`
+	Changes       []Change    `json:"changes"`
+	Conflicts     []Conflict  `json:"conflicts"`
+	Exceptions    []Exception `json:"exceptions"`
+	Notes         []string    `json:"notes"`
 
 	writes  []write
 	inputs  map[string]fileInput
@@ -294,11 +296,20 @@ func (planner *planner) readConfig() (*jsondoc.Object, bool, error) {
 // readProfile loads --profile, else the profile jackstay.json names.
 func (planner *planner) readProfile(original *jsondoc.Object) (*profile.Profile, error) {
 	recorded := ""
+	recordedDigest := ""
 	if adoptSection := original.Object("adopt"); adoptSection != nil {
 		recorded, _ = getString(adoptSection, "profile")
+		recordedDigest, _ = getString(adoptSection, "profile_sha256")
 	}
 	given := planner.options.Profile
+	digest := planner.options.ProfileSHA256
+	if digest == "" {
+		digest = recordedDigest
+	}
 	if given == "" && recorded == "" {
+		if digest != "" {
+			return nil, &UsageError{"profile SHA-256 requires a profile path"}
+		}
 		return nil, nil
 	}
 	var path string
@@ -312,7 +323,14 @@ func (planner *planner) readProfile(original *jsondoc.Object) (*profile.Profile,
 		path = planner.resolveRecorded(recorded)
 	}
 	planner.plan.Profile = recorded
-	loaded, err := profile.Load(path)
+	planner.plan.ProfileSHA256 = digest
+	var loaded *profile.Profile
+	var err error
+	if digest != "" {
+		loaded, err = profile.LoadPinned(path, digest)
+	} else {
+		loaded, err = profile.Load(path)
+	}
 	if err != nil {
 		return nil, &UsageError{"the profile: " + err.Error()}
 	}
@@ -371,6 +389,9 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		mergeDefaults(document, chosen.Defaults)
 		if planner.options.Profile != "" {
 			setAdopt(document, "profile", planner.plan.Profile)
+		}
+		if planner.options.ProfileSHA256 != "" {
+			setAdopt(document, "profile_sha256", strings.ToLower(planner.plan.ProfileSHA256))
 		}
 	}
 	planner.document = document

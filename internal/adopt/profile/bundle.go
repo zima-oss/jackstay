@@ -85,6 +85,23 @@ func export(path string) ([]byte, error) {
 	return append(encoded, '\n'), nil
 }
 
+// LoadPinned checks the entire artifact against an independently supplied digest before
+// interpreting it. A pinned profile must be a self-contained bundle.
+func LoadPinned(path, expected string) (*Profile, error) {
+	decoded, err := hex.DecodeString(expected)
+	if err != nil || len(decoded) != sha256.Size {
+		return nil, errors.New("profile SHA-256 must be 64 hex digits")
+	}
+	data, err := readProfileFile(path, maxBundleBytes)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(sha256Hex(data), expected) {
+		return nil, errors.New("profile artifact SHA-256 does not match the expected digest")
+	}
+	return loadBundle(path, data)
+}
+
 func loadBundle(path string, data []byte) (*Profile, error) {
 	var bundled bundle
 	if err := strictjson.Unmarshal(data, &bundled); err != nil {

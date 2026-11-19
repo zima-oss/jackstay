@@ -178,3 +178,14 @@ works. It must report the observed delivery boundary for each host.
    adoption, receipts or telemetry records.
 6. Ship local B8 chat alongside the independent queue and App pilots. Add engine delivery once
    each host can demonstrate addressed injection, reconnect and acknowledgment.
+
+
+## Next integration work
+
+1. Extend the [managed chat pilot](session-chat.md#managed-codex-pilot) to a shared test
+   workspace and measure discovery, delivery and acknowledgment on live agent turns.
+2. Extend the [GitHub Free queue pilot](merge-queue-pilot.md#github-free-manual-pilot)
+   with ambiguous provider responses and recovery before piloting automatic landing or batching.
+3. Exercise [signed CI receipts](../guide/tests.md#verify-a-report-produced-by-ci) in a
+   protected signing job and verify the report in a second environment. Stage
+   [digest-pinned profile upgrades](../guide/adopt.md) across repositories and measure rollback.

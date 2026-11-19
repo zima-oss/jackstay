@@ -14,9 +14,9 @@ import (
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
-const usage = `usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
-       jst adopt --block [--profile PATH] [DIR]
+const usage = `usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+       jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Brings the project around DIR (default: here) to jackstay's reference: jackstay.json, the AGENTS block
 between its markers, the guard hook in .claude/settings.json, the workflows jackstay writes. It never
@@ -32,6 +32,7 @@ changes anything else; what it must not decide is a conflict (docs/design/adopt.
                    --apply again on the merged base for the other files
   --profile PATH   an organisation's profile; recorded in jackstay.json by --apply, used later without
                    the flag
+  --profile-sha256 DIGEST  pin the exact portable bundle bytes; recorded for future adoption
   --json           the plan as one JSON object
   --block          print the AGENTS block this project gets; nothing is written
 
@@ -130,6 +131,12 @@ func parseArgs(args []string) (Options, string, bool, error) {
 				return options, "", false, err
 			}
 			options.Accept = append(options.Accept, id)
+		case "--profile-sha256":
+			digest, err := value()
+			if err != nil {
+				return options, "", false, err
+			}
+			options.ProfileSHA256 = digest
 		case "--profile":
 			path, err := value()
 			if err != nil {

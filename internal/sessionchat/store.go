@@ -21,15 +21,23 @@ import (
 
 // Message is one durable direct communication between two registered sessions.
 type Message struct {
-	ID             string `json:"id"`
-	From           string `json:"from"`
-	To             string `json:"to"`
-	Kind           string `json:"kind"`
-	Body           string `json:"body"`
-	ReplyTo        string `json:"reply_to,omitempty"`
-	Created        string `json:"created"`
-	Acknowledged   bool   `json:"acknowledged,omitempty"`
-	IdempotencyKey string `json:"idempotency_key,omitempty"`
+	ID             string           `json:"id"`
+	From           string           `json:"from"`
+	To             string           `json:"to"`
+	Kind           string           `json:"kind"`
+	Body           string           `json:"body"`
+	ReplyTo        string           `json:"reply_to,omitempty"`
+	Created        string           `json:"created"`
+	Acknowledged   bool             `json:"acknowledged,omitempty"`
+	IdempotencyKey string           `json:"idempotency_key,omitempty"`
+	CodexAccepted  *CodexAcceptance `json:"codex_accepted,omitempty"`
+}
+
+// CodexAcceptance records app-server acceptance, not agent processing.
+type CodexAcceptance struct {
+	ThreadID string `json:"thread_id"`
+	TurnID   string `json:"turn_id"`
+	At       string `json:"at"`
 }
 
 // Session is a discoverable local agent connection, identified by an opaque ID.
@@ -69,6 +77,14 @@ func randomID() (string, error) {
 	return hex.EncodeToString(data), nil
 }
 
+func (store Store) tokenID(token string) (string, error) {
+	if len(token) < 32 || len(token) > 256 {
+		return "", errors.New("session token must be 32 to 256 characters")
+	}
+	digest := sha256.Sum256([]byte("jackstay-chat-v1\x00" + store.namespace + "\x00" + token))
+	return hex.EncodeToString(digest[:]), nil
+}
+
 // Register creates or resumes an identity; token remains outside the state file.
 func (store Store) Register(name, token string) (Session, error) {
 	if strings.TrimSpace(name) == "" || len(name) > 80 || strings.ContainsAny(name, "\r\n") {
@@ -76,11 +92,11 @@ func (store Store) Register(name, token string) (Session, error) {
 	}
 	var id string
 	if token != "" {
-		if len(token) < 32 || len(token) > 256 {
-			return Session{}, errors.New("session token must be 32 to 256 characters")
+		var err error
+		id, err = store.tokenID(token)
+		if err != nil {
+			return Session{}, err
 		}
-		digest := sha256.Sum256([]byte("jackstay-chat-v1\x00" + store.namespace + "\x00" + token))
-		id = hex.EncodeToString(digest[:])
 	} else {
 		var err error
 		id, err = randomID()
@@ -107,6 +123,33 @@ func (store Store) Register(name, token string) (Session, error) {
 		return true, nil
 	})
 	return result, err
+}
+
+// registerForHook avoids rewriting the durable state at every tool boundary.
+func (store Store) registerForHook(name, token string) (Session, error) {
+	id, err := store.tokenID(token)
+	if err != nil {
+		return Session{}, err
+	}
+	var existing Session
+	if err := store.update(func(state *snapshot) (bool, error) {
+		for _, session := range state.Sessions {
+			if session.ID == id {
+				existing = session
+				break
+			}
+		}
+		return false, nil
+	}); err != nil {
+		return Session{}, err
+	}
+	if existing.ID == "" {
+		return store.Register(name, token)
+	}
+	if existing.Name != name {
+		return Session{}, errors.New("the Claude hook name differs from the MCP session name")
+	}
+	return existing, nil
 }
 
 // Sessions discovers identities retained in this repository namespace.
@@ -181,14 +224,20 @@ func (store Store) Send(from, recipientID, kind, body, key, replyTo string) (Mes
 		if !sender || !recipient {
 			return false, errors.New("unknown session")
 		}
-		pending := 0
+		pending, recipientPending := 0, 0
 		for _, message := range state.Messages {
 			if !message.Acknowledged {
 				pending++
+				if message.To == recipientID {
+					recipientPending++
+				}
 			}
 		}
 		if pending >= store.policy.MaxPending {
 			return false, errors.New("pending message capacity reached")
+		}
+		if store.policy.MaxPendingPerSession > 0 && recipientPending >= store.policy.MaxPendingPerSession {
+			return false, errors.New("recipient pending message capacity reached")
 		}
 		if len(state.Messages) >= 4*store.policy.MaxPending {
 			return false, errors.New("retained message capacity reached")
@@ -221,6 +270,11 @@ func (store Store) Inbox(id string, limit int) ([]Message, error) {
 	if limit < 1 || limit > 100 {
 		return nil, errors.New("limit must be 1 to 100")
 	}
+	return store.pending(id, limit)
+}
+
+// A zero limit returns the full actionable inbox to the local delivery bridge.
+func (store Store) pending(id string, limit int) ([]Message, error) {
 	result := []Message{}
 	err := store.update(func(state *snapshot) (bool, error) {
 		for _, message := range state.Messages {
@@ -250,6 +304,31 @@ func (store Store) Acknowledge(sessionID, messageID string) error {
 				state.Messages[index].Acknowledged = true
 				return true, nil
 			}
+		}
+		return false, errors.New("unknown message")
+	})
+}
+
+// MarkCodexAccepted durably records a transport response or a history observation.
+// The message remains pending until the recipient calls Acknowledge.
+func (store Store) MarkCodexAccepted(sessionID, messageID, threadID, turnID string) error {
+	if threadID == "" || turnID == "" {
+		return errors.New("codex acceptance requires thread and turn IDs")
+	}
+	return store.update(func(state *snapshot) (bool, error) {
+		for index := range state.Messages {
+			message := &state.Messages[index]
+			if message.ID != messageID {
+				continue
+			}
+			if message.To != sessionID {
+				return false, errors.New("message is not addressed to this session")
+			}
+			if message.CodexAccepted != nil && message.CodexAccepted.ThreadID == threadID && message.CodexAccepted.TurnID == turnID {
+				return false, nil
+			}
+			message.CodexAccepted = &CodexAcceptance{ThreadID: threadID, TurnID: turnID, At: store.now().UTC().Format(time.RFC3339Nano)}
+			return true, nil
 		}
 		return false, errors.New("unknown message")
 	})

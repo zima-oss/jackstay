@@ -19,6 +19,11 @@ type client struct {
 	*githubapi.Client
 }
 
+// RequiredChecksFor reads the effective branch check requirements without a merge request.
+func RequiredChecksFor(ctx context.Context, connected *githubapi.Client, branch string) ([]RequiredCheck, error) {
+	return (client{Client: connected}).RequiredChecks(ctx, branch)
+}
+
 // connectReal is GitHub as docs/design/implementation.md section 8.1 says: the process's environment, the account's token.
 func connectReal(ctx context.Context, account, repository string) (GitHub, githubapi.Token, error) {
 	connected, token, err := githubapi.Connect(ctx, githubapi.OSEnvironment(), account, repository)

@@ -45,6 +45,9 @@ var items = []item{
 	{id: "evidence", commands: []string{"receipts export", "receipts verify"}, wanted: hasSection("receipts"), text: fixed(
 		"- **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`\n" +
 			"  using the expected digest, revision and key from a trusted source.")},
+	{id: "ci-evidence", commands: []string{"receipts attest-ci", "receipts verify-ci"}, wanted: hasSection("receipts"), text: fixed(
+		"- **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity\n" +
+			"  independently of the uploaded receipt and attestation.")},
 	{id: "wait", commands: []string{"wait"}, wanted: always, text: fixed(
 		"- **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.")},
 	{id: "bg", commands: []string{"bg", "procs", "procs stop"}, wanted: always, text: fixed(
@@ -92,16 +95,28 @@ var items = []item{
 		"- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.")},
 	{id: "profiles", commands: []string{"profile export", "profile verify"}, wanted: hasSection("adopt"), text: fixed(
 		"- **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.")},
-	{id: "queue", commands: []string{"queue status", "queue test", "queue handoff"}, wanted: func(config map[string]any) bool {
+	{id: "queue", commands: []string{"queue status", "queue test", "queue handoff", "queue reconcile"}, wanted: func(config map[string]any) bool {
 		return section(config, "queue")["enabled"] == true
 	}, text: fixed(
 		"- **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`\n" +
-			"  for the operator's landing decision.")},
+			"  for the operator's landing decision. After landing, run `jst queue reconcile --commit SHA`.")},
 	{id: "chat", commands: []string{"chat serve", "setup"}, wanted: func(config map[string]any) bool {
 		return section(config, "chat")["enabled"] == true
 	}, text: fixed(
 		"- **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools\n" +
 			"  to send a request, read your inbox and acknowledge messages you process.")},
+	{id: "chat-codex", commands: []string{"chat codex-bridge"}, wanted: func(config map[string]any) bool {
+		chat := section(config, "chat")
+		return chat["enabled"] == true && section(chat, "codex_bridge")["enabled"] == true
+	}, text: fixed(
+		"- **Deliver chat to managed Codex**: `jst chat codex-bridge` uses the owner's local socket, thread and session.\n" +
+			"  Use `chat.ack` after processing a message.")},
+	{id: "chat-claude", commands: []string{"chat claude-hook"}, wanted: func(config map[string]any) bool {
+		chat := section(config, "chat")
+		return chat["enabled"] == true && section(chat, "claude_code")["enabled"] == true
+	}, text: fixed(
+		"- **Check chat at a Claude Code boundary** with the owner-configured `jst chat claude-hook`.\n" +
+			"  When notified, use the MCP inbox and acknowledge each processed message.")},
 	{id: "doctor", commands: []string{"doctor", "check", "adopt", "setup"}, wanted: always, text: fixed(
 		"- **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is\n" +
 			"  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.")},

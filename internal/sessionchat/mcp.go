@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
-	"github.com/zima-oss/jackstay/internal/config"
-	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 )
 
@@ -44,7 +42,7 @@ type Server struct {
 }
 
 func init() {
-	cli.Register(cli.Command{Name: "chat serve", Summary: "serve repository-local agent session chat over MCP", Usage: "usage: jst chat serve --name NAME\n\nServe a local stdio MCP session. Set JACKSTAY_CHAT_SESSION_TOKEN to a random 32+ character secret in the host launcher to resume an identity. The project must enable chat in jackstay.json. Messages are delivered when recipients poll their inbox.\n\nexit: 0 end of input; 2 invalid configuration, arguments or transport.\n\nexample: jst chat serve --name reviewer\n", Run: Run})
+	cli.Register(cli.Command{Name: "chat serve", Summary: "serve repository-local agent session chat over MCP", Usage: "usage: jst chat serve --name NAME\n\nServe a local stdio MCP session. Set JACKSTAY_CHAT_SESSION_TOKEN to a random 32+ character secret in the host launcher to resume an identity. The project must enable chat in jackstay.json. Messages are delivered when recipients poll their inbox.\n\nexit: 0 end of input; 2 invalid configuration, arguments or transport.\n\nexample: jst chat serve --name reviewer\n", PrivateArgs: true, Run: Run})
 }
 
 // Run starts the chat MCP server from an explicitly enabled project.
@@ -53,31 +51,11 @@ func Run(args []string, input io.Reader, output, diagnostics io.Writer) int {
 		fmt.Fprintln(diagnostics, "usage: jst chat serve --name NAME")
 		return 2
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintln(diagnostics, "chat: cannot read working directory")
-		return 2
-	}
-	_, loaded, err := config.Load(cwd, []string{"chat"})
-	if err != nil {
-		fmt.Fprintln(diagnostics, err)
-		return 2
-	}
-	policy := config.ChatSettings(loaded.Section("chat"))
-	if !policy.Enabled {
-		fmt.Fprintln(diagnostics, "chat is not enabled in jackstay.json")
-		return 2
-	}
 	contextWithDeadline, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	common, err := (gitcli.Git{Dir: cwd}).CommonDir(contextWithDeadline)
+	store, _, err := loadLocalChat(contextWithDeadline)
 	if err != nil {
-		fmt.Fprintln(diagnostics, "chat requires a Git repository")
-		return 2
-	}
-	store, err := StoreFor(common, policy)
-	if err != nil {
-		fmt.Fprintln(diagnostics, "chat state is unavailable")
+		fmt.Fprintf(diagnostics, "chat: %v\n", err)
 		return 2
 	}
 	session, err := store.Register(args[1], os.Getenv("JACKSTAY_CHAT_SESSION_TOKEN"))
@@ -199,6 +177,7 @@ func (server *Server) call(raw json.RawMessage) any {
 	var envelope struct {
 		Name      string          `json:"name"`
 		Arguments json.RawMessage `json:"arguments"`
+		Metadata  json.RawMessage `json:"_meta"` // transport metadata, never tool arguments
 	}
 	if strictjson.Unmarshal(raw, &envelope) != nil {
 		return toolFailure("invalid tool call")
@@ -248,6 +227,7 @@ func (server *Server) call(raw json.RawMessage) any {
 		var message Message
 		var duplicate bool
 		message, duplicate, err = server.store.Send(server.session.ID, arguments.To, arguments.Kind, arguments.Body, arguments.IdempotencyKey, "")
+		message.CodexAccepted = nil
 		result = map[string]any{"message": message, "duplicate": duplicate}
 	case "chat.inbox":
 		if arguments.Limit == 0 {
@@ -255,11 +235,15 @@ func (server *Server) call(raw json.RawMessage) any {
 		}
 		var messages []Message
 		messages, err = server.store.Inbox(server.session.ID, arguments.Limit)
+		for index := range messages {
+			messages[index].CodexAccepted = nil
+		}
 		result = map[string]any{"messages": messages}
 	case "chat.reply":
 		var message Message
 		var duplicate bool
 		message, duplicate, err = server.store.Reply(server.session.ID, arguments.MessageID, arguments.Body, arguments.IdempotencyKey)
+		message.CodexAccepted = nil
 		result = map[string]any{"message": message, "duplicate": duplicate}
 	case "chat.ack":
 		err = server.store.Acknowledge(server.session.ID, arguments.MessageID)

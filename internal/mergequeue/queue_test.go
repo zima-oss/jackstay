@@ -216,6 +216,9 @@ func TestCommandRunsCountedGateAndRefusesStaleHandoff(t *testing.T) {
 	if status := handoffCommand(nil, nil, &out, &diagnostics); status != 0 || !strings.Contains(out.String(), "manual handoff only") {
 		t.Fatalf("handoff exit %d: %s %s", status, out.String(), diagnostics.String())
 	}
+	if recorded, err := service.Status(context.Background()); err != nil || recorded.HandoffAt.IsZero() {
+		t.Fatalf("command did not persist a handoff: %+v, %v", recorded, err)
+	}
 	gitCommand(t, repository, "switch", "feature")
 	if err := os.WriteFile(filepath.Join(repository, "next.txt"), []byte("next\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -224,5 +227,15 @@ func TestCommandRunsCountedGateAndRefusesStaleHandoff(t *testing.T) {
 	gitCommand(t, repository, "commit", "-m", "advance feature")
 	if status := handoffCommand(nil, nil, &out, &diagnostics); status == 0 {
 		t.Fatal("handoff ignored moved head")
+	}
+	gitCommand(t, repository, "switch", "main")
+	gitCommand(t, repository, "merge", "--no-ff", "feature", "-m", "manual landing")
+	landed := gitCommand(t, repository, "rev-parse", "main")
+	diagnostics.Reset()
+	if status := reconcileCommand([]string{"--commit", landed}, nil, &out, &diagnostics); status != 1 || !strings.Contains(diagnostics.String(), "outcome recorded") {
+		t.Fatalf("changed landing was not recorded as a mismatch: exit=%d %s", status, diagnostics.String())
+	}
+	if recorded, err := service.Status(context.Background()); err != nil || recorded.Outcome == nil || recorded.Outcome.Matched {
+		t.Fatalf("command lost landing mismatch: %+v, %v", recorded, err)
 	}
 }

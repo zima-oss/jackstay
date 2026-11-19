@@ -10,6 +10,8 @@
   Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
 - **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
   using the expected digest, revision and key from a trusted source.
+- **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity
+  independently of the uploaded receipt and attestation.
 - **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
 - **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or
   `nohup`; `jst procs` lists them, `jst procs stop NAME` stops yours.
@@ -38,9 +40,13 @@
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
 - **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
 - **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`
-  for the operator's landing decision.
+  for the operator's landing decision. After landing, run `jst queue reconcile --commit SHA`.
 - **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools
   to send a request, read your inbox and acknowledge messages you process.
+- **Deliver chat to managed Codex**: `jst chat codex-bridge` uses the owner's local socket, thread and session.
+  Use `chat.ack` after processing a message.
+- **Check chat at a Claude Code boundary** with the owner-configured `jst chat claude-hook`.
+  When notified, use the MCP inbox and acknowledge each processed message.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.
 

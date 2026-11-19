@@ -172,7 +172,7 @@ func TestMCPToolsAndOversizeRequest(t *testing.T) {
 		data, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 		return string(data) + "\n"
 	}
-	calls := request(1, "initialize", map[string]any{"protocolVersion": "2025-11-25"}) + request(2, "tools/list", map[string]any{}) + request(3, "tools/call", map[string]any{"name": "chat.send", "arguments": map[string]any{"to": recipient.ID, "kind": "message", "body": "hello", "idempotency_key": "one"}})
+	calls := request(1, "initialize", map[string]any{"protocolVersion": "2025-11-25"}) + request(2, "tools/list", map[string]any{}) + request(3, "tools/call", map[string]any{"name": "chat.send", "_meta": map[string]any{"progressToken": 3}, "arguments": map[string]any{"to": recipient.ID, "kind": "message", "body": "hello", "idempotency_key": "one"}})
 	var output, diagnostics bytes.Buffer
 	if status := server.Serve(strings.NewReader(calls), &output, &diagnostics); status != 0 {
 		t.Fatalf("status %d: %s", status, diagnostics.String())
@@ -267,5 +267,39 @@ func TestRetentionPrunesAcknowledgedMessages(t *testing.T) {
 	}
 	if len(state.Messages) != 0 {
 		t.Fatalf("retained expired messages: %+v", state.Messages)
+	}
+}
+
+func TestPerRecipientPendingCapLeavesSpaceForOtherSessions(t *testing.T) {
+	store, _ := chatFixture(t)
+	store.policy.MaxPending = 4
+	store.policy.MaxPendingPerSession = 1
+	owner, err := store.Register("sender", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Register("first", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Register("second", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, _, err := store.Send(owner.ID, first.ID, "request", "fixture", "first", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Send(owner.ID, first.ID, "message", "full", "blocked", ""); err == nil {
+		t.Fatal("accepted a message beyond the recipient quota")
+	}
+	if _, _, err := store.Send(owner.ID, second.ID, "message", "room", "other", ""); err != nil {
+		t.Fatalf("a saturated inbox blocked a different recipient: %v", err)
+	}
+	if err := store.Acknowledge(first.ID, message.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Send(owner.ID, first.ID, "message", "available", "after", ""); err != nil {
+		t.Fatalf("acknowledgment did not free the slot: %v", err)
 	}
 }

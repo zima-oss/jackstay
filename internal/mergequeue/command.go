@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/cli"
@@ -17,13 +18,15 @@ import (
 	scopes "github.com/zima-oss/jackstay/internal/testing"
 )
 
-const queueHelp = `usage: jst queue add --head REF
-       jst queue prepare | test | status | handoff | remove
+const queueHelp = `usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
 
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
-holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
-a clean copy and requires counted portable receipts; handoff checks freshness and prints the
-candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
 
 exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
 
@@ -38,6 +41,7 @@ func init() {
 		cli.Command{Name: "queue test", Summary: "run the gate on the candidate and save counted evidence", Usage: queueHelp, Run: testCommand},
 		cli.Command{Name: "queue status", Summary: "show the candidate and input freshness", Usage: queueHelp, Run: statusCommand},
 		cli.Command{Name: "queue handoff", Summary: "verify freshness and show manual landing evidence", Usage: queueHelp, Run: handoffCommand},
+		cli.Command{Name: "queue reconcile", Summary: "record the observed landing and compare its tree", Usage: queueHelp, Run: reconcileCommand},
 		cli.Command{Name: "queue remove", Summary: "empty the local queue without changing refs", Usage: queueHelp, Run: removeCommand},
 	)
 }
@@ -68,19 +72,31 @@ func commandService(stderr io.Writer) (Service, bool) {
 		fmt.Fprintln(stderr, "jst queue: set queue.base_ref to a moving branch ref")
 		return Service{}, false
 	}
-	return Service{Here: here, Project: config.ProjectName(root, loaded, here), BaseRef: base}, true
+	service := Service{Here: here, Project: config.ProjectName(root, loaded, here), BaseRef: base}
+	service.RequirePullRequest, _ = section["require_pull_request"].(bool)
+	service.ReviewTask, _ = section["review_task"].(string)
+	return service, true
 }
 
 func addCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
-	if len(args) != 2 || args[0] != "--head" {
+	if len(args) != 2 && len(args) != 4 || args[0] != "--head" || len(args) == 4 && args[2] != "--pr" {
 		fmt.Fprint(stderr, queueHelp)
 		return 2
+	}
+	var pullRequest []int
+	if len(args) == 4 {
+		number, err := strconv.Atoi(args[3])
+		if err != nil || number <= 0 {
+			fmt.Fprintln(stderr, "jst queue: --pr requires a positive number")
+			return 2
+		}
+		pullRequest = append(pullRequest, number)
 	}
 	service, ok := commandService(stderr)
 	if !ok {
 		return 2
 	}
-	state, err := service.Enqueue(context.Background(), args[1])
+	state, err := service.Enqueue(context.Background(), args[1], pullRequest...)
 	if err != nil {
 		return queueError(stderr, err)
 	}
@@ -188,8 +204,20 @@ func statusCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if state.Stale {
 		status = "stale"
 	}
-	fmt.Fprintf(stdout, "%s: %s %s base=%s head=%s candidate=%s attempt=%d receipts=%d\n",
-		status, state.HeadRef, state.BaseRef, state.Base, state.Head, state.Candidate, state.Attempt, len(state.Receipts))
+	if !state.HandoffAt.IsZero() {
+		status = "handed-off"
+	}
+	if state.Outcome != nil {
+		status = "landed-mismatch"
+		if state.Outcome.Matched {
+			status = "landed-matched"
+		}
+	}
+	fmt.Fprintf(stdout, "%s: %s %s base=%s head=%s candidate=%s attempt=%d receipts=%d pr=%d\n",
+		status, state.HeadRef, state.BaseRef, state.Base, state.Head, state.Candidate, state.Attempt, len(state.Receipts), state.PullRequest)
+	if state.Outcome != nil {
+		fmt.Fprintf(stdout, "observed commit %s tree %s, tested tree %s\n", state.Outcome.Commit, state.Outcome.Tree, state.Tree)
+	}
 	return 0
 }
 
@@ -202,26 +230,56 @@ func handoffCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	state, err := service.Handoff(context.Background())
+	state, err := service.handoff(context.Background(), func(candidate *State) error {
+		for _, item := range candidate.Receipts {
+			data, err := exportReceipt(item.Key)
+			if err != nil || digest(data) != item.SHA256 || !validEvidence(data, candidate.Candidate, item.Key) {
+				return fmt.Errorf("receipt %s is no longer verifiable", item.Key)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		return queueError(stderr, err)
 	}
-	for _, item := range state.Receipts {
-		data, err := exportReceipt(item.Key)
-		if err != nil || digest(data) != item.SHA256 || !validEvidence(data, state.Candidate, item.Key) {
-			return queueError(stderr, fmt.Errorf("receipt %s is no longer verifiable", item.Key))
-		}
-	}
-	if _, err := service.Handoff(context.Background()); err != nil {
+	state, err = service.recordHandoff(context.Background(), state)
+	if err != nil {
 		return queueError(stderr, err)
 	}
-	fmt.Fprintf(stdout, "manual handoff only: base %s=%s, head %s=%s\n", state.BaseRef, state.Base, state.HeadRef, state.Head)
+	if state.PullRequest == 0 {
+		fmt.Fprintln(stdout, "manual handoff only: local evidence verified, GitHub PR review and required-check freshness unchecked")
+	} else {
+		fmt.Fprintf(stdout, "manual handoff only: PR #%d review and required checks were current at the final read\n", state.PullRequest)
+	}
+	fmt.Fprintf(stdout, "base %s=%s, head %s=%s\n", state.BaseRef, state.Base, state.HeadRef, state.Head)
 	fmt.Fprintf(stdout, "tested candidate %s tree %s gate %s\n", state.Candidate, state.Tree, state.GateRunID)
 	for _, item := range state.Receipts {
 		fmt.Fprintf(stdout, "counted receipt %s sha256 %s\n", item.Key, item.SHA256)
 	}
 	fmt.Fprintln(stdout, "Recheck the live base/head and compare the landed tree after a human merge; this handoff does not prove the provider's atomic merge decision.")
 	return 0
+}
+
+func reconcileCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	if len(args) != 2 || args[0] != "--commit" || !objectID(args[1]) {
+		fmt.Fprint(stderr, queueHelp)
+		return 2
+	}
+	service, ok := commandService(stderr)
+	if !ok {
+		return 2
+	}
+	state, err := service.Reconcile(context.Background(), args[1])
+	if err != nil {
+		return queueError(stderr, err)
+	}
+	if state.Outcome.Matched {
+		fmt.Fprintf(stdout, "observed landing %s tree %s matches tested candidate %s\n", state.Outcome.Commit, state.Outcome.Tree, state.Candidate)
+		return 0
+	}
+	fmt.Fprintf(stderr, "jst queue: observed landing %s tree %s differs from tested candidate tree %s; outcome recorded for inspection\n",
+		state.Outcome.Commit, state.Outcome.Tree, state.Tree)
+	return 1
 }
 
 func removeCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {

@@ -1,9 +1,9 @@
 ==> jst adopt --help
 jst adopt: bring this project to jackstay's reference: jackstay.json, the AGENTS block, the guard hook, workflows
 
-usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
-       jst adopt --block [--profile PATH] [DIR]
+usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+       jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Brings the project around DIR (default: here) to jackstay's reference: jackstay.json, the AGENTS block
 between its markers, the guard hook in .claude/settings.json, the workflows jackstay writes. It never
@@ -19,6 +19,7 @@ changes anything else; what it must not decide is a conflict (docs/design/adopt.
                    --apply again on the merged base for the other files
   --profile PATH   an organisation's profile; recorded in jackstay.json by --apply, used later without
                    the flag
+  --profile-sha256 DIGEST  pin the exact portable bundle bytes; recorded for future adoption
   --json           the plan as one JSON object
   --block          print the AGENTS block this project gets; nothing is written
 
@@ -188,10 +189,40 @@ example: jst changes view --version 1.4.0
 ==> jst chat --help
 jst chat: these commands (each answers --help)
 
-  jst chat serve  serve repository-local agent session chat over MCP
+  jst chat claude-hook   announce pending chat at a Claude Code boundary
+  jst chat codex-bridge  deliver pending chat to a managed Codex turn
+  jst chat serve         serve repository-local agent session chat over MCP
 
 exit: 0 this list; 2 `jst chat` alone, or with a word that is no command under it (nothing
 is run); each command's --help names its own.
+
+==> jst chat claude-hook --help
+jst chat claude-hook: announce pending chat at a Claude Code boundary
+
+usage: jst chat claude-hook --name NAME --event UserPromptSubmit|PostToolUse|PostToolBatch
+
+Run from a Claude Code command hook at the named event. Use the same
+JACKSTAY_CHAT_SESSION_TOKEN as this session's jst chat serve MCP process.
+Enable chat.claude_code in jackstay.json. Pending messages are announced to
+Claude at the next configured boundary and remain pending until chat.ack.
+
+exit: 0 no message or notice emitted; 1 chat setup unavailable; 2 invalid arguments.
+
+example: jst chat claude-hook --name reviewer --event PostToolUse
+
+==> jst chat codex-bridge --help
+jst chat codex-bridge: deliver pending chat to a managed Codex turn
+
+usage: jst chat codex-bridge --socket PATH --thread ID --name NAME
+
+Attach to an owner-managed Codex app-server Unix socket and one thread. Start the
+MCP server and the bridge with the same JACKSTAY_CHAT_SESSION_TOKEN. Enable
+chat.codex_bridge in jackstay.json. The bridge delivers to a running turn and
+leaves the message pending until the recipient calls chat.ack.
+
+exit: 0 stopped; 2 invalid setup or another bridge owns the session.
+
+example: jst chat codex-bridge --socket "$APP_SOCKET" --thread "$APP_THREAD" --name reviewer
 
 ==> jst chat serve --help
 jst chat serve: serve repository-local agent session chat over MCP
@@ -619,36 +650,41 @@ example: jst profile verify --sha256 "$expected" policy.bundle.json
 ==> jst queue --help
 jst queue: local single-head merge candidate and manual handoff
 
-usage: jst queue add --head REF
-       jst queue prepare | test | status | handoff | remove
+usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
 
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
-holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
-a clean copy and requires counted portable receipts; handoff checks freshness and prints the
-candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
 
 exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
 
 example: jst queue add --head refs/heads/my-change
 
 commands under it (each answers --help):
-  jst queue add      pin one head in the local merge queue
-  jst queue handoff  verify freshness and show manual landing evidence
-  jst queue prepare  build a candidate commit without changing refs
-  jst queue remove   empty the local queue without changing refs
-  jst queue status   show the candidate and input freshness
-  jst queue test     run the gate on the candidate and save counted evidence
+  jst queue add        pin one head in the local merge queue
+  jst queue handoff    verify freshness and show manual landing evidence
+  jst queue prepare    build a candidate commit without changing refs
+  jst queue reconcile  record the observed landing and compare its tree
+  jst queue remove     empty the local queue without changing refs
+  jst queue status     show the candidate and input freshness
+  jst queue test       run the gate on the candidate and save counted evidence
 
 ==> jst queue add --help
 jst queue add: pin one head in the local merge queue
 
-usage: jst queue add --head REF
-       jst queue prepare | test | status | handoff | remove
+usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
 
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
-holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
-a clean copy and requires counted portable receipts; handoff checks freshness and prints the
-candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
 
 exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
 
@@ -657,13 +693,15 @@ example: jst queue add --head refs/heads/my-change
 ==> jst queue handoff --help
 jst queue handoff: verify freshness and show manual landing evidence
 
-usage: jst queue add --head REF
-       jst queue prepare | test | status | handoff | remove
+usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
 
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
-holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
-a clean copy and requires counted portable receipts; handoff checks freshness and prints the
-candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
 
 exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
 
@@ -672,13 +710,32 @@ example: jst queue add --head refs/heads/my-change
 ==> jst queue prepare --help
 jst queue prepare: build a candidate commit without changing refs
 
-usage: jst queue add --head REF
-       jst queue prepare | test | status | handoff | remove
+usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
 
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
-holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
-a clean copy and requires counted portable receipts; handoff checks freshness and prints the
-candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
+
+exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
+
+example: jst queue add --head refs/heads/my-change
+
+==> jst queue reconcile --help
+jst queue reconcile: record the observed landing and compare its tree
+
+usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
+
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
 
 exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
 
@@ -687,13 +744,15 @@ example: jst queue add --head refs/heads/my-change
 ==> jst queue remove --help
 jst queue remove: empty the local queue without changing refs
 
-usage: jst queue add --head REF
-       jst queue prepare | test | status | handoff | remove
+usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
 
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
-holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
-a clean copy and requires counted portable receipts; handoff checks freshness and prints the
-candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
 
 exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
 
@@ -702,13 +761,15 @@ example: jst queue add --head refs/heads/my-change
 ==> jst queue status --help
 jst queue status: show the candidate and input freshness
 
-usage: jst queue add --head REF
-       jst queue prepare | test | status | handoff | remove
+usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
 
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
-holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
-a clean copy and requires counted portable receipts; handoff checks freshness and prints the
-candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
 
 exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
 
@@ -717,26 +778,30 @@ example: jst queue add --head refs/heads/my-change
 ==> jst queue test --help
 jst queue test: run the gate on the candidate and save counted evidence
 
-usage: jst queue add --head REF
-       jst queue prepare | test | status | handoff | remove
+usage: jst queue add --head REF [--pr NUMBER]
+       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
 
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
-holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
-a clean copy and requires counted portable receipts; handoff checks freshness and prints the
-candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
+prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
+and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
+required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
+handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
+requests a GitHub merge. After landing, reconcile checks the observed target tree.
 
 exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
 
 example: jst queue add --head refs/heads/my-change
 
 ==> jst receipts --help
-jst receipts: the receipts: key, stats, list, export, verify
+jst receipts: the receipts: key, stats, list, export, verify and CI provenance
 
 usage: jst receipts key -- COMMAND [ARG ...]   the key and what went into it; nothing is run
        jst receipts stats [--project NAME] [--json]   runs, reuses and seconds saved, from the log
        jst receipts list [--project NAME]
        jst receipts export KEY
        jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE
+       jst receipts attest-ci --trust-root NAME --issuer ID --workflow ID --run ID --signing-key KEY RECEIPT
+       jst receipts verify-ci --trust-root NAME --public-key KEY --issuer ID --workflow ID --run ID --head SHA --key KEY --manifest SHA RECEIPT ATTESTATION
 
 See each command's --help.
 
@@ -746,11 +811,23 @@ names its own.
 example: jst receipts stats --json
 
 commands under it (each answers --help):
-  jst receipts export  write a portable record of a stored test pass
-  jst receipts key     the key of a command here and what went into it; nothing is run
-  jst receipts list    the stored receipts
-  jst receipts stats   runs, reuses and seconds saved, from the run log
-  jst receipts verify  verify a portable test record against expected digests and revision
+  jst receipts attest-ci  sign a portable receipt with its CI identity
+  jst receipts export     write a portable record of a stored test pass
+  jst receipts key        the key of a command here and what went into it; nothing is run
+  jst receipts list       the stored receipts
+  jst receipts stats      runs, reuses and seconds saved, from the run log
+  jst receipts verify     verify a portable test record against expected digests and revision
+  jst receipts verify-ci  verify a CI receipt against a named trust root
+
+==> jst receipts attest-ci --help
+jst receipts attest-ci: sign a portable receipt with its CI identity
+
+usage: jst receipts attest-ci --trust-root NAME --issuer ID --repository ID --workflow ID --run ID --signing-key KEY RECEIPT
+
+Sign the exact exported receipt bytes and CI run identity with an Ed25519 private key in PKCS#8
+PEM format. Keep the key outside Git. Write the attestation to stdout.
+
+exit: 0 attested; 1 invalid receipt, key or write failure; 2 bad request.
 
 ==> jst receipts export --help
 jst receipts export: write a portable record of a stored test pass
@@ -811,6 +888,16 @@ Verify the record against the expected file digest, checkout HEAD and receipt ke
 expected values independently of FILE. No receipt store or Git repository is needed.
 
 exit: 0 verified; 1 unverified or unreadable evidence; 2 bad request.
+
+==> jst receipts verify-ci --help
+jst receipts verify-ci: verify a CI receipt against a named trust root
+
+usage: jst receipts verify-ci --trust-root NAME --public-key KEY --issuer ID --repository ID --workflow ID --run ID --head SHA --key KEY --manifest SHA RECEIPT ATTESTATION
+
+Verify the Ed25519 attestation against a trusted public key and independently expected CI
+identity, revision, receipt key and manifest. Both files are portable; no repository is needed.
+
+exit: 0 verified; 1 invalid or mismatched evidence; 2 bad request.
 
 ==> jst release --help
 jst release: these commands (each answers --help)

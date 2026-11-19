@@ -473,3 +473,42 @@ The design: [testing.md](../design/testing.md), and for receipts, the lock and `
 Set `test.requires_timeout_seconds` to choose a project default for `requires` commands.
 The default is 60 seconds. A `timeout` on an individual prerequisite takes precedence.
 The setting applies to checks attached to command scopes, steps and composite gates.
+
+### Verify a report produced by CI
+
+The portable receipt records the counted verdict, source revision, policy key and input
+manifest. Its SHA-256 verifies integrity when the digest is known independently. A CI job can
+attach an Ed25519 attestation to identify the job that produced those exact receipt bytes.
+Create a PKCS#8 signing key outside Git and distribute its PKIX public key through the
+project's trusted CI key channel. Name each key rotation with a new trust-root value.
+The key-generation example uses OpenSSL with Ed25519 support.
+
+```sh
+umask 077
+openssl genpkey -algorithm ED25519 -out "$ci_signing_key"
+openssl pkey -in "$ci_signing_key" -pubout -out "$ci_public_key"
+jst receipts export "$receipt_key" > evidence.json
+jst receipts attest-ci --trust-root ci-2026 --issuer github-actions \
+  --repository "$ci_repository" --workflow gate.yml --run "$ci_run_attempt" --signing-key "$ci_signing_key" \
+  evidence.json > evidence.attestation.json
+```
+
+Set `ci_signing_key` and `ci_public_key` to paths outside the repository. Inject the private
+key through the secret store of a trusted signing job. Restrict its use to the expected repository
+and workflow, outside jobs that execute untrusted pull request code. The verifier obtains the public key and every expected value
+independently of the uploaded receipt and attestation, including the repository, run ID and
+input manifest. Use a run identity that distinguishes retries, for example
+`GITHUB_RUN_ID.GITHUB_RUN_ATTEMPT` in GitHub Actions. Verify in a separate checkout
+or offline after transferring both files:
+
+```sh
+jst receipts verify-ci --trust-root ci-2026 --public-key "$ci_public_key" \
+  --issuer github-actions --repository "$expected_repository" --workflow gate.yml --run "$expected_run" \
+  --head "$expected_head" --key "$expected_key" --manifest "$expected_manifest" \
+  evidence.json evidence.attestation.json
+```
+
+A changed report, source revision, policy key, manifest, repository, run identity or trusted public key
+invalidates verification. The signing key's security and the independent source of expected
+values determine whether the CI provenance is trustworthy. Keep signing keys outside the
+repository and out of command output.

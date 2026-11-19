@@ -146,7 +146,13 @@ func (plan *Plan) apply(writeFile func(string, []byte) error) error {
 
 func (plan *Plan) checkInputs() error {
 	if plan.profile != nil {
-		current, err := profile.Load(plan.profile.Path)
+		var current *profile.Profile
+		var err error
+		if plan.ProfileSHA256 != "" {
+			current, err = profile.LoadPinned(plan.profile.Path, plan.ProfileSHA256)
+		} else {
+			current, err = profile.Load(plan.profile.Path)
+		}
 		if err != nil {
 			return fmt.Errorf("checking the profile before apply: %w", err)
 		}
