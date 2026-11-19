@@ -83,7 +83,7 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 		t.Fatalf("offline verify exit %d: %s", status, &errors)
 	}
 	options := adopt.Options{Dir: root, WorkingDir: root, Profile: "policy.bundle.json",
-		Version: "0.5.99", Has: cli.Has, SettingsOnly: true}
+		Version: "0.5.99", Has: cli.Has, SettingsOnly: true, ProfileSHA256: digest}
 	plan, err := adopt.Make(options)
 	if err != nil || len(plan.Changes) != 1 || plan.Changes[0].Path != "jackstay.json" {
 		t.Fatalf("settings preview: %+v %v", plan, err)
@@ -91,10 +91,26 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 	if data, err := os.ReadFile(configPath); err != nil || string(data) != configText {
 		t.Fatalf("preview wrote or removed settings: %s, %v", data, err)
 	}
+	// The verified profile object is unchanged by whitespace, but the artifact's
+	// independently expected digest still protects the settings write.
+	changedBytes := append(bytes.TrimSpace(bundled), '\n', '\n')
+	save(t, root, "policy.bundle.json", changedBytes)
+	if err := plan.Apply(); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("apply accepted changed artifact bytes: %v", err)
+	}
+	if data, err := os.ReadFile(configPath); err != nil || string(data) != configText {
+		t.Fatalf("failed apply changed settings: %s %v", data, err)
+	}
+	save(t, root, "policy.bundle.json", bundled)
 	if err := plan.Apply(); err != nil {
 		t.Fatal(err)
 	}
-	options.Profile, options.SettingsOnly = "", false
+	save(t, root, "policy.bundle.json", upgraded)
+	if _, err := adopt.Make(adopt.Options{Dir: root, WorkingDir: root, Version: "0.5.99", Has: cli.Has}); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("recorded artifact pin accepted an unapproved upgrade: %v", err)
+	}
+	save(t, root, "policy.bundle.json", bundled)
+	options.Profile, options.ProfileSHA256, options.SettingsOnly = "", "", false
 	plan, err = adopt.Make(options)
 	if err != nil {
 		t.Fatal(err)
@@ -111,6 +127,7 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 		files[name] = string(data)
 	}
 	if settings := files["jackstay.json"]; !strings.Contains(settings, `"pin": "v0.5.99"`) ||
+		!strings.Contains(settings, `"profile_sha256": "`+digest+`"`) ||
 		!strings.Contains(settings, `"max_minutes": 300`) || !strings.Contains(settings, `"default_minutes": 42`) {
 		t.Fatalf("pin or defaults were not applied: %s", settings)
 	}
@@ -147,9 +164,9 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 	if status := cli.Dispatch([]string{"profile", "verify", "--sha256", checksum(upgraded), newPath}, nil, &output, &errors); status != 0 {
 		t.Fatalf("verify upgraded profile exit %d: %s", status, &errors)
 	}
-	change := func(profile, version, previous string) {
+	change := func(profilePath, expectedDigest, version, previous string) {
 		t.Helper()
-		options.Profile, options.Version, options.Pin, options.SettingsOnly = profile, version, true, true
+		options.Profile, options.ProfileSHA256, options.Version, options.Pin, options.SettingsOnly = profilePath, expectedDigest, version, true, true
 		plan, err := adopt.Make(options)
 		if err != nil || len(plan.Changes) != 1 || plan.Changes[0].Path != "jackstay.json" {
 			t.Fatalf("upgrade settings preview: %+v %v", plan, err)
@@ -160,7 +177,7 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 		if err := plan.Apply(); err != nil {
 			t.Fatal(err)
 		}
-		options.Profile, options.Pin, options.SettingsOnly = "", false, false
+		options.Profile, options.ProfileSHA256, options.Pin, options.SettingsOnly = "", "", false, false
 		plan, err = adopt.Make(options)
 		if err != nil {
 			t.Fatal(err)
@@ -169,7 +186,7 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 			t.Fatal(err)
 		}
 	}
-	change(newName, "0.6.0", files["jackstay.json"])
+	change(newName, checksum(upgraded), "0.6.0", files["jackstay.json"])
 	updated, err := os.ReadFile(configPath)
 	if err != nil || !bytes.Contains(updated, []byte(`"pin": "v0.6.0"`)) ||
 		!bytes.Contains(updated, []byte(`"max_minutes": 300`)) {
@@ -179,7 +196,7 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 	if err != nil || !bytes.Contains(workflow, []byte("name: updated team gate v0.6.0")) {
 		t.Fatalf("the workflow was not updated: %s %v", workflow, err)
 	}
-	change("policy.bundle.json", "0.5.99", string(updated))
+	change("policy.bundle.json", digest, "0.5.99", string(updated))
 	for name, expected := range files {
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil || string(data) != expected {

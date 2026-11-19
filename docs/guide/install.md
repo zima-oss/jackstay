@@ -103,8 +103,8 @@ Open a new shell or Claude Code session after a change, then run `jst doctor` ag
 `jst setup --chat` shows local session chat integration routes. The terminal can show steps for
 Codex, Claude Code and other MCP hosts. Use `jst setup --chat --plan --json` for the same
 read-only plan in JSON. See the [session chat guide](session-chat.md) to register a launcher.
-Current delivery depends on inbox polling. An engine adapter needs its own proven delivery
-and acknowledgment path before it can deliver during a running turn.
+The managed Codex bridge can deliver into a running turn. Other local routes use inbox polling
+while their engine integration is unavailable.
 
 ## Other ways to install
 

@@ -25,6 +25,10 @@
         "profile": {
           "pattern": "\\S",
           "type": "string"
+        },
+        "profile_sha256": {
+          "pattern": "^[0-9a-fA-F]{64}$",
+          "type": "string"
         }
       },
       "type": "object"
@@ -157,6 +161,37 @@
     },
     "chat": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "claude_code": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            },
+            "required": [
+              "claude_code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          }
+        }
+      ],
       "if": {
         "properties": {
           "codex_bridge": {
@@ -175,6 +210,15 @@
         ]
       },
       "properties": {
+        "claude_code": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "codex_bridge": {
           "additionalProperties": false,
           "properties": {

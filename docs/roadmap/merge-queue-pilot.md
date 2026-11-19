@@ -9,10 +9,12 @@ single-writer file lock. Git writes an unreachable candidate commit, without mov
 `test` runs the gate on its clean copy and requires an exportable counted receipt before
 `handoff`. A moved base or head, or a changed configured base ref, invalidates that evidence.
 
-The remaining sections describe the broader queue contract and pilot work. The local slice does
-not yet accept PR numbers, fetch inputs, inspect reviews or required-check policy, batch or bisect
-heads, or request a remote merge. Manual handoff cannot prevent a provider-side race. It does not
-record a human's final decision or the landed tree yet. These gaps keep autonomous landing off.
+The optional PR-bound handoff rechecks live head and base, the GitHub test-merge tree, required
+checks and review approval. A project can require the PR path and an independent local review.
+The outcome slice records a successful handoff, then accepts an observed landing commit and
+compares its Git tree with the tested candidate. Local lanes require the target tip. PR lanes
+also require GitHub to confirm the exact merged commit reachable from the target.
+Batching and provider-side exact-tree enforcement remain separate from manual handoff.
 
 The primary feature is a durable queue owned by jackstay, with one writer per repository and one tested candidate at a time. It works without GitHub's native merge queue. The first slice is a manual single-PR lane in a disposable repository. It proves candidate identity, crash recovery and the conditions for safe landing. Ordered batches, failure bisection and a service process follow after that slice. [Issue #3](https://github.com/zima-oss/jackstay/issues/3) · [Backlog brief](backlog.md#b6-pilot-a-merge-queue-3)
 
@@ -45,13 +47,36 @@ The expected-head parameter prevents a changed PR head from merging. It does not
 
 The candidate implementation is a branch-protection rule with strict required checks and no bypass, plus a required check tied to the tested candidate's GitHub test-merge commit and receipt. GitHub documents strict checks as requiring the PR branch to be current with the base. It also permits selecting a specific GitHub App as the required-check source. Those documented properties suggest a path, but do not by themselves prove that a particular tested tree is an atomic merge precondition. The private protected pilot must verify the full behavior, including a base change after final local validation and before the merge request. A direct merge is enabled only for a rule and merge method that pass that test. An admin or App bypass invalidates the proof. [GitHub required checks and strict freshness](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging) · [GitHub merge API head parameter](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10#merge-a-pull-request)
 
-Manual mode makes the same candidate and receipt visible to an operator. It checks for staleness before handoff, records a human decision and compares the observed landed tree afterward. It labels any difference or unknown effect explicitly. It cannot claim that an unchecked human merge satisfied the exact-tree invariant.
+Manual mode makes the same candidate and receipt visible to an operator. It checks for staleness
+before handoff and persists that handoff. The operator supplies the observed landing commit for
+reconciliation. Its tree comparison is saved under the same candidate attempt, including a
+mismatch. An unavailable target or unconfirmed PR outcome remains open. The comparison detects
+a changed tree after landing and does not prove the provider enforced an atomic exact-tree
+condition. Recording an explicit human decision before the merge remains follow-up work.
 
 ## Existing evidence, with synthetic identities
 
 A temporary Git probe merged one feature head into a base. Merge and squash commits made from the same computed candidate had equal tree object IDs. Advancing the base changed the candidate tree. This establishes the local Git invariant for a simple clean merge.
 
 A prior disposable private-repository experiment used synthetic PRs and a strict required check. A detached candidate passed a counted gate and matched GitHub's test-merge tree. Advancing the base made the old candidate stale. GitHub rejected a merge without the new required check; it rejected a stale expected head separately. With a fresh gate, the candidate and landed trees matched. An asynchronous direct merge returned a pending request that could later be observed as merged, and an exported receipt verified from a second checkout. These observations cover examples, not the full race: the experiment did not prove an atomic exact-tree condition for every base advance after the final read. No repository or account identifier from that experiment is needed for this specification.
+
+## GitHub Free manual pilot
+
+The November 2026 pilot used a private organization test repository on GitHub Free and
+isolated synthetic target and source branches. GitHub denied access to the repository
+rulesets endpoint on that plan. Jackstay's local-only handoff was used for this run.
+
+Advancing the live target invalidated the first gate result. After a fresh counted gate,
+GitHub's recomputed test merge tree matched the candidate even though the PR's embedded
+base SHA still reported the original commit. PR-backed handoff reads the live target ref
+separately and verifies the test merge commit's tree and parents.
+
+An operator squash-merged the test pull request. The squash commit differed from the
+candidate commit, and its tree matched the candidate, the computed GitHub test-merge
+tree and the tree read back from GitHub after landing. A fresh Jackstay invocation recorded
+`landed-matched`. Repeating reconciliation returned the same recorded result. The pilot
+left the default branch untouched and exercised manual handoff on a plan without private
+branch protection.
 
 ## Disposable private organization pilot
 

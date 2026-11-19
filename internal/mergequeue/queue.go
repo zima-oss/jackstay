@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -31,29 +32,44 @@ type Evidence struct {
 	SHA256 string `json:"sha256"`
 }
 
+// Outcome records one observed manual landing against the tested candidate.
+type Outcome struct {
+	Attempt  int       `json:"attempt"`
+	Commit   string    `json:"commit"`
+	Tree     string    `json:"tree"`
+	Matched  bool      `json:"matched"`
+	Observed time.Time `json:"observed"`
+}
+
 // State is a local single-head queue. Attempts increment whenever inputs change.
 type State struct {
-	Schema     int        `json:"schema"`
-	Repository string     `json:"repository"`
-	BaseRef    string     `json:"base_ref"`
-	HeadRef    string     `json:"head_ref"`
-	Base       string     `json:"base"`
-	Head       string     `json:"head"`
-	Candidate  string     `json:"candidate,omitempty"`
-	Tree       string     `json:"tree,omitempty"`
-	Attempt    int        `json:"attempt"`
-	GateRunID  string     `json:"gate_run_id,omitempty"`
-	Receipts   []Evidence `json:"receipts,omitempty"`
-	Updated    time.Time  `json:"updated"`
-	Stale      bool       `json:"-"`
+	Schema      int        `json:"schema"`
+	Repository  string     `json:"repository"`
+	BaseRef     string     `json:"base_ref"`
+	HeadRef     string     `json:"head_ref"`
+	PullRequest int        `json:"pull_request,omitempty"`
+	Base        string     `json:"base"`
+	Head        string     `json:"head"`
+	Candidate   string     `json:"candidate,omitempty"`
+	Tree        string     `json:"tree,omitempty"`
+	Attempt     int        `json:"attempt"`
+	GateRunID   string     `json:"gate_run_id,omitempty"`
+	Receipts    []Evidence `json:"receipts,omitempty"`
+	HandoffAt   time.Time  `json:"handoff_at,omitempty"`
+	Outcome     *Outcome   `json:"outcome,omitempty"`
+	Updated     time.Time  `json:"updated"`
+	Stale       bool       `json:"-"`
 }
 
 // Service locates local queue state by project and Git common directory. BaseRef must name a
 // moving ref; supplying an immutable SHA would make freshness checks meaningless.
 type Service struct {
-	Here    string
-	Project string
-	BaseRef string
+	Here               string
+	Project            string
+	BaseRef            string
+	RequirePullRequest bool
+	ReviewTask         string
+	Provider           Provider
 }
 
 func (service Service) git() gitcli.Git { return gitcli.Git{Dir: service.Here} }
@@ -107,8 +123,13 @@ func read(place string) (*State, error) {
 		return nil, err
 	}
 	if state.Schema != stateSchema || state.Repository == "" || state.BaseRef == "" || state.HeadRef == "" ||
-		state.Base == "" || state.Head == "" || state.Attempt < 1 || state.Updated.IsZero() {
+		state.Base == "" || state.Head == "" || state.PullRequest < 0 || state.Attempt < 1 || state.Updated.IsZero() {
 		return nil, errors.New("queue state is incomplete or has an unsupported schema")
+	}
+	if state.Outcome != nil && (state.HandoffAt.IsZero() || state.Outcome.Attempt != state.Attempt ||
+		!objectID(state.Outcome.Commit) || !objectID(state.Outcome.Tree) || state.Outcome.Observed.IsZero() ||
+		state.Outcome.Matched != (state.Outcome.Tree == state.Tree)) {
+		return nil, errors.New("queue outcome is incomplete or inconsistent")
 	}
 	return &state, nil
 }
@@ -177,9 +198,15 @@ func (service Service) fresh(ctx context.Context, state *State) (bool, error) {
 }
 
 // Enqueue pins the current commits at a base and head ref. The first slice has one lane only.
-func (service Service) Enqueue(ctx context.Context, headRef string) (*State, error) {
+func (service Service) Enqueue(ctx context.Context, headRef string, pullRequest ...int) (*State, error) {
 	if service.BaseRef == "" {
 		return nil, errors.New("queue.base_ref is required")
+	}
+	if len(pullRequest) > 1 || len(pullRequest) == 1 && pullRequest[0] <= 0 {
+		return nil, errors.New("the pull request number must be positive")
+	}
+	if service.RequirePullRequest && len(pullRequest) == 0 {
+		return nil, errors.New("queue.require_pull_request requires --pr NUMBER")
 	}
 	return service.withLock(ctx, func(place, common string) (*State, error) {
 		if _, err := os.Lstat(place); err == nil {
@@ -200,6 +227,9 @@ func (service Service) Enqueue(ctx context.Context, headRef string) (*State, err
 		}
 		state := &State{Schema: stateSchema, Repository: common, BaseRef: service.BaseRef,
 			HeadRef: headRef, Base: base, Head: head, Attempt: 1}
+		if len(pullRequest) == 1 {
+			state.PullRequest = pullRequest[0]
+		}
 		return state, save(place, state)
 	})
 }
@@ -213,6 +243,9 @@ func (service Service) Status(ctx context.Context) (*State, error) {
 		}
 		if state.Repository != common {
 			return nil, errors.New("queue state belongs to another repository")
+		}
+		if state.Outcome != nil {
+			return state, nil
 		}
 		fresh, err := service.fresh(ctx, state)
 		state.Stale = !fresh
@@ -230,6 +263,12 @@ func (service Service) Prepare(ctx context.Context) (*State, error) {
 		}
 		if state.Repository != common {
 			return nil, errors.New("queue state belongs to another repository")
+		}
+		if state.Outcome != nil {
+			return nil, errors.New("the observed landing is recorded; remove the lane before another attempt")
+		}
+		if !state.HandoffAt.IsZero() {
+			return nil, errors.New("the handoff is recorded; reconcile its result before preparing another attempt")
 		}
 		baseRef := service.BaseRef
 		if baseRef == "" {
@@ -310,6 +349,12 @@ func (service Service) recordGate(ctx context.Context, candidate, gateRunID stri
 		if err != nil || !fresh || state.Repository != common || state.Candidate != candidate {
 			return nil, errors.New("the candidate or its inputs changed while the gate ran")
 		}
+		if state.Outcome != nil {
+			return nil, errors.New("the observed landing is already recorded")
+		}
+		if !state.HandoffAt.IsZero() {
+			return nil, errors.New("the handoff is recorded; reconcile its result before changing gate evidence")
+		}
 		state.GateRunID, state.Receipts = gateRunID, evidence
 		return state, save(place, state)
 	})
@@ -317,6 +362,10 @@ func (service Service) recordGate(ctx context.Context, candidate, gateRunID stri
 
 // Handoff returns a tested candidate only while its pinned inputs still match live refs.
 func (service Service) Handoff(ctx context.Context) (*State, error) {
+	return service.handoff(ctx, nil)
+}
+
+func (service Service) handoff(ctx context.Context, verifyReceipts func(*State) error) (*State, error) {
 	state, err := service.Status(ctx)
 	if err != nil {
 		return nil, err
@@ -324,7 +373,118 @@ func (service Service) Handoff(ctx context.Context) (*State, error) {
 	if state.Stale || state.Candidate == "" || state.GateRunID == "" || len(state.Receipts) == 0 {
 		return nil, errors.New("candidate is stale or has no counted gate evidence; prepare and test again")
 	}
+	if state.Outcome != nil {
+		return nil, errors.New("the observed landing is already recorded")
+	}
+	if service.RequirePullRequest && state.PullRequest == 0 {
+		return nil, errors.New("queue.require_pull_request forbids local-only handoff")
+	}
+	if verifyReceipts != nil {
+		if err := verifyReceipts(state); err != nil {
+			return nil, err
+		}
+	}
+	if err := service.verifyPolicy(ctx, state); err != nil {
+		return nil, err
+	}
+	confirmed, err := service.Status(ctx)
+	if err != nil || confirmed.Stale || confirmed.Attempt != state.Attempt || confirmed.Candidate != state.Candidate ||
+		confirmed.PullRequest != state.PullRequest || confirmed.GateRunID != state.GateRunID ||
+		!slices.Equal(confirmed.Receipts, state.Receipts) {
+		return nil, errors.New("queue inputs or policy changed while handoff evidence was read")
+	}
 	return state, nil
+}
+
+// recordHandoff pins the verified candidate before the operator can land it.
+func (service Service) recordHandoff(ctx context.Context, checked *State) (*State, error) {
+	return service.withLock(ctx, func(place, common string) (*State, error) {
+		state, err := read(place)
+		if err != nil {
+			return nil, err
+		}
+		fresh, err := service.fresh(ctx, state)
+		if err != nil || !fresh || state.Repository != common || state.Outcome != nil ||
+			state.Attempt != checked.Attempt || state.Candidate != checked.Candidate || state.Tree != checked.Tree ||
+			state.GateRunID != checked.GateRunID || !slices.Equal(state.Receipts, checked.Receipts) {
+			return nil, errors.New("queue inputs or evidence changed before handoff could be recorded")
+		}
+		if !state.HandoffAt.IsZero() {
+			return state, nil
+		}
+		state.HandoffAt = time.Now().UTC()
+		return state, save(place, state)
+	})
+}
+
+// Reconcile stores the observed landing and whether its tree matches the tested candidate.
+// Local-only lanes require the current target tip. PR lanes accept its confirmed merge commit
+// while it remains reachable from the target, even if later work advanced that branch.
+func (service Service) Reconcile(ctx context.Context, commit string) (*State, error) {
+	if !objectID(commit) {
+		return nil, errors.New("reconcile requires a full observed commit ID")
+	}
+	return service.withLock(ctx, func(place, common string) (*State, error) {
+		state, err := read(place)
+		if err != nil {
+			return nil, err
+		}
+		if state.Repository != common || state.BaseRef != service.BaseRef {
+			return nil, errors.New("queue repository or target branch changed")
+		}
+		if state.Outcome != nil {
+			if state.Outcome.Commit == commit {
+				return state, nil
+			}
+			return nil, errors.New("a different landing outcome is already recorded")
+		}
+		if state.HandoffAt.IsZero() || state.Candidate == "" || state.Tree == "" ||
+			state.GateRunID == "" || len(state.Receipts) == 0 {
+			return nil, errors.New("reconcile requires a recorded, tested handoff")
+		}
+		observed, err := service.resolve(ctx, state.BaseRef)
+		if err != nil {
+			return nil, errors.New("target ref cannot be read; fetch the target and retry")
+		}
+		if state.PullRequest == 0 && observed != commit {
+			return nil, errors.New("observed commit is not the current local target ref")
+		}
+		if state.PullRequest != 0 {
+			if _, err := service.git().Run(ctx, "merge-base", "--is-ancestor", commit, observed); err != nil {
+				return nil, errors.New("PR landing commit is not reachable from the current target ref")
+			}
+		}
+		if commit == state.Base {
+			return nil, errors.New("the target ref has not advanced from the tested base")
+		}
+		if _, err := service.git().Run(ctx, "merge-base", "--is-ancestor", state.Base, commit); err != nil {
+			return nil, errors.New("observed commit does not descend from the tested base")
+		}
+		tree, err := service.git().Line(ctx, "rev-parse", "--verify", commit+"^{tree}")
+		if err != nil || !objectID(tree) {
+			return nil, errors.New("the observed commit tree could not be read")
+		}
+		if state.PullRequest != 0 {
+			provider, repository, err := service.provider(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("pull request landing cannot be confirmed: %w", err)
+			}
+			pull, err := provider.PullRequest(ctx, state.PullRequest)
+			if err != nil || pull.Number != state.PullRequest || !pull.Merged || pull.MergeCommitSHA != commit ||
+				pull.HeadSHA != state.Head || pull.Base != strings.TrimPrefix(state.BaseRef, "refs/heads/") ||
+				(repository != "" && reposDiffer(repository, pull.BaseRepository)) {
+				return nil, errors.New("GitHub has not confirmed this exact PR landing commit")
+			}
+		}
+		// Do not persist an observation whose target moved during the provider read.
+		confirmed, err := service.resolve(ctx, state.BaseRef)
+		if err != nil || confirmed != observed {
+			return nil, errors.New("target ref moved while the landing was inspected")
+		}
+		state.Outcome = &Outcome{Attempt: state.Attempt, Commit: commit, Tree: tree,
+			Matched: tree == state.Tree, Observed: time.Now().UTC()}
+		return state, save(place, state)
+	})
 }
 
 // Remove ends the local lane. It never changes Git refs or remote state.

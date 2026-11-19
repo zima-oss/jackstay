@@ -25,7 +25,7 @@ var everySection = map[string]any{
 	"review":   map[string]any{},
 	"receipts": map[string]any{},
 	"adopt":    map[string]any{},
-	"chat":     map[string]any{"enabled": true},
+	"chat":     map[string]any{"enabled": true, "codex_bridge": map[string]any{"enabled": true}, "claude_code": map[string]any{"enabled": true}},
 	"queue":    map[string]any{"enabled": true},
 	"test": map[string]any{"scopes": map[string]any{"gate": map[string]any{}, "quick": map[string]any{}},
 		"selection": map[string]any{"order": []string{"quick", "gate"}}},
@@ -74,8 +74,8 @@ func TestEveryItemIsPrintedForSomeConfig(t *testing.T) {
 	text := Render(Inputs{Config: everySection, Has: everyCommand})
 	for _, word := range []string{"jst test gate", "jst wait", "jst bg", "jst lock", "jst start", "jst discard", "The guard",
 		"jst gh", "jst review", "origin/trunk..HEAD", "jst id next", "jst new", "jst changes new", "jst release prepare",
-		"jst log", "jst timeline", "jst inventory", "jst receipts export", "jst profile export", "jst owner", "jst adopt --plan",
-		"jst setup --plan", "jst setup --chat", "jst queue handoff", "jst test plan changed"} {
+		"jst log", "jst timeline", "jst inventory", "jst receipts export", "jst receipts verify-ci", "jst profile export", "jst owner", "jst adopt --plan",
+		"jst setup --plan", "jst setup --chat", "jst chat codex-bridge", "jst chat claude-hook", "jst queue handoff", "jst queue reconcile", "jst test plan changed"} {
 		if !strings.Contains(text, word) {
 			t.Errorf("the block lacks %q", word)
 		}

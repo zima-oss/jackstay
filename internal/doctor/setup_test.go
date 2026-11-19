@@ -282,9 +282,12 @@ func TestChatEngineSetupIsExplicitAndDoesNotPromiseDelivery(t *testing.T) {
 		t.Fatalf("chat engine steps: %+v", items)
 	}
 	for _, item := range items {
-		if item.Status != "manual" || !strings.Contains(item.Text, "poll-only") || !strings.Contains(item.Fix, "roll back") {
+		if item.Status != "manual" || !strings.Contains(item.Fix, "roll back") {
 			t.Fatalf("premature delivery claim or missing rollback: %+v", item)
 		}
+	}
+	if !strings.Contains(items[0].Text, "poll-only") || !strings.Contains(items[1].Text, "next-boundary") || !strings.Contains(items[2].Text, "poll-only") {
+		t.Fatalf("incorrect host capabilities: %+v", items)
 	}
 	if !strings.Contains(items[0].Text, "detected on PATH") || !strings.Contains(items[1].Text, "not found on PATH") {
 		t.Fatalf("engine detection: %+v", items)
@@ -292,7 +295,7 @@ func TestChatEngineSetupIsExplicitAndDoesNotPromiseDelivery(t *testing.T) {
 	var output bytes.Buffer
 	reader := bufio.NewReader(strings.NewReader("s\nk\nk\na\n"))
 	promptChatEngineSetup(SetupPlan{Items: items}, reader, &output)
-	if !strings.Contains(output.String(), "turn/steer") || strings.Contains(output.String(), "lifecycle hook can present") {
+	if !strings.Contains(output.String(), "jst chat codex-bridge") || strings.Contains(output.String(), "jst chat claude-hook") {
 		t.Fatalf("interactive choice did not show only selected route: %s", output.String())
 	}
 	if answer, err := reader.ReadString('\n'); err != nil || answer != "a\n" {

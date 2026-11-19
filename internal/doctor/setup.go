@@ -234,8 +234,8 @@ func chatEngineSetupItems(lookPath func(string) (string, error)) []SetupItem {
 	engines := []struct {
 		name, identifier, capability, steps string
 	}{
-		{"codex", "chat-codex", "poll-only", "A managed app-server session bridge is required for turn/steer, reconnect and agent acknowledgment. No active-turn bridge is installed by setup; use chat.inbox polling until a bridge passes its synthetic delivery probe. Disable the bridge or restore its saved configuration to roll back."},
-		{"claude", "chat-claude", "poll-only", "A scoped Claude Code lifecycle hook can present queued event IDs at the next prompt or tool boundary. Setup does not install a hook yet; use chat.inbox polling. A hook-only route must be labelled next-boundary, never active-turn. Remove the hook and restore its saved settings to roll back."},
+		{"codex", "chat-codex", "poll-only", "Enable chat.codex_bridge in jackstay.json. Start jst chat codex-bridge with the owner-managed app-server socket, thread ID and session name. Use the same local session token as jst chat serve. Stop the bridge or restore the host configuration to roll back."},
+		{"claude", "chat-claude", "next-boundary with hook", "Enable chat.claude_code in jackstay.json. Register jst chat serve --name NAME as a local MCP server. In Claude Code settings, add command hooks that run jst chat claude-hook --name NAME --event UserPromptSubmit and --event PostToolBatch. Export one JACKSTAY_CHAT_SESSION_TOKEN to both the MCP server and hooks. The hook announces pending messages; Claude reads them with chat.inbox and acknowledges with chat.ack. Remove the hooks to roll back."},
 	}
 	items := make([]SetupItem, 0, len(engines)+1)
 	for _, engine := range engines {

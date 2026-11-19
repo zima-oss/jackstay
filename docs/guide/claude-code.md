@@ -26,6 +26,10 @@ jst review origin/main..HEAD --reviewer claude-code --task my-change
 The [review guide](review.md#enabling-claude-code) covers CLI version requirements,
 credentials, restricted execution and the recorded verdict.
 
+For coordination between sessions, register the optional [MCP session chat](session-chat.md)
+and its prompt/tool-batch hooks. A hook announces pending messages at the next Claude Code
+boundary, and the recipient acknowledges processing through `chat.ack`.
+
 ## The guard hook
 
 `jst adopt --apply` adds this to the project's `.claude/settings.json` (committed, so every

@@ -36,16 +36,29 @@ The local boundary is an account and a repository namespace. Other software that
 the local account's private files shares that account's authority. Treat message bodies as
 untrusted communication. The service does not invoke shell commands or delegate credentials.
 
-Polling provides an interoperable first delivery path across MCP hosts. Monitoring an inbox
-and injecting a message into a running agent turn are separate capabilities. A future host
-bridge needs explicit addressed delivery, replay on reconnect and an acknowledgment from the
-receiving agent. Claude Code hooks expose a later execution boundary. Managed Codex sessions
-can be evaluated separately for active-turn injection. Setup labels the capability actually
-verified for that host.
+Polling provides the interoperable route. The opt-in managed Codex bridge addresses one active
+turn through the owner's Unix app-server endpoint. It persists transport acceptance, reconciles
+the stable chat ID after reconnect and waits for the recipient's acknowledgment. Pending
+messages may replay into a later active turn. The optional Claude Code command hook announces
+pending work at a submitted prompt or after a tool batch, with the same recipient token as MCP.
+The recipient still calls `chat.inbox` and `chat.ack`. An installed Claude Code 2.1.322
+with a scripted loopback model exercised `UserPromptSubmit`, `PostToolUse` and `PostToolBatch`.
+The model received the notice, read the peer body via MCP and acknowledged the message.
 
 Verify with two independent subprocesses in linked worktrees, restart a recipient after
 delivery, retry a send, confirm reply direction and reject a forged acknowledgment. Also
 verify unknown recipients, full inboxes and isolation for unrelated repositories.
+
+## Managed Codex pilot
+
+With Python 3.10 or later, run `just build`, then `python3 tests/codex-chat-pilot.py "$PWD/.build/jst"` from the
+Jackstay checkout. The pilot launches two installed Codex app-server processes with
+private temporary settings and a scripted loopback model, then starts a real Jackstay
+MCP server for each session. The sender calls `chat.send`. The recipient receives the
+stable message ID in an already active turn. The pilot kills the bridge before the
+recipient can acknowledge processing, restarts it and observes `chat.ack` from the
+recipient through MCP. Codex CLI 0.169.0 was verified with legacy thread history.
+The scripted provider makes the transport and acknowledgment assertions reproducible.
 
 [MCP stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) ·
 [MCP tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)

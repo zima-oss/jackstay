@@ -93,3 +93,40 @@ func TestChatQuotaAndCodexDefaults(t *testing.T) {
 		t.Fatalf("expected a per-session quota error: %v", problems)
 	}
 }
+
+func TestClaudeCodeChatRequiresEnabledChat(t *testing.T) {
+	parsed, err := Parse([]byte(`{"jackstay_schema":2,"chat":{"enabled":true,"claude_code":{"enabled":true}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ChatSettings(parsed.Section("chat")).ClaudeCodeEnabled || len(SectionProblems(parsed).Of("chat")) != 0 {
+		t.Fatal("enabled Claude Code chat hook was rejected")
+	}
+	parsed.Section("chat")["enabled"] = false
+	if problems := SectionProblems(parsed).Of("chat"); len(problems) != 1 {
+		t.Fatalf("Claude Code hook was allowed without chat: %v", problems)
+	}
+	content, err := JSONSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(content, []byte(`"claude_code"`)) {
+		t.Fatal("editor schema omitted Claude Code chat settings")
+	}
+}
+
+func TestPinnedAdoptionProfileNeedsDigestAndPath(t *testing.T) {
+	parsed, err := Parse([]byte(`{"jackstay_schema":2,"adopt":{"profile_sha256":"bad"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := SectionProblems(parsed).Of("adopt"); len(problems) != 2 {
+		t.Fatalf("missing digest and path checks: %v", problems)
+	}
+	adopt := parsed.Section("adopt")
+	adopt["profile"] = "policy.bundle.json"
+	adopt["profile_sha256"] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if problems := SectionProblems(parsed).Of("adopt"); len(problems) != 0 {
+		t.Fatalf("valid profile digest rejected: %v", problems)
+	}
+}

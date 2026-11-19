@@ -786,6 +786,14 @@ func TestReleaseWorkflowUsesCardsBranchWhenReleaseBaseIsOmitted(t *testing.T) {
 	}
 }
 
+func TestAdoptParsesExpectedProfileArtifactDigest(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	options, mode, _, err := parseArgs([]string{"--plan", "--profile", "policy.bundle.json", "--profile-sha256", digest})
+	if err != nil || mode != "plan" || options.Profile != "policy.bundle.json" || options.ProfileSHA256 != digest {
+		t.Fatalf("profile pin arguments: %+v, %q, %v", options, mode, err)
+	}
+}
+
 func TestSettingsOnlyPinsAProfileWorkflowBeforeApplyingIt(t *testing.T) {
 	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p"}`})
 	options := optionsFor(root)

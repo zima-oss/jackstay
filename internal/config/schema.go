@@ -62,6 +62,7 @@ func schemaNode(wanted *schemaType) map[string]any {
 
 func setSchemaHints(root map[string]any) {
 	properties := root["properties"].(map[string]any)
+	properties["adopt"].(map[string]any)["properties"].(map[string]any)["profile_sha256"].(map[string]any)["pattern"] = "^[0-9a-fA-F]{64}$"
 	properties["jackstay_schema"].(map[string]any)["enum"] = []int{1, Schema}
 	queue := properties["queue"].(map[string]any)
 	queue["if"] = map[string]any{"required": []string{"enabled"}, "properties": map[string]any{"enabled": map[string]any{"const": true}}}
@@ -72,6 +73,12 @@ func setSchemaHints(root map[string]any) {
 		"required": []string{"codex_bridge"}, "properties": map[string]any{"codex_bridge": enabled},
 	}
 	chat["then"] = enabled
+	chat["allOf"] = []map[string]any{
+		{
+			"if":   map[string]any{"required": []string{"claude_code"}, "properties": map[string]any{"claude_code": enabled}},
+			"then": enabled,
+		},
+	}
 	chat["properties"].(map[string]any)["max_pending_per_session"].(map[string]any)["description"] =
 		"Pending messages per recipient. The default is min(32, max_pending); an explicit value must not exceed max_pending."
 	testJudges := []string{"swift-test", "steps", "exit", "go-json", "junit", "jest-json", "trx", "xcresult-json"}

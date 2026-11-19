@@ -10,6 +10,7 @@ package config
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -283,6 +284,8 @@ var codexBridgeSection = object(
 	"ack_timeout_seconds", boundedInteger(5, 300, 30),
 )
 
+var claudeCodeSection = object("enabled", boolean())
+
 var chatSection = object(
 	"enabled", boolean(),
 	"max_message_bytes", boundedInteger(128, 16384, 4096),
@@ -291,6 +294,7 @@ var chatSection = object(
 	"max_sessions", boundedInteger(2, 64, 32),
 	"retention_hours", boundedInteger(1, 168, 72),
 	"codex_bridge", codexBridgeSection,
+	"claude_code", claudeCodeSection,
 )
 
 var testSection = object(
@@ -318,7 +322,7 @@ func TestRequiresTimeout(section map[string]any) int {
 
 // ChatPolicy contains effective limits. The repository validator checks overrides against the table.
 type ChatPolicy struct {
-	Enabled, CodexBridgeEnabled                                                    bool
+	Enabled, CodexBridgeEnabled, ClaudeCodeEnabled                                 bool
 	MaxMessageBytes, MaxPending, MaxPendingPerSession, MaxSessions, RetentionHours int
 	CodexPollIntervalMS, CodexAckTimeoutSeconds                                    int
 }
@@ -326,6 +330,7 @@ type ChatPolicy struct {
 // ChatSettings resolves the settings in a section already checked by Load.
 func ChatSettings(section map[string]any) ChatPolicy {
 	bridge := objectOf(section["codex_bridge"])
+	claude := objectOf(section["claude_code"])
 	pending := boundedValue(section, chatSection, "max_pending")
 	return ChatPolicy{
 		Enabled:                section["enabled"] == true,
@@ -335,6 +340,7 @@ func ChatSettings(section map[string]any) ChatPolicy {
 		MaxSessions:            boundedValue(section, chatSection, "max_sessions"),
 		RetentionHours:         boundedValue(section, chatSection, "retention_hours"),
 		CodexBridgeEnabled:     bridge["enabled"] == true,
+		ClaudeCodeEnabled:      claude["enabled"] == true,
 		CodexPollIntervalMS:    boundedValue(bridge, codexBridgeSection, "poll_interval_ms"),
 		CodexAckTimeoutSeconds: boundedValue(bridge, codexBridgeSection, "ack_timeout_seconds"),
 	}
@@ -387,7 +393,7 @@ var Table = object(
 	"github", object("account", str(), "remote", str(), "repository", str(),
 		"wait", object("timeout_seconds", number(), "interval_seconds", number(), "log_lines", integer())),
 	// docs/design/adopt.md section 3.1: what `jst adopt` keeps in the project's file.
-	"adopt", object("pin", str(), "profile", str(), "exceptions", mapOf(str())),
+	"adopt", object("pin", str(), "profile", str(), "profile_sha256", str(), "exceptions", mapOf(str())),
 	// docs/design/observability.md, section 10: the journal's retention and how commands are kept.
 	"telemetry", object("keep_days", integer(), "compress_after_days", integer(), "commands", str()),
 	"test", testSection,
@@ -563,7 +569,7 @@ func SectionProblems(config Config) Problems {
 			problems.add(key, typeProblems(config[key], sub, key)...)
 		}
 	}
-	for _, section := range []string{"receipts", "lock", "guard", "baseline", "test", "github", "telemetry", "queue", "chat"} {
+	for _, section := range []string{"receipts", "lock", "guard", "baseline", "adopt", "test", "github", "telemetry", "queue", "chat"} {
 		if _, ok := config[section]; ok && len(problems.found[section]) == 0 {
 			problems.add(section, sectionCheck(section, config)...)
 		}
@@ -692,6 +698,17 @@ func sectionCheck(section string, config Config) []string {
 		if unit, ok := baseline["merge_unit"]; ok && unit != "pr" && unit != "commit" {
 			found = append(found, "`baseline.merge_unit` must be \"pr\" or \"commit\"")
 		}
+	case "adopt":
+		adopt := objectOf(config["adopt"])
+		if raw, present := adopt["profile_sha256"].(string); present {
+			decoded, err := hex.DecodeString(raw)
+			if err != nil || len(decoded) != 32 {
+				found = append(found, "`adopt.profile_sha256` must be 64 hex digits")
+			}
+			if !has(adopt, "profile") {
+				found = append(found, "`adopt.profile_sha256` requires `adopt.profile`")
+			}
+		}
 	case "chat":
 		chat := objectOf(config["chat"])
 		if has(chat, "max_pending_per_session") &&
@@ -700,6 +717,9 @@ func sectionCheck(section string, config Config) []string {
 		}
 		if objectOf(chat["codex_bridge"])["enabled"] == true && chat["enabled"] != true {
 			found = append(found, "`chat.codex_bridge.enabled` requires `chat.enabled`")
+		}
+		if objectOf(chat["claude_code"])["enabled"] == true && chat["enabled"] != true {
+			found = append(found, "`chat.claude_code.enabled` requires `chat.enabled`")
 		}
 	case "queue":
 		queue := objectOf(config["queue"])
