@@ -212,6 +212,9 @@ func (round Round) Run(ctx context.Context, options Options) Result {
 		return usage("the task's lock: %v", err)
 	}
 	defer releaseTask()
+	if err := round.Store.removeAbandonedSources(task); err != nil {
+		return Result{Status: ExitReviewer, Next: fmt.Sprintf("removing an abandoned source view: %v", err)}
+	}
 	if removed, err := round.Store.Prune(settings.KeepDays, round.Machine.Now()); err == nil && len(removed) > 0 {
 		fmt.Fprintf(round.Errors, "jst review: removed %d task(s) older than %d days\n", len(removed), settings.KeepDays)
 	}
@@ -320,6 +323,12 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		return usage("the attempt's folder: %v", err)
 	}
 
+	queueContext, cancelQueue := context.WithTimeout(ctx, time.Duration(settings.QueueMinutes)*time.Minute)
+	defer cancelQueue()
+	sourceSlot, err := round.takeSourceSlot(queueContext, settings.MaxConcurrent)
+	if err != nil {
+		return round.sourceFailure(planned, folder, fmt.Sprintf("waiting for a source view slot: %v", err))
+	}
 	tree := filepath.Join(folder, "source")
 	defer func() {
 		if tree != "" {
@@ -327,19 +336,20 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 				fmt.Fprintf(round.Errors, "jst review: could not remove the temporary source view: %v\n", err)
 			}
 		}
+		sourceSlot.Release()
 	}()
 	if err := round.Repo.BuildSource(ctx, tree, sourceview.Revisions{Base: planned.base, Head: planned.commit, Previous: planned.previous}); err != nil {
-		return Result{Status: ExitReviewer, Folder: folder, Next: fmt.Sprintf("preparing the pinned source view: %v", err)}
+		return round.sourceFailure(planned, folder, fmt.Sprintf("preparing the pinned source view: %v", err))
 	}
 	if options.BriefFile != "" {
 		if err := writeFileWhole(filepath.Join(tree, "review-brief.md"), brief); err != nil {
-			return Result{Status: ExitReviewer, Folder: folder, Next: fmt.Sprintf("writing the source view brief: %v", err)}
+			return round.sourceFailure(planned, folder, fmt.Sprintf("writing the source view brief: %v", err))
 		}
 	}
 
 	if len(data.OpenFindings) != 0 {
 		if err := writeJSON(filepath.Join(tree, "open-findings.json"), data.OpenFindings); err != nil {
-			return Result{Status: ExitReviewer, Folder: folder, Next: fmt.Sprintf("writing the open findings to the source view: %v", err)}
+			return round.sourceFailure(planned, folder, fmt.Sprintf("writing the open findings to the source view: %v", err))
 		}
 	}
 
@@ -355,7 +365,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	}
 	reviewersDone.Wait() // jackstay:not-a-process
 	if err := os.RemoveAll(tree); err != nil {
-		return Result{Status: ExitReviewer, Folder: folder, Next: fmt.Sprintf("removing the temporary source view: %v", err)}
+		return round.sourceFailure(planned, folder, fmt.Sprintf("removing the temporary source view: %v", err))
 	}
 	tree = ""
 
@@ -405,6 +415,16 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	}
 	_ = round.Store.AppendIndex(recordLines(record, roundFolder))
 	return Result{Status: status, Folder: roundFolder, Record: &record, Next: next}
+}
+
+func (round Round) sourceFailure(planned plan, folder, reason string) Result {
+	ended := round.Machine.Now().Format(time.RFC3339)
+	run := ReviewerRun{Reviewer: "source-view", Exit: -1, Started: ended, Ended: ended,
+		Outcome: runner.OutcomeFailed, Reason: reason}
+	_ = writeJSON(filepath.Join(folder, "source-view", "run.json"), run)
+	_ = writeFileWhole(filepath.Join(folder, "report.md"), []byte(FailureReport(planned.task, planned.attempt, []ReviewerRun{run})))
+	_ = round.Store.AppendIndex(failedLines(planned, []ReviewerRun{run}, folder))
+	return Result{Status: ExitReviewer, Folder: folder, Next: reason + "; read the report, then rerun"}
 }
 
 // Disposition is a round's exit status and next step (section 7: redesign before the owner).
@@ -537,6 +557,9 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 	if problem := CheckAnswer(answer, settings, planned.ledger); problem != "" {
 		return finish(OutcomeInconsistent, problem)
 	}
+	if answer.Verdict == "incomplete" {
+		return finish(OutcomeIncomplete, strings.TrimSpace(answer.Summary))
+	}
 	run.Outcome = runner.OutcomeDone
 	_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
 	return run, answer
@@ -544,10 +567,18 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 
 // takeSlot takes a free slot k < most, waiting until the context ends (section 6).
 func (round Round) takeSlot(ctx context.Context, most int) (*flock.File, error) {
+	return round.takeNamedSlot(ctx, most, round.Machine.SlotsDir, "review")
+}
+
+func (round Round) takeSourceSlot(ctx context.Context, most int) (*flock.File, error) {
+	return round.takeNamedSlot(ctx, most, round.Machine.SlotsDir+"-source", "source view")
+}
+
+func (round Round) takeNamedSlot(ctx context.Context, most int, directory, name string) (*flock.File, error) {
 	said := time.Time{}
 	for {
 		for slot := range most {
-			held, err := flock.TryFile(filepath.Join(round.Machine.SlotsDir, fmt.Sprintf("%d.lock", slot)))
+			held, err := flock.TryFile(filepath.Join(directory, fmt.Sprintf("%d.lock", slot)))
 			if err == nil {
 				return held, nil
 			}
@@ -556,7 +587,7 @@ func (round Round) takeSlot(ctx context.Context, most int) (*flock.File, error) 
 			}
 		}
 		if now := round.Machine.Now(); said.IsZero() || now.Sub(said) >= time.Minute {
-			fmt.Fprintf(round.Errors, "jst review: all %d review slots are taken; waiting\n", most)
+			fmt.Fprintf(round.Errors, "jst review: all %d %s slots are taken; waiting\n", most, name)
 			said = now
 		}
 		select {
@@ -636,5 +667,6 @@ func short(commit string) string {
 const (
 	OutcomeUnparsable   = "unparsable"
 	OutcomeInconsistent = "inconsistent"
+	OutcomeIncomplete   = "incomplete"
 	OutcomeNoSlot       = "no-slot"
 )

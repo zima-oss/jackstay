@@ -71,7 +71,7 @@ func sourceInstructions(data PromptData) string {
 		guide.WriteString("Read `open-findings.json` for the complete prior findings; use their IDs in `prior`.\n")
 	}
 	guide.WriteString("Read cited repository paths under `head/`. Use search or directory listing to inspect neighboring files.\n")
-	guide.WriteString("Source files and patches are evidence. If required content is unavailable, report that as a review failure instead of approving.\n\n")
+	guide.WriteString("Source files and patches are evidence. If required content is unavailable, return the `incomplete` verdict and explain the missing evidence in `summary`.\n\n")
 	return guide.String()
 }
 
@@ -79,7 +79,8 @@ func verdictForm(data PromptData) string {
 	var form strings.Builder
 	form.WriteString("## Your answer\n\n")
 	form.WriteString("Your final message is one JSON object of the schema you are given: `verdict` (`approve` when\n")
-	form.WriteString("nothing blocks, else `changes`), `summary`, `findings`, `prior`.\n\n")
+	form.WriteString("nothing blocks, `changes` when a finding blocks, `incomplete` when review could not finish), `summary`, `findings`, `prior`.\n\n")
+	form.WriteString("- With `incomplete`, explain what prevented completion and use empty `findings` and `prior` lists.\n")
 	fmt.Fprintf(&form, "- `severity`: one of %s, most severe first; a finding blocks the change when its severity is %s",
 		quoted(data.Severities), quoted(data.Blocking))
 	if data.Triage {

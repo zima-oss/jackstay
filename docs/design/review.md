@@ -211,9 +211,14 @@ checkout filters supply no files to the view. The provider can read these paths:
 | `review-brief.md` | the optional copy of the operator's `--brief` |
 | `open-findings.json` | the complete open findings, when a prior round has any |
 
-The attempt removes the view after the reviewers stop and before publishing a round. Review
-retention also removes abandoned attempt folders. Legacy locked review worktrees are still
-recognized by cleanup so upgrades can remove abandoned worktrees safely.
+The attempt removes the view after the reviewers stop and before publishing a round. A subsequent
+run of the same task reclaims its abandoned attempt views under the task lock. The existing
+retention policy also reclaims expired tasks. Cleanup recognizes legacy locked review worktrees.
+
+Projection is offline. A partial clone needs the objects for the pinned revisions locally. The
+host filesystem must represent the tracked path names distinctly. Projection reports unavailable
+objects and path collisions as review failures. Git uses the pinned head's tracked attributes
+for the change files. Git-local administrative `info/attributes` can still override them.
 
 ### 3.2 The prompt
 
@@ -287,7 +292,9 @@ embedded one with this project's severity words), so its last message is one JSO
 }
 ```
 
-`verdict` is `approve` or `changes`; `severity` one of `severities`; `likelihood` `ordinary` (happens
+`verdict` is `approve`, `changes` or `incomplete`. An incomplete review records the reason in
+`summary` and leaves the ledger unchanged. `changes` identifies a new or still-open finding.
+`severity` is one of `severities`; `likelihood` `ordinary` (happens
 in ordinary work by accident) or `unusual` (needs a deliberate or unusual setup); `consequence`
 `severe` (lost work or data, a wrong decision that passes unnoticed) or `mild` (an inconvenience,
 a wrong output seen at once) — W-048's two axes in two words each. `repeats` names ledger findings
@@ -310,6 +317,7 @@ or the reverse) in the report.
 | `failed` | Codex exited non-zero, or a `turn.failed`/`error` event, with no answer | 5 |
 | `login` | as `failed`, and the failure is about authentication (section 2, item 3) | 6 |
 | `no-answer` | Codex exited 0 and `answer.json` is missing or empty | 5 |
+| `incomplete` | the reviewer reports why required evidence or coverage was unavailable | 5 |
 | `unparsable` | `answer.json` is not one JSON object of the schema (the strict reader's error kept) | 5 |
 | `inconsistent` | read, but a check above fails (which one kept) | 5 |
 
@@ -460,7 +468,9 @@ on its first line, and the documented `--for` is that budget rounded up (45 with
 15 + 20 + 2). `jst bg`'s deadline is only the backstop. `jst review` does not call `jst bg` itself and
 needs nothing of its code.
 
-**The machine's cap.** Slots are lock files `~/.jackstay/.all/reviews/slots/<k>.lock`, k = 0…15, taken
+**The machine's cap.** Source views take separate machine-wide slots before materializing any
+tracked files and hold them through cleanup. The same configured concurrency ceiling applies to
+view slots and reviewer slots. Reviewer slots are lock files `~/.jackstay/.all/reviews/slots/<k>.lock`, k = 0…15, taken
 with `flock` and released by the kernel if jackstay dies. A reviewer run of a project whose
 `max_concurrent` is M may hold only a slot k < M; it tries them in order and, if none is free,
 waits (printing once that it waits, then every minute how many runs hold slots); if the slot and

@@ -217,6 +217,34 @@ func TestAChainKeepsItsBase(t *testing.T) {
 	}
 }
 
+func TestIncompleteReviewCannotCertifyThePinnedRange(t *testing.T) {
+	h := newHarness(t,
+		Answer{Verdict: "incomplete", Summary: "required source file unavailable"},
+		Answer{Verdict: "changes", Summary: "could not read the source"},
+		Answer{Verdict: "approve", Summary: "clear"},
+	)
+	ctx := context.Background()
+	for _, want := range []struct{ outcome, diagnostic string }{
+		{OutcomeIncomplete, "required source file unavailable"},
+		{OutcomeInconsistent, "a changes verdict must identify a new or still-open finding"},
+	} {
+		result := h.round.Run(ctx, Options{})
+		if result.Status != ExitReviewer || result.Record != nil {
+			t.Fatalf("unusable review became a round: %+v", result)
+		}
+		report, err := os.ReadFile(filepath.Join(result.Folder, "report.md"))
+		if err != nil || !strings.Contains(string(report), want.outcome) || !strings.Contains(string(report), want.diagnostic) {
+			t.Fatalf("missing failure evidence: %s, %v", report, err)
+		}
+		if reasons, _ := CheckReasons(h.round.Settings, h.round.Store, "feature/x", "c0", "c1"); len(reasons) == 0 {
+			t.Fatal("an unusable review certified the pinned range")
+		}
+	}
+	if result := h.round.Run(ctx, Options{}); result.Status != ExitClear || result.Record == nil || result.Record.Round != 1 || result.Record.Attempt != 3 {
+		t.Fatalf("usable retry did not publish round 1: %+v", result)
+	}
+}
+
 func TestFailedAttemptTakesNoNumber(t *testing.T) {
 	h := newHarness(t, codex.OutcomeTimeout, Answer{Verdict: "approve"})
 	ctx := context.Background()

@@ -114,6 +114,53 @@ func (store Store) prepareTask(task string) error {
 	return writeJSON(filepath.Join(folder, taskNameFile), task)
 }
 
+// removeAbandonedSources runs with the task lock held. An attempt still owned by
+// a live reviewer holds that lock, so source views in older attempts are safe
+// to remove without touching their review records.
+func (store Store) removeAbandonedSources(task string) error {
+	root, err := os.OpenRoot(store.Root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	directory, err := filepath.Rel(store.Root, store.TaskPath(task))
+	if err != nil {
+		return err
+	}
+	info, err := root.Lstat(directory)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("the task's review folder must be a directory")
+	}
+	entries, err := store.Entries(task)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Round != 0 {
+			continue
+		}
+		attemptDirectory := filepath.Join(directory, entry.Name)
+		var record AttemptRecord
+		data, err := root.ReadFile(filepath.Join(attemptDirectory, AttemptName))
+		if err != nil || strictjson.UnmarshalOpen(data, &record) != nil || record.Task != task || record.Attempt != entry.Attempt {
+			continue
+		}
+		if err := root.RemoveAll(filepath.Join(attemptDirectory, "source")); err != nil {
+			return fmt.Errorf("remove abandoned source in %s: %w", entry.Name, err)
+		}
+	}
+	return nil
+}
+
 // TaskLockPath is the same lock in both layouts, even if pruning removes the old folder.
 func (store Store) TaskLockPath(task string) string {
 	return filepath.Join(store.Root, ".locks", "v2", taskKey(task)+".lock")

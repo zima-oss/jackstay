@@ -88,7 +88,10 @@ func objectID(value string) bool {
 	return true
 }
 
-type gitReader struct{ root string }
+type gitReader struct {
+	root            string
+	attributeSource string
+}
 
 type streamPipe struct{ *io.PipeWriter }
 
@@ -146,6 +149,9 @@ func (buffer *diagnosticBuffer) String() string {
 func (git gitReader) stream(ctx context.Context, input []byte, output io.Writer, args ...string) error {
 	argv := append([]string{"git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"}, args...)
 	env := append(gitcli.WithoutRepository(os.Environ()), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1", "LC_ALL=C")
+	if git.attributeSource != "" {
+		env = append(env, "GIT_ATTR_SOURCE="+git.attributeSource)
+	}
 	var stderr diagnosticBuffer
 	checked := &checkedWriter{Writer: output}
 	outcome, err := supervise.Run(nil, supervise.Spec{Argv: argv, Dir: git.root, Env: env, Mode: supervise.Group,
@@ -230,9 +236,10 @@ func parseEntry(record []byte) (entry, error) {
 func (git gitReader) blobs(ctx context.Context, destination string, entries []entry) error {
 	var requested bytes.Buffer
 	var blobs []entry
+	directories := make(map[string]bool)
 	for _, item := range entries {
 		if item.mode == "160000" {
-			if err := writeBlob(destination, item.path, strings.NewReader("Submodule "+item.oid+"\n"), int64(len(item.oid)+11)); err != nil {
+			if err := writeBlob(destination, item.path, strings.NewReader("Submodule "+item.oid+"\n"), int64(len(item.oid)+11), directories); err != nil {
 				return err
 			}
 		} else {
@@ -250,15 +257,11 @@ func (git gitReader) blobs(ctx context.Context, destination string, entries []en
 			if err != nil {
 				return err
 			}
-			fields := strings.Fields(header)
-			if len(fields) != 3 || fields[0] != item.oid || fields[1] != "blob" {
-				return fmt.Errorf("unexpected Git blob header %q", header)
+			size, err := blobSize(item, header)
+			if err != nil {
+				return err
 			}
-			size, err := strconv.ParseInt(fields[2], 10, 64)
-			if err != nil || size < 0 {
-				return fmt.Errorf("invalid Git blob size %q", fields[2])
-			}
-			if err := writeBlob(destination, item.path, reader, size); err != nil {
+			if err := writeBlob(destination, item.path, reader, size, directories); err != nil {
 				return err
 			}
 			separator, err := reader.ReadByte()
@@ -273,12 +276,30 @@ func (git gitReader) blobs(ctx context.Context, destination string, entries []en
 	}, "cat-file", "--batch")
 }
 
-func writeBlob(destination, name string, input io.Reader, size int64) error {
-	path := filepath.Join(destination, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+func blobSize(item entry, header string) (int64, error) {
+	fields := strings.Fields(header)
+	if len(fields) == 2 && fields[0] == item.oid && fields[1] == "missing" {
+		return 0, fmt.Errorf("git blob %s for %q is missing locally; fetch the blob before reviewing this partial clone", item.oid, item.path)
+	}
+	if len(fields) != 3 || fields[0] != item.oid || fields[1] != "blob" {
+		return 0, fmt.Errorf("unexpected Git blob header %q for %q", header, item.path)
+	}
+	size, err := strconv.ParseInt(fields[2], 10, 64)
+	if err != nil || size < 0 {
+		return 0, fmt.Errorf("invalid Git blob size %q for %q", fields[2], item.path)
+	}
+	return size, nil
+}
+
+func writeBlob(destination, name string, input io.Reader, size int64, directories map[string]bool) error {
+	if err := makeExactParents(destination, name, directories); err != nil {
 		return err
 	}
+	path := filepath.Join(destination, name)
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("source path %q collides with another tracked path on this filesystem: %w", name, err)
+	}
 	if err != nil {
 		return err
 	}
@@ -286,7 +307,44 @@ func writeBlob(destination, name string, input io.Reader, size int64) error {
 	return errors.Join(copyErr, file.Close())
 }
 
+func makeExactParents(destination, name string, known map[string]bool) error {
+	parent := destination
+	for _, component := range strings.Split(filepath.Dir(name), string(filepath.Separator)) {
+		if component == "." {
+			break
+		}
+		path := filepath.Join(parent, component)
+		if known[path] {
+			parent = path
+			continue
+		}
+		if err := os.Mkdir(path, 0o700); err != nil {
+			if !errors.Is(err, os.ErrExist) {
+				return fmt.Errorf("create source directory %q: %w", path, err)
+			}
+			members, readErr := os.ReadDir(parent)
+			if readErr != nil {
+				return readErr
+			}
+			found := false
+			for _, member := range members {
+				if member.Name() == component && member.IsDir() {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("source directory %q collides with another tracked path on this filesystem", filepath.Join(parent, component))
+			}
+		}
+		known[path] = true
+		parent = path
+	}
+	return nil
+}
+
 func (git gitReader) change(ctx context.Context, destination, name, from, head string) error {
+	git.attributeSource = head
 	patch := filepath.Join(destination, name+".patch")
 	if err := git.diffToFile(ctx, patch, from, head); err != nil {
 		return err

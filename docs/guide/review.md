@@ -32,7 +32,9 @@ search the reviewed commit under `head/`, compare files with `base/` and, for an
 round, inspect `previous/`. The `changes/` directory contains changed-path indexes and patches
 for on-demand reading. The initial prompt contains instructions and references. The selected
 provider receives source excerpts when the reviewer reads them during the session.
-Jackstay keeps the result of each round under `~/.jackstay/<project>/reviews/`.
+Jackstay keeps the result of each round under `~/.jackstay/<project>/reviews/`. If Git reports
+missing objects in a partial clone, fetch the required history and objects before retrying.
+A projection error or an incomplete verdict leaves a failed attempt visible through `jst review last`.
 
 | Exit | Meaning | What to do |
 |---|---|---|
@@ -41,7 +43,7 @@ Jackstay keeps the result of each round under `~/.jackstay/<project>/reviews/`.
 | 2 | usage or configuration (also: this task busy with another run) | read the message |
 | 3 | a place drew findings two rounds running: it is due for redesign | redesign that place, not patch it |
 | 4 | the round limit is reached and it still blocks | the owner decides; `--past-limit` after that |
-| 5 | a reviewer gave no usable answer (timeout, no slot, unparsable) | rerun; `jst review last` says why |
+| 5 | a reviewer could not complete the review or gave no usable answer | rerun; `jst review last` says why |
 | 6 | the environment refuses: reviewer unavailable, sandbox or authentication issue | follow the diagnostic for the selected reviewer |
 
 Without `--json` it prints three lines: the outcome, the report's path, and the next step.
@@ -68,8 +70,9 @@ failure it refuses until `codex login` has been run again.
 ### Enabling Claude Code
 
 Install Claude Code 2.1.248 or newer. Check your existing login with `claude auth status` or
-provide `ANTHROPIC_API_KEY` through the environment. Starting a review never opens an interactive
-login. [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
+provide `ANTHROPIC_API_KEY` through the environment. With a desktop login on macOS, run `jst review`
+or `jst review pool next` from a context that can access the system credential store. Check
+`claude auth status` in that same context if the adapter reports an authentication failure. [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
 
 Select Claude Code directly for one round:
 
