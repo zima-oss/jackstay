@@ -92,6 +92,16 @@ var items = []item{
 		"- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.")},
 	{id: "profiles", commands: []string{"profile export", "profile verify"}, wanted: hasSection("adopt"), text: fixed(
 		"- **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.")},
+	{id: "queue", commands: []string{"queue status", "queue test", "queue handoff"}, wanted: func(config map[string]any) bool {
+		return section(config, "queue")["enabled"] == true
+	}, text: fixed(
+		"- **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`\n" +
+			"  for the operator's landing decision.")},
+	{id: "chat", commands: []string{"chat serve", "setup"}, wanted: func(config map[string]any) bool {
+		return section(config, "chat")["enabled"] == true
+	}, text: fixed(
+		"- **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools\n" +
+			"  to send a request, read your inbox and acknowledge messages you process.")},
 	{id: "doctor", commands: []string{"doctor", "check", "adopt", "setup"}, wanted: always, text: fixed(
 		"- **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is\n" +
 			"  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.")},

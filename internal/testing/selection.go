@@ -63,8 +63,11 @@ func selectionProblems(section map[string]any) []string {
 		if !has(scopes, name) {
 			problems = append(problems, fmt.Sprintf("`test.selection.order` names undeclared scope `%s`", name))
 		}
-		if name == "focused" {
+		switch {
+		case name == "focused":
 			problems = append(problems, "`test.selection.order` cannot use `focused`: it needs test names")
+		case textOf(objectOf(scopes[name])["selector"]) != "":
+			problems = append(problems, fmt.Sprintf("`test.selection.order` cannot use `%s`: it needs a test ID", name))
 		}
 	}
 	if len(rules) == 0 {

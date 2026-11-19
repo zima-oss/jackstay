@@ -17,7 +17,7 @@ places and nothing else:
 
 | Place | What jackstay writes |
 |---|---|
-| `jackstay.json` | created with `jackstay_schema` and `project` when missing; a profile's defaults added where the project has no value; never a value you set |
+| `jackstay.json` | created with an editor schema association, `jackstay_schema` and `project` when missing; a profile's defaults added where the project has no value; never a value you set |
 | `AGENTS.md` | the tools block, between two `jackstay-adopt` markers; `CLAUDE.md` holding `@AGENTS.md` when there is no `CLAUDE.md` |
 | `.claude/settings.json` | the guard hook (`PreToolUse`, matcher `Bash`, `jst-guard`), every other key kept |
 | `.github/workflows/` | `card-line.yml` when the project has `cards` or `changes`; `release.yml` when it has `release` |
@@ -62,7 +62,7 @@ changes (4):
   agents-block                 AGENTS.md: new, with the block
   claude-md                    CLAUDE.md: new: @AGENTS.md (Claude Code reads CLAUDE.md)
   hook:guard                   .claude/settings.json: add the guard hook (PreToolUse, Bash, jst-guard)
-  jackstay.json                jackstay.json: new: jackstay_schema, project
+  jackstay.json                jackstay.json: new: $schema, jackstay_schema, project
 conflicts (0)
 ```
 
@@ -117,9 +117,27 @@ jst patterns         # the patterns that are not RE2 (Go's dialect: no lookaroun
 
 Put `jst check` in your project's own gate.
 
+Newly adopted projects get a `$schema` field for editor completion. Add the same field to an existing `jackstay.json`:
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/zima-oss/jackstay/main/schemas/jackstay.schema.json",
+  "jackstay_schema": 2,
+  "project": "your-project"
+}
+```
+
+The [published JSON Schema](https://raw.githubusercontent.com/zima-oss/jackstay/main/schemas/jackstay.schema.json)
+describes the keys, types and selected value choices accepted by `jst check`. It is generated
+from jackstay's runtime configuration table and checked for drift in tests. Editors that support
+JSON Schema can use the URL for completion and early diagnostics. A project pinned to an older
+jackstay release can replace `main` in the URL with that release tag. The schema cannot express
+every rule involving paths, other fields or Go regular expressions; `jst check` remains the
+authoritative validator.
+
 | Section | What it configures | Guide page |
 |---|---|---|
-| `jackstay_schema` (required), `project` | the file's version (1 or 2; most sections need 2) and the project's name | here |
+| `$schema`, `jackstay_schema` (required), `project` | the file's version (1 or 2; most sections need 2) and the project's name | here |
 | `guard` | `regenerable` folder names, your own `deny` rules, each rule's level | [guard](guard.md) |
 | `test` | scopes, steps, judges, timeouts, leftovers | [tests](tests.md) |
 | `receipts` | what goes into a tree's key, which commands may reuse a receipt | [tests](tests.md#receipts) |
@@ -239,3 +257,19 @@ When jackstay changes, a project's session can adopt the new version with this p
   the generated one.
 
 The design: [adopt.md](../design/adopt.md).
+
+### Keep policy and local credentials separate
+
+Configure project policy in `jackstay.json` so linked worktrees can share it. Keep machine-specific
+authority and transient identities in the relevant launcher, credential store or invocation.
+
+| Capability | Project configuration | Local or per-run input |
+|---|---|---|
+| Session chat | `chat.enabled` and bounded message, pending, session and retention settings | MCP host registration, session label, optional reconnect token |
+| Local merge queue | `queue.enabled` and `queue.base_ref` | Head to enqueue, local repository, candidate and evidence |
+| Structured tests | `test.scopes`, judge, report names, selector and duration settings, path selection | Test ID, revision or base to test |
+| Review | Reviewer commands, options, selected reviewers and limits | Local provider authentication and optional invocation override |
+| Installation and adoption | Profile and pin when a project needs them | Installer arguments, local permissions and external trust credentials |
+
+The editor schema describes keys, types, ranges and selected choices. Runtime checking still
+validates Git refs, RE2 syntax, file relationships and other rules that use local state.

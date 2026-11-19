@@ -1,6 +1,8 @@
 package judge
 
 import (
+	"encoding/json/jsontext"
+	"math"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/strictjson"
@@ -9,12 +11,17 @@ import (
 // A goJSONReader consumes the stdout of one go test -json invocation. The limits bound
 // memory even when the command produces an untrusted or unexpectedly large stream.
 type goJSONReader struct {
-	packages map[string]*goJSONPackage
-	events   int
-	bytes    int
-	problem  string
-	failure  string
-	cached   bool
+	packages           map[string]*goJSONPackage
+	selection          *GoSelection
+	withDurations      bool
+	durations          []GoCaseDuration
+	durationsTruncated bool
+	outsideSelection   bool
+	events             int
+	bytes              int
+	problem            string
+	failure            string
+	cached             bool
 }
 
 type goJSONPackage struct {
@@ -27,23 +34,39 @@ type goJSONPackage struct {
 }
 
 type goJSONCase struct {
-	child bool
+	child    bool
+	selected bool
 }
 
 type goJSONEvent struct {
-	Action      string `json:"Action"`
-	Package     string `json:"Package"`
-	Test        string `json:"Test"`
-	Output      string `json:"Output"`
-	FailedBuild string `json:"FailedBuild"`
+	Action      string         `json:"Action"`
+	Package     string         `json:"Package"`
+	Test        string         `json:"Test"`
+	Output      string         `json:"Output"`
+	FailedBuild string         `json:"FailedBuild"`
+	Elapsed     jsontext.Value `json:"Elapsed"`
+}
+
+// GoSelection identifies one Go test or subtest in one import-path package.
+type GoSelection struct {
+	Package string
+	Name    string
+}
+
+// GoCaseDuration is one completed leaf execution. Repeated executions remain separate samples.
+type GoCaseDuration struct {
+	Package string  `json:"package"`
+	Test    string  `json:"test"`
+	Seconds float64 `json:"seconds"`
 }
 
 const (
-	maxGoJSONEvents   = 1_000_000
-	maxGoJSONBytes    = 128 << 20
-	maxGoJSONPackages = 4_096
-	maxGoJSONCases    = 100_000
-	maxGoJSONName     = 512
+	maxGoJSONEvents      = 1_000_000
+	maxGoJSONBytes       = 128 << 20
+	maxGoJSONPackages    = 4_096
+	maxGoJSONCases       = 100_000
+	maxGoJSONName        = 512
+	maxGoDurationSamples = 512
 )
 
 func (reader *goJSONReader) line(text string) {
@@ -161,7 +184,17 @@ func (reader *goJSONReader) caseEvent(pkg *goJSONPackage, event goJSONEvent) {
 			}
 			enclosing.child = true
 		}
-		pkg.active[event.Test] = &goJSONCase{}
+		selected := true
+		if reader.selection != nil {
+			name := reader.selection.Name
+			selected = event.Package == reader.selection.Package &&
+				(event.Test == name || strings.HasPrefix(event.Test, name+"/"))
+			ancestor := event.Package == reader.selection.Package && strings.HasPrefix(name, event.Test+"/")
+			if !selected && !ancestor {
+				reader.outsideSelection = true
+			}
+		}
+		pkg.active[event.Test] = &goJSONCase{selected: selected}
 	case "pause", "cont":
 		if pkg.active[event.Test] == nil {
 			reader.problem = "a Go test changed state without starting"
@@ -179,6 +212,9 @@ func (reader *goJSONReader) caseEvent(pkg *goJSONPackage, event goJSONEvent) {
 		if active.child {
 			return
 		}
+		if !active.selected {
+			return
+		}
 		switch event.Action {
 		case "skip":
 			pkg.skipped++
@@ -186,6 +222,21 @@ func (reader *goJSONReader) caseEvent(pkg *goJSONPackage, event goJSONEvent) {
 			pkg.failed++
 		case "pass":
 			pkg.passed++
+		}
+		if reader.withDurations && event.Action != "skip" && len(event.Elapsed) > 0 && string(event.Elapsed) != "null" {
+			var seconds float64
+			if err := strictjson.Unmarshal(event.Elapsed, &seconds); err != nil ||
+				seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
+				reader.problem = "a Go JSON event has an invalid elapsed time"
+				return
+			}
+			if len(reader.durations) < maxGoDurationSamples {
+				reader.durations = append(reader.durations, GoCaseDuration{
+					Package: event.Package, Test: event.Test, Seconds: seconds,
+				})
+			} else {
+				reader.durationsTruncated = true
+			}
 		}
 	case "output":
 		// Output is retained by the normal run log, not as structured evidence.
@@ -215,6 +266,14 @@ func (reader *goJSONReader) facts() Facts {
 	}
 	if reader.cached {
 		facts.Unjudged = append(facts.Unjudged, "the Go test result came from the cache")
+	}
+	if reader.selection != nil {
+		if _, found := reader.packages[reader.selection.Package]; !found {
+			facts.Unjudged = append(facts.Unjudged, "the selected Go package did not report")
+		}
+		if reader.outsideSelection {
+			facts.Unjudged = append(facts.Unjudged, "a Go test outside the selected case ran")
+		}
 	}
 	return facts
 }

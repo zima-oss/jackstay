@@ -1,8 +1,10 @@
 package doctor
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,5 +268,34 @@ func TestSetupSelectionAndTerminalChoices(t *testing.T) {
 	content, err := os.ReadFile(profile)
 	if err != nil || strings.Count(string(content), "# jackstay setup: PATH") != 1 {
 		t.Fatalf("repeat profile: %q, %v", content, err)
+	}
+}
+
+func TestChatEngineSetupIsExplicitAndDoesNotPromiseDelivery(t *testing.T) {
+	items := chatEngineSetupItems(func(name string) (string, error) {
+		if name == "codex" {
+			return "/fake/bin/codex", nil
+		}
+		return "", errors.New("not found")
+	})
+	if len(items) != 3 || items[0].ID != "chat-codex" || items[1].ID != "chat-claude" || items[2].ID != "chat-other" {
+		t.Fatalf("chat engine steps: %+v", items)
+	}
+	for _, item := range items {
+		if item.Status != "manual" || !strings.Contains(item.Text, "poll-only") || !strings.Contains(item.Fix, "roll back") {
+			t.Fatalf("premature delivery claim or missing rollback: %+v", item)
+		}
+	}
+	if !strings.Contains(items[0].Text, "detected on PATH") || !strings.Contains(items[1].Text, "not found on PATH") {
+		t.Fatalf("engine detection: %+v", items)
+	}
+	var output bytes.Buffer
+	reader := bufio.NewReader(strings.NewReader("s\nk\nk\na\n"))
+	promptChatEngineSetup(SetupPlan{Items: items}, reader, &output)
+	if !strings.Contains(output.String(), "turn/steer") || strings.Contains(output.String(), "lifecycle hook can present") {
+		t.Fatalf("interactive choice did not show only selected route: %s", output.String())
+	}
+	if answer, err := reader.ReadString('\n'); err != nil || answer != "a\n" {
+		t.Fatalf("chat prompts consumed the next repair choice: %q, %v", answer, err)
 	}
 }

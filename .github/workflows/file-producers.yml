@@ -1,0 +1,54 @@
+name: file-producers
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/file-producers.yml
+      - internal/config/**
+      - internal/judge/**
+      - internal/testing/**
+      - internal/receipts/**
+      - internal/testreport/**
+      - tests/producers/**
+      - go.mod
+      - go.sum
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  jest-json:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.11.1
+          package-manager-cache: false
+      - run: npm install --prefix "$RUNNER_TEMP/jest" --no-save --ignore-scripts --no-audit --no-fund jest@30.5.2
+      - run: go build -mod=readonly -o "$RUNNER_TEMP/jst" ./cmd/jst
+      - run: sh tests/producers/structured.sh jest "$RUNNER_TEMP/jst" "$RUNNER_TEMP/jest/node_modules/.bin/jest"
+
+  vstest-trx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: 11.0.100
+      - run: go build -mod=readonly -o "$RUNNER_TEMP/jst" ./cmd/jst
+      - run: sh tests/producers/structured.sh trx "$RUNNER_TEMP/jst"
+      - run: sh tests/producers/trx/partition.sh "$RUNNER_TEMP/jst"

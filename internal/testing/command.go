@@ -66,16 +66,26 @@ func (run *leafRun) command(asked time.Time, held *flock.Held) result {
 	env = setEnv(setEnv(env, RunIDVariable, did.runID), RunTmpVariable, runTmp)
 	argv := run.words.argv
 	var report *testreport.Report
-	if options.Kind == judge.JUnit {
-		report, err = testreport.OpenReport(runTmp, run.leaf.report)
+	if testreport.FileJudge(string(options.Kind)) {
+		names := run.leaf.reports
+		if run.leaf.report != "" {
+			names = []string{run.leaf.report}
+		}
+		report, err = testreport.OpenReports(runTmp, names)
 		if err != nil {
 			_ = os.RemoveAll(runTmp)
-			return run.notStarted("the private JUnit report could not be prepared: " + err.Error())
+			return run.notStarted("the private test report could not be prepared: " + err.Error())
 		}
 		defer func() { _ = report.Close() }()
-		env = setEnv(env, testreport.PathVariable, report.Path())
+		values := map[string]string{}
+		if run.leaf.report != "" {
+			env = setEnv(env, testreport.PathVariable, report.Path())
+			values["report"] = report.Path()
+		} else {
+			env = setEnv(env, testreport.DirectoryVariable, report.Directory())
+			values["report_dir"] = report.Directory()
+		}
 		argv = slices.Clone(argv)
-		values := map[string]string{"report": report.Path()}
 		for index := 1; index < len(argv); index++ {
 			argv[index] = replacePlaceholders(argv[index], values)
 		}
@@ -240,7 +250,20 @@ func (did *ran) judged(launchedRun launched, reader *judge.Reader, seen *leftove
 	if len(found.listed) > 0 {
 		did.say("left behind (listed, not judged): %s", strings.Join(found.listed[:min(10, len(found.listed))], ", "))
 	}
-	if did.leaf.durations && (verdict.Outcome == judge.Passed || verdict.Outcome == judge.Failed) {
+	if did.leaf.durations && verdict.Outcome == judge.Passed {
+		switch judge.Kind(did.leaf.judge) {
+		case judge.GoJSON:
+			samples, truncated := reader.GoDurations()
+			recordCaseDurations(more, samples, truncated)
+		case judge.JUnit:
+			samples, truncated := reader.JUnitDurations()
+			recordCaseDurations(more, samples, truncated)
+		case judge.XCResultJSON:
+			samples, truncated := reader.XCResultDurations()
+			recordCaseDurations(more, samples, truncated)
+		}
+	}
+	if did.leaf.durations && did.leaf.judge == string(judge.SwiftTest) && (verdict.Outcome == judge.Passed || verdict.Outcome == judge.Failed) {
 		scope := did.leaf.scope
 		if scope == "" {
 			scope = did.leaf.name
@@ -408,4 +431,13 @@ func (did *ran) storeReceipt(counted int) (stored, whyNot, kind string) {
 		return "", fmt.Sprintf("the receipt could not be written: %v", err), receipts.NotStoredWriteFailed
 	}
 	return place, "", ""
+}
+
+func recordCaseDurations[Sample any](record map[string]any, samples []Sample, truncated bool) {
+	if len(samples) > 0 {
+		record["case_durations"] = samples
+	}
+	if truncated {
+		record["case_durations_truncated"] = true
+	}
 }

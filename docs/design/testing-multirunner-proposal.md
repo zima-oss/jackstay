@@ -11,6 +11,13 @@ The first implementation uses the [compatibility baseline](testing-compatibility
 verdict, bounded per-attempt report transport and opt-in Go JSON and JUnit judges.
 See the [implemented contract](testing.md#21-structured-evidence) for current configuration.
 Receipt lookup and gate resume validate the saved evidence under the current adapter version.
+TST-7 pins Vitest, Surefire, Jest and VSTest with partition and retry checks. See the
+[producer guide](../guide/tests.md#structured-test-reports) for the evidence each mode supplies.
+TST-8 provides [Go](../guide/tests.md#select-a-go-test-by-id) and
+[Jest](../guide/tests.md#select-a-jest-test-by-id) typed selectors, and opt-in Go and
+[JUnit](../guide/tests.md#read-junit-case-durations) timings while preserving Swift
+selection and duration history. Generic JUnit reports do not define a runner's selector
+syntax, and unsupported selector or duration settings are refused before execution.
 
 ## What the current code does
 
@@ -96,9 +103,9 @@ An opt-in starting shape could look like this:
 }
 ```
 
-The examples require schema work. The prototype supports one declared report. Java, .NET and
-sharded workflows need an explicit list of outputs or a producer-provided manifest. Adapter
-selection is explicit. An unrecognized format must never fall back to a parser that might
+The implemented file transport supports one declared report for any file adapter and an
+explicit list for JUnit. Single-file partition producers can use separate gate steps.
+Adapter selection is explicit. An unrecognized format must never fall back to a parser that might
 incorrectly confirm a pass.
 
 ## Implementation sequence and verification
@@ -113,7 +120,7 @@ incorrectly confirm a pass.
 | TST-6 Receipt and gate migration | TST-2 and first structured adapter | Key results by semantic adapter inputs. Old keys remain readable for reporting where the configured format changes. Verify cache miss on an adapter version change, normal reuse within one version, clean-copy fresh runs, and that a resumed step cannot require a missing artifact. |
 | TST-7 Additional producers | TST-5 or TST-4, according to format | Onboard Vitest and Surefire through verified XML dialect fixtures, then Jest JSON and .NET TRX. Use pinning and per-producer CI. Give every producer at least one real invocation per supported version range and cover retries and sharding before accepting those modes. |
 | TST-8 Selection and duration capabilities | TST-2, stable IDs from TST-4 and TST-5 | Keep old Swift selection and introduce typed selectors where an adapter genuinely supports them. Measure selections against real fixture IDs. Report unsupported capabilities before launch. |
-| TST-9 Structured Swift migration | TST-2, TST-3 | Derive separate SwiftPM and Xcode contracts from captured fixtures. Compare the two Swift testing engines with legacy output on supported versions. Keep the text adapter available for projects that rely on it. |
+| TST-9 Structured Swift migration | TST-2, TST-3 | Derive separate SwiftPM and Xcode contracts from captured fixtures. Compare the two Swift testing engines with legacy output on supported versions. Keep the text adapter available for projects that rely on it. [Initial SwiftPM and Xcode pilot](swift-structured-pilot.md). |
 
 The first release should close TST-1 through TST-6 and document the API limits. TST-7 producer
 lanes can run in parallel once their format is supported. TST-8 and TST-9 remain opt-in until

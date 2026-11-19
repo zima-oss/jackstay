@@ -85,7 +85,7 @@ func TestBadSections(t *testing.T) {
 		{scope("full", map[string]any{"run": argv("x", "{report}"), "judge": "junit", "report": "tests.xml", "empty_exit": 5}), ""},
 		{scope("full", map[string]any{"run": argv("x"), "judge": "junit", "report": "../tests.xml"}), "single portable file name"},
 		{scope("full", map[string]any{"run": argv("x"), "judge": "junit", "report": "tests.xml", "empty_exit": 126}), "from 1 to 125"},
-		{scope("full", map[string]any{"run": argv("x", "{report}"), "judge": "go-json"}), "only in arguments to a junit producer"},
+		{scope("full", map[string]any{"run": argv("x", "{report}"), "judge": "go-json"}), "only in arguments to a file-based producer"},
 		{scope("full", map[string]any{"run": argv("x"), "judge": "go-json", "evidence": "ran ([0-9]+)"}), "cannot be combined"},
 		{map[string]any{"scopes": map[string]any{"gate": map[string]any{"steps": argv("a")}},
 			"steps": map[string]any{"a": map[string]any{"steps": argv("gate")}}}, "circle"},
@@ -100,7 +100,7 @@ func TestBadSections(t *testing.T) {
 		{map[string]any{"leftovers": []any{map[string]any{"fail": true}}}, "glob` is missing"},
 		{scope("full", map[string]any{"run": argv("x"), "requires": []any{map[string]any{"run": argv("y")}}}), "why` is missing"},
 		{scope("full", map[string]any{"run": argv("x"), "requires": []any{map[string]any{"why": "y"}}}), "run` is missing"},
-		{scope("quick", map[string]any{"run": argv("x"), "durations": true}), "part of a class"},
+		{scope("quick", map[string]any{"run": argv("x"), "judge": "swift-test", "durations": true}), "part of a class"},
 		{scope("full", map[string]any{"run": argv("x"), "judge": "swift-test", "expect": argv("junit")}), "not an engine"},
 		{scope("full", map[string]any{"run": argv("x"), "expect": argv("xctest")}), "is for the `swift-test` judge"},
 		{map[string]any{"expect": []any{}, "scopes": map[string]any{}}, "names no engine"},
@@ -167,7 +167,7 @@ func TestLeafPathsAndResolve(t *testing.T) {
 		t.Fatalf("format: %+v", format)
 	}
 	display := resolve(section, "display", kindScope, objectOf(objectOf(section["scopes"])["display"]))
-	if len(display.requires) != 1 || display.requires[0].timeout != requiresTimeout {
+	if len(display.requires) != 1 || display.requires[0].timeout != 60 {
 		t.Fatalf("display: %+v", display)
 	}
 }
@@ -395,5 +395,17 @@ func TestAScopeNotOptedInLogsNoWouldHit(t *testing.T) {
 	w.expectCounters("full", 2)
 	if hits := w.records("would-hit"); len(hits) != 0 {
 		t.Fatalf("would-hit lines: %v", hits)
+	}
+}
+
+func TestProjectPrerequisiteTimeoutIsAResolutionDefault(t *testing.T) {
+	section := map[string]any{"requires_timeout_seconds": json.Number("120")}
+	entry := map[string]any{"requires": []any{
+		map[string]any{"run": []any{"true"}, "why": "default"},
+		map[string]any{"run": []any{"true"}, "why": "override", "timeout": json.Number("7")},
+	}}
+	checks := checksOf(section, entry)
+	if len(checks) != 2 || checks[0].timeout != 120 || checks[1].timeout != 7 {
+		t.Fatalf("unexpected timeouts: %+v", checks)
 	}
 }

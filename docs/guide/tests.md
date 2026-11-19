@@ -1,7 +1,7 @@
 # Tests
 
 `jst test` runs a project's test command, reads its evidence, records the run and keeps its output.
-Go JSON, pytest JUnit XML and Vitest JUnit XML can supply structured evidence. Existing `steps`,
+Go JSON, JUnit XML, Jest JSON and VSTest TRX can supply structured evidence. Existing `steps`,
 `swift-test` and `exit` judges remain available. A single command passes when its tests were counted. A gate line
 shows each step's outcome. A pass is keyed by the exact tree it ran on, so a later run of the same
 tree can be skipped where you opt in.
@@ -71,6 +71,69 @@ meaning each in every project; anything else starts with `x-`:
 When each is required is your rule, written once in the scope's `when`; `jst test list` prints it,
 so your `AGENTS.md` can point there instead of restating it.
 
+### Select a Go test by ID
+
+The `focused` scope or an `x-…` scope with `selector: "go-test"` accepts one literal ID, written as
+`PACKAGE::TestName[/subtest]`. Use the package import path and the test name from Go JSON
+events. Each part of the test name is matched literally.
+
+```json
+"test": {
+  "scopes": {
+    "x-go-case": {
+      "run": ["go", "test", "-json", "-count=1", "{test_args}"],
+      "judge": "go-json",
+      "selector": "go-test",
+      "durations": true
+    }
+  }
+}
+```
+
+```sh
+jst test plan x-go-case 'github.com/zima-oss/jackstay/internal/testing::TestGoScopeRefusesUnsupportedCapabilitiesBeforeLaunch/wrong_judge'
+jst test x-go-case 'github.com/zima-oss/jackstay/internal/testing::TestGoScopeRefusesUnsupportedCapabilitiesBeforeLaunch/wrong_judge'
+jst test last --scope x-go-case --json
+```
+
+`{test_args}` expands to separate filter and package arguments. Go can run parent setup
+while looking for a nested case and runs descendants of a selected case. jackstay checks the
+selected ID against execution evidence. A matching parent that ran only to look for a missing
+subtest does not count as a pass. Gate steps and automatic path-based selection cannot
+supply a case ID. Swift scopes keep using `{tests}` and `{slow}`.
+
+Set `durations: true` on a `go-json` scope to include completed, executed leaf timings on a
+fresh counted pass. The run record prints up to 512 samples at `run.case_durations` in
+`jst test last --json`, with `package`, `test` and `seconds`. Repeated execution samples stay
+separate. `run.case_durations_truncated` means the sample limit was exceeded. Go timing samples
+do not contribute to Swift's `{slow}` class history.
+[Go subtest selection](https://pkg.go.dev/cmd/go#hdr-Testing_flags)
+
+### Select a Jest test by ID
+
+For a `focused` or `x-…` scope, configure `selector: "jest-test"` and
+`judge: "jest-json"` with a declared `report`. Use this command:
+
+```json
+["jest", "--runInBand", "--no-watchman", "--json", "--outputFile={report}", "{test_args}"]
+```
+
+Pass one `FILE::full test name` argument, quoted as one shell word. The file is relative to
+the scope's working directory. The name includes enclosing `describe` blocks and parameter
+labels as Jest reports them. The selector passes an exact file path and a literal anchored
+name to Jest. It then verifies both in the JSON report. An existing file with no matching
+case yields `nothing-run`. Ambiguous or unrelated execution evidence yields `unjudged` when
+the process succeeds. [Jest CLI](https://jestjs.io/docs/cli)
+
+### Read JUnit case durations
+
+A `junit` scope can set `durations: true` for one report or a declared report set. On a fresh
+counted pass, `jst test last --scope SCOPE --json` includes up to 512 measurements in
+`run.case_durations` across the whole set. Each sample contains the `suite` path, `class`,
+`test`, and `seconds` from the producer. Skips and cases without a valid `time` have no sample.
+A reused run has no fresh measurements. These values measure the producer's reported time,
+which can include setup and teardown. [pytest time reporting](https://docs.pytest.org/en/stable/how-to/output.html#creating-junitxml-format-files)
+
 ### Choose a scope from committed paths
 
 Declare `test.selection` to let `jst test changed` choose a scope from the commits since a base.
@@ -137,12 +200,13 @@ one regular expression, made for `swift test --filter`; `{base}`, the scope's `b
 `{slow}`, the slow classes `quick` skips) or `steps`;
 `judge` (`steps`: an `evidence` pattern with one number group counts the tests; `exit`: status only,
 so `exited-0` at best; `swift-test`: built in for `swift test`; `go-json`: Go test events;
-`junit`: a declared XML report); `evidence` and `veto` (RE2);
+`junit`: declared XML reports; `jest-json`: a Jest result file; `trx`: a VSTest report);
+`evidence` and `veto` (RE2);
 `timeout` (seconds; the whole process tree is stopped at it); `requires` (checks run first); `env`;
 `lock`; `when`. A scope that lists `steps` needs `receipts.toolchain` written out, even as an empty
 list.
 
-### Structured evidence from Go and pytest
+### Structured test reports
 
 For Go, ask the runner for JSON events and select the `go-json` judge:
 
@@ -195,14 +259,65 @@ Install Vitest in the project before running this scope. `run` makes this an exe
 Vitest 5.1.1 producer, a matching pass plus skip exits 0 and counts one executed case, a failed
 case exits 1, and a `--testNamePattern` matching no names exits 0 with all cases skipped.
 `--passWithNoTests` with no matching files writes a zero-case report and exits 0. Both empty
-results are `nothing-run`. The checked-in XML fixtures run in the ordinary Go gate; the
-real Vitest 5.1.1 producer is checked separately. Other Vitest versions, retries and shard
-aggregation have not been verified. See [Vitest's reporter guide](https://vitest.dev/guide/reporters).
+results are `nothing-run`. Vitest 5.1.1 also has a two-shard producer check. To combine a fixed
+Vitest shard plan, direct every shard to its own named JUnit file under `{report_dir}` and list
+all files in `reports`. The command must check each shard's exit status. jackstay requires
+all declared files and rejects duplicate cases across them. The shard count and output
+mapping belong to the project's command. See [Vitest's reporter guide](https://vitest.dev/guide/reporters).
 
-For `jst test -- COMMAND`, put the same `judge`, `report` and `empty_exit` fields in that command's
-`receipts.commands` entry. A direct command receives `JACKSTAY_TEST_REPORT`; its wrapper must use
-that path when it writes the declared report. The [design proposal](../design/testing-multirunner-proposal.md)
-tracks additional producers and selection capabilities.
+For JVM projects, [Maven Surefire](maven-surefire.md) can write separate XML files. List their
+names in `reports` and direct the producer to `{report_dir}`. A missing file prevents the set
+from proving a pass.
+
+For Jest or .NET, use one file from a single runner invocation:
+
+```json
+"test": {
+  "scopes": {
+    "x-jest": {"judge": "jest-json", "report": "jest.json",
+               "run": ["npx", "jest", "--json", "--outputFile={report}"]},
+    "x-dotnet": {"judge": "trx", "report": "run.trx",
+                 "run": ["dotnet", "test", "Tests.csproj", "--framework", "net11.0",
+                         "--disable-build-servers", "--logger", "trx;LogFileName={report}"]}
+  }
+}
+```
+
+Jest's decoder reconciles its totals with executed assertions. Discovery output, including
+`--collectTests` results with `wouldRun`, cannot prove a pass. VSTest's TRX reports are checked
+against their individual test results and final counters. Use one test project and target
+framework per TRX scope so the logger cannot overwrite an earlier file. Disable build servers
+so no compiler process outlives the run. Producer checks use
+Jest 30.5.2 and VSTest from .NET SDK 11.0.100 with MSTest 4.2.3. Each Jest shard or VSTest
+filter partition uses its own command and report, so use separate scopes or gate steps. A
+single report cannot prove coverage of the complete shard plan.
+
+Disable retries for evidence that must prove a first-attempt pass. Jest JSON exposes repeated
+invocations, so jackstay reports a successful Jest run with a repeated assertion as
+`unjudged`. Vitest JUnit and VSTest TRX from MSTest can collapse a failed first attempt followed
+by a pass into one final result. These reports cannot establish a first-attempt pass with
+retries enabled. TRX from Microsoft.Testing.Platform is outside these checks.
+[Jest CLI](https://jestjs.io/docs/cli) · [VSTest logger](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test-vstest)
+
+For `jst test -- COMMAND`, declare the same judge and report settings in `receipts.commands`.
+Direct wrappers receive `JACKSTAY_TEST_REPORT` for one file or `JACKSTAY_TEST_REPORT_DIR` for
+multiple JUnit files. The [design proposal](../design/testing-multirunner-proposal.md) tracks
+additional producers and selection capabilities.
+
+### Judge an Xcode test plan
+
+On the verified Xcode 27.2 contract, use `judge: "xcresult-json"` with
+`reports: ["summary.json", "tests.json"]` and `xcresult_bundles` naming every expected unit
+test bundle. Export both views from the same fresh `.xcresult` with
+`xcrun xcresulttool get test-results summary` and `xcrun xcresulttool get test-results tests`.
+The shell wrapper `tests/producers/swift/xcresult.sh` shows how to run the test plan and
+write both files to `JACKSTAY_TEST_REPORT_DIR`. It keeps the `xcodebuild test` exit status.
+
+The judge checks the reported bundles, the case tree and summary totals for one device and
+configuration. It counts parameterized cases at the test case level and verifies the argument
+results separately. A successful process with missing or inconsistent reports yields
+`unjudged`. Add `durations: true` to record bounded case timings for a fresh counted pass.
+SwiftPM mixed-engine scopes keep using the text judge. [Swift evidence pilot](../design/swift-structured-pilot.md)
 
 ### The gate
 
@@ -351,3 +466,10 @@ run-record parts have anything to read (`--projects-dir` names another transcrip
 
 The design: [testing.md](../design/testing.md), and for receipts, the lock and `jst baseline`,
 [implementation.md, sections 5.4 and 9](../design/implementation.md#9-receipts-and-the-baseline-jst-test----command-jst-receipts-jst-baseline).
+
+
+### Default timeout for prerequisite commands
+
+Set `test.requires_timeout_seconds` to choose a project default for `requires` commands.
+The default is 60 seconds. A `timeout` on an individual prerequisite takes precedence.
+The setting applies to checks attached to command scopes, steps and composite gates.

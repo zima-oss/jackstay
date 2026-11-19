@@ -11,21 +11,20 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/judge"
+	"github.com/zima-oss/jackstay/internal/testreport"
 )
 
 // The judges and engines a scope names.
 var (
-	judges  = []string{"swift-test", "steps", "exit", string(judge.GoJSON), string(judge.JUnit)}
+	judges  = []string{"swift-test", "steps", "exit", string(judge.GoJSON), string(judge.JUnit), string(judge.JestJSON), string(judge.TRX), string(judge.XCResultJSON)}
 	engines = []string{"xctest", "swift-testing"}
 	// placeholderNames are the placeholders of a run's words.
-	placeholderNames = []string{"tests", "base", "slow", "report"}
+	placeholderNames = []string{"tests", "test_args", "base", "slow", "report", "report_dir"}
 )
 
 const (
 	kindScope = "scope"
 	kindStep  = "step"
-	// requiresTimeout is a `requires` check's timeout when it names none (seconds).
-	requiresTimeout = 60
 )
 
 var (
@@ -225,8 +224,8 @@ func expectProblems(values []string, where string) []string {
 }
 
 // listOnlyKeys are the keys that belong to a step running a command, never to a list of steps.
-var listOnlyKeys = []string{"judge", "evidence", "veto", "env", "base", "slow", "expect", "cwd", "durations", "timeout", "report", "empty_exit",
-	"lock_wait", "lock", "resume"}
+var listOnlyKeys = []string{"judge", "evidence", "veto", "env", "base", "slow", "expect", "cwd", "durations", "timeout", "report", "reports", "empty_exit",
+	"lock_wait", "lock", "resume", "selector", "xcresult_bundles"}
 
 func definitionProblems(section map[string]any, kind, name string, entry map[string]any) []string {
 	here := fmt.Sprintf("test.%s.%s", kind, name)
@@ -258,11 +257,22 @@ func definitionProblems(section map[string]any, kind, name string, entry map[str
 	for _, token := range placeholdersOf(words) {
 		used[token] = true
 		if !slices.Contains(placeholderNames, token) {
-			found = append(found, fmt.Sprintf("`%s.run` holds {%s}: the placeholders are {tests}, {base}, {slow} and {report}", here, token))
+			found = append(found, fmt.Sprintf("`%s.run` holds {%s}: the placeholders are {tests}, {test_args}, {base}, {slow}, {report} and {report_dir}", here, token))
 		}
 	}
-	if used["report"] && (judgeName != string(judge.JUnit) || slices.Contains(placeholdersOf(words[:1]), "report")) {
-		found = append(found, fmt.Sprintf("`%s.run` allows {report} only in arguments to a junit producer", here))
+	if has(entry, "selector") || used["test_args"] {
+		if problem := selectorProblem(textOf(entry["selector"]), judgeName, kind, name, words); problem != "" {
+			found = append(found, fmt.Sprintf("`%s.selector`: %s", here, problem))
+		}
+	}
+	if used["report"] && (!testreport.FileJudge(judgeName) || slices.Contains(placeholdersOf(words[:1]), "report")) {
+		found = append(found, fmt.Sprintf("`%s.run` allows {report} only in arguments to a file-based producer", here))
+	}
+	if used["report"] && has(entry, "reports") {
+		found = append(found, fmt.Sprintf("`%s.run` uses {report_dir} for multiple reports", here))
+	}
+	if used["report_dir"] && (!testreport.FileJudge(judgeName) || !has(entry, "reports") || slices.Contains(placeholdersOf(words[:1]), "report_dir")) {
+		found = append(found, fmt.Sprintf("`%s.run` allows {report_dir} only in arguments to a producer with a `reports` list", here))
 	}
 	slow, hasSlow := entry["slow"]
 	switch {
@@ -309,8 +319,13 @@ func definitionProblems(section map[string]any, kind, name string, entry map[str
 			found = append(found, fmt.Sprintf("`%s.env`: %s is jackstay's own", here, name))
 		}
 	}
-	if entry["durations"] == true && slices.Contains(neverDurations, name) {
-		found = append(found, fmt.Sprintf("`%s.durations`: a `%s` run holds part of a class, so its times never count", here, name))
+	if entry["durations"] == true {
+		switch {
+		case judgeName != string(judge.SwiftTest) && judgeName != string(judge.GoJSON) && judgeName != string(judge.JUnit) && judgeName != string(judge.XCResultJSON):
+			found = append(found, fmt.Sprintf("`%s.durations`: judge `%s` does not support durations", here, judgeName))
+		case judgeName == string(judge.SwiftTest) && slices.Contains(neverDurations, name):
+			found = append(found, fmt.Sprintf("`%s.durations`: a `%s` run holds part of a class, so its times never count", here, name))
+		}
 	}
 	return found
 }
@@ -370,8 +385,12 @@ func leafPaths(section map[string]any, name string, trail []string) ([]leafPath,
 		return nil, fmt.Errorf("`test`: the steps go round in a circle: %s", path)
 	}
 	if !has(entry, "steps") {
-		if len(trail) > 0 && slices.Contains(placeholdersOf(textsOf(entry["run"])), "tests") {
-			return nil, fmt.Errorf("`test`: %s: a step whose words hold {tests} cannot be in a list of steps (nothing gives it names)", path)
+		if len(trail) > 0 {
+			for _, token := range placeholdersOf(textsOf(entry["run"])) {
+				if token == "tests" || token == "test_args" {
+					return nil, fmt.Errorf("`test`: %s: a step whose words hold {%s} cannot be in a list of steps (nothing gives it names)", path, token)
+				}
+			}
 		}
 		return []leafPath{{name: name, kind: kind, entry: entry, trail: slices.Clone(trail)}}, nil
 	}
@@ -403,14 +422,17 @@ type slowRule struct {
 type leaf struct {
 	name, kind string
 	// scope is the name when the leaf is a scope ("" for a step).
-	scope     string
-	run       []string
-	cwd       string
-	judge     string
-	evidence  string
-	veto      string
-	report    string
-	emptyExit int
+	scope           string
+	run             []string
+	cwd             string
+	judge           string
+	selector        string
+	evidence        string
+	veto            string
+	report          string
+	reports         []string
+	xcresultBundles []string
+	emptyExit       int
 	// timeout and lockWait are seconds; zero is none.
 	timeout   float64
 	lockWait  float64
@@ -435,7 +457,10 @@ func resolve(section map[string]any, name, kind string, entry map[string]any) le
 	resolved := leaf{name: name, kind: kind, run: textsOf(entry["run"]), cwd: ".", judge: judgeOf(section, entry),
 		evidence: textOf(entry["evidence"]), veto: textOf(entry["veto"]), lock: !slices.Contains(unlockedByDefault, name),
 		env: map[string]string{}, base: textOf(entry["base"]), resume: true, when: textOf(entry["when"])}
+	resolved.selector = textOf(entry["selector"])
 	resolved.report = textOf(entry["report"])
+	resolved.reports = textsOf(entry["reports"])
+	resolved.xcresultBundles = textsOf(entry["xcresult_bundles"])
 	resolved.emptyExit = int(secondsOf(entry["empty_exit"]))
 	if kind == kindScope {
 		resolved.scope = name
@@ -462,9 +487,9 @@ func resolve(section map[string]any, name, kind string, entry map[string]any) le
 	resolved.slow.caseSeconds, resolved.slow.hasCaseSeconds = numberOf(rule["case_seconds"])
 	if resolved.judge == "swift-test" {
 		resolved.durations = slices.Contains(durationsByDefault, name)
-		if chosen, present := entry["durations"].(bool); present {
-			resolved.durations = chosen
-		}
+	}
+	if chosen, present := entry["durations"].(bool); present {
+		resolved.durations = chosen
 	}
 	resolved.expect = textsOf(entry["expect"])
 	if len(resolved.expect) == 0 {
@@ -476,15 +501,15 @@ func resolve(section map[string]any, name, kind string, entry map[string]any) le
 	if resume, present := entry["resume"].(bool); present {
 		resolved.resume = resume
 	}
-	resolved.requires = checksOf(entry)
+	resolved.requires = checksOf(section, entry)
 	return resolved
 }
 
-func checksOf(entry map[string]any) []check {
+func checksOf(section, entry map[string]any) []check {
 	var found []check
 	for _, raw := range items(entry["requires"]) {
 		member := objectOf(raw)
-		timeout := float64(requiresTimeout)
+		timeout := float64(config.TestRequiresTimeout(section))
 		if chosen, ok := numberOf(member["timeout"]); ok {
 			timeout = chosen
 		}

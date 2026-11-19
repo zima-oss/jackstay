@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/zima-oss/jackstay/internal/testreport"
 )
 
 // End is how the command ended and what the run left, known after the output was read.
@@ -102,13 +104,13 @@ func (reader *Reader) VerdictWithPolicy(end End, policy Policy) Verdict {
 	case reader.goJSON != nil:
 		facts = reader.goJSON.facts()
 		unjudged = facts.Unjudged
-	case reader.kind == JUnit:
+	case testreport.FileJudge(string(reader.kind)):
 		if reader.report != nil {
 			facts = *reader.report
 		}
 		unjudged = facts.Unjudged
 		if reader.report == nil {
-			unjudged = []string{"the JUnit report is missing or unreadable"}
+			unjudged = []string{"the test report is missing or unreadable"}
 		}
 		if reader.emptyExit != 0 && end.Status == reader.emptyExit && facts.Counts.Counting &&
 			facts.Counts.Counted == 0 && facts.Counts.Skipped == 0 && facts.Failure == "" && len(unjudged) == 0 {

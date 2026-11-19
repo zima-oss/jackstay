@@ -52,11 +52,11 @@ func testsPattern(names []string) string {
 // expand is the words that run: the placeholders replaced, as whole words or inside one; a
 // refusal when the call cannot fill them (or gives names nothing takes). slow is `{slow}`'s value
 // ("" leaves it skipping nothing).
-func expand(chosen leaf, args []string, base, slow string) ([]string, error) {
+func expand(chosen leaf, args []string, base, slow string, selected []string) ([]string, error) {
 	used := placeholdersOf(chosen.run)
 	takesTests := slices.Contains(used, "tests")
 	switch {
-	case len(args) > 0 && !takesTests:
+	case len(args) > 0 && !takesTests && selected == nil:
 		return nil, refused("`" + chosen.name + "` takes no names (its words hold no {tests}); given: " + joinSpace(args))
 	case takesTests && len(args) == 0:
 		return nil, refused("`" + chosen.name + "` needs the tests to run: jst test " + chosen.name + " Target.Class[/test] …")
@@ -67,12 +67,16 @@ func expand(chosen leaf, args []string, base, slow string) ([]string, error) {
 		slow = nothing
 	}
 	values := map[string]string{"tests": "", "base": base, "slow": slow}
-	if len(args) > 0 {
+	if takesTests {
 		values["tests"] = testsPattern(args)
 	}
 	words := make([]string, 0, len(chosen.run))
 	for _, word := range chosen.run {
-		words = append(words, replacePlaceholders(word, values))
+		if word == "{test_args}" && selected != nil {
+			words = append(words, selected...)
+		} else {
+			words = append(words, replacePlaceholders(word, values))
+		}
 	}
 	return words, nil
 }

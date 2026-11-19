@@ -1,0 +1,59 @@
+name: surefire-producer
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/surefire-producer.yml
+      - cmd/jst/**
+      - internal/config/**
+      - internal/judge/**
+      - internal/testing/**
+      - internal/testreport/**
+      - go.mod
+      - go.sum
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/surefire-producer.yml
+      - cmd/jst/**
+      - internal/config/**
+      - internal/judge/**
+      - internal/testing/**
+      - internal/testreport/**
+      - go.mod
+      - go.sum
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  surefire-junit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Go from go.mod
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Java for the pinned Surefire producer
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned Maven in a disposable directory
+        shell: bash
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/apache-maven-3.9.11-bin.tar.gz" \
+            https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.11/apache-maven-3.9.11-bin.tar.gz
+          echo 'bcfe4fe305c962ace56ac7b5fc7a08b87d5abd8b7e89027ab251069faebee516b0ded8961445d6d91ec1985dfe30f8153268843c89aa392733d1a3ec956c9978  '"$RUNNER_TEMP/apache-maven-3.9.11-bin.tar.gz" | sha512sum -c -
+          tar -xzf "$RUNNER_TEMP/apache-maven-3.9.11-bin.tar.gz" -C "$RUNNER_TEMP"
+      - name: Verify real Surefire reports
+        env:
+          SUREFIRE_MAVEN: ${{ runner.temp }}/apache-maven-3.9.11/bin/mvn
+        run: go test -tags integration ./internal/judge -run '^TestSurefireJUnitProducer$' -count=1

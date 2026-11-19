@@ -1,0 +1,117 @@
+{
+  "devices": [
+    {}
+  ],
+  "testPlanConfigurations": [
+    {}
+  ],
+  "testNodes": [
+    {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "name": "Test skipped: pilot skip",
+                  "nodeType": "Skip Message"
+                }
+              ],
+              "name": "modernSkip()",
+              "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/ModernTests/modernSkip()",
+              "nodeType": "Test Case",
+              "result": "Skipped"
+            },
+            {
+              "durationInSeconds": 0.00020885467529296875,
+              "name": "modernOptionalFailure()",
+              "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/ModernTests/modernOptionalFailure()",
+              "nodeType": "Test Case",
+              "result": "Passed"
+            },
+            {
+              "children": [
+                {
+                  "durationInSeconds": 0.00013303756713867188,
+                  "name": "1",
+                  "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/ModernTests/parameterized(_:)?args=6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+                  "nodeType": "Arguments",
+                  "result": "Passed"
+                },
+                {
+                  "durationInSeconds": 0.00011897087097167969,
+                  "name": "2",
+                  "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/ModernTests/parameterized(_:)?args=d4735e3a265e16eee03f59718b9b5d03019c07d8b6c51f90da3a666eec13ab35",
+                  "nodeType": "Arguments",
+                  "result": "Passed"
+                }
+              ],
+              "durationInSeconds": 0.00012600421905517578,
+              "name": "parameterized(_:)",
+              "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/ModernTests/parameterized(_:)",
+              "nodeType": "Test Case",
+              "result": "Passed"
+            },
+            {
+              "durationInSeconds": 0.0001838207244873047,
+              "name": "modernPass()",
+              "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/ModernTests/modernPass()",
+              "nodeType": "Test Case",
+              "result": "Passed"
+            }
+          ],
+          "name": "ModernTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/ModernTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        },
+        {
+          "children": [
+            {
+              "children": [
+                {
+                  "durationInSeconds": 0.0009390115737915039,
+                  "name": "testOptionalFailure()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/LegacyTests/LegacyTests/testOptionalFailure",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "durationInSeconds": 0.0012819766998291016,
+                  "name": "testPass()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/LegacyTests/LegacyTests/testPass",
+                  "nodeType": "Test Case",
+                  "result": "Passed"
+                },
+                {
+                  "children": [
+                    {
+                      "name": "Test skipped - pilot skip",
+                      "nodeType": "Skip Message"
+                    }
+                  ],
+                  "durationInSeconds": 0.0018720626831054688,
+                  "name": "testSkip()",
+                  "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/LegacyTests/LegacyTests/testSkip",
+                  "nodeType": "Test Case",
+                  "result": "Skipped"
+                }
+              ],
+              "name": "LegacyTests",
+              "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/LegacyTests/LegacyTests",
+              "nodeType": "Test Suite",
+              "result": "Passed"
+            }
+          ],
+          "name": "LegacyTests",
+          "nodeIdentifierURL": "test://com.apple.xcode/SwiftStructuredPilot/LegacyTests",
+          "nodeType": "Unit test bundle",
+          "result": "Passed"
+        }
+      ],
+      "name": "SwiftStructuredPilot-Package",
+      "nodeType": "Test Plan",
+      "result": "Passed"
+    }
+  ]
+}

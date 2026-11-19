@@ -41,5 +41,9 @@
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
+- **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`
+  for the operator's landing decision.
+- **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools
+  to send a request, read your inbox and acknowledge messages you process.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.

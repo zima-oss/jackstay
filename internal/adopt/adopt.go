@@ -265,6 +265,7 @@ func (planner *planner) readConfig() (*jsondoc.Object, bool, error) {
 	}
 	if !exists {
 		fresh := jsondoc.NewObject()
+		fresh.Set("$schema", config.EditorSchemaURL)
 		fresh.Set("jackstay_schema", json.Number(fmt.Sprint(config.Schema)))
 		fresh.Set("project", filepath.Base(planner.root))
 		planner.plan.Project = filepath.Base(planner.root)
