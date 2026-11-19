@@ -38,12 +38,32 @@ jobs:
       - name: Download jackstay's binary
         env:
           GH_TOKEN: ${{ github.token }}
+          JACKSTAY_PROVENANCE: ${{ vars.JACKSTAY_PROVENANCE }}
+          JACKSTAY_LINUX_AMD64_SHA256: ${{ vars.JACKSTAY_LINUX_AMD64_SHA256 }}
         run: |
           mkdir -p "$RUNNER_TEMP/jackstay"
           cd "$RUNNER_TEMP/jackstay"
           gh release download "$JACKSTAY_VERSION" -R @@jackstay_repository@@ -p 'jackstay_*_linux_amd64.tar.gz' -p checksums.txt
           sha256sum --check --ignore-missing checksums.txt
-          tar -xzf jackstay_*_linux_amd64.tar.gz
+          archives=(jackstay_*_linux_amd64.tar.gz)
+          [ "${#archives[@]}" -eq 1 ] && [ -f "${archives[0]}" ] || { echo '::error::expected one jackstay archive'; exit 1; }
+          archive=${archives[0]}
+          if [ -n "$JACKSTAY_LINUX_AMD64_SHA256" ]; then
+            [[ "$JACKSTAY_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo '::error::invalid pinned SHA-256'; exit 1; }
+            [ "$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$JACKSTAY_LINUX_AMD64_SHA256" ] || { echo '::error::archive does not match pinned SHA-256'; exit 1; }
+          fi
+          case ${JACKSTAY_PROVENANCE:-checksum} in
+            checksum)
+              [ -n "$JACKSTAY_LINUX_AMD64_SHA256" ] || echo '::warning::jackstay archive checked for integrity only; set JACKSTAY_PROVENANCE=attestation or JACKSTAY_LINUX_AMD64_SHA256'
+              ;;
+            attestation)
+              gh attestation verify "$archive" --repo @@jackstay_repository@@ \
+                --signer-workflow zima-oss/jackstay/.github/workflows/release.yml \
+                --source-ref "refs/tags/$JACKSTAY_VERSION" >/dev/null || { echo '::error::jackstay archive attestation failed'; exit 1; }
+              ;;
+            *) echo '::error::JACKSTAY_PROVENANCE must be checksum or attestation'; exit 1 ;;
+          esac
+          tar -xzf "$archive"
           echo "$RUNNER_TEMP/jackstay" >> "$GITHUB_PATH"
       - name: Check out with full history and the writing App's token
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

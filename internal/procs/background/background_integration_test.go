@@ -107,13 +107,17 @@ func (r *machineRun) started(args ...string) (*exec.Cmd, string) {
 	if err := command.Start(); err != nil {
 		r.t.Fatal(err)
 	}
+	r.t.Cleanup(func() {
+		r.killGroups()
+		_ = command.Process.Kill()
+		_ = command.Wait()
+	})
 	lines := bufio.NewReader(pipe)
 	first, err := lines.ReadString('\n')
 	if err != nil {
 		r.t.Fatalf("jst bg said nothing: %v", err)
 	}
 	go func() { _, _ = io.Copy(io.Discard, lines) }()
-	r.t.Cleanup(func() { r.killGroups() })
 	return command, first
 }
 
@@ -219,6 +223,11 @@ func (r *machineRun) awaitFile(path string, command *exec.Cmd) {
 			r.t.Fatal("jst bg ended before the command was ready")
 		}
 		if time.Now().After(until) {
+			if command != nil {
+				row, found, err := procs.Row(command.Process.Pid)
+				r.t.Fatalf("%s never appeared: supervisor pid %d found %t row %+v error %v; process state %v",
+					path, command.Process.Pid, found, row, err, command.ProcessState)
+			}
 			r.t.Fatalf("%s never appeared", path)
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -236,6 +245,26 @@ func (r *machineRun) awaitHeld() {
 		}
 		if time.Now().After(until) {
 			r.t.Fatalf("no held entry in %v", r.listJSON())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// awaitRunning waits until both the child and the registry are visible to a separate procs call.
+// The startup line confirms the registry write, but does not confirm that a process-table scan
+// can classify the entry as running yet.
+func (r *machineRun) awaitRunning(name, session string, command *exec.Cmd) map[string]any {
+	r.t.Helper()
+	until := time.Now().Add(outerBound)
+	for {
+		listed := r.listJSON()
+		if len(listed) == 1 && listed[0]["name"] == name && listed[0]["state"] == "running" && listed[0]["session"] == session {
+			return listed[0]
+		}
+		if time.Now().After(until) {
+			row, found, err := procs.Row(command.Process.Pid)
+			r.t.Fatalf("%s never became ready: listed %v; supervisor pid %d found %t row %+v error %v; process state %v",
+				name, listed, command.Process.Pid, found, row, err, command.ProcessState)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -370,11 +399,14 @@ func noteThisSession(t *testing.T, place store, session string) {
 func TestRealKeptIsListedAndStoppedByName(t *testing.T) {
 	r := newReal(t)
 	noteThisSession(t, r.place, "this-session")
-	child, first := r.started("--keep", "--name", "server", "--", "sleep", "300")
+	ready := filepath.Join(r.dir, "server-ready")
+	child, first := r.started("--keep", "--name", "server", "--", "sh", "-c",
+		"touch \"$1\"; exec sleep 300", "sh", ready)
 	if !strings.Contains(first, "kept") {
 		t.Fatalf("said %q", first)
 	}
-	entry := r.only()
+	r.awaitFile(ready, child)
+	entry := r.awaitRunning("server", "this-session", child)
 	if entry["name"] != "server" || entry["state"] != "running" || entry["deadline"] != nil || entry["session"] != "this-session" {
 		t.Fatalf("listed %v", entry)
 	}

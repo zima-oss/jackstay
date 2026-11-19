@@ -82,12 +82,46 @@ func PlanCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 
 func (base *tester) plan(args []string) int {
 	name, rest, chosen, err := parse(args)
+	selectChanged := err == nil && name == "changed" && base.hasSelection()
+	selectedRange := false
+	if selectChanged && len(rest) > 0 {
+		if len(rest) != 1 || chosen.base != "" || chosen.commit != "" {
+			err = refused("`jst test plan changed BASE..REV` takes one range, without --base or --commit")
+		} else {
+			chosen.base, chosen.commit, err = selectionRange(rest[0])
+			rest = nil
+			selectedRange = err == nil
+		}
+	}
 	if err == nil && name == "" {
 		err = refused("usage: jst test plan <scope> [ARGS…]")
+	}
+	if err == nil && selectedRange {
+		made, inside, copyError := base.makeCopy(chosen)
+		if copyError != nil {
+			err = copyError
+		} else {
+			defer made.Remove()
+			base.here = inside
+		}
 	}
 	var proj *project
 	if err == nil {
 		proj, err = base.open(chosen)
+	}
+	if err == nil && (name == "auto" || selectChanged) {
+		if len(rest) > 0 || chosen.commit != "" && !selectedRange {
+			err = refused("`jst test plan auto` takes no test names or --commit")
+		} else {
+			var choice selectionResult
+			choice, err = proj.selectScope()
+			if err == nil {
+				name = choice.scope
+				chosen.base = choice.base
+				proj.options = chosen
+				proj.printSelection(choice)
+			}
+		}
 	}
 	var paths []leafPath
 	if err == nil {

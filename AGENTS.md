@@ -29,7 +29,7 @@ the same rules hold.
 - **Secrets**: never write a token, key or password into a file, a test, a log or a commit message;
   tests use made-up values.
 
-<!-- jackstay-adopt: begin agents-block sha256:fe4da405beaf — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:84028b9352ac — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed on this machine. Reach for it before a hand-written shell loop:
@@ -62,5 +62,5 @@ the same rules hold.
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
-  this project up to date with jackstay).
+  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.
 <!-- jackstay-adopt: end agents-block -->

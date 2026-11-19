@@ -12,6 +12,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -36,6 +37,7 @@ import (
 
 func init() {
 	cli.Register(cli.Command{Name: "doctor", Summary: "is jackstay alive on this machine: the layout, the guard, its calls, the sandbox", Usage: help, Run: Run})
+	cli.Register(cli.Command{Name: "setup", Summary: "plan and apply selected machine setup repairs", Usage: setupHelp, Run: RunSetup})
 }
 
 const usage = "usage: jst doctor [--json] [--prefix DIR] | jst doctor --expect NAME | jst doctor --forget NAME"
@@ -74,7 +76,11 @@ func (report *Report) note(kind, format string, values ...any) {
 // Inputs are everything the checks read.
 type Inputs struct {
 	Prefix string
-	Now    time.Time
+	// CheckPath distinguishes real machine checks from test fixtures that omit PATH.
+	CheckPath bool
+	// ActiveJst is the first jst resolved through PATH, or empty when none is found.
+	ActiveJst string
+	Now       time.Time
 	// Version is the running binary's identity.
 	Version string
 	// Home is jackstay's home.
@@ -149,7 +155,8 @@ func RealInputs(prefix string) Inputs {
 	}
 	now := time.Now()
 	inputs := Inputs{Prefix: prefix, Now: now, Version: cli.Identity(), GuardSpans: guardSpans(now),
-		Settings: filepath.Join(homedir.AccountHome(), ".claude", "settings.json"),
+		CheckPath: true,
+		Settings:  filepath.Join(homedir.AccountHome(), ".claude", "settings.json"),
 		Run: func(argv []string, input []byte) (supervise.Captured, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), prove.Timeout)
 			defer cancel()
@@ -168,6 +175,7 @@ func RealInputs(prefix string) Inputs {
 			return adopt.Check(here)
 		}}
 	inputs.Home, _ = homedir.Home()
+	inputs.ActiveJst, _ = exec.LookPath("jst")
 	inputs.Mac = runtime.GOOS == "darwin"
 	inputs.CodesignIdentity, inputs.CodesignSetting, inputs.CodesignErr = install.SigningIdentity()
 	inputs.Expected, inputs.ExpectedErr = expected.Read()
@@ -190,7 +198,8 @@ func OwnPrefix() string {
 
 // Diagnose runs every check.
 func Diagnose(inputs Inputs) Report {
-	report := Report{Facts: map[string]any{"version": inputs.Version, "prefix": inputs.Prefix}, Problems: []Finding{}, Notes: []Finding{}}
+	report := Report{Facts: map[string]any{"version": inputs.Version, "prefix": inputs.Prefix, "home": inputs.Home, "settings": inputs.Settings}, Problems: []Finding{}, Notes: []Finding{}}
+	checkPath(&report, inputs)
 	checkLayout(&report, inputs)
 	checkLogs(&report, inputs)
 	checkMarks(&report, inputs)

@@ -6,7 +6,8 @@
 - **Run tests**: `jst test <scope>`; `jst test list` shows the scopes and when each is required.
   Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
   a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
-  removes). No scope fits: `jst test -- COMMAND`.
+  removes).
+  Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
 - **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
   using the expected digest, revision and key from a trusted source.
 - **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
@@ -37,7 +38,7 @@
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
 - **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
-  this project up to date with jackstay).
+  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.
 
 ### This project's organisation
 

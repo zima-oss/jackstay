@@ -254,7 +254,7 @@ func (run *session) lookUp(key Key, keyErr error, where string) bool {
 	var receipt *Receipt
 	whyNot := "the receipt store cannot be found"
 	if run.storeErr == nil {
-		receipt, whyNot = run.store.Read(key.Value)
+		receipt, whyNot = run.store.ReadCurrent(key)
 	}
 	refusal := run.refusal()
 	if refusal != "" || receipt == nil {
@@ -505,6 +505,7 @@ func (run *session) command(evidenceJudge *Evidence, key Key, keyErr error, held
 		"evidence": evidence, "receipt_removed": did.setAside, "output": output}
 	if kind != "" {
 		did.facts["judge"] = string(kind)
+		did.facts["adapter_version"] = judge.AdapterVersion(kind)
 	}
 	sessions, err := os.CreateTemp("", "jackstay-test-sessions.")
 	sessionsFile := ""
@@ -521,6 +522,7 @@ func (run *session) command(evidenceJudge *Evidence, key Key, keyErr error, held
 		"started_epoch": epochOf(did.started), "locked": did.facts["locked"]}
 	if kind != "" {
 		startFields["judge"] = string(kind)
+		startFields["adapter_version"] = judge.AdapterVersion(kind)
 	}
 	if !run.runLog.Write(EventStart, did.keyValue(), startFields) {
 		run.notLogged("the start of this run")

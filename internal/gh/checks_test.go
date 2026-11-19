@@ -216,6 +216,7 @@ func TestCancelIsSettledAndFailing(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("lint"), checkRun("test", "COMPLETED", "CANCELLED", 4)})
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{}))
 	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
 	contains(t, stdout, "RED: 1 of 2")
 	contains(t, stdout, "cancelled: test (run 4 of ci): a cancellation is not a pass")
@@ -378,13 +379,84 @@ func TestWaitDefaultsComeFromTheGitHubSectionAndFlagsWin(t *testing.T) {
 	contains(t, stderr, "within 1s")
 }
 
-// No run metadata, nor GitHub's concurrency annotation, ties a cancelled run to the run that
-// replaced it (issue #13 is open), so a cancellation beside a newer passing run still counts, and
-// is named as a cancellation, not a failure.
-func TestACancellationBesideANewerPassingRunStillCounts(t *testing.T) {
+func TestACancelledCheckUsesANewerRunOfTheSameWorkflowAndCommit(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)})
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "success"},
+		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
+	}))
+	stdout, _ := bench.expect(exitFine, "ci-wait", "7", "--timeout", "30")
+	contains(t, stdout, "run 5 supersedes cancelled run 4")
+}
+
+func TestACancelledCheckWaitsForTheReplacementJob(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA))
+	onChecks(bench.hub, shaA,
+		[]githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4)},
+		[]githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)})
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "in_progress"},
+		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
+	}))
+	stdout, _ := bench.expect(exitFine, "ci-wait", "7", "--timeout", "20", "--interval", "5")
+	contains(t, stdout, "0s: 1 pending — lint")
+	contains(t, stdout, "run 5 supersedes cancelled run 4")
+}
+
+func TestAReplacementWorkflowWithoutTheRequiredJobStaysPending(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA))
+	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4)})
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "success"},
+		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
+	}))
+	stdout, stderr := bench.expect(exitPending, "ci-wait", "7", "--timeout", "5", "--interval", "5")
+	contains(t, stdout, "run 5 supersedes cancelled run 4")
+	contains(t, stderr, "still pending after 5s: lint")
+}
+
+func TestACancelledCheckDoesNotHideAFailedReplacement(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA))
+	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "FAILURE", 5)})
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "failure"},
+		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
+	}))
 	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
-	contains(t, stdout, "cancelled: lint (run 4 of ci): a cancellation is not a pass")
+	contains(t, stdout, "run 5 supersedes cancelled run 4")
+	contains(t, stdout, "RED: 1 of 1 checks")
+}
+
+func TestACancelledCheckRejectsAnUnrelatedReplacement(t *testing.T) {
+	for _, newer := range []githubapi.WorkflowRun{
+		{ID: 5, WorkflowID: 2, HeadSHA: shaA, HeadBranch: "feat", Event: "pull_request", Status: "completed", Conclusion: "success"},
+		{ID: 5, WorkflowID: 1, HeadSHA: shaB, HeadBranch: "feat", Event: "pull_request", Status: "completed", Conclusion: "success"},
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA, HeadBranch: "other", Event: "pull_request", Status: "completed", Conclusion: "success"},
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA, HeadBranch: "feat", Event: "push", Status: "completed", Conclusion: "success"},
+	} {
+		bench := newHarness(t, checkout(shaA))
+		onPull(bench.hub, pull(7, "feat", shaA))
+		onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)})
+		bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+			newer, {ID: 4, WorkflowID: 1, HeadSHA: shaA, HeadBranch: "feat", Event: "pull_request", Status: "completed", Conclusion: "cancelled"},
+		}))
+		stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
+		contains(t, stdout, "cancelled: lint (run 4 of ci)")
+	}
+}
+
+func TestACancelledCheckRejectsAHeadThatMovesDuringRunLookup(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA), pull(7, "feat", shaA), pull(7, "feat", shaB))
+	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)})
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA}, {ID: 4, WorkflowID: 1, HeadSHA: shaA},
+	}))
+	_, stderr := bench.expect(exitMoved, "ci-wait", "7", "--timeout", "30")
+	contains(t, stderr, "head of #7 changed")
 }

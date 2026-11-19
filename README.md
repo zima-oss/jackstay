@@ -21,6 +21,8 @@ The script downloads a release, checks its archive against `checksums.txt` and i
 `~/.local` without `sudo`. Read the [install guide](docs/guide/install.md) for a manual install,
 source build or update. Commit the project files written by `jst adopt --apply`; the
 [getting-started guide](docs/guide/getting-started.md) walks through this and the first test run.
+Maintainers can [prepare a Homebrew tap formula](docs/guide/homebrew-tap.md) from the release
+archives; the tap is not published yet.
 
 ## Follow the work
 

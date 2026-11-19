@@ -254,6 +254,27 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 			}
 			continue
 		}
+		candidateSHAs := []string{head}
+		if onMerge {
+			candidateSHAs = append(candidateSHAs, now.MergeCommitSHA)
+		}
+		rows, replacements, err := work.reconcileCancelled(rows, candidateSHAs)
+		if err != nil {
+			return 0, err
+		}
+		if len(replacements) > 0 {
+			confirmed, err := work.github.PullRequest(work.ctx, number)
+			if err != nil {
+				return 0, fmt.Errorf("pull request #%d: %w", number, err)
+			}
+			if err := evidence.confirm(work.repository, confirmed); err != nil {
+				return 0, err
+			}
+			evidence.pull = confirmed
+		}
+		for _, replacement := range replacements {
+			work.say("%s", replacement)
+		}
 		weighed := weigh(rows, options.required)
 		pending := weighed.pending
 		if len(pending) > 0 && len(weighed.failed) == 0 {
@@ -315,11 +336,27 @@ func (work *session) ciStatus(number int) (int, error) {
 		return 0, failf(exitMoved, "the head of #%d moved from %s to %s while its checks were read. Checks for the old "+
 			"commit say nothing about the new one; run it again.", number, short(pull.HeadSHA, 8), short(now.HeadSHA, 8))
 	}
+	rows, replacements, err := work.reconcileCancelled(rows, []string{pull.HeadSHA})
+	if err != nil {
+		return 0, err
+	}
+	if len(replacements) > 0 {
+		confirmed, err := work.github.PullRequest(work.ctx, number)
+		if err != nil {
+			return 0, fmt.Errorf("pull request #%d: %w", number, err)
+		}
+		if err := (checkEvidence{repository: work.repository, pull: now}).confirm(work.repository, confirmed); err != nil {
+			return 0, err
+		}
+	}
 	if len(rows) == 0 {
 		work.say("no checks registered for this ref yet")
 		return exitPending, nil
 	}
 	work.say("%s", summarise(rows))
+	for _, replacement := range replacements {
+		work.say("%s", replacement)
+	}
 	weighed := weigh(rows, nil)
 	for _, line := range weighed.notes() {
 		work.say("%s", line)
@@ -376,6 +413,94 @@ func (work *session) sameBase(pull githubapi.PullRequest) error {
 	}
 	return failf(exitMoved, "the base of #%d changed from %s to %s: the checks waited for are the ones %s requires. "+
 		"Run it again.", pull.Number, rulesOf, pull.Base, rulesOf)
+}
+
+// reconcileCancelled replaces a cancelled job only when the repository's run listing proves a
+// newer run of the same workflow and commit. A replacement without this job's result stays
+// pending; the workflow's success alone cannot satisfy a required check.
+func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string) ([]githubapi.Check, []string, error) {
+	needsLookup := false
+	for _, row := range rows {
+		needsLookup = needsLookup || (row.Bucket() == githubapi.Cancel && row.RunID > 0)
+	}
+	if !needsLookup {
+		return rows, nil, nil
+	}
+	runs := make(map[string][]githubapi.WorkflowRun, len(commits))
+	for _, sha := range commits {
+		if sha == "" {
+			continue
+		}
+		listed, err := work.github.WorkflowRuns(work.ctx, githubapi.RunFilter{HeadSHA: sha})
+		if err != nil {
+			return nil, nil, fmt.Errorf("workflow runs of %s: %w", short(sha, 8), err)
+		}
+		runs[sha] = listed
+	}
+	updated := make([]githubapi.Check, 0, len(rows))
+	var notes []string
+	for _, row := range rows {
+		if row.Bucket() != githubapi.Cancel || row.RunID == 0 {
+			updated = append(updated, row)
+			continue
+		}
+		var replacement githubapi.WorkflowRun
+		for sha, listed := range runs {
+			var original githubapi.WorkflowRun
+			for _, run := range listed {
+				if run.ID == row.RunID && run.HeadSHA == sha && run.WorkflowID > 0 {
+					original = run
+					break
+				}
+			}
+			if original.ID == 0 {
+				continue
+			}
+			for _, run := range listed {
+				if run.WorkflowID != original.WorkflowID || run.HeadSHA != sha ||
+					(original.Event != "" && run.Event != original.Event) ||
+					(original.HeadBranch != "" && run.HeadBranch != original.HeadBranch) ||
+					!newerWorkflowRun(run, original) {
+					continue
+				}
+				if replacement.ID == 0 || newerWorkflowRun(run, replacement) {
+					replacement = run
+				}
+			}
+		}
+		if replacement.ID == 0 {
+			updated = append(updated, row)
+			continue
+		}
+		notes = append(notes, fmt.Sprintf("run %d supersedes cancelled run %d of %s for %s", replacement.ID, row.RunID, row.Workflow, row.Name))
+		found := false
+		for _, current := range rows {
+			if current.RunID == replacement.ID && current.Kind == githubapi.CheckRun && current.Name == row.Name && current.AppID == row.AppID {
+				found = true
+				break
+			}
+		}
+		if found {
+			continue
+		}
+		row.RunID = replacement.ID
+		row.Status, row.Conclusion = "IN_PROGRESS", ""
+		if replacement.Status == "completed" && replacement.Conclusion != "success" && replacement.Conclusion != "skipped" && replacement.Conclusion != "neutral" {
+			row.Status, row.Conclusion = "COMPLETED", "FAILURE"
+		}
+		updated = append(updated, row)
+	}
+	return updated, notes, nil
+}
+
+func newerWorkflowRun(candidate, previous githubapi.WorkflowRun) bool {
+	if candidate.ID <= previous.ID {
+		return false
+	}
+	if !candidate.CreatedAt.IsZero() && !previous.CreatedAt.IsZero() && candidate.CreatedAt.Before(previous.CreatedAt) {
+		return false
+	}
+	return true
 }
 
 // weighed is a head's checks judged: the ones still to wait for, the ones that stop a merge, and

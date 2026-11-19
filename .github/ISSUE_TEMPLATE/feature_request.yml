@@ -1,0 +1,28 @@
+name: Feature request
+description: Propose a new jackstay capability or improvement
+title: "feature: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: Describe the work you are trying to complete and where current commands stop helping.
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Desired behavior
+      description: Give an example command or user-visible outcome if you have one.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Current workaround and tradeoffs
+      description: Describe what you use today and what it costs.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Platforms and project configurations
+      description: Note any macOS/Linux, runner, or repository constraints that matter.

@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/receipts"
 	"github.com/zima-oss/jackstay/internal/version"
 )
@@ -291,15 +292,17 @@ func createOnce(place string, data []byte) error {
 
 // mark is a step's pass on a key, which `--resume` may stand on.
 type mark struct {
-	Key      string  `json:"key"`
-	Step     string  `json:"step"`
-	Outcome  string  `json:"outcome"`
-	RunID    string  `json:"run_id"`
-	Head     string  `json:"head"`
-	Seconds  float64 `json:"seconds"`
-	At       string  `json:"at"`
-	AtEpoch  float64 `json:"at_epoch"`
-	Jackstay string  `json:"jackstay"`
+	Key            string  `json:"key"`
+	Step           string  `json:"step"`
+	Outcome        string  `json:"outcome"`
+	RunID          string  `json:"run_id"`
+	Head           string  `json:"head"`
+	Seconds        float64 `json:"seconds"`
+	At             string  `json:"at"`
+	AtEpoch        float64 `json:"at_epoch"`
+	Jackstay       string  `json:"jackstay"`
+	AdapterVersion int     `json:"adapter_version,omitempty"`
+	Counted        int     `json:"counted,omitempty"`
 }
 
 func (proj *project) markPath(key string) string {
@@ -307,14 +310,18 @@ func (proj *project) markPath(key string) string {
 }
 
 // writeMark files a step's pass; a key with a bar gets none (a mark could outlive its bar).
-func (proj *project) writeMark(key, step string, ended result, head string) bool {
+func (proj *project) writeMark(key, step string, ended result, head string, adapterVersion int) bool {
+	if adapterVersion != 0 && (ended.outcome != receipts.OutcomePassed || ended.counted <= 0) {
+		return false
+	}
 	if proj.barOf(key) != nil {
 		proj.say("step %s: no mark (this step failed on this same tree before; its bar stands)", step)
 		return false
 	}
 	folder := proj.stateFolder("gate-marks")
 	data, err := json.Marshal(mark{Key: key, Step: step, Outcome: ended.outcome, RunID: ended.runID, Head: head,
-		Seconds: ended.seconds, At: proj.timeText(), AtEpoch: epochSeconds(proj.clock.Now()), Jackstay: version.Version})
+		Seconds: ended.seconds, At: proj.timeText(), AtEpoch: epochSeconds(proj.clock.Now()), Jackstay: version.Version,
+		AdapterVersion: adapterVersion, Counted: ended.counted})
 	if err == nil {
 		err = os.MkdirAll(folder, 0o700)
 	}
@@ -340,7 +347,7 @@ func (proj *project) writeMark(key, step string, ended result, head string) bool
 func (proj *project) removeMark(key string) { _ = os.Remove(proj.markPath(key)) }
 
 // readMark is a mark usable now for the key, or why not.
-func (proj *project) readMark(key string) (*mark, string) {
+func (proj *project) readMark(key, step, head string, adapterVersion int) (*mark, string) {
 	data, err := os.ReadFile(proj.markPath(key))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, "no mark"
@@ -349,8 +356,14 @@ func (proj *project) readMark(key string) (*mark, string) {
 	if err != nil || json.Unmarshal(data, &found) != nil {
 		return nil, "the mark cannot be read"
 	}
-	if found.Key != key || found.Jackstay != version.Version {
+	if found.Key != key || found.Step != step || found.Head != head || found.RunID == "" || found.Jackstay != version.Version {
 		return nil, "the mark is not one for this key"
+	}
+	if found.Outcome != receipts.OutcomePassed && found.Outcome != receipts.OutcomeExited0 {
+		return nil, "the mark is not a successful step"
+	}
+	if found.AdapterVersion != adapterVersion || (adapterVersion != 0 && (found.Outcome != receipts.OutcomePassed || found.Counted <= 0)) {
+		return nil, "the mark has no counted pass for the current adapter"
 	}
 	if found.AtEpoch == 0 {
 		return nil, "the mark's time cannot be read"
@@ -452,6 +465,7 @@ func (proj *project) gate(name string) int {
 func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked map[string]string, state *gateState) (*int, bool) {
 	keepGoing := proj.options.keepGoing
 	chosen := resolve(proj.section, path.name, path.kind, path.entry)
+	adapterVersion := judge.AdapterVersion(judge.Kind(chosen.judge))
 	found, err := proj.wordsOf(chosen, nil)
 	if err != nil {
 		state.steps = append(state.steps, step{"step": path.name, "outcome": receipts.OutcomeNotStarted, "seconds": 0})
@@ -521,7 +535,7 @@ func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked
 			state.outcome, state.status, state.failedAt = outcomeRefused, statusRefused, path.name
 			return nil, true
 		}
-		if found, _ := proj.readMark(key); found != nil {
+		if found, _ := proj.readMark(key, path.name, head, adapterVersion); found != nil {
 			proj.say("step %s: resumed (it %s at %s on this same tree; run %s)", path.name, found.Outcome, found.At, found.RunID)
 			state.steps = append(state.steps, step{"step": path.name, "outcome": outcomeResumed, "seconds": 0, "mark_of": found.RunID})
 			return nil, false
@@ -594,7 +608,7 @@ func (proj *project) markAfter(name, key, head string, stamps map[string]string,
 			joinComma(changed[:min(3, len(changed))]))
 		return
 	}
-	proj.writeMark(key, name, ended, head)
+	proj.writeMark(key, name, ended, head, judge.AdapterVersion(judge.Kind(chosen.judge)))
 }
 
 func mergeKeys(first, second map[string]string) map[string]bool {

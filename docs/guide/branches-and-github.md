@@ -88,7 +88,9 @@ jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reaso
 - `ci-wait` waits until every check on a pull request's current head settles (default: this
   branch's), and prints the failing step's log of each red check if time remains. Its timeout
   includes GitHub requests and retries. `--timeout 0` makes one look, with up to 10 seconds for
-  its requests. `ci-status` is one look.
+  its requests. A cancelled Actions check waits for a newer run's matching job only when GitHub
+  confirms that the run has the same workflow and commit; otherwise it remains cancelled.
+  `ci-status` is one look.
 - `run-wait` waits for one workflow run on a branch or commit.
 - `pr-find` finds one pull request by head branch or search text; none found is exit 1.
 - `pr-status` says where this branch and its pull request stand, including the pull request's base.

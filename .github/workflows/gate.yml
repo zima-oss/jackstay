@@ -1,8 +1,8 @@
 name: gate
 
 # jackstay's gate (`just gate`: the Go checks, every test with the race detector, the integration
-# tests, govulncheck and gosec, the docs check) on GitHub's Linux runner: the only CI check, and the
-# one `main` requires. jackstay supports macOS and Linux (W-069); there is no macOS job (W-083): the
+# tests, govulncheck and gosec, the docs check) on GitHub's Linux runner. This is the gate
+# `main` requires. jackstay supports macOS and Linux (W-069); there is no macOS job (W-083): the
 # macOS-only code (`*_darwin.go`) is checked by the maintainers' `just gate` on a Mac before an
 # install and a release.
 

@@ -81,6 +81,9 @@ func (run *leafRun) command(asked time.Time, held *flock.Held) result {
 		}
 	}
 	scopeFacts := map[string]any{"judge": run.leaf.judge, "timeout": nil}
+	if version := judge.AdapterVersion(options.Kind); version != 0 {
+		scopeFacts["adapter_version"] = version
+	}
 	for name, value := range run.facts {
 		scopeFacts[name] = value
 	}
@@ -360,7 +363,8 @@ func (did *ran) finish(outcome string, status int, more map[string]any, words st
 		did.notLogged("this run")
 	}
 	did.say("%s", words)
-	return result{outcome: outcome, status: status, seconds: seconds, runID: did.runID}
+	counted, _ := more["counted"].(int)
+	return result{outcome: outcome, status: status, seconds: seconds, runID: did.runID, counted: counted}
 }
 
 // storeReceipt writes the receipt of a counted pass when every rule allows it: (path, why not,

@@ -19,6 +19,9 @@ concurrency:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
+  artifact-metadata: write
 
 jobs:
   release:
@@ -92,6 +95,10 @@ jobs:
           folder=$(mktemp -d)
           JST_LICENCES="$folder/licenses" \
             go run github.com/goreleaser/goreleaser/v2@v2.20.2 release --clean --skip=publish,announce
+      - name: Attest the release archives before publication
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/jackstay_*.tar.gz
       - name: Publish the release, created by this run and named by its id
         env:
           GH_TOKEN: ${{ github.token }}

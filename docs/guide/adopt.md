@@ -29,12 +29,21 @@ places and nothing else:
   `jackstay.json` so later runs need no flag.
 - `--pin` moves `adopt.pin`, the jackstay release the workflows download, to the running version.
   Without it the pin never moves.
+
 - `--settings-only` plans or writes `jackstay.json` alone. `jst lint pr` (rule D0) wants a change
   of `jackstay.json` in a pull request of its own, so a change of it and other files lands in two
   (below).
 - `--block` prints the AGENTS block this project gets.
 - Exit: 0 adopted (nothing to change, or everything written); 1 conflicts left; 2 usage, or
   `jackstay.json` or the profile cannot be read; 3 (`--plan`) changes pending, no conflict.
+
+The generated `card-line.yml` and `release.yml` download the pinned Linux archive and check
+`checksums.txt`. For releases with build attestations, set the repository variable
+`JACKSTAY_PROVENANCE=attestation`; the workflow then requires a GitHub attestation for the pinned
+tag, source repository and jackstay release workflow before unpacking. For older releases, an
+independently recorded archive digest can be set as `JACKSTAY_LINUX_AMD64_SHA256` (64 lowercase
+hex digits). Update that digest when moving the pin. When both variables are set, both checks must
+pass. With neither variable, the workflow warns that the checksum is an integrity check only.
 
 A second `--apply` leaves project files unchanged. If an apply stops partway through, rerun it
 with the same options. jackstay checks the previous attempt against the files now on disk and

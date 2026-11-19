@@ -92,9 +92,9 @@ var items = []item{
 		"- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.")},
 	{id: "profiles", commands: []string{"profile export", "profile verify"}, wanted: hasSection("adopt"), text: fixed(
 		"- **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.")},
-	{id: "doctor", commands: []string{"doctor", "check", "adopt"}, wanted: always, text: fixed(
+	{id: "doctor", commands: []string{"doctor", "check", "adopt", "setup"}, wanted: always, text: fixed(
 		"- **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is\n" +
-			"  this project up to date with jackstay).")},
+			"  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.")},
 }
 
 func fixed(text string) func(map[string]any) string {
@@ -113,6 +113,9 @@ func testText(config map[string]any) string {
 	if _, gate := scopes["gate"]; gate {
 		text += " Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and\n" +
 			"  removes)."
+	}
+	if section(section(config, "test"), "selection") != nil {
+		text += "\n  Preview path-based selection with `jst test plan changed --base REF`."
 	}
 	return text + " No scope fits: `jst test -- COMMAND`."
 }

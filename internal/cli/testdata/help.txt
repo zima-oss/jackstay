@@ -219,8 +219,9 @@ jst doctor: is jackstay alive on this machine: the layout, the guard, its calls,
 
 usage: jst doctor [--json] [--prefix DIR] | jst doctor --expect NAME | jst doctor --forget NAME
 
-Is jackstay alive on this machine: the installed layout, the guard refusing, its logs of the last 7 days,
-the projects it was heard from and those expected, Claude Code's sandbox settings, the lock.
+Is jackstay alive on this machine: the installed layout, the jst selected on PATH, the guard
+refusing, its logs of the last 7 days, the projects it was heard from and those expected,
+Claude Code's sandbox settings, the lock.
   --json          the report as one JSON object
   --prefix DIR    the install prefix to inspect (default: this binary's own)
   --expect NAME   add project NAME to the projects whose guard is expected to be heard from
@@ -877,6 +878,27 @@ exit: 0 shown; 2 the request or configuration, or no such round (its file cannot
 
 example: jst review show parser-fix 2
 
+==> jst setup --help
+jst setup: plan and apply selected machine setup repairs
+
+usage: jst setup [--plan] [--json] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]
+
+Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
+POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
+  --plan          print the plan without changing files (also the nonterminal default)
+  --json          print the plan as JSON; implies --plan
+  --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
+  --yes           apply only explicitly selected repair IDs; requires --select
+  --select ID     select path or sandbox; repeat to select both
+
+Without options, a terminal offers apply, show and skip. An existing profile is copied to a
+unique backup beside it before replacement. Unsupported shells and conflicting profiles are
+left for the owner. Open a new shell after applying a PATH repair.
+
+exit: 0 planned or applied; 1 an applicable repair failed; 2 the request is wrong.
+
+example: jst setup --plan --json
+
 ==> jst start --help
 jst start: a new branch and its worktree on the default branch as fetched
 
@@ -940,11 +962,12 @@ usage: jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | -
 
 Runs a scope of jackstay.json's test section (`jst test list` shows them), or with -- any command, judged,
 recorded and keyed by the tree. Only the outcome passed is a pass: read the last `jst test:` line.
+With test.selection configured, use jst test changed [BASE..REV] to select a scope from committed paths.
   --no-reuse      run even when a receipt of this tree could be reused
   --wait S        give up waiting for the machine-wide lock after S seconds
   --lock          take the machine-wide lock; --no-lock: do not (default: the scope's lock)
   --project NAME  the project's name in the record (default jackstay.json's)
-  --base REF      the scope's {base}: what a change is measured from
+  --base REF      the scope's {base} or the base for automatic selection
   --resume        a gate: skip the steps that passed on this same tree
   --keep-going    a gate: run the remaining steps after one fails
   --commit REV    run on a clean copy of REV that jackstay makes and then removes
@@ -1005,10 +1028,16 @@ base and checks. Nothing is run. It reads the options of `jst test SCOPE`:
   --base REF       the {base} the words are planned with
   --project NAME   the project's name (default jackstay.json's)
 
+Use SCOPE=auto, or changed when test.selection is configured, to select a declared scope from committed paths. The plan prints the selected
+scope, every matching path rule and the scope's when. It uses origin/HEAD as the default base;
+without that ref, pass --base REF. Auto takes no test names or --commit in a plan.
+jst test plan changed BASE..REV plans from a temporary clean copy of REV and removes it.
+
 exit: 0 the plan (a step that cannot run as asked says so on its line); 2 refused: no scope, not a
 scope of the project, or the request or jackstay.json's test section cannot be used.
 
 example: jst test plan changed --base origin/main
+example: jst test plan auto --base origin/main
 
 ==> jst tidy --help
 jst tidy: report the branches and worktrees whose work is done (--fix: remove them)
