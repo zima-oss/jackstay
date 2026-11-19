@@ -192,6 +192,38 @@ func TestCollectFinishesAStoppedRun(t *testing.T) {
 	}
 }
 
+func TestCollectPreservesAnIndexedEntryWithoutAWorktreeCopy(t *testing.T) {
+	project := repo(t, stageOneJSON, map[string]string{"changes/a.md": "- original\n", "CHANGELOG.md": "# Changelog\n"})
+	lock := filepath.Join(project.Root, ".git", "index.lock")
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output, diagnostic bytes.Buffer
+	if code, err := Collect(project, "1.0.0", "2026-03-04", false, &output, &diagnostic); code != 2 || err == nil {
+		t.Fatalf("collection did not pause before removing entries: %d, %v", code, err)
+	}
+	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteInRepo(project.Root, "changes/a.md", []byte("- newer staged entry\n")); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := project.Git.Run(ctx, "add", "--", "changes/a.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(project.Root, "changes/a.md")); err != nil {
+		t.Fatal(err)
+	}
+	if code, err := Collect(project, "1.0.0", "2026-03-04", false, &output, &diagnostic); code != 1 || err != nil || !strings.Contains(diagnostic.String(), "kept changes/a.md") {
+		t.Fatalf("collection did not identify the unresolved entry: %d, %v, %s", code, err, &diagnostic)
+	}
+	data, err := project.Git.Run(ctx, "show", ":changes/a.md")
+	if err != nil || string(data) != "- newer staged entry\n" {
+		t.Fatalf("staged content was not preserved: %q, %v", data, err)
+	}
+}
+
 func TestCollectMigratesAnUnfinishedLegacyPlan(t *testing.T) {
 	project := repo(t, stageOneJSON, map[string]string{"changes/a.md": "- a\n", "CHANGELOG.md": "# Changelog\n"})
 	head, err := project.Git.Line(context.Background(), "rev-parse", "HEAD")

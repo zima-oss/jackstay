@@ -8,6 +8,13 @@ import (
 	"github.com/zima-oss/jackstay/internal/reviewpool"
 )
 
+type reviewNotificationSyncError struct{ cause error }
+
+func (failure reviewNotificationSyncError) Error() string {
+	return "review notification sync: " + failure.cause.Error()
+}
+func (failure reviewNotificationSyncError) Unwrap() error { return failure.cause }
+
 // syncReviewNotifications moves durable queue events into the recipient's chat
 // inbox. The queue marks each event only after chat accepts it; repeating after
 // an interrupted write uses the same chat idempotency key.

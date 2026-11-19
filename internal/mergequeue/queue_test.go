@@ -82,6 +82,32 @@ func TestCandidateIsPersistentAndDoesNotMoveRefs(t *testing.T) {
 	}
 }
 
+func TestMissingCandidateStartsNewAttemptAndClearsGate(t *testing.T) {
+	service, repository := fixture(t)
+	ctx := context.Background()
+	if _, err := service.Enqueue(ctx, "refs/heads/feature"); err != nil {
+		t.Fatal(err)
+	}
+	old, err := service.Prepare(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.recordGate(ctx, old.Candidate, "old-gate", []Evidence{{Key: strings.Repeat("a", 64), SHA256: strings.Repeat("b", 64)}}); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repository, "prune", "--expire=now")
+	newCandidate, err := service.Prepare(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newCandidate.Attempt != old.Attempt+1 || newCandidate.Candidate == "" || newCandidate.GateRunID != "" || len(newCandidate.Receipts) != 0 {
+		t.Fatalf("missing candidate retained old gate evidence: %+v", newCandidate)
+	}
+	if _, err := service.Handoff(ctx); err == nil {
+		t.Fatal("replacement candidate handed off without a new gate")
+	}
+}
+
 func TestMovedBaseInvalidatesAndRebuildsCandidate(t *testing.T) {
 	service, repository := fixture(t)
 	ctx := context.Background()

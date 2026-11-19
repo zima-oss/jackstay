@@ -76,9 +76,30 @@ func kinds(findings []Finding) string {
 }
 
 func TestHealthyGoLayout(t *testing.T) {
-	report := Diagnose(inputs(t, goPrefix(t, "0.5.0 (abc)")))
+	given := inputs(t, goPrefix(t, "0.5.0 (abc)"))
+	report := Diagnose(given)
 	if len(report.Problems) != 0 || len(report.Notes) != 0 {
 		t.Fatalf("problems %v notes %v", report.Problems, report.Notes)
+	}
+	if _, err := os.Stat(given.LockFolder); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("diagnosis created lock directory: %v", err)
+	}
+}
+
+func TestLockCheckRejectsFileWithoutChangingIt(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "lock-folder")
+	if err := os.WriteFile(file, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	report := Report{Facts: map[string]any{}}
+	checkLock(&report, Inputs{LockFolder: file, Settings: filepath.Join(root, "settings.json")})
+	if got := kinds(report.Problems); got != "lock-unwritable" {
+		t.Fatalf("lock check accepted a file: %s", got)
+	}
+	content, err := os.ReadFile(file)
+	if err != nil || string(content) != "keep" {
+		t.Fatalf("lock check modified file: %q, %v", content, err)
 	}
 }
 

@@ -169,6 +169,9 @@ func readCards(root string) CardStatus {
 		return CardStatus{Status: "unknown", Error: err.Error()}
 	}
 	entries, err := os.ReadDir(directory)
+	if errors.Is(err, os.ErrNotExist) {
+		return CardStatus{Status: "none"}
+	}
 	if err != nil {
 		return CardStatus{Status: "unknown", Error: err.Error()}
 	}

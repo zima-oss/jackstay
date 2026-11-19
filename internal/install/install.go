@@ -142,6 +142,11 @@ func Install(options Options) int {
 	if err != nil {
 		return refuse("%s cannot be read: %v", options.Prefix, err)
 	}
+	if folder, ok := recoverableLive(state, versionText); ok {
+		state.Link = layout.LinkToFolder
+		state.Live = &folder
+		state.Folders = append(state.Folders, folder)
+	}
 	if refusal := state.Refusal(); refusal != nil {
 		return refuse("%v", refusal)
 	}
@@ -216,6 +221,49 @@ func Install(options Options) int {
 		}
 	}
 	return options.finish(state, versionText, target, already)
+}
+
+// recoverableLive recognizes only the active folder that jackstay created for
+// this exact version. A missing or non-executable program may be repaired, but
+// foreign links, metadata and non-regular program paths remain a refusal.
+func recoverableLive(state layout.State, versionText string) (layout.Folder, bool) {
+	if state.Link != layout.LinkElsewhere || strings.Contains(state.LinkTarget, "/") ||
+		!strings.HasPrefix(state.LinkTarget, layout.FolderPrefix) {
+		return layout.Folder{}, false
+	}
+	path := filepath.Join(layout.Lib(state.Prefix), state.LinkTarget)
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() {
+		return layout.Folder{}, false
+	}
+	for _, marker := range []string{layout.VersionFile, layout.SourceFile} {
+		markerPath := filepath.Join(path, marker)
+		markerInfo, err := os.Lstat(markerPath)
+		if err != nil || !markerInfo.Mode().IsRegular() {
+			return layout.Folder{}, false
+		}
+		data, err := os.ReadFile(markerPath)
+		if err != nil || strings.TrimSpace(string(data)) == "" {
+			return layout.Folder{}, false
+		}
+		if marker == layout.VersionFile && strings.TrimSpace(string(data)) != versionText {
+			return layout.Folder{}, false
+		}
+	}
+	for _, name := range layout.Launchers {
+		if name == layout.Program {
+			continue
+		}
+		target, err := os.Readlink(filepath.Join(path, name))
+		if err != nil || target != layout.Program {
+			return layout.Folder{}, false
+		}
+	}
+	program, err := os.Lstat(filepath.Join(path, layout.Program))
+	if err != nil && !errors.Is(err, os.ErrNotExist) || err == nil && !program.Mode().IsRegular() {
+		return layout.Folder{}, false
+	}
+	return layout.Folder{Name: state.LinkTarget, Path: path, Version: versionText, Made: info.ModTime()}, true
 }
 
 // finish prunes and says what was done. It reads only the prefix, so a stop after the activation

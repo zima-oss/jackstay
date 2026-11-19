@@ -560,7 +560,7 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 		return 0, err
 	}
 	work.notePull(number, landing)
-	_, mergeErr := work.github.Merge(work.ctx, number, landing, "", body)
+	mergedResult, mergeErr := work.github.Merge(work.ctx, number, landing, "", body)
 	// A merge queue or auto-merge may hold it, and an answer may be lost: asked, not assumed.
 	landed, err := work.github.PullRequest(work.ctx, number)
 	if err != nil {
@@ -573,6 +573,12 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 		work.say("#%d is not merged yet (GitHub says %s: a merge queue or auto-merge holds it); the remote branch is kept, "+
 			"and nothing here changed", number, landed.State)
 		return exitPending, nil
+	}
+	if mergeErr != nil {
+		return 0, fmt.Errorf("#%d is now merged, but GitHub did not confirm this merge request (%v); inspect its merge commit before cleaning up the remote branch", number, mergeErr)
+	}
+	if !mergedResult.Merged || mergedResult.SHA == "" || landed.MergeCommitSHA != mergedResult.SHA {
+		return 0, failf(exitNotFine, "#%d is now merged, but its commit %s does not match the confirmed merge result %s; inspect the landing before cleaning up the remote branch", number, landed.MergeCommitSHA, mergedResult.SHA)
 	}
 	if landed.Base != "" {
 		base = landed.Base

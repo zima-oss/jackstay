@@ -142,6 +142,28 @@ func TestSelectionStatusParser(t *testing.T) {
 	}
 }
 
+func TestSelectionMatchesRepeatedDoubleStars(t *testing.T) {
+	deepPath := strings.Repeat("nested/", 40) + "result.go"
+	for _, test := range []struct {
+		name    string
+		pattern string
+		file    string
+		want    bool
+	}{
+		{"deep match", "**/**/**/result.go", deepPath, true},
+		{"deep mismatch", "**/**/**/missing.go", deepPath, false},
+		{"adjacent empty segments", "src/**/**/result.go", "src/result.go", true},
+		{"segment boundary", "src/**/**/result.go", "sources/result.go", false},
+		{"single star stays in one segment", "src/*/result.go", "src/one/two/result.go", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := selectionMatches(test.pattern, test.file); got != test.want {
+				t.Fatalf("selectionMatches(%q, %q) = %t, want %t", test.pattern, test.file, got, test.want)
+			}
+		})
+	}
+}
+
 func TestSelectionCommitUsesCopy(t *testing.T) {
 	w := newWorld(t, selectionSection(), nil)
 	w.repo.Commit("docs", map[string]string{"docs/new.md": "new\n"})
@@ -190,6 +212,31 @@ func TestChangedSelectionRejectsAmbiguousRange(t *testing.T) {
 	w.expectSaid("range must be BASE..REV")
 	w.expectStatus(w.jst("changed", "main..HEAD", "--base", "main"), statusRefused)
 	w.expectSaid("without --base or --commit")
+}
+
+func TestChangedSelectionUsesTheCommittedConfiguration(t *testing.T) {
+	w := newWorld(t, selectionSection(), nil)
+	w.repo.Commit("docs", map[string]string{"docs/new.md": "new\n"})
+	w.configure(scopesSection(), nil)
+	w.expectStatus(w.jst("plan", "changed", "main..HEAD"), 0)
+	if !strings.Contains(w.stdout.String(), "selection: scope=quick") {
+		t.Fatalf("range used the live configuration: %s", w.stdout.String())
+	}
+	w.expectStatus(w.jst("changed", "--base", "main", "--commit", "HEAD"), 0)
+	if got := w.lastRecord("run").Text("scope"); got != "quick" {
+		t.Fatalf("committed selection chose %q, want quick", got)
+	}
+}
+
+func TestChangedSelectionUsesTheCommittedDefaultRef(t *testing.T) {
+	w := newWorld(t, selectionSection(), nil)
+	w.repo.Git("update-ref", "refs/remotes/origin/main", w.repo.Git("rev-parse", "main"))
+	w.repo.Git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	w.repo.Commit("docs", map[string]string{"docs/new.md": "new\n"})
+	w.expectStatus(w.jst("changed", "--commit", "HEAD"), 0)
+	if !strings.Contains(w.stdout.String(), "selection: scope=quick base=refs/remotes/origin/main") {
+		t.Fatalf("copy lost origin/HEAD: %s", w.stdout.String())
+	}
 }
 
 func TestNamedChangedScopeWorksWithoutSelection(t *testing.T) {

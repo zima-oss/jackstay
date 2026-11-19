@@ -60,6 +60,9 @@ func TestGoJSONRefusesCacheAndIncompleteOrContradictoryEvidence(t *testing.T) {
 		{"cached replay", []string{goEvent("start", "one", "", ""), goEvent("run", "one", "TestCase", ""),
 			goEvent("pass", "one", "TestCase", ""), goEvent("output", "one", "", "ok  \tone\t(cached)\n"),
 			goEvent("pass", "one", "", "")}, Unjudged, "cache"},
+		{"cached replay with coverage summary", []string{goEvent("start", "one", "", ""), goEvent("run", "one", "TestCase", ""),
+			goEvent("pass", "one", "TestCase", ""), goEvent("output", "one", "", "ok  \tone\t0.013s\tcoverage: 81.0% of statements\t(cached)\n"),
+			goEvent("pass", "one", "", "")}, Unjudged, "cache"},
 		{"unfinished package", []string{goEvent("start", "one", "", ""), goEvent("run", "one", "TestCase", ""),
 			goEvent("pass", "one", "TestCase", "")}, Unjudged, "incomplete"},
 		{"unfinished test", []string{goEvent("start", "one", "", ""), goEvent("run", "one", "TestCase", ""),
@@ -88,6 +91,20 @@ func TestGoJSONRefusesCacheAndIncompleteOrContradictoryEvidence(t *testing.T) {
 				t.Fatalf("facts %+v, verdict %+v", facts, verdict)
 			}
 		})
+	}
+}
+
+func TestGoJSONAcceptsSlashWithinOneSubtestName(t *testing.T) {
+	facts := readGoEvents(
+		goEvent("start", "one", "", ""),
+		goEvent("run", "one", "TestParent", ""),
+		goEvent("run", "one", "TestParent/part/whole", ""),
+		goEvent("pass", "one", "TestParent/part/whole", ""),
+		goEvent("pass", "one", "TestParent", ""),
+		goEvent("pass", "one", "", ""),
+	)
+	if facts.Counts.Counted != 1 || len(facts.Unjudged) != 0 || Evaluate(facts, End{}, ScopePolicy).Outcome != Passed {
+		t.Fatalf("slash in subtest name: %+v", facts)
 	}
 }
 

@@ -123,6 +123,21 @@ func TestTheCopyHasTheCheckoutsRefs(t *testing.T) {
 	}
 }
 
+func TestTheCopyKeepsTheDefaultRemoteRef(t *testing.T) {
+	w := newCleanWorld(t)
+	w.repo.Git("update-ref", "refs/remotes/origin/main", w.repo.Git("rev-parse", "main"))
+	w.repo.Git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	runner := w.tester()
+	made, inside, err := runner.makeCopy(options{commit: "HEAD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer made.Remove()
+	if got := w.repo.GitIn(inside, "symbolic-ref", "refs/remotes/origin/HEAD"); got != "refs/remotes/origin/main" {
+		t.Fatalf("copy default remote ref = %q", got)
+	}
+}
+
 func TestACommitOnNoRefChecksOutThroughTheAlternates(t *testing.T) {
 	w := newCleanWorld(t)
 	w.repo.Write(map[string]string{"Sources/a.swift": "let a = 3\n"})

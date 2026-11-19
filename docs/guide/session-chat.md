@@ -17,6 +17,14 @@ Use `jst setup --chat` to inspect host integration steps. Register `jst chat ser
 as a local stdio MCP server in each agent host. Launch it from the intended checkout or use a
 local launcher that changes into that checkout before starting the process. Linked worktrees
 of the same Git repository share chat. Unrelated repositories have separate chat state.
+The namespace also follows the identity of the Git common directory. Replacing a repository
+at the same filesystem path starts a fresh namespace; its sessions cannot see the old inbox.
+State written by earlier Jackstay versions under a path-only namespace remains untouched in
+`~/.jackstay/.all/session-chat/` (or under `JACKSTAY_HOME/.all/session-chat/`), but is not
+imported automatically. If an earlier inbox must be recovered, keep a private copy of that
+directory and inspect it with the earlier Jackstay version against the original, trusted
+repository before deciding on a manual migration. Do not copy an old state file into a new
+repository's namespace: the old registrations do not prove which repository created them.
 
 For example, register the server from the project in Claude Code with
 `claude mcp add --scope local agent-chat -- jst chat serve --name reviewer`. In Codex, use

@@ -94,6 +94,18 @@ func TestBoardKeepsRepositoriesSeparateAndDoesNotWrite(t *testing.T) {
 	}
 }
 
+func TestConfiguredMissingCardsDirectoryIsEmpty(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	root := repository(t, t.TempDir(), "cards-missing")
+	if err := os.RemoveAll(filepath.Join(root, "cards")); err != nil {
+		t.Fatal(err)
+	}
+	board := Read(context.Background(), []string{root})
+	if board.Partial || len(board.Repositories) != 1 || board.Repositories[0].Cards.Status != "none" {
+		t.Fatalf("missing cards source: %+v", board)
+	}
+}
+
 func TestBoardSharesQueueAndChatAcrossLinkedWorktrees(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("JACKSTAY_HOME", home)

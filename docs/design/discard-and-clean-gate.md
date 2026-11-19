@@ -85,8 +85,11 @@ content or of the link's target (read with `Lstat`/`Readlink`, never followed). 
 ENTRY` puts the item back as now; and when the target exists, it replaces it **only** when the
 target's kind, executable bit and SHA-256 all equal `replaced` (nothing changed since the discard,
 and what is replaced is HEAD's version, which git still has). Otherwise it refuses ("is
-there already … use --to PATH"). Restore installs the saved version with a single rename, staging
-a checked copy beside the target first if the volumes differ. A failed rename leaves the current
+there already … use --to PATH"). To replace a known target, restore exchanges a checked copy
+with the destination, then verifies the displaced file. A concurrent change is put back where
+possible. Recovered versions remain available if that exchange cannot be reversed safely. An
+empty destination is installed with a no-replacement rename, staging a checked copy beside the
+target first if the volumes differ. A failed rename leaves the current
 file and the trash entry in place. A destination that appears while restoring to an empty path is
 left alone. A `staged` entry is restored as a working file, not staged again
 (the restore line says so).

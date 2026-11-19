@@ -37,7 +37,7 @@ func landing(t *testing.T, setups ...landSetup) (*harness, *scriptedGit) {
 	if setup.mergeErr != nil {
 		bench.hub.OnMerge(7, githubfake.Fail[githubapi.MergeResult](setup.mergeErr))
 	} else {
-		bench.hub.OnMerge(7, answer(githubapi.MergeResult{Merged: true}))
+		bench.hub.OnMerge(7, answer(githubapi.MergeResult{Merged: true, SHA: shaC}))
 		bench.hub.afterMerge = merged(7, "feat", shaA)
 	}
 	return bench, git
@@ -87,7 +87,7 @@ func TestExplicitPullRequestSelectionUsesItsActualBase(t *testing.T) {
 	selected := pull(8, "feat", shaA)
 	selected.Base = "release"
 	bench.hub.OnPullRequest(8, answer(selected))
-	bench.hub.OnMerge(8, answer(githubapi.MergeResult{Merged: true}))
+	bench.hub.OnMerge(8, answer(githubapi.MergeResult{Merged: true, SHA: shaC}))
 	landed := merged(8, "feat", shaA)
 	landed.Base = "release"
 	bench.hub.afterMerge = landed
@@ -400,6 +400,27 @@ func TestAMergeGitHubRefusesIsExit1(t *testing.T) {
 	contains(t, stderr, "Head branch was modified")
 	if len(git.callsStarting("push")) != 0 {
 		t.Fatal("the remote branch was touched")
+	}
+}
+
+func TestAmbiguousMergeKeepsRemoteBranchForReconciliation(t *testing.T) {
+	bench, git := landing(t, landSetup{mergeErr: errors.New("merge response lost")})
+	bench.hub.afterMerge = merged(7, "feat", shaA)
+	stdout, stderr := bench.expect(exitNotFine, "pr-land", "--no-wait")
+	lacks(t, stdout, "merged #7")
+	contains(t, stderr, "did not confirm this merge request")
+	if len(git.callsStarting("push")) != 0 {
+		t.Fatal("an unconfirmed merge deleted the remote branch")
+	}
+}
+
+func TestDifferentMergeCommitKeepsRemoteBranch(t *testing.T) {
+	bench, git := landing(t)
+	bench.hub.afterMerge.MergeCommitSHA = shaB
+	_, stderr := bench.expect(exitNotFine, "pr-land", "--no-wait")
+	contains(t, stderr, "does not match the confirmed merge result")
+	if len(git.callsStarting("push")) != 0 {
+		t.Fatal("a different merge deleted the remote branch")
 	}
 }
 
@@ -770,6 +791,19 @@ func TestTheTestMergeCommitsResultTakesPrecedence(t *testing.T) {
 	contains(t, stdout, "RED: 1 of 1")
 	if len(bench.hub.Merges()) != 0 {
 		t.Fatal("merged on the head's green over the merge commit's red")
+	}
+}
+
+func TestOptionalFailureOnTestMergeCommitStopsLanding(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.MergeCommitSHA = shaC
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{passed("gate")}})
+	onChecks(bench.hub, shaC, []githubapi.Check{passed("gate"), failed("lint", 0)})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	stdout, _ := bench.expect(exitNotFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "RED: 1 of")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged despite an optional failed check on the test merge commit")
 	}
 }
 

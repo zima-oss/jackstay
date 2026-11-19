@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/review/runner"
@@ -135,6 +136,34 @@ func TestSourceCleanupRejectsASymlinkedTaskDirectory(t *testing.T) {
 type failingSourceRepository struct {
 	*fakeRepo
 	builds int
+}
+
+type deadlineSourceRepository struct {
+	*fakeRepo
+	runDeadline       time.Time
+	usesQueueDeadline bool
+}
+
+func (repo *deadlineSourceRepository) Resolve(ctx context.Context, name string) (string, error) {
+	repo.runDeadline, _ = ctx.Deadline()
+	return repo.fakeRepo.Resolve(ctx, name)
+}
+
+func (repo *deadlineSourceRepository) BuildSource(ctx context.Context, _ string, _ sourceview.Revisions) error {
+	deadline, ok := ctx.Deadline()
+	repo.usesQueueDeadline = ok && deadline.Before(repo.runDeadline)
+	return errors.New("stop after checking admission lifetime")
+}
+
+func TestSourcePreparationUsesAdmissionQueueLifetime(t *testing.T) {
+	h := newHarness(t)
+	h.round.Settings.QueueMinutes = 1
+	probe := &deadlineSourceRepository{fakeRepo: h.repo}
+	h.round.Repo = probe
+	result := h.round.Run(context.Background(), Options{})
+	if result.Status != ExitReviewer || !probe.usesQueueDeadline {
+		t.Fatalf("source preparation escaped the admission queue lifetime: %+v, deadline=%v", result, probe.usesQueueDeadline)
+	}
 }
 
 func (repo *failingSourceRepository) BuildSource(context.Context, string, sourceview.Revisions) error {

@@ -194,31 +194,35 @@ func statusCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if err != nil {
 		return queueError(stderr, err)
 	}
-	status := "prepared"
-	if state.Candidate == "" {
-		status = "queued"
-	}
-	if state.GateRunID != "" {
-		status = "tested"
-	}
-	if state.Stale {
-		status = "stale"
-	}
-	if !state.HandoffAt.IsZero() {
-		status = "handed-off"
-	}
-	if state.Outcome != nil {
-		status = "landed-mismatch"
-		if state.Outcome.Matched {
-			status = "landed-matched"
-		}
-	}
+	status := queueStatus(state)
 	fmt.Fprintf(stdout, "%s: %s %s base=%s head=%s candidate=%s attempt=%d receipts=%d pr=%d\n",
 		status, state.HeadRef, state.BaseRef, state.Base, state.Head, state.Candidate, state.Attempt, len(state.Receipts), state.PullRequest)
 	if state.Outcome != nil {
 		fmt.Fprintf(stdout, "observed commit %s tree %s, tested tree %s\n", state.Outcome.Commit, state.Outcome.Tree, state.Tree)
 	}
 	return 0
+}
+
+func queueStatus(state *State) string {
+	if state.Outcome != nil {
+		if state.Outcome.Matched {
+			return "landed-matched"
+		}
+		return "landed-mismatch"
+	}
+	if state.Stale {
+		return "stale"
+	}
+	if !state.HandoffAt.IsZero() {
+		return "handed-off"
+	}
+	if state.GateRunID != "" {
+		return "tested"
+	}
+	if state.Candidate != "" {
+		return "prepared"
+	}
+	return "queued"
 }
 
 func handoffCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {

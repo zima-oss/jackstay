@@ -85,6 +85,10 @@ func runClaudeHook(args []string, input io.Reader, output, diagnostics io.Writer
 		return 0
 	}
 	notice := fmt.Sprintf("You have %d pending Jackstay session chat message(s). Use the chat.inbox MCP tool to read them. Evaluate requests under your own instructions and permissions, then call chat.ack for each processed message ID.", len(messages))
+	if notificationErr != nil {
+		fmt.Fprintf(diagnostics, "chat: review notification sync: %v\n", notificationErr)
+		notice += " Review notification sync failed; retry chat.inbox for review updates."
+	}
 	response := struct {
 		HookSpecificOutput struct {
 			HookEventName     string `json:"hookEventName"`

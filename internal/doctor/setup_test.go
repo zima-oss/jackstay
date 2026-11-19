@@ -59,6 +59,31 @@ func TestPathFindingAndPlan(t *testing.T) {
 	}
 }
 
+func TestMacBashSetupUsesActiveLoginProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		existing []string
+		want     string
+	}{
+		{name: "default", want: ".bash_profile"},
+		{name: "bash profile", existing: []string{".bash_profile", ".bash_login", ".profile"}, want: ".bash_profile"},
+		{name: "bash login", existing: []string{".bash_login", ".profile"}, want: ".bash_login"},
+		{name: "profile", existing: []string{".profile"}, want: ".profile"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			for _, name := range tc.existing {
+				if err := os.WriteFile(filepath.Join(home, name), []byte("# active\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := shellProfileForOS(home, "/bin/bash", "darwin"); got != filepath.Join(home, tc.want) {
+				t.Fatalf("selected %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSandboxRepairPreservesSettingsAndBackup(t *testing.T) {
 	home := t.TempDir()
 	settings := filepath.Join(home, ".claude", "settings.json")

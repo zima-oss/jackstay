@@ -1,8 +1,11 @@
 package sessionchat
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +17,7 @@ import (
 
 func TestMCPReviewSubmissionStatusAndAcknowledgedOutcome(t *testing.T) {
 	repository := testrepo.New(t, map[string]string{
-		"jackstay.json": `{"jackstay_schema":2,"project":"review-chat-test"}`,
+		"jackstay.json": `{"jackstay_schema":2,"project":"review-chat-test","chat":{"enabled":true,"max_pending":1,"claude_code":{"enabled":true}}}`,
 		"file.txt":      "first\n",
 	})
 	repository.Commit("change", map[string]string{"file.txt": "second\n"})
@@ -88,9 +91,36 @@ func TestMCPReviewSubmissionStatusAndAcknowledgedOutcome(t *testing.T) {
 	if response := otherServer.call([]byte(`{"name":"review.status","arguments":{"job_id":"` + jobID + `"}}`)).(map[string]any); response["isError"] != true {
 		t.Fatalf("unsubscribed session read status: %+v", response)
 	}
-	firstInbox := call(restarted, "chat.inbox", map[string]any{})["messages"].([]Message)
+	firstResult := call(restarted, "chat.inbox", map[string]any{})
+	firstInbox := firstResult["messages"].([]Message)
 	if len(firstInbox) != 1 || firstInbox[0].ID != ordinary.ID {
 		t.Fatalf("review sync displaced ordinary chat at capacity: %+v", firstInbox)
+	}
+	if warning, ok := firstResult["notification_error"].(string); !ok || !strings.Contains(warning, "capacity") {
+		t.Fatalf("partial inbox hid review sync failure: %+v", firstResult)
+	}
+	fake, socket := startFakeCodex(t)
+	bridge := CodexBridge{Store: store, SessionID: submitter.ID, SocketPath: socket, ThreadID: "thread-1"}
+	var notificationFailure reviewNotificationSyncError
+	if delivered, err := bridge.Deliver(context.Background()); delivered != 1 || !errors.As(err, &notificationFailure) || !strings.Contains(err.Error(), "capacity") {
+		t.Fatalf("bridge hid partial review sync failure: delivered %d, error %v", delivered, err)
+	}
+	if fake.steers != 1 {
+		t.Fatalf("bridge did not deliver ordinary message: %d", fake.steers)
+	}
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(repository.Root); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	t.Setenv("JACKSTAY_CHAT_SESSION_TOKEN", strings.Repeat("s", 32))
+	var hookOutput, hookDiagnostics bytes.Buffer
+	if status := runClaudeHook([]string{"--name", "submitter", "--event", "PostToolBatch"}, nil, &hookOutput, &hookDiagnostics); status != 0 ||
+		!strings.Contains(hookOutput.String(), "Review notification sync failed") || !strings.Contains(hookDiagnostics.String(), "capacity") {
+		t.Fatalf("hook hid partial review sync failure: exit %d, %s, %s", status, hookOutput.String(), hookDiagnostics.String())
 	}
 	call(restarted, "chat.ack", map[string]any{"message_id": ordinary.ID})
 	inbox := call(restarted, "chat.inbox", map[string]any{})["messages"].([]Message)

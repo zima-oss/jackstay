@@ -79,3 +79,25 @@ func TestReadOverviewRejectsFIFOWithoutOpeningWriter(t *testing.T) {
 		t.Fatal("FIFO was accepted as chat state")
 	}
 }
+
+func TestOverviewCountsRetainedReviewNotification(t *testing.T) {
+	store, _ := chatFixture(t)
+	recipient, err := store.Register("review recipient", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	message, _, err := store.notifyReview(recipient.ID, "Review completed", "review-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return time.Now().Add(96 * time.Hour) }
+	if overview, err := store.ReadOverview(); err != nil || overview.Sessions != 1 || overview.Pending != 1 {
+		t.Fatalf("retained notification overview: %+v, %v", overview, err)
+	}
+	if err := store.Acknowledge(recipient.ID, message.ID); err != nil {
+		t.Fatal(err)
+	}
+	if overview, err := store.ReadOverview(); err != nil || overview.Pending != 0 {
+		t.Fatalf("acknowledged notification overview: %+v, %v", overview, err)
+	}
+}

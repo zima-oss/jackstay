@@ -5,8 +5,6 @@ import (
 	"path"
 	"slices"
 	"strings"
-
-	"github.com/zima-oss/jackstay/internal/config"
 )
 
 type selectionMatch struct {
@@ -20,13 +18,6 @@ type selectionResult struct {
 	base      string
 	matches   []selectionMatch
 	unmatched []string
-}
-
-// hasSelection is checked before making a clean copy for a changed BASE..REV request.
-// A project without the new selection table keeps its existing named changed scope.
-func (base *tester) hasSelection() bool {
-	_, loaded, err := config.Load(base.here, needs)
-	return err == nil && has(loaded.Section("test"), "selection")
 }
 
 func selectionRange(word string) (string, string, error) {
@@ -112,19 +103,28 @@ func selectionPatternProblem(pattern string) string {
 func selectionMatches(pattern, file string) bool {
 	parts := strings.Split(pattern, "/")
 	pathParts := strings.Split(file, "/")
+	type position struct {
+		patternIndex int
+		pathIndex    int
+	}
+	results := make(map[position]bool)
 	var match func(int, int) bool
 	match = func(patternIndex, pathIndex int) bool {
+		current := position{patternIndex, pathIndex}
+		if result, found := results[current]; found {
+			return result
+		}
+		var matched bool
 		if patternIndex == len(parts) {
-			return pathIndex == len(pathParts)
+			matched = pathIndex == len(pathParts)
+		} else if parts[patternIndex] == "**" {
+			matched = match(patternIndex+1, pathIndex) || pathIndex < len(pathParts) && match(patternIndex, pathIndex+1)
+		} else if pathIndex < len(pathParts) {
+			segmentMatches, _ := path.Match(parts[patternIndex], pathParts[pathIndex])
+			matched = segmentMatches && match(patternIndex+1, pathIndex+1)
 		}
-		if parts[patternIndex] == "**" {
-			return match(patternIndex+1, pathIndex) || pathIndex < len(pathParts) && match(patternIndex, pathIndex+1)
-		}
-		if pathIndex >= len(pathParts) {
-			return false
-		}
-		matched, _ := path.Match(parts[patternIndex], pathParts[pathIndex])
-		return matched && match(patternIndex+1, pathIndex+1)
+		results[current] = matched
+		return matched
 	}
 	return match(0, 0)
 }

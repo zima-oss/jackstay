@@ -18,6 +18,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -281,13 +282,17 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 // scope runs `jst test <scope> …`.
 func (base *tester) scope(args []string) int {
 	name, rest, chosen, err := parse(args)
-	selectChanged := err == nil && name == "changed" && base.hasSelection()
-	if selectChanged && len(rest) > 0 {
-		if len(rest) != 1 || chosen.base != "" || chosen.commit != "" {
+	selectChanged := false
+	selectedRange := false
+	var rangeArgument string
+	if err == nil && name == "changed" && len(rest) == 1 && strings.Contains(rest[0], "..") {
+		if chosen.base != "" || chosen.commit != "" {
 			err = refused("`jst test changed BASE..REV` takes one range, without --base or --commit")
 		} else {
+			rangeArgument = rest[0]
 			chosen.base, chosen.commit, err = selectionRange(rest[0])
 			rest = nil
+			selectedRange = err == nil
 		}
 	}
 	if err == nil && name == "" {
@@ -326,6 +331,12 @@ func (base *tester) scope(args []string) int {
 	var proj *project
 	if err == nil {
 		proj, err = base.open(chosen)
+	}
+	if err == nil && name == "changed" {
+		selectChanged = has(proj.section, "selection")
+		if selectedRange && !selectChanged {
+			rest = []string{rangeArgument}
+		}
 	}
 	if err == nil && (name == "auto" || selectChanged) {
 		if len(rest) > 0 {

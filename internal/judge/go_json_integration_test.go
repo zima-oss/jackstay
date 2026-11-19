@@ -26,6 +26,7 @@ import "testing"
 
 func TestParent(t *testing.T) {
 	t.Run("child", func(t *testing.T) {})
+	t.Run("part/whole", func(t *testing.T) {})
 	t.Run("skipped", func(t *testing.T) { t.Skip("fixture skip") })
 }
 `
@@ -50,7 +51,7 @@ func TestParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	facts := reader.facts()
-	if facts.Counts.Counted != 1 || facts.Counts.Skipped != 1 || len(facts.Unjudged) != 0 ||
+	if facts.Counts.Counted != 2 || facts.Counts.Skipped != 1 || len(facts.Unjudged) != 0 ||
 		Evaluate(facts, End{}, ScopePolicy).Outcome != Passed {
 		t.Fatalf("real go test -json evidence: %+v", facts)
 	}

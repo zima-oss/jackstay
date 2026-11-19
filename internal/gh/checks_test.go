@@ -450,6 +450,41 @@ func TestACancelledCheckRejectsAnUnrelatedReplacement(t *testing.T) {
 	}
 }
 
+func TestACancelledCheckReplacementRequiresTheSamePullRequest(t *testing.T) {
+	for _, replacement := range []struct {
+		name  string
+		pulls []int
+		want  int
+	}{
+		{name: "same PR", pulls: []int{7}, want: exitFine},
+		{name: "different PR", pulls: []int{8}, want: exitNotFine},
+		{name: "unknown PR", want: exitNotFine},
+	} {
+		t.Run(replacement.name, func(t *testing.T) {
+			bench := newHarness(t, checkout(shaA))
+			onPull(bench.hub, pull(7, "feat", shaA))
+			onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4), checkRun("lint", "COMPLETED", "SUCCESS", 5)})
+			bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+				{ID: 5, WorkflowID: 1, HeadSHA: shaA, HeadBranch: "feat", Event: "pull_request", PullRequests: replacement.pulls},
+				{ID: 4, WorkflowID: 1, HeadSHA: shaA, HeadBranch: "feat", Event: "pull_request", PullRequests: []int{7, 8}},
+			}))
+			bench.expect(replacement.want, "ci-wait", "7", "--timeout", "30")
+		})
+	}
+}
+
+func TestCancelledOptionalReplacementRemainsOptional(t *testing.T) {
+	rows := []githubapi.Check{checkRun("gate", "COMPLETED", "SUCCESS", 0), checkRun("lint", "COMPLETED", "CANCELLED", 4)}
+	bench, _ := landing(t, landSetup{checks: rows})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
+		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
+	}))
+	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
+	contains(t, stdout, "not required: lint cancel (not waited for)")
+}
+
 func TestACancelledCheckRejectsAHeadThatMovesDuringRunLookup(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA), pull(7, "feat", shaA), pull(7, "feat", shaB))

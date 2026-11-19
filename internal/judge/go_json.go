@@ -137,7 +137,7 @@ func (reader *goJSONReader) packageEvent(pkg *goJSONPackage, event goJSONEvent) 
 		// go test replays test events from its cache. The package summary records
 		// that fact even though the replayed events look like a fresh execution.
 		fields := strings.Fields(event.Output)
-		if len(fields) == 3 && fields[0] == "ok" && fields[1] == event.Package && fields[2] == "(cached)" {
+		if len(fields) >= 3 && fields[0] == "ok" && fields[1] == event.Package && fields[len(fields)-1] == "(cached)" {
 			reader.cached = true
 		}
 	case "pass", "fail", "skip":
@@ -177,12 +177,14 @@ func (reader *goJSONReader) caseEvent(pkg *goJSONPackage, event goJSONEvent) {
 			return
 		}
 		if parent := strings.LastIndexByte(event.Test, '/'); parent >= 0 {
-			enclosing := pkg.active[event.Test[:parent]]
-			if enclosing == nil {
+			for parent >= 0 && pkg.active[event.Test[:parent]] == nil {
+				parent = strings.LastIndexByte(event.Test[:parent], '/')
+			}
+			if parent < 0 {
 				reader.problem = "a Go subtest has no running parent"
 				return
 			}
-			enclosing.child = true
+			pkg.active[event.Test[:parent]].child = true
 		}
 		selected := true
 		if reader.selection != nil {

@@ -18,7 +18,10 @@ archive against the release's `checksums.txt` before it unpacks or runs anything
 puts it there (for sh, bash or zsh; for another shell, the folder), then `jst doctor` and
 `jst adopt`. Installation writes within its prefix. With a terminal and a release that provides
 `jst setup`, the installer can also offer machine settings repairs before printing the next steps.
-The script runs only once curl has downloaded all of it and reads none of your own curl settings.
+The install step changes only its prefix. If both input and output are terminals, the optional
+interactive setup can apply the machine settings you choose after showing each change; see
+[plan machine setup](#plan-machine-setup). The script runs only once curl has downloaded all of
+it and reads none of your own curl settings.
 
 Two settings, given to the `sh` that runs the script, as in this line (in sh, bash or zsh):
 
@@ -184,7 +187,8 @@ installing a lower version than the live one is refused, and there is no rollbac
 
 Reinstall the same version and commit from a trusted binary to repair an installation whose
 launchers fail their probes. `jst install` verifies the replacement before it switches the live
-executable.
+executable. This also repairs a missing or non-executable live `jst` when the active version folder's
+markers and links still identify it as jackstay's.
 
 ## Remove
 

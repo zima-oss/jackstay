@@ -19,10 +19,11 @@ import (
 
 // fakeRepo answers a round's questions from maps; trees are plain folders.
 type fakeRepo struct {
-	commits map[string]string // name -> id
-	parents map[string]string
-	files   map[string]bool // "commit:path"
-	branch  string
+	commits  map[string]string // name -> id
+	parents  map[string]string
+	files    map[string]bool   // "commit:path"
+	contents map[string]string // optional "commit:path" content
+	branch   string
 }
 
 func newFakeRepo() *fakeRepo {
@@ -48,9 +49,74 @@ func (repo *fakeRepo) Dirty(context.Context) (bool, error)             { return 
 func (repo *fakeRepo) Subject(context.Context, string) (string, error) { return "subject", nil }
 func (repo *fakeRepo) Show(_ context.Context, commit, path string) ([]byte, error) {
 	if repo.files[commit+":"+path] {
+		if content, ok := repo.contents[commit+":"+path]; ok {
+			return []byte(content), nil
+		}
 		return []byte("text of " + path), nil
 	}
 	return nil, errors.New("missing")
+}
+
+func TestStandingReviewFilesRequireFreshAfterContentEdit(t *testing.T) {
+	for _, changedFile := range []string{"brief", "template"} {
+		t.Run(changedFile, func(t *testing.T) {
+			h := newHarness(t, Answer{Verdict: "approve"}, Answer{Verdict: "approve"})
+			h.round.Settings.Brief = "docs/review-brief.md"
+			h.round.Settings.Template = "docs/review-template.md"
+			h.repo.contents = map[string]string{}
+			for _, commit := range []string{"c1", "c2"} {
+				h.repo.files[commit+":"+h.round.Settings.Brief] = true
+				h.repo.files[commit+":"+h.round.Settings.Template] = true
+				h.repo.contents[commit+":"+h.round.Settings.Brief] = "standing brief"
+				h.repo.contents[commit+":"+h.round.Settings.Template] = "{{.Subject}}"
+			}
+			path := h.round.Settings.Brief
+			if changedFile == "template" {
+				path = h.round.Settings.Template
+			}
+			h.repo.contents["c2:"+path] += " edited"
+			first := h.round.Run(context.Background(), Options{})
+			if first.Status != ExitClear || first.Record == nil || first.Record.ContentPolicy == "" {
+				t.Fatalf("first round did not pin standing files: %+v", first)
+			}
+			changed := h.round.Run(context.Background(), Options{Revision: "c2"})
+			if changed.Status != ExitUsage || !strings.Contains(changed.Next, "--fresh") || len(h.reviewer.prompts) != 1 {
+				t.Fatalf("changed standing content continued delta chain: %+v", changed)
+			}
+			fresh := h.round.Run(context.Background(), Options{Revision: "c0..c2", Fresh: true})
+			if fresh.Status != ExitClear || fresh.Record == nil || fresh.Record.Follows != 0 || fresh.Record.ContentPolicy == first.Record.ContentPolicy {
+				t.Fatalf("fresh round did not pin new standing content: %+v", fresh)
+			}
+		})
+	}
+}
+
+func TestStandingReviewFilesAllowUnchangedDeltaAndRejectUnpinnedLegacy(t *testing.T) {
+	h := newHarness(t, Answer{Verdict: "approve"}, Answer{Verdict: "approve"})
+	h.round.Settings.Brief = "docs/review-brief.md"
+	for _, commit := range []string{"c1", "c2"} {
+		h.repo.files[commit+":"+h.round.Settings.Brief] = true
+	}
+	first := h.round.Run(context.Background(), Options{})
+	if first.Status != ExitClear || first.Record == nil {
+		t.Fatalf("first round: %+v", first)
+	}
+	second := h.round.Run(context.Background(), Options{Revision: "c2"})
+	if second.Status != ExitClear || second.Record == nil || second.Record.Follows != first.Record.Round || second.Record.ContentPolicy != first.Record.ContentPolicy {
+		t.Fatalf("unchanged brief did not continue chain: %+v", second)
+	}
+
+	legacy := newHarness(t)
+	legacy.round.Settings.Brief = h.round.Settings.Brief
+	legacy.repo.files["c2:"+legacy.round.Settings.Brief] = true
+	legacyRecord := RoundRecord{Task: "feature/x", Round: 1, Attempt: 1, Chain: 1, Base: "c0", Commit: "c1",
+		Policy: legacy.round.Settings.policyID(), Runs: []ReviewerRun{{Reviewer: "codex", Outcome: codex.OutcomeDone}}}
+	if err := writeJSON(filepath.Join(legacy.round.Store.TaskPath("feature/x"), "round-1", RecordName), legacyRecord); err != nil {
+		t.Fatal(err)
+	}
+	if result := legacy.round.Run(context.Background(), Options{Revision: "c2"}); result.Status != ExitUsage || !strings.Contains(result.Next, "--fresh") {
+		t.Fatalf("legacy round without content digest continued chain: %+v", result)
+	}
 }
 func (repo *fakeRepo) Exists(_ context.Context, commit, path string) bool {
 	return repo.files[commit+":"+path]

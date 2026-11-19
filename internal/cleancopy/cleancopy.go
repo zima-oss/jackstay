@@ -148,6 +148,11 @@ func Make(request Request) (*Copy, string, error) {
 		"+refs/heads/*:refs/heads/*", "+refs/remotes/*:refs/remotes/*", "+refs/tags/*:refs/tags/*"); err != nil {
 		return fail("git fetch of the checkout's refs", err)
 	}
+	if target, err := git(top, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); err == nil {
+		if _, err := git(made.Tree, "symbolic-ref", "refs/remotes/origin/HEAD", target); err != nil {
+			return fail("the default remote ref", err)
+		}
+	}
 	if _, err := git(made.Tree, "-c", "advice.detachedHead=false", "checkout", "--quiet", "--detach", commit); err != nil {
 		return fail("git checkout", err)
 	}
