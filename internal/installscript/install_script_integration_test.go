@@ -458,6 +458,33 @@ func TestNoPathLineWhenTheInstallIsOnPath(t *testing.T) {
 	}
 }
 
+func TestInstalledSetupRunsOnlyWithATerminal(t *testing.T) {
+	terminal, err := exec.LookPath("script")
+	if err != nil {
+		t.Skip("script is unavailable")
+	}
+	fake := newRelease(t, "v1.2.4")
+	fake.publish(t, "v1.2.4", "")
+	paths := pathWithout(t)
+	direct := runScript(t, "sh", fake, paths)
+	if direct.exit != 0 || !strings.HasPrefix(direct.record, "install\n") {
+		t.Fatalf("nonterminal install ran setup: exit %d, arguments %q", direct.exit, direct.record)
+	}
+	installer := installScript(t)
+	var command *exec.Cmd
+	if runtime.GOOS == "darwin" {
+		command = exec.Command(terminal, "-q", "/dev/null", "sh", installer)
+	} else {
+		quoted := "'" + strings.ReplaceAll(installer, "'", "'\\''") + "'"
+		command = exec.Command(terminal, "-q", "-e", "-c", "sh "+quoted, "/dev/null")
+	}
+	interactive := runCommand(t, command, fake, paths)
+	if want := "setup\n--prefix\n" + interactive.prefix + "\n"; interactive.exit != 0 || interactive.record != want {
+		t.Fatalf("terminal install: exit %d, arguments %q, want %q\n%s",
+			interactive.exit, interactive.record, want, interactive.stderr)
+	}
+}
+
 func TestAVersionAskedForIsTheOneInstalled(t *testing.T) {
 	for _, version := range []string{"1.2.3", "v1.2.3"} {
 		fake := newRelease(t, "v1.2.4")
@@ -485,6 +512,84 @@ func TestAnArchiveThatDoesNotMatchItsChecksumIsNeverRun(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestAnIndependentDigestIsCheckedBeforeTheArchiveRuns(t *testing.T) {
+	fake := newRelease(t, "v1.2.3")
+	archive := fake.publish(t, "v1.2.3", "")
+	contents, _ := fake.file("v1.2.3/" + archive)
+	digest := sha256.Sum256(contents)
+	for _, check := range []struct {
+		name   string
+		pin    string
+		result int
+		want   string
+	}{
+		{"valid", hex.EncodeToString(digest[:]), 0, ""},
+		{"changed", strings.Repeat("0", 64), 1, "does not match the independently supplied"},
+		{"malformed", "not-a-digest", 1, "must be a 64-digit lowercase"},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			result := runScript(t, "sh", fake, os.Getenv("PATH"), "JACKSTAY_SHA256="+check.pin)
+			if result.exit != check.result || (check.result != 0 && result.record != "") || !strings.Contains(result.stderr, check.want) {
+				t.Fatalf("exit %d, jst ran: %q\n%s", result.exit, result.record, result.stderr)
+			}
+		})
+	}
+}
+
+func TestStrictAttestationChecksIdentityAndNeverDowngrades(t *testing.T) {
+	fake := newRelease(t, "v1.2.3")
+	archive := fake.publish(t, "v1.2.3", "")
+	contents, _ := fake.file("v1.2.3/" + archive)
+	digest := sha256.Sum256(contents)
+	folder := t.TempDir()
+	gh := filepath.Join(folder, "gh")
+	// A fake verifier checks the identity flags. It never contacts GitHub or accepts an
+	// arbitrary workflow, repository or tag.
+	script := `#!/bin/sh
+test "$1 $2" = 'attestation verify' || exit 1
+test "$4 $5" = '--repo zima-oss/jackstay' || exit 1
+test "$6 $7" = '--signer-workflow zima-oss/jackstay/.github/workflows/release.yml' || exit 1
+test "$8 $9" = '--source-ref refs/tags/v1.2.3' || exit 1
+exit "${FAKE_GH_EXIT:-0}"
+`
+	if err := os.WriteFile(gh, []byte(script), 0o755); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	realTar, err := exec.LookPath("tar")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tar := "#!/bin/sh\nprintf x > \"$TAR_RECORD\"\nexec " + strconv.Quote(realTar) + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(folder, "tar"), []byte(tar), 0o755); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	path := folder + string(os.PathListSeparator) + pathWithout(t)
+	for _, check := range []struct {
+		name, verifierExit, pin string
+		wantExit                int
+	}{
+		{"verified", "0", "", 0},
+		{"refused", "1", "", 1},
+		{"pin_does_not_bypass_verifier", "1", hex.EncodeToString(digest[:]), 1},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			tarRecord := filepath.Join(t.TempDir(), "tar-record")
+			result := runScript(t, "sh", fake, path, "JACKSTAY_PROVENANCE=attestation", "JACKSTAY_SHA256="+check.pin, "FAKE_GH_EXIT="+check.verifierExit, "TAR_RECORD="+tarRecord)
+			if result.exit != check.wantExit || (check.wantExit != 0 && result.record != "") {
+				t.Fatalf("exit %d, jst ran: %q\n%s", result.exit, result.record, result.stderr)
+			}
+			_, tarError := os.Stat(tarRecord)
+			if check.wantExit == 0 && tarError != nil || check.wantExit != 0 && !os.IsNotExist(tarError) {
+				t.Fatalf("tar ran unexpectedly or was skipped: %v\n%s", tarError, result.stderr)
+			}
+		})
+	}
+	result := runScript(t, "sh", fake, pathWithout(t), "JACKSTAY_PROVENANCE=attestation")
+	if result.exit != 1 || result.record != "" || !strings.Contains(result.stderr, "gh is needed") {
+		t.Fatalf("missing verifier: exit %d, jst ran: %q\n%s", result.exit, result.record, result.stderr)
 	}
 }
 

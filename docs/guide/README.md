@@ -12,6 +12,9 @@ your machine.
 2. [Install](install.md) covers the release script, archive and source install, updates and removal.
 3. [Adopting a project](adopt.md) explains the generated files, profiles and safe upgrades.
 
+Maintainers preparing another install channel can [generate a Homebrew tap formula](homebrew-tap.md)
+from a verified release.
+
 ## Protect the work
 
 - [The guard, discard and trash](guard.md) covers the commands that are intercepted and where

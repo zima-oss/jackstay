@@ -1,6 +1,6 @@
 #!/bin/sh
 # jackstay's quick install (W-076): downloads a release of jst for this machine from GitHub,
-# checks the archive against the release's checksums.txt before anything is unpacked or run, and
+# checks the archive's checksum and any configured provenance before anything is unpacked or run, and
 # lets the binary install itself with `jst install` (under ~/.local by default). It never uses sudo.
 #
 #   script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && sh -c "$script"
@@ -10,6 +10,10 @@
 #   JACKSTAY_PREFIX    where `jst install` puts it (default: ~/.local; the binary is PREFIX/bin/jst)
 #   JACKSTAY_RELEASES  the releases page the archives come from
 #                      (default: https://github.com/zima-oss/jackstay/releases)
+#   JACKSTAY_SHA256    independently trusted archive digest (64 lowercase hex digits); verifies
+#                      downloaded legacy/current archives without gh; download still needs network
+#   JACKSTAY_PROVENANCE  attestation: require GitHub CLI verification; checksum: integrity only
+#                        (default for releases made before attestations were published)
 #
 # Exit status: 0 installed; 1 nothing was installed (the message says why); otherwise the status of a
 # `jst install` that failed or refused (its own message says what is left).
@@ -191,6 +195,32 @@ main() {
   [ "$expected" = "$actual" ] ||
     fail "$archive does not match its line in checksums.txt (expected $expected, got $actual)"
 
+  # checksums.txt comes from the same release as the archive. A pin is a separate trust source.
+  if [ -n "${JACKSTAY_SHA256:-}" ]; then
+    case $JACKSTAY_SHA256 in
+      *[!0-9a-f]* | '') fail "JACKSTAY_SHA256 must be a 64-digit lowercase SHA-256 hex digest" ;;
+    esac
+    [ "${#JACKSTAY_SHA256}" -eq 64 ] || fail "JACKSTAY_SHA256 must be a 64-digit lowercase SHA-256 hex digest"
+    [ "$JACKSTAY_SHA256" = "$actual" ] ||
+      fail "$archive does not match the independently supplied JACKSTAY_SHA256 digest"
+  fi
+  case ${JACKSTAY_PROVENANCE:-checksum} in
+    checksum)
+      [ -n "${JACKSTAY_SHA256:-}" ] ||
+        say "warning: $archive is checked for integrity only; supply JACKSTAY_SHA256 or JACKSTAY_PROVENANCE=attestation to verify provenance"
+      ;;
+    attestation)
+      need gh
+      # The public repo, release workflow and version tag must all match the signed certificate.
+      # Silence gh output: an authentication error can include local credential context.
+      gh attestation verify "$work/$archive" --repo zima-oss/jackstay \
+        --signer-workflow zima-oss/jackstay/.github/workflows/release.yml \
+        --source-ref "refs/tags/v$version" >/dev/null 2>&1 ||
+        fail "$archive has no valid attestation from zima-oss/jackstay release.yml at v$version"
+      ;;
+    *) fail "JACKSTAY_PROVENANCE must be checksum or attestation" ;;
+  esac
+
   mkdir "$work/unpacked"
   tar -xzf "$work/$archive" -C "$work/unpacked" || fail "could not unpack $archive"
   if [ ! -f "$work/unpacked/jst" ] || [ ! -x "$work/unpacked/jst" ]; then
@@ -207,6 +237,13 @@ main() {
   fi
 
   say "jackstay $version is installed: $prefix/bin/jst"
+  if [ -t 0 ] && [ -t 1 ] &&
+     JACKSTAY_TELEMETRY=off "$prefix/bin/jst" setup --help >/dev/null 2>&1; then
+    say "starting machine setup; each proposed change needs your choice"
+    if ! JACKSTAY_TELEMETRY=off "$prefix/bin/jst" setup --prefix "$prefix"; then
+      say "machine setup stopped; the installation is ready"
+    fi
+  fi
   next_steps "$prefix/bin"
 }
 

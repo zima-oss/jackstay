@@ -1,0 +1,54 @@
+name: vitest-producer
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/vitest-producer.yml
+      - cmd/jst/**
+      - internal/config/**
+      - internal/judge/**
+      - internal/testing/**
+      - internal/testreport/**
+      - go.mod
+      - go.sum
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/vitest-producer.yml
+      - cmd/jst/**
+      - internal/config/**
+      - internal/judge/**
+      - internal/testing/**
+      - internal/testreport/**
+      - go.mod
+      - go.sum
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  vitest-junit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Go from go.mod
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Node for the pinned Vitest producer
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.11.1
+          package-manager-cache: false
+      - name: Install Vitest in a disposable directory
+        run: npm install --prefix "$RUNNER_TEMP/vitest-producer" --no-save --ignore-scripts --no-audit --no-fund vitest@5.1.1
+      - name: Verify real JUnit reports
+        env:
+          VITEST_ROOT: ${{ runner.temp }}/vitest-producer
+        run: go test -tags integration ./internal/judge -run '^TestVitestJUnitProducer$' -count=1

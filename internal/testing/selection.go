@@ -1,0 +1,240 @@
+package scopes
+
+import (
+	"fmt"
+	"path"
+	"slices"
+	"strings"
+
+	"github.com/zima-oss/jackstay/internal/config"
+)
+
+type selectionMatch struct {
+	pattern string
+	scope   string
+	paths   []string
+}
+
+type selectionResult struct {
+	scope     string
+	base      string
+	matches   []selectionMatch
+	unmatched []string
+}
+
+// hasSelection is checked before making a clean copy for a changed BASE..REV request.
+// A project without the new selection table keeps its existing named changed scope.
+func (base *tester) hasSelection() bool {
+	_, loaded, err := config.Load(base.here, needs)
+	return err == nil && has(loaded.Section("test"), "selection")
+}
+
+func selectionRange(word string) (string, string, error) {
+	base, revision, found := strings.Cut(word, "..")
+	if !found || base == "" || revision == "" || strings.Contains(revision, "..") || strings.HasPrefix(revision, ".") {
+		return "", "", refused("range must be BASE..REV (two commit refs)")
+	}
+	return base, revision, nil
+}
+
+// selectionProblems checks a total, unambiguous ordering. A linear order cannot contain a cycle.
+func selectionProblems(section map[string]any) []string {
+	raw, present := section["selection"]
+	if !present {
+		return nil
+	}
+	selection := objectOf(raw)
+	order := textsOf(selection["order"])
+	rules := items(selection["rules"])
+	scopes := objectOf(section["scopes"])
+	var problems []string
+	if len(order) == 0 || order[len(order)-1] != "gate" {
+		problems = append(problems, "`test.selection.order` must end with `gate` (least to most strict)")
+	}
+	if !has(scopes, "gate") {
+		problems = append(problems, "`test.selection` requires a declared `gate` scope")
+	}
+	seen := map[string]bool{}
+	for _, name := range order {
+		if seen[name] {
+			problems = append(problems, fmt.Sprintf("`test.selection.order` repeats `%s`; strictness would be ambiguous", name))
+		}
+		seen[name] = true
+		if !has(scopes, name) {
+			problems = append(problems, fmt.Sprintf("`test.selection.order` names undeclared scope `%s`", name))
+		}
+		if name == "focused" {
+			problems = append(problems, "`test.selection.order` cannot use `focused`: it needs test names")
+		}
+	}
+	if len(rules) == 0 {
+		problems = append(problems, "`test.selection.rules` needs at least one path rule")
+	}
+	for index, rawRule := range rules {
+		rule := objectOf(rawRule)
+		pattern, name := textOf(rule["glob"]), textOf(rule["scope"])
+		if problem := selectionPatternProblem(pattern); problem != "" {
+			problems = append(problems, fmt.Sprintf("`test.selection.rules[%d].glob`: %s", index, problem))
+		}
+		if !seen[name] {
+			problems = append(problems, fmt.Sprintf("`test.selection.rules[%d].scope` names `%s` outside `test.selection.order`", index, name))
+		}
+	}
+	return problems
+}
+
+func selectionPatternProblem(pattern string) string {
+	if pattern == "" || strings.HasPrefix(pattern, "/") || strings.HasSuffix(pattern, "/") {
+		return "use a nonempty repository-relative path glob"
+	}
+	for _, part := range strings.Split(pattern, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "empty, `.` and `..` path segments are not allowed"
+		}
+		if part == "**" {
+			continue
+		}
+		if strings.Contains(part, "**") {
+			return "`**` must be a whole path segment"
+		}
+		if _, err := path.Match(part, "file"); err != nil {
+			return err.Error()
+		}
+	}
+	return ""
+}
+
+// selectionMatches treats ** as zero or more complete path segments. Other wildcards stay
+// within one segment, so docs/* does not silently cover docs/nested/file.
+func selectionMatches(pattern, file string) bool {
+	parts := strings.Split(pattern, "/")
+	pathParts := strings.Split(file, "/")
+	var match func(int, int) bool
+	match = func(patternIndex, pathIndex int) bool {
+		if patternIndex == len(parts) {
+			return pathIndex == len(pathParts)
+		}
+		if parts[patternIndex] == "**" {
+			return match(patternIndex+1, pathIndex) || pathIndex < len(pathParts) && match(patternIndex, pathIndex+1)
+		}
+		if pathIndex >= len(pathParts) {
+			return false
+		}
+		matched, _ := path.Match(parts[patternIndex], pathParts[pathIndex])
+		return matched && match(patternIndex+1, pathIndex+1)
+	}
+	return match(0, 0)
+}
+
+func (proj *project) selectScope() (selectionResult, error) {
+	selection := objectOf(proj.section["selection"])
+	if selection == nil {
+		return selectionResult{}, refused("`jst test auto` needs `test.selection` in jackstay.json")
+	}
+	base := proj.options.base
+	if base == "" {
+		defaultRef, err := proj.git(proj.ctx, proj.root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+		if err != nil {
+			return selectionResult{}, refused("no known default ref; use `--base REF` for `jst test auto`")
+		}
+		base = strings.TrimSpace(string(defaultRef))
+	}
+	if strings.HasPrefix(base, "-") || strings.Contains(base, "..") {
+		return selectionResult{}, refused("--base must name one commit, without a range or option prefix")
+	}
+	resolved, err := proj.git(proj.ctx, proj.root, "rev-parse", "--verify", base+"^{commit}")
+	if err != nil {
+		return selectionResult{}, refused("base `" + base + "` is not a commit")
+	}
+	commit := strings.TrimSpace(string(resolved))
+	status, err := proj.git(proj.ctx, proj.root, "diff", "--name-status", "-z", "--find-renames", commit+"...HEAD", "--")
+	if err != nil {
+		return selectionResult{}, refused("cannot compare base `" + base + "` with HEAD: " + err.Error())
+	}
+	paths, err := changedPaths(status)
+	if err != nil {
+		return selectionResult{}, refused("cannot read changed paths: " + err.Error())
+	}
+	result := selectionResult{scope: "gate", base: base}
+	order := textsOf(selection["order"])
+	chosenRank := -1
+	for _, rawRule := range items(selection["rules"]) {
+		rule := objectOf(rawRule)
+		matched := selectionMatch{pattern: textOf(rule["glob"]), scope: textOf(rule["scope"])}
+		for _, file := range paths {
+			if selectionMatches(matched.pattern, file) {
+				matched.paths = append(matched.paths, file)
+			}
+		}
+		if len(matched.paths) > 0 {
+			result.matches = append(result.matches, matched)
+			rank := slices.Index(order, matched.scope)
+			if rank > chosenRank {
+				result.scope, chosenRank = matched.scope, rank
+			}
+		}
+	}
+	for _, file := range paths {
+		matched := false
+		for _, rule := range result.matches {
+			if slices.Contains(rule.paths, file) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			result.unmatched = append(result.unmatched, file)
+		}
+	}
+	if len(paths) == 0 || len(result.unmatched) > 0 {
+		result.scope = "gate"
+	}
+	return result, nil
+}
+
+// changedPaths reads Git's -z name-status stream, including both paths of copies and renames.
+func changedPaths(status []byte) ([]string, error) {
+	if len(status) == 0 {
+		return nil, nil
+	}
+	if status[len(status)-1] != 0 {
+		return nil, fmt.Errorf("incomplete NUL-delimited Git status")
+	}
+	fields := strings.Split(string(status[:len(status)-1]), "\x00")
+	var paths []string
+	for index := 0; index < len(fields); {
+		change := fields[index]
+		index++
+		count := 1
+		if strings.HasPrefix(change, "R") || strings.HasPrefix(change, "C") {
+			count = 2
+		}
+		if change == "" || index+count > len(fields) {
+			return nil, fmt.Errorf("incomplete Git name-status entry")
+		}
+		for _, file := range fields[index : index+count] {
+			if file == "" {
+				return nil, fmt.Errorf("empty path in Git name-status entry")
+			}
+			paths = append(paths, file)
+		}
+		index += count
+	}
+	return paths, nil
+}
+
+func (proj *project) printSelection(choice selectionResult) {
+	fmt.Fprintf(proj.stdout, "selection: scope=%s base=%s\n", choice.scope, choice.base)
+	for _, rule := range choice.matches {
+		fmt.Fprintf(proj.stdout, "  rule: %s -> %s (%s)\n", rule.pattern, rule.scope, joinComma(rule.paths))
+	}
+	for _, file := range choice.unmatched {
+		fmt.Fprintf(proj.stdout, "  unmatched: %s -> gate\n", file)
+	}
+	if len(choice.matches) == 0 && len(choice.unmatched) == 0 {
+		fmt.Fprintln(proj.stdout, "  empty committed range -> gate")
+	}
+	if when := textOf(objectOf(objectOf(proj.section["scopes"])[choice.scope])["when"]); when != "" {
+		fmt.Fprintf(proj.stdout, "  when: %s\n", when)
+	}
+}

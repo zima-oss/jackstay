@@ -103,9 +103,7 @@ func exportEvidence(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	evidence := portableEvidence{Schema: evidenceSchema, Jackstay: receipt.Jackstay, Head: receipt.Head,
 		Key: receipt.Key, Manifest: receipt.Material.Manifest, Outcome: receipt.Outcome,
 		Count: receipt.EvidenceCount, Ended: fromEpoch(receipt.EndedEpoch).UTC().Format(time.RFC3339Nano)}
-	material, err := json.Marshal(receipt.Material)
-	if err != nil || sha256Text(material) != receipt.Key || receipt.Project != projectName ||
-		receipt.Material.Project != projectName || (receipt.Material.Head != "" && receipt.Material.Head != receipt.Head) || !evidence.valid() {
+	if !receipt.matchesMaterial() || receipt.Project != projectName || !evidence.valid() {
 		return evidenceError(stderr, fmt.Errorf("the receipt has inconsistent key material or no counted pass tied to a checkout"))
 	}
 	data, err := json.Marshal(evidence)

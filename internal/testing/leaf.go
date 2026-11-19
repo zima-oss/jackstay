@@ -35,6 +35,7 @@ type result struct {
 	seconds float64
 	runID   string
 	why     string
+	counted int
 	// signalled says jackstay was asked to stop: the caller ends at once with status, writing nothing more.
 	signalled bool
 }

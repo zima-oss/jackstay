@@ -14,6 +14,25 @@ import (
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
+// ReadCurrent checks a stored pass against the current computation of its receipt key.
+// Report paths are per-attempt transport. The saved material and counted verdict suffice.
+func (store Store) ReadCurrent(key Key) (*Receipt, string) {
+	receipt, why := store.Read(key.Value)
+	if receipt == nil {
+		return nil, why
+	}
+	if !receipt.matchesMaterial() || receipt.EvidenceCount <= 0 || receipt.Project != key.Material.Project {
+		return nil, "the receipt has inconsistent key material or no counted pass"
+	}
+	return receipt, ""
+}
+
+func (receipt Receipt) matchesMaterial() bool {
+	data, err := json.Marshal(receipt.Material)
+	return err == nil && sha256Text(data) == receipt.Key && receipt.Material.Project == receipt.Project &&
+		(receipt.Material.Head == "" || receipt.Material.Head == receipt.Head)
+}
+
 // Receipt is a stored pass of a key (schema 3, Go's own).
 type Receipt struct {
 	Schema        int      `json:"schema"`

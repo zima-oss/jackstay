@@ -1,0 +1,47 @@
+name: Bug report
+description: Report behavior that does not match the documented command contract
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: "For a security vulnerability, use the private reporting path in [SECURITY.md](https://github.com/zima-oss/jackstay/blob/main/SECURITY.md)."
+  - type: textarea
+    id: behavior
+    attributes:
+      label: What happened?
+      description: Include the exact command, outcome, and error text. Remove credentials and private paths.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: Link to the command help or guide if possible.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Use a small project or a made-up fixture where possible.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: jackstay version
+      description: Output of `jst version`.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: macOS or Linux, architecture, and shell if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Relevant diagnostics
+      description: Include `jst doctor`, `jst test last`, or a trace ID when applicable. Redact secrets.

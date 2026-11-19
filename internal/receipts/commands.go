@@ -179,7 +179,7 @@ func (base *tester) showKey(argv []string) int {
 	why := "the receipt store cannot be found"
 	if store, storeErr := OpenStore(run.project, run.section, base.clock); storeErr == nil {
 		var receipt *Receipt
-		if receipt, why = store.Read(key.Value); receipt != nil {
+		if receipt, why = store.ReadCurrent(key); receipt != nil {
 			receiptPath = receipt.Path
 		}
 	}

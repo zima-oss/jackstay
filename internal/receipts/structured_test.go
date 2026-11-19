@@ -1,6 +1,7 @@
 package receipts
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -40,6 +41,7 @@ func TestDirectStructuredReportsRecordAndKeyTheEvidence(t *testing.T) {
 	if record := world.lastRecord(EventRun); record.Text("judge") != "junit" || record["evidence_count"] != 1.0 || record["stored"] != true {
 		t.Fatalf("JUnit record %v", record)
 	}
+	junitKey := world.lastRecord(EventRun).Text("key")
 	if _, err := os.Stat(reportPath); !os.IsNotExist(err) {
 		t.Fatalf("report path survived the attempt: %q (%v)", reportPath, err)
 	}
@@ -47,6 +49,40 @@ func TestDirectStructuredReportsRecordAndKeyTheEvidence(t *testing.T) {
 	if status := world.test("--", "pytest-wrapper"); status != 0 || world.fake.calls != 0 {
 		t.Fatalf("structured receipt not reused: status %d, calls %d, %s", status, world.fake.calls, world.stderr.String())
 	}
+	// Simulate the same configuration under a previous decoder version. The file
+	// remains readable under its own key, without satisfying the current command.
+	store, err := OpenStore("demo", nil, world.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, why := store.Read(junitKey)
+	if previous == nil {
+		t.Fatal(why)
+	}
+	previous.Material.Rules.Adapter["version"] = 0
+	material, err := json.Marshal(previous.Material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous.Key = sha256Text(material)
+	if previous.Key == junitKey {
+		t.Fatal("the adapter version does not change the receipt key")
+	}
+	if _, err := store.Write(*previous); err != nil {
+		t.Fatal(err)
+	}
+	if historical, why := store.Read(previous.Key); historical == nil || !historical.matchesMaterial() {
+		t.Fatalf("older receipt is no longer readable: %s", why)
+	}
+	// A stale receipt misplaced in the current slot also fails the content check.
+	previous.Key = junitKey
+	if _, err := store.Write(*previous); err != nil {
+		t.Fatal(err)
+	}
+	if status := world.test("--", "pytest-wrapper"); status != StatusUnjudged || world.fake.calls != 1 {
+		t.Fatalf("older adapter was reused: status %d, calls %d, %s", status, world.fake.calls, world.stderr.String())
+	}
+	world.fake = &fakeRun{}
 	world.repo.Write(map[string]string{"jackstay.json": strings.Replace(settings, "report.xml", "new.xml", 1)})
 	if status := world.test("--", "pytest-wrapper"); status != StatusUnjudged || world.fake.calls != 1 {
 		t.Fatalf("changed config reused stale evidence: status %d, calls %d, %s", status, world.fake.calls, world.stderr.String())

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/gitcli"
+	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/receipts"
 )
 
@@ -24,7 +25,7 @@ func (run *leafRun) refusal() string {
 		return "the command is not listed in receipts.commands"
 	case run.entry["reuse"] != true:
 		return "the command is not opted in (reuse is not true)"
-	case textOf(run.entry["evidence"]) == "":
+	case textOf(run.entry["evidence"]) == "" && judge.AdapterVersion(judge.Kind(run.leaf.judge)) == 0:
 		return "the command has no evidence pattern in receipts.commands"
 	}
 	if _, written := run.receipts["env"].([]any); !written {
@@ -53,7 +54,7 @@ func (run *leafRun) lookUp(key receipts.Key, underLock bool) bool {
 	var receipt *receipts.Receipt
 	whyNot := "the receipt store cannot be found"
 	if run.storeOK {
-		receipt, whyNot = run.store.Read(key.Value)
+		receipt, whyNot = run.store.ReadCurrent(key)
 	}
 	refusal := run.refusal()
 	if refusal != "" || receipt == nil {

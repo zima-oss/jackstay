@@ -10,6 +10,7 @@ This is an implementation plan. The names and configuration examples below are p
 The first implementation uses the [compatibility baseline](testing-compatibility.md), a shared
 verdict, bounded per-attempt report transport and opt-in Go JSON and JUnit judges.
 See the [implemented contract](testing.md#21-structured-evidence) for current configuration.
+Receipt lookup and gate resume validate the saved evidence under the current adapter version.
 
 ## What the current code does
 

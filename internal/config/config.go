@@ -310,6 +310,7 @@ var Table = object(
 	// docs/design/observability.md, section 10: the journal's retention and how commands are kept.
 	"telemetry", object("keep_days", integer(), "compress_after_days", integer(), "commands", str()),
 	"test", object("judge", str(), "timeout", number(), "expect", texts(),
+		"selection", object("order", texts(), "rules", list(object("glob", str(), "scope", str()))),
 		"leftovers", list(object("glob", str(), "fail", boolean())),
 		"scopes", mapOf(testRun), "steps", mapOf(testRun)),
 )

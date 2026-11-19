@@ -1,7 +1,7 @@
 # Testing: scopes, a judge, a timeout, a gate — `jst test <scope>`
 
 Decisions: [W-012](../decisions/W-012-test-scopes-vocabulary.md) (one vocabulary of scopes, run as
-`jst test <scope>`; selection stays in each project) and
+`jst test <scope>`; each project defines its selection policy) and
 [W-013](../decisions/W-013-quality-testing-declarative.md) (no time-sensitive tests; everything
 jackstay adds is declarative and general; the goal is good and efficient testing in every project,
 with jackstay helping), from a study of the test scopes and scripts of projects that adopt it.
@@ -32,6 +32,12 @@ cheap checks after a long suite, and hand-kept lists of slow classes, waste time
 real suites).
 
 ## 1. Scopes
+
+`jst test plan changed --base REF` resolves a scope from a committed range. The order and path rules
+come from `test.selection`. Empty ranges and paths without rules select `gate`. Rename endpoints
+and deleted paths participate. With selection configured, `jst test changed` dispatches through
+the chosen scope's execution and receipt policy. An explicit `BASE..REV` runs on a clean copy of
+`REV`. See [path-based selection](../guide/tests.md#choose-a-scope-from-committed-paths).
 
     jst test <scope> [ARGS…] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock]
                      [--resume] [--keep-going] [--commit REV]
@@ -197,7 +203,12 @@ with zero executed cases yields `nothing-run`. For a producer such as pytest, se
 zero cases. Other nonzero statuses retain their failure semantics.
 
 The format name, adapter version and semantic report settings are keyed. The allocated report
-path is transport only. Receipts and gate outcomes record the verdict and its counts.
+path is transport only. Receipt lookup recomputes the saved material's digest and requires a
+positive count. Changing the adapter version changes the key without rewriting the historical
+records. Structured gate marks also carry the adapter version and counted pass. Resume needs
+that durable verdict, even after the private report directory is removed. It still runs
+`requires` before resuming any step that needs an external input. `--commit` runs afresh in a
+clean copy, including for structured judges.
 JUnit producer compatibility has first been exercised with pytest. The
 [compatibility baseline](testing-compatibility.md) records the original exit and reporting contracts.
 
@@ -271,8 +282,9 @@ excused from `full`.
     (`.build`, `DerivedData`, `node_modules`, `__pycache__`, …) or a `.DS_Store`. A checkout that is
     not clean is never resumed and its passes leave no mark.
   - **The step's key**: HEAD's commit; the step's full definition from `jackstay.json` (words,
-    folder, `env`, judge, vetoes, timeout); the environment variables and the toolchain output the
-    receipts key reads; jackstay's version; the content of `receipts.extra_files`; the **tip
+    folder, `env`, judge, vetoes, timeout, adapter version and report settings); the environment
+    variables and the toolchain output the receipts key reads; jackstay's version; the content of
+    `receipts.extra_files`; the **tip
     commit** of every ref in `receipts.refs` and the command entry's own `refs`; the **merge base**
     of HEAD with every ref in `receipts.merge_bases` and the entry's own `merge_bases` (only the
     merge base: the ref's tip may move without changing the key); and for the step's resolved

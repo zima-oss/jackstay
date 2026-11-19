@@ -1148,7 +1148,8 @@ The lock is advisory: a test command typed without it is not stopped.
 - **Publishing** is `.github/workflows/release.yml`, run by a pushed `v*` tag in the public
   repository (`zima-oss/jackstay`; the job does not run elsewhere) on a GitHub-hosted
   `ubuntu-latest` runner, in the `release` environment (which holds the five secrets and requires the
-  owner's approval), with `permissions: contents: write` and nothing else; every action is pinned by
+  owner's approval), with `contents: write`, `id-token: write`, `attestations: write` and
+  `artifact-metadata: write` permissions; every action is pinned by
   its full commit hash, and GoReleaser is run pinned from Go's checksum database
   (`go run github.com/goreleaser/goreleaser/v2@<version>`), with Go's build cache off (no cache a pull
   request could have written reaches a release). Before the owner approves the run, `just gate` has
@@ -1163,7 +1164,11 @@ The lock is advisory: a test command typed without it is not stopped.
      released.
   3. GoReleaser builds, signs and notarises with that tag (`GORELEASER_CURRENT_TAG`, so another tag
      on the same commit is not taken) and publishes nothing (`--skip=publish,announce`).
-  4. The workflow publishes, naming the release only by the id GitHub gives it: the tag on GitHub
+  4. `actions/attest` signs GitHub build provenance for each archive's name and SHA-256 digest,
+     bound by the workflow certificate to the repository, release workflow and tagged commit.
+     Failure stops before a release is published. The attestation is held by GitHub's attestation
+     API; `checksums.txt` remains a separate integrity check.
+  5. The workflow publishes, naming the release only by the id GitHub gives it: the tag on GitHub
      must still name the commit built (`git ls-remote`); no published release of the tag may exist
      (only a confirmed 404 lets it on: a release is never redone, W-020), nor a draft of it (one an
      earlier run left is read and deleted by the maintainer first); it creates a draft
@@ -1197,7 +1202,11 @@ The lock is advisory: a test command typed without it is not stopped.
   missing. The release is `JACKSTAY_VERSION` or the newest one (where GitHub's
   `releases/latest` redirects); it downloads the platform's archive and `checksums.txt` with
   `--proto =https --proto-redir =https --tlsv1.2`, and goes on only when the archive's own line in
-  `checksums.txt`, matched by its whole name, names the SHA-256 it computes. It unpacks into a
+  `checksums.txt`, matched by its whole name, names the SHA-256 it computes. By default, older
+  releases remain installable with an explicit integrity-only warning. `JACKSTAY_SHA256` adds a
+  separately recorded digest requirement; `JACKSTAY_PROVENANCE=attestation` requires `gh` to verify
+  the archive against the repository, release workflow and version tag. Both checks apply when
+  both are set. A failed configured trust check stops before unpacking. It unpacks into a
   `mktemp -d` folder it removes on exit, runs
   `jst install --prefix "${JACKSTAY_PREFIX:-$HOME/.local}" --binary <that jst>` and prints the next
   steps ([W-078](../decisions/W-078-setup-after-install.md)). It asks which `jst` the inherited
@@ -1627,8 +1636,12 @@ secondary limit honours `Retry-After`.
 **Checks** are one GraphQL query of the head commit's `statusCheckRollup`, paged to the end: the
 newest run of each check name in each check suite (so a re-run does not leave a false red) and
 commit statuses of other apps. Each workflow run is a suite of its own, so a run a `concurrency`
-group cancelled for a newer run is still listed and still counts: neither the run's metadata nor
-GitHub's cancellation annotation ties it to the run that replaced it (issue #13).
+group cancelled for a newer run is still listed. A cancelled check is superseded only after a
+bounded repository run listing for the checked commit identifies the cancelled run and a newer run
+with the same workflow ID and commit (and the same event and branch when known). The newer run's
+matching job result is judged; if that job has not appeared, the check stays pending. A missing or
+unrelated run leaves the cancellation red.
+The pull request identity is checked again after the run lookup and before landing.
 Buckets: SUCCESS → pass; SKIPPED,
 NEUTRAL → skipping; FAILURE, ERROR, TIMED_OUT, ACTION_REQUIRED, STARTUP_FAILURE → fail; CANCELLED →
 cancel (settled, failing, and named as a cancellation); STALE, PENDING, EXPECTED and anything else
@@ -2222,7 +2235,7 @@ one gate run each, not every edit ([W-040](../decisions/W-040-python-frozen-test
 **The workflow** `.github/workflows/gate.yml` runs `just gate` on GitHub's `ubuntu-latest` for every
 pull request, every push to `main` and by hand: Go from `go.mod`'s toolchain line, read-only
 permissions, the checkout's credentials not kept, a 30-minute limit, a pull request's older run
-cancelled. It is the only CI check, and the one `main` requires. There is no macOS job
+cancelled. It is the gate `main` requires. The Vitest producer check runs separately. There is no macOS job
 ([W-083](../decisions/W-083-no-macos-job-in-ci.md)): the macOS-only files (`*_darwin.go`) are
 checked by the maintainers' `just gate` on a Mac before an install and a release.
 

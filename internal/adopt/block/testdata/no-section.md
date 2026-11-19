@@ -22,4 +22,4 @@
 - **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
-  this project up to date with jackstay).
+  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.

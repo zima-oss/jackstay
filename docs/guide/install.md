@@ -16,9 +16,9 @@ beside this site as `/install.sh`) downloads the newest release for your platfor
 archive against the release's `checksums.txt` before it unpacks or runs anything, installs it with
 `jst install` and prints what to run next: when the install is not on your `PATH`, the line that
 puts it there (for sh, bash or zsh; for another shell, the folder), then `jst doctor` and
-`jst adopt`. It changes nothing outside
-the install's prefix. It runs only once curl has downloaded all of it, and
-reads none of your own curl settings.
+`jst adopt`. Installation writes within its prefix. With a terminal and a release that provides
+`jst setup`, the installer can also offer machine settings repairs before printing the next steps.
+The script runs only once curl has downloaded all of it and reads none of your own curl settings.
 
 Two settings, given to the `sh` that runs the script, as in this line (in sh, bash or zsh):
 
@@ -28,12 +28,22 @@ script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.
 
 - `JACKSTAY_VERSION=0.5.11` (or `v0.5.11`) installs that release instead of the newest.
 - `JACKSTAY_PREFIX=DIR` installs under `DIR` instead of `~/.local`.
+- `JACKSTAY_PROVENANCE=attestation` requires `gh` and verifies a signed GitHub build attestation
+  for the archive, `zima-oss/jackstay`, `.github/workflows/release.yml`, and the selected tag.
+- `JACKSTAY_SHA256=HEX` requires the archive to match a separately obtained, 64-digit lowercase
+  SHA-256 digest. Record it outside the release and its `checksums.txt`. It also works for older
+  releases and without `gh`; the script still downloads the archive and checksum over the network.
+  If both settings are provided, both checks must pass.
 - It needs `curl`, `tar` and `sha256sum` or `shasum`, and names the one missing.
 - Exit: 0 installed; 1 nothing was installed (the message says why); otherwise `jst install`'s own.
 
-The checksum guards against a damaged or swapped download, not against a compromised release: the
-archive and `checksums.txt` come from the same place. On macOS the binary is also signed with a
-Developer ID and notarised, which `codesign -dv ~/.local/bin/jst` shows.
+The default checksum guards against a damaged download. It does not establish release provenance:
+the archive and `checksums.txt` come from the same place, and the installer prints an integrity-only
+warning. This default keeps releases made before attestations usable. For an attested release,
+install with `JACKSTAY_PROVENANCE=attestation`; a missing verifier, attestation, or identity match
+stops before unpacking. A digest copied from the same release is not an independent pin. On macOS
+the binary is also signed with a Developer ID and notarised, which
+`codesign -dv ~/.local/bin/jst` shows.
 
 ### Read it before you run it
 
@@ -64,6 +74,31 @@ settings. On a new machine it reports `guard-never-called` until a session with 
 made a call; see [What jackstay did](observability.md#jst-doctor). Each problem it reports is
 followed by its fix. What else an install leaves to you:
 [getting started](getting-started.md#what-an-install-leaves-to-you).
+
+### Plan machine setup
+
+`jst setup --plan` turns `jst doctor` findings into a setup list. `--json` gives the same list as
+data. Setup can put the installed prefix's `bin` first on `PATH` in zsh, bash, sh, dash or ksh's
+profile. It can also add jackstay's state folder to Claude Code's
+`sandbox.filesystem.allowWrite` when the sandbox is enabled and no deny rule covers the folder.
+Other findings carry doctor's manual fix. Fish and other shells need their own configuration,
+so setup only reports their PATH repair.
+
+```sh
+jst setup --plan --json
+jst setup --yes --select path
+jst setup --yes --select sandbox
+```
+
+The first command reads files only. The other commands apply **only** the selected repair.
+Running `jst setup` in a terminal offers apply, show and skip; with piped input it only prints
+the plan. The quick installer runs that interactive setup after a successful install when both
+input and output are terminals. Before changing an existing shell profile or Claude Code settings,
+setup shows the change and saves the original content in a
+unique `*.jackstay-backup-*` file beside it and shows that path. It refuses a symlink, an
+unusual file, a profile with a different jackstay PATH entry, malformed settings, or a sandbox
+deny rule that needs an owner's decision. A second run does not append the same entry again.
+Open a new shell or Claude Code session after a change, then run `jst doctor` again.
 
 ## Other ways to install
 
@@ -97,7 +132,14 @@ The parentheses run it in a subshell: `set -eu` stops it at the first failing li
 missing or different checksum) without closing your terminal. With the GitHub CLI, replace only the
 two `curl` lines with
 `gh release download "v$VERSION" -R zima-oss/jackstay -p "$ARCHIVE" -p checksums.txt`. The
-downloaded folder can be removed afterwards.
+downloaded folder can be removed afterwards. For a release with an attestation, run this before
+`tar` in the example (and stop if it fails):
+
+```sh
+gh attestation verify "$ARCHIVE" --repo zima-oss/jackstay \
+  --signer-workflow zima-oss/jackstay/.github/workflows/release.yml \
+  --source-ref "refs/tags/v$VERSION"
+```
 
 ### From source
 

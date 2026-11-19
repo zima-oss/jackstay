@@ -1,8 +1,8 @@
 # Tests
 
 `jst test` runs a project's test command, reads its evidence, records the run and keeps its output.
-Go JSON and pytest JUnit XML can supply structured evidence. Existing `steps`, `swift-test` and
-`exit` judges remain available. A single command passes when its tests were counted. A gate line
+Go JSON, pytest JUnit XML and Vitest JUnit XML can supply structured evidence. Existing `steps`,
+`swift-test` and `exit` judges remain available. A single command passes when its tests were counted. A gate line
 shows each step's outcome. A pass is keyed by the exact tree it ran on, so a later run of the same
 tree can be skipped where you opt in.
 
@@ -49,6 +49,10 @@ jst test last                # the last run again: outcome, what went wrong, whe
 jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock] [--resume] [--keep-going] [--commit REV]
 jst test list [--project NAME]       # the scopes, what each runs, when the project runs it
 jst test plan SCOPE [ARGS...]        # the words a scope would run, step by step; runs nothing
+jst test auto [--base REF]           # choose and run a scope from committed paths
+jst test changed [BASE..REV]         # same choice; a range runs on a clean copy of REV
+jst test plan auto [--base REF]      # show the choice and command without running it
+jst test plan changed BASE..REV      # show the choice and command for REV
 jst test last [--scope S] [--json]   # the last run, without running anything
 ```
 
@@ -66,6 +70,48 @@ meaning each in every project; anything else starts with `x-`:
 
 When each is required is your rule, written once in the scope's `when`; `jst test list` prints it,
 so your `AGENTS.md` can point there instead of restating it.
+
+### Choose a scope from committed paths
+
+Declare `test.selection` to let `jst test changed` choose a scope from the commits since a base.
+The `order` lists declared scopes from least to most strict and ends with `gate`. Rules map
+repository-relative path globs to scopes. `*` matches within one path segment; `**` matches
+zero or more complete segments. Every path touched by a commit counts, including a deleted path
+and both names of a rename. The strictest matching rule wins. An unmatched path or an empty
+range chooses `gate`.
+
+```json
+"receipts": {"toolchain": []},
+"test": {
+  "selection": {
+    "order": ["quick", "full", "gate"],
+    "rules": [
+      {"glob": "docs/**", "scope": "quick"},
+      {"glob": "Sources/**", "scope": "full"}
+    ]
+  },
+  "scopes": {
+    "quick": {"run": ["make", "docs-check"], "judge": "exit"},
+    "full": {"run": ["make", "test"], "judge": "exit"},
+    "gate": {"steps": ["full", "lint"], "when": "before merging or publishing"}
+  },
+  "steps": {"lint": {"run": ["make", "lint"], "judge": "exit"}}
+}
+```
+
+```sh
+jst test plan auto --base origin/main  # prints the choice, each matching rule, when and the command
+jst test auto --base origin/main       # runs the selected scope with normal receipt handling
+jst test changed origin/main..HEAD     # selects and runs on a clean copy of HEAD
+jst test plan changed origin/main..HEAD # plans from that clean copy without running tests
+```
+
+Without `--base`, jackstay uses Git's `origin/HEAD` default ref. If that ref is unavailable, name
+the base explicitly. Selection uses the committed range through `HEAD`; uncommitted edits do not
+change the choice. `--commit REV` runs the selection and chosen scope on a clean copy of that
+commit. Use `jst test gate` for installation, tags and release publishing, regardless of the
+scope selected for ordinary development feedback.
+Projects without `test.selection` retain their declared `changed` scope and its existing runner.
 
 ```json
 "receipts": {"toolchain": []},
@@ -130,6 +176,28 @@ For pytest, declare the report name and give its attempt-specific path to the ru
 executed cases and treats an all-skipped or empty report as `nothing-run`. `empty_exit: 5`
 recognizes pytest's no-tests-collected status only when a valid empty report accompanies it. A
 missing, unreadable or incomplete report is `unjudged` when the command otherwise succeeds.
+
+Vitest can use the same JUnit judge with its file reporter:
+
+```json
+{
+  "test": {
+    "scopes": {
+      "full": {"run": ["npx", "vitest", "run", "--reporter=junit", "--outputFile={report}"],
+               "judge": "junit", "report": "vitest.xml", "when": "before handing over"}
+    }
+  }
+}
+```
+
+Install Vitest in the project before running this scope. `run` makes this an execution report;
+`--outputFile={report}` sends it to jackstay's private path for the attempt. In the verified
+Vitest 5.1.1 producer, a matching pass plus skip exits 0 and counts one executed case, a failed
+case exits 1, and a `--testNamePattern` matching no names exits 0 with all cases skipped.
+`--passWithNoTests` with no matching files writes a zero-case report and exits 0. Both empty
+results are `nothing-run`. The checked-in XML fixtures run in the ordinary Go gate; the
+real Vitest 5.1.1 producer is checked separately. Other Vitest versions, retries and shard
+aggregation have not been verified. See [Vitest's reporter guide](https://vitest.dev/guide/reporters).
 
 For `jst test -- COMMAND`, put the same `judge`, `report` and `empty_exit` fields in that command's
 `receipts.commands` entry. A direct command receives `JACKSTAY_TEST_REPORT`; its wrapper must use

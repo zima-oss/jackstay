@@ -432,7 +432,7 @@ The text, for a project with every section (`internal/adopt/block`, golden-teste
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
-  this project up to date with jackstay).
+  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.
 ```
 
 Item IDs, what each needs, and what changes with the section:

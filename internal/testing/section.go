@@ -183,6 +183,7 @@ func Problems(section map[string]any) []string {
 	if expect, present := section["expect"]; present {
 		found = append(found, expectProblems(textsOf(expect), "test.expect")...)
 	}
+	found = append(found, selectionProblems(section)...)
 	for _, table := range []struct {
 		kind    string
 		entries map[string]any

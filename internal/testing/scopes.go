@@ -51,7 +51,7 @@ const (
 
 // Usage is how `jst test <scope>` and its siblings are called.
 const Usage = "usage: jst test <scope> [ARGS…] [--no-reuse] [--wait S] [--base REF] [--lock|--no-lock] [--resume] [--keep-going] [--commit REV]\n" +
-	"       jst test list | jst test plan <scope> [ARGS…] | jst test last [--scope S] | jst test -- COMMAND …"
+	"       jst test changed [BASE..REV] | jst test auto [--base REF] | jst test list | jst test plan <scope> [ARGS…] | jst test last [--scope S] | jst test -- COMMAND …"
 
 // unreadableVariable makes jackstay act as though the process table could not be read (tests only).
 const unreadableVariable = "JACKSTAY_PROC_UNREADABLE"
@@ -281,6 +281,15 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 // scope runs `jst test <scope> …`.
 func (base *tester) scope(args []string) int {
 	name, rest, chosen, err := parse(args)
+	selectChanged := err == nil && name == "changed" && base.hasSelection()
+	if selectChanged && len(rest) > 0 {
+		if len(rest) != 1 || chosen.base != "" || chosen.commit != "" {
+			err = refused("`jst test changed BASE..REV` takes one range, without --base or --commit")
+		} else {
+			chosen.base, chosen.commit, err = selectionRange(rest[0])
+			rest = nil
+		}
+	}
 	if err == nil && name == "" {
 		err = refused("which scope? " + Usage)
 	}
@@ -317,6 +326,20 @@ func (base *tester) scope(args []string) int {
 	var proj *project
 	if err == nil {
 		proj, err = base.open(chosen)
+	}
+	if err == nil && (name == "auto" || selectChanged) {
+		if len(rest) > 0 {
+			err = refused("`auto` takes no test names")
+		} else {
+			var choice selectionResult
+			choice, err = proj.selectScope()
+			if err == nil {
+				name = choice.scope
+				chosen.base = choice.base
+				proj.options = chosen
+				proj.printSelection(choice)
+			}
+		}
 	}
 	var entry map[string]any
 	if err == nil {

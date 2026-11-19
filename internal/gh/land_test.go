@@ -569,6 +569,7 @@ func TestPRLandWaitsOnlyForTheRequiredChecks(t *testing.T) {
 	bench, _ := landing(t, landSetup{checks: []githubapi.Check{passed("gate"), pending("gate-macos"),
 		checkRun("extra", "COMPLETED", "CANCELLED", 3)}})
 	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{}))
 	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
 	contains(t, stdout, "wait for the checks the rules of main require on the resulting head (gate)")
 	contains(t, stdout, "not required: gate-macos pending (not waited for)")
@@ -576,6 +577,30 @@ func TestPRLandWaitsOnlyForTheRequiredChecks(t *testing.T) {
 	contains(t, stdout, "GREEN: 1 checks")
 	if len(bench.hub.Merges()) != 1 {
 		t.Fatal("not merged")
+	}
+}
+
+func TestPRLandMergesOnlyWhenCancelledRequiredCheckHasAProvenReplacement(t *testing.T) {
+	for _, matching := range []bool{false, true} {
+		rows := []githubapi.Check{checkRun("gate", "COMPLETED", "CANCELLED", 4), checkRun("gate", "COMPLETED", "SUCCESS", 5)}
+		bench, _ := landing(t, landSetup{checks: rows})
+		bench.hub.required = []RequiredCheck{{Name: "gate", AppID: 15368}}
+		workflowID := int64(2)
+		if matching {
+			workflowID = 1
+		}
+		bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+			{ID: 5, WorkflowID: workflowID, HeadSHA: shaA, Status: "completed", Conclusion: "success"},
+			{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
+		}))
+		want := exitNotFine
+		if matching {
+			want = exitFine
+		}
+		bench.expect(want, "pr-land", "--timeout", "30")
+		if got := len(bench.hub.Merges()); got != map[bool]int{false: 0, true: 1}[matching] {
+			t.Fatalf("matching %v: %d merges", matching, got)
+		}
 	}
 }
 

@@ -27,6 +27,29 @@ func TestEmbeddedTemplatesArePinnedAndUseOnlyJackstaysValues(t *testing.T) {
 	}
 }
 
+func TestDownloadTemplatesVerifyConfiguredProvenanceBeforeUnpacking(t *testing.T) {
+	for _, template := range Embedded() {
+		if template.Name != "card-line" && template.Name != "release" {
+			continue
+		}
+		text := template.Text
+		for _, fragment := range []string{
+			"JACKSTAY_PROVENANCE: ${{ vars.JACKSTAY_PROVENANCE }}",
+			"JACKSTAY_LINUX_AMD64_SHA256: ${{ vars.JACKSTAY_LINUX_AMD64_SHA256 }}",
+			"gh attestation verify \"$archive\" --repo @@jackstay_repository@@",
+			"--signer-workflow zima-oss/jackstay/.github/workflows/release.yml",
+			"--source-ref \"refs/tags/$JACKSTAY_VERSION\"",
+		} {
+			if !strings.Contains(text, fragment) {
+				t.Errorf("%s lacks %q", template.Name, fragment)
+			}
+		}
+		if strings.Index(text, "gh attestation verify") > strings.Index(text, "tar -xzf") {
+			t.Errorf("%s unpacks before verifying provenance", template.Name)
+		}
+	}
+}
+
 func TestPinProblemsFindsEveryUnpinnedUse(t *testing.T) {
 	text := strings.Join([]string{
 		"      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",

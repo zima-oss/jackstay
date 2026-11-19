@@ -1,12 +1,107 @@
 package scopes
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/zima-oss/jackstay/internal/receipts"
 )
+
+func TestStructuredScopeReusesWithoutRegexAndCleanCopyRunsAfresh(t *testing.T) {
+	command := counted("report", `printf '%s' '<testsuite tests="1"><testcase name="case"/></testsuite>' > "$JACKSTAY_TEST_REPORT"`)
+	section := map[string]any{"scopes": map[string]any{"full": map[string]any{
+		"judge": "junit", "report": "tests.xml", "run": command,
+	}}}
+	more := map[string]any{"receipts": map[string]any{
+		"inputs": argv("Sources"), "toolchain": []any{}, "env": []any{},
+		"commands": []any{map[string]any{"argv": command, "judge": "junit", "report": "tests.xml", "reuse": true}},
+	}}
+	world := newWorld(t, section, more)
+	world.commit()
+	world.expectStatus(world.jst("full"), 0)
+	world.expectStatus(world.jst("full"), 0)
+	world.expectLast("outcome=reused")
+	world.expectCounters("report", 1)
+	world.expectStatus(world.jst("full", "--commit", "HEAD"), 0)
+	world.expectLast("outcome=passed")
+	world.expectCounters("report", 2)
+}
+
+func TestStructuredGateResumesOnlyCurrentCountedEvidence(t *testing.T) {
+	section := map[string]any{
+		"scopes": map[string]any{"gate": map[string]any{"steps": argv("producer", "consumer")}},
+		"steps": map[string]any{
+			"producer": map[string]any{"judge": "junit", "report": "tests.xml",
+				"run": argv("sh", "-c", `printf '%s\n' "$1" >> "$SIDE/reports"; printf '%s' "$2" > "$1"`,
+					"runner", "{report}", `<testsuite tests="1"><testcase name="case"/></testsuite>`)},
+			"consumer": map[string]any{"run": counted("consumer", "true"), "requires": []any{
+				map[string]any{"run": argv("sh", "-c", `test -f "$SIDE/consumer-input"`), "why": "consumer input is missing"},
+			}},
+		},
+	}
+	world := newWorld(t, section, nil)
+	world.flag("consumer-input", true)
+	world.expectStatus(world.jst("gate"), 0)
+	report := strings.TrimSpace(world.read("reports"))
+	if _, err := os.Stat(report); !os.IsNotExist(err) {
+		t.Fatalf("private report was retained: %v", err)
+	}
+	world.expectStatus(world.jst("gate", "--resume"), 0)
+	world.expectLast("outcome=resumed")
+	world.expectCounters("reports consumer", 1, 1)
+	folder, err := receipts.StateFolder("demo", "gate-marks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var older string
+	for _, entry := range entries {
+		path := filepath.Join(folder, entry.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved mark
+		if err := json.Unmarshal(data, &saved); err != nil {
+			t.Fatal(err)
+		}
+		if saved.Step != "producer" {
+			continue
+		}
+		if saved.AdapterVersion == 0 || saved.Counted != 1 {
+			t.Fatalf("mark lacks structured evidence: %+v", saved)
+		}
+		saved.AdapterVersion = 0
+		older = path
+		data, err = json.Marshal(saved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if older == "" {
+		t.Fatal("the producer did not get a mark")
+	}
+	world.expectStatus(world.jst("gate", "--resume"), 0)
+	world.expectCounters("reports consumer", 2, 1)
+	// A consumer that still needs an external artifact must recheck it at resume.
+	world.flag("consumer-input", false)
+	world.expectStatus(world.jst("gate", "--resume"), statusRefused)
+	world.expectSaid("consumer input is missing")
+	world.expectCounters("reports consumer", 2, 1)
+	world.flag("consumer-input", true)
+	world.expectStatus(world.jst("gate", "--commit", "HEAD"), 0)
+	world.expectLast("outcome=passed")
+	world.expectCounters("reports consumer", 3, 2)
+}
 
 func TestStructuredScopesRecordVerdictsAndUsePrivateReportPaths(t *testing.T) {
 	const passing = `<testsuite tests="2" skipped="1" failures="0" errors="0"><testcase name="pass"/><testcase name="skip"><skipped/></testcase></testsuite>`
