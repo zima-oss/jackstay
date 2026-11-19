@@ -228,7 +228,7 @@ func (reader *reader) defaults(value any) map[string]any {
 		return nil
 	}
 	for _, key := range sortedKeys(members) {
-		if key == "jackstay_schema" || key == "project" || key == "adopt" {
+		if key == "$schema" || key == "jackstay_schema" || key == "project" || key == "adopt" {
 			reader.fail("`jackstay_json.defaults.%s`: a profile does not set %s", key, key)
 		}
 	}

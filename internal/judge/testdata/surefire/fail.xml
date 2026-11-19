@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report.xsd" version="3.0.2" name="dev.jackstay.fixtures.FailingTest" time="0.028" tests="1" errors="0" skipped="0" failures="1">
+  <properties/>
+  <testcase name="fails" classname="dev.jackstay.fixtures.FailingTest" time="0.005">
+    <failure message="fixture failure" type="java.lang.AssertionError"><![CDATA[java.lang.AssertionError: fixture failure
+	at dev.jackstay.fixtures.FailingTest.fails(FailingTest.java:10)
+]]></failure>
+    <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+]]></system-err>
+  </testcase>
+</testsuite>

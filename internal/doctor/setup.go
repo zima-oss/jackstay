@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 )
 
-const setupUsage = "usage: jst setup [--plan] [--json] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]"
+const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]"
 
 const setupHelp = setupUsage + `
 
@@ -23,10 +24,13 @@ POSIX shell profile and allow jackstay's state folder in Claude Code's enabled s
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
   --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
+  --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
 
-Without options, a terminal offers apply, show and skip. An existing profile is copied to a
+Mail steps report detected engines and their current integration limits. They are guidance only;
+setup does not install an unverified bridge or claim active-turn delivery. Without options, a
+terminal offers apply, show and skip. An existing profile is copied to a
 unique backup beside it before replacement. Unsupported shells and conflicting profiles are
 left for the owner. Open a new shell after applying a PATH repair.
 
@@ -157,7 +161,7 @@ func planSetup(report Report, home, shell string) SetupPlan {
 
 // RunSetup is jst setup. Mutations require an interactive choice or --yes with a selected ID.
 func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	planOnly, asJSON, yes, prefix := false, false, false, ""
+	planOnly, asJSON, yes, chat, prefix := false, false, false, false, ""
 	selected := map[string]bool{}
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
@@ -167,6 +171,8 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			asJSON, planOnly = true, true
 		case "--yes":
 			yes = true
+		case "--chat":
+			chat = true
 		case "--select", "--prefix":
 			if index+1 >= len(args) {
 				fmt.Fprintln(stderr, setupUsage)
@@ -183,7 +189,7 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	if (yes && len(selected) == 0) || (!yes && len(selected) != 0) || (planOnly && yes) {
+	if (yes && len(selected) == 0) || (!yes && len(selected) != 0) || (planOnly && yes) || (chat && yes) {
 		fmt.Fprintln(stderr, setupUsage)
 		return 2
 	}
@@ -204,6 +210,9 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	inputs := RealInputs(prefix)
 	// Settings lives under ~/.claude; the profile belongs directly under account home.
 	plan := planSetup(Diagnose(inputs), filepath.Dir(filepath.Dir(inputs.Settings)), os.Getenv("SHELL"))
+	if chat {
+		plan.Items = append(plan.Items, chatEngineSetupItems(exec.LookPath)...)
+	}
 	if asJSON {
 		encoder := json.NewEncoder(stdout)
 		encoder.SetIndent("", "  ")
@@ -214,7 +223,53 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if planOnly || (!yes && (!terminalInput(stdin) || !terminalOutput(stdout))) {
 		return 0
 	}
-	return executeSetup(plan, yes, selected, stdin, stdout, stderr)
+	reader := bufio.NewReader(stdin)
+	if chat {
+		promptChatEngineSetup(plan, reader, stdout)
+	}
+	return executeSetup(plan, yes, selected, reader, stdout, stderr)
+}
+
+func chatEngineSetupItems(lookPath func(string) (string, error)) []SetupItem {
+	engines := []struct {
+		name, identifier, capability, steps string
+	}{
+		{"codex", "chat-codex", "poll-only", "A managed app-server session bridge is required for turn/steer, reconnect and agent acknowledgment. No active-turn bridge is installed by setup; use chat.inbox polling until a bridge passes its synthetic delivery probe. Disable the bridge or restore its saved configuration to roll back."},
+		{"claude", "chat-claude", "poll-only", "A scoped Claude Code lifecycle hook can present queued event IDs at the next prompt or tool boundary. Setup does not install a hook yet; use chat.inbox polling. A hook-only route must be labelled next-boundary, never active-turn. Remove the hook and restore its saved settings to roll back."},
+	}
+	items := make([]SetupItem, 0, len(engines)+1)
+	for _, engine := range engines {
+		_, err := lookPath(engine.name)
+		detection := "not found on PATH"
+		if err == nil {
+			detection = "detected on PATH"
+		}
+		items = append(items, SetupItem{
+			ID: engine.identifier, Status: "manual",
+			Text: fmt.Sprintf("%s session chat (%s; current capability: %s)", engine.name, detection, engine.capability),
+			Fix:  engine.steps,
+		})
+	}
+	items = append(items, SetupItem{
+		ID: "chat-other", Status: "manual",
+		Text: "other MCP host session chat (current capability: poll-only)",
+		Fix:  "Register jst chat serve --name NAME as a local stdio server through an owner-controlled launcher. For active-turn delivery, connect a host adapter with addressed injection and an acknowledgment probe. Remove that local server registration and restore the saved host configuration to roll back.",
+	})
+	return items
+}
+
+func promptChatEngineSetup(plan SetupPlan, stdin io.Reader, stdout io.Writer) {
+	reader := bufio.NewReader(stdin)
+	for _, item := range plan.Items {
+		if !strings.HasPrefix(item.ID, "chat-") {
+			continue
+		}
+		fmt.Fprintf(stdout, "%s: [s]how integration steps, s[k]ip? ", item.ID)
+		answer, _ := reader.ReadString('\n')
+		if strings.EqualFold(strings.TrimSpace(answer), "s") || strings.EqualFold(strings.TrimSpace(answer), "show") {
+			fmt.Fprintf(stdout, "%s: %s\n", item.ID, item.Fix)
+		}
+	}
 }
 
 func executeSetup(plan SetupPlan, yes bool, selected map[string]bool, stdin io.Reader, stdout, stderr io.Writer) int {

@@ -26,6 +26,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/supervise"
+	"github.com/zima-oss/jackstay/internal/testreport"
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
@@ -194,8 +195,18 @@ func KeyOf(ctx context.Context, keying Keying) (Key, error) {
 	}
 	if name, _ := entry["judge"].(string); keying.Scope == nil && judge.AdapterVersion(judge.Kind(name)) != 0 {
 		material.Rules.Adapter = map[string]any{"judge": name, "version": judge.AdapterVersion(judge.Kind(name))}
-		if name == string(judge.JUnit) {
-			material.Rules.Adapter["report"], material.Rules.Adapter["empty_exit"] = entry["report"], entry["empty_exit"]
+		if testreport.FileJudge(name) {
+			if reports, found := entry["reports"]; found {
+				material.Rules.Adapter["reports"] = reports
+			} else {
+				material.Rules.Adapter["report"] = entry["report"]
+			}
+			if name == string(judge.XCResultJSON) {
+				material.Rules.Adapter["xcresult_bundles"] = entry["xcresult_bundles"]
+			}
+			if name == string(judge.JUnit) {
+				material.Rules.Adapter["empty_exit"] = entry["empty_exit"]
+			}
 		}
 	}
 	if section["include_head"] == true {

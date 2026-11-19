@@ -15,17 +15,18 @@ multi-runner proposal are described in [testing](../design/testing.md) and the
 [test evidence plan](../design/testing-multirunner-proposal.md). Each next slice below starts
 from those shipped interfaces and must preserve readable older records.
 
-## Open issues and relevance
+## Issues and proposals
 
 | Priority | Issue | Assessment and first deliverable |
 |---|---|---|
 | P1 | [#13 Cancelled check run](https://github.com/zima-oss/jackstay/issues/13) | Relevant. The current check grouping [counts cancelled runs as failures](../../internal/gh/checks.go). Reconcile a cancelled run with a newer run of the same workflow and commit before deciding the PR result. |
 | P1 | [#20 Flaky Linux process test](https://github.com/zima-oss/jackstay/issues/20) | Relevant. The [integration test](../../internal/procs/background/background_integration_test.go) has condition-based polling helpers, while the reported failure's root cause remains unproved. Reproduce it and add the missing readiness condition at the failing transition. |
 | P1 | [#11 Release download provenance](https://github.com/zima-oss/jackstay/issues/11) | Relevant. The current [installer](../../install.sh) and [adopted workflow](../../internal/adopt/templates/files/release.yml) verify a checksum fetched from the same release. Specify an independently trusted provenance or pinned digest path, then pilot it for one download. |
+| P1 | Local agent session chat | Let parallel agents discover each other and exchange direct messages, requests and replies. Persist delivery and acknowledgment locally. [Product specification](session-chat.md). |
 | P2 | [#5 Select a test scope from changed paths](https://github.com/zima-oss/jackstay/issues/5) | Relevant for fast agent feedback. The existing [scope runner](../../internal/testing/commands.go) requires the caller to choose a scope. Define explicit ordering between scopes and a conservative fallback before adding automatic selection. |
 | P2 | [#4 Idempotent machine setup](https://github.com/zima-oss/jackstay/issues/4) | Relevant for onboarding. [Doctor](../guide/observability.md) already diagnoses local setup. Begin with a plan and one reversible machine setting, with terminal approval for sensitive file changes. |
 | P2 | [#1 Install channels](https://github.com/zima-oss/jackstay/issues/1) | Split by value. Build attestations belong with #11. Issue and pull request templates can ship independently. A tap needs release automation and a macOS installation check. Homebrew core has an external eligibility gate. |
-| Strategic | [#3 Merge queue](https://github.com/zima-oss/jackstay/issues/3) | High potential impact and high correctness risk. Existing `jst test`, receipts, `jst gh` and local delivery checkpoints make a pilot possible. First prove that the tested tree equals the landed tree for one repository. |
+| Strategic | [#3 Merge queue](https://github.com/zima-oss/jackstay/issues/3) | High potential impact and high correctness risk. Build an app-managed queue with a tested-candidate handoff on ordinary GitHub plans. Enable protected direct landing only where an exact-tree precondition is proved. |
 | Discovery | [#2 GitHub App setup](https://github.com/zima-oss/jackstay/issues/2) | Relevant to projects using the release workflow. Start by proving the App permission, installation and secret flows in a disposable GitHub repository. The proposed credential flow requires a separate threat review before implementation. |
 
 The first two issues affect the trustworthiness of an existing gate or landing command. #11
@@ -109,6 +110,8 @@ syntax on macOS and Linux. The project file remains under `jst adopt`.
 
 ### B6. Pilot a merge queue, #3
 
+The [merge queue pilot](merge-queue-pilot.md) defines a local queue, a manual handoff for ordinary plans and the provider preconditions for enabling automatic landing.
+
 **Contract.** A per-repository queue records PR head, base and required check identities, the
 exact candidate tree, its test evidence and the observed landing effect. One writer owns a
 repository lane. A stale candidate is retested. A batch that fails may be split into smaller
@@ -116,15 +119,17 @@ candidates, but no candidate lands until its exact tree has a fresh counted gate
 required review and remote checks are current. The queue reports uncertain remote effects for
 operator reconciliation.
 
-**Sequence and proof.** First run a disposable-repository experiment to verify GitHub landing
-semantics for stacked PRs and branch protection. Define the queue record on the A2 delivery
-schema and bind it to A3 verification evidence. Implement a manual single-PR queue with dry-run,
-crash replay and base/head changes, then batch construction and bisection. Add a service process
-only after the manual lane is proven. Test restart at every effect boundary against fake GitHub,
-then compare tested and landed tree IDs in the pilot. Depends on B1, stable multi-runner test
-verdicts and an explicit pilot project.
+**Sequence and proof.** The local single-head lane pins refs, prepares a candidate, runs the
+gate and exports counted evidence for manual handoff. Linked worktrees share the lane.
+[Queue commands](../guide/merge-queue.md) describe the available path. Next, establish policy
+and review freshness and crash recovery against fake GitHub. An opt-in automatic landing mode
+requires a server-enforced precondition for the exact tested tree. Batches and bisection depend
+on that proof.
 
 ### B7. Prove GitHub App setup, #2
+
+The [GitHub App pilot](github-app-pilot.md) defines the permissions, credential handoff and
+disposable-repository acceptance matrix.
 
 **Contract.** An owner-initiated setup plan states the GitHub identity, target repositories,
 minimal App permissions and local changes. A key moves directly to the chosen secret store and
@@ -138,6 +143,16 @@ interactive handoff and a no-terminal plan. Implement behind explicit owner acti
 threat review. Fake API tests cover permission refusal, interrupted conversion, failed secret
 write and rotation, while a manual pilot checks real GitHub behavior. This has no dependency on
 the merge queue and should reuse B5 setup reporting when that contract is stable.
+
+### B8. Local agent session chat
+
+The [session chat specification](session-chat.md) defines MCP addressing, bounded durable
+inboxes, requests, replies and acknowledgment. The first slice uses polling, stable recipient
+IDs and optional reconnect capabilities.
+
+Exercise two processes in linked worktrees, unrelated repository isolation, restart,
+duplicate sends and quota refusal. Engine-specific delivery comes after the shared transport
+works. It must report the observed delivery boundary for each host.
 
 ## Further product slices from the local audit plan
 
@@ -161,8 +176,5 @@ the merge queue and should reuse B5 setup reporting when that contract is stable
 5. Expand A1 policy explanation, A4 workspace reporting and A5 staged upgrades independently
    where their data formats do not overlap. Reconcile schema changes before parallel writes to
    adoption, receipts or telemetry records.
-
-Every change begins with a regression that fails on the current behavior and finishes with its
-package tests, applicable real Git or process integration tests, and `just gate`. The issue
-briefs identify the next deliverable. Wider product slices require an issue and a short decision
-record when the design changes, as described in [contributing](../../CONTRIBUTING.md).
+6. Ship local B8 chat alongside the independent queue and App pilots. Add engine delivery once
+   each host can demonstrate addressed injection, reconnect and acknowledgment.

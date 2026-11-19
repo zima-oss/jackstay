@@ -4,15 +4,26 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 )
 
 const (
-	junitReportLimit = 16 << 20
-	junitCaseLimit   = 100000
-	junitDepthLimit  = 32
+	junitReportLimit   = 16 << 20
+	junitCaseLimit     = 100000
+	junitDepthLimit    = 32
+	junitIdentityLimit = 4096
+	junitDurationLimit = 512
 )
+
+// JUnitCaseDuration is a measured testcase from a completed JUnit report.
+type JUnitCaseDuration struct {
+	Suite   []string `json:"suite"`
+	Class   string   `json:"class"`
+	Test    string   `json:"test"`
+	Seconds float64  `json:"seconds"`
+}
 
 type junitCounts struct {
 	tests    int
@@ -27,67 +38,85 @@ type junitElement struct {
 	counts   junitCounts
 	declared map[string]int
 	status   string
+	timing   *JUnitCaseDuration
 }
 
 type junitParser struct {
-	stack    []*junitElement
-	cases    map[string]struct{}
-	total    junitCounts
-	sawRoot  bool
-	complete bool
+	stack            []*junitElement
+	cases            map[string]struct{}
+	total            junitCounts
+	sawRoot          bool
+	complete         bool
+	withTimings      bool
+	timings          []JUnitCaseDuration
+	timingsTruncated bool
 }
 
 // readJUnit decodes one bounded JUnit XML report. It only trusts a complete document whose
 // suite summaries agree with its test cases. Diagnostics never contain report text.
 func readJUnit(report io.Reader) Facts {
+	return readJUnitCases(report, make(map[string]struct{}))
+}
+
+func readJUnitCases(report io.Reader, cases map[string]struct{}) Facts {
+	facts, _, _ := readJUnitReport(report, cases, false)
+	return facts
+}
+
+// readJUnitTimed returns validated case durations when the caller requests them.
+func readJUnitTimed(report io.Reader, cases map[string]struct{}) (Facts, []JUnitCaseDuration, bool) {
+	return readJUnitReport(report, cases, true)
+}
+
+func readJUnitReport(report io.Reader, cases map[string]struct{}, withTimings bool) (Facts, []JUnitCaseDuration, bool) {
 	invalid := func(reason string) Facts {
 		return Facts{Kind: JUnit, Counts: Counts{Counting: true}, Unjudged: []string{reason}}
 	}
 	limited := &io.LimitedReader{R: report, N: junitReportLimit + 1}
 	decoder := xml.NewDecoder(limited)
-	parser := junitParser{cases: make(map[string]struct{})}
+	parser := junitParser{cases: cases, withTimings: withTimings}
 	for {
 		token, err := decoder.Token()
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			return invalid("the JUnit XML report is unreadable or incomplete")
+			return invalid("the JUnit XML report is unreadable or incomplete"), nil, false
 		}
 		switch value := token.(type) {
 		case xml.StartElement:
 			if err := parser.start(value); err != nil {
-				return invalid(err.Error())
+				return invalid(err.Error()), nil, false
 			}
 		case xml.EndElement:
 			if err := parser.end(value); err != nil {
-				return invalid(err.Error())
+				return invalid(err.Error()), nil, false
 			}
 		case xml.CharData:
 			if len(parser.stack) == 0 && len(strings.TrimSpace(string(value))) != 0 {
-				return invalid("the JUnit XML report has content outside its root")
+				return invalid("the JUnit XML report has content outside its root"), nil, false
 			}
 			if len(parser.stack) > 0 {
 				switch parser.stack[len(parser.stack)-1].name {
 				case "testsuites", "testsuite", "testcase", "properties":
 					if len(strings.TrimSpace(string(value))) != 0 {
-						return invalid("the JUnit XML report has unexpected text")
+						return invalid("the JUnit XML report has unexpected text"), nil, false
 					}
 				}
 			}
 		case xml.Directive:
-			return invalid("the JUnit XML report contains a forbidden directive")
+			return invalid("the JUnit XML report contains a forbidden directive"), nil, false
 		case xml.ProcInst:
 			if parser.sawRoot || value.Target != "xml" {
-				return invalid("the JUnit XML report contains a forbidden instruction")
+				return invalid("the JUnit XML report contains a forbidden instruction"), nil, false
 			}
 		}
 	}
 	if limited.N == 0 {
-		return invalid("the JUnit XML report exceeds the size limit")
+		return invalid("the JUnit XML report exceeds the size limit"), nil, false
 	}
 	if !parser.sawRoot || !parser.complete || len(parser.stack) != 0 {
-		return invalid("the JUnit XML report is incomplete")
+		return invalid("the JUnit XML report is incomplete"), nil, false
 	}
 	facts := Facts{Kind: JUnit, Counts: Counts{
 		Counting: true, Counted: parser.total.tests - parser.total.skipped,
@@ -96,7 +125,7 @@ func readJUnit(report io.Reader) Facts {
 	if parser.total.failures+parser.total.errors > 0 {
 		facts.Failure = "the JUnit XML report contains failed or errored test cases"
 	}
-	return facts
+	return facts, parser.timings, parser.timingsTruncated
 }
 
 func (parser *junitParser) start(element xml.StartElement) error {
@@ -142,6 +171,36 @@ func (parser *junitParser) start(element xml.StartElement) error {
 			return errors.New("the JUnit XML report repeats a test case")
 		}
 		parser.cases[identity] = struct{}{}
+		if parser.withTimings {
+			var value string
+			seen := false
+			valid := true
+			var class, test string
+			for _, attribute := range element.Attr {
+				switch attribute.Name.Local {
+				case "classname":
+					class = attribute.Value
+				case "name":
+					test = attribute.Value
+				case "time":
+					valid = valid && !seen
+					seen = true
+					value = attribute.Value
+				}
+			}
+			if seen && valid {
+				seconds, err := strconv.ParseFloat(value, 64)
+				if err == nil && !math.IsNaN(seconds) && !math.IsInf(seconds, 0) && seconds >= 0 {
+					var suites []string
+					for _, parent := range parser.stack {
+						if parent.name == "testsuite" {
+							suites = append(suites, parent.suite)
+						}
+					}
+					node.timing = &JUnitCaseDuration{Suite: suites, Class: class, Test: test, Seconds: seconds}
+				}
+			}
+		}
 	}
 	if name == "failure" || name == "error" || name == "skipped" {
 		parent := parser.stack[len(parser.stack)-1]
@@ -162,6 +221,13 @@ func (parser *junitParser) end(element xml.EndElement) error {
 	parser.stack = parser.stack[:len(parser.stack)-1]
 	if node.name == "testcase" {
 		parser.total.tests++
+		if node.timing != nil && node.status != "skipped" {
+			if len(parser.timings) < junitDurationLimit {
+				parser.timings = append(parser.timings, *node.timing)
+			} else {
+				parser.timingsTruncated = true
+			}
+		}
 		switch node.status {
 		case "failure":
 			parser.total.failures++
@@ -214,7 +280,17 @@ func (parser *junitParser) caseIdentity(attributes []xml.Attr) (string, error) {
 	if name == "" {
 		return "", errors.New("the JUnit XML report has a test case without a name")
 	}
+	size := len(class) + len(name) + 1
+	for _, node := range parser.stack {
+		if node.name == "testsuite" {
+			size += len(node.suite) + 1
+		}
+	}
+	if size > junitIdentityLimit {
+		return "", errors.New("the JUnit XML report has an oversized test identity")
+	}
 	var path strings.Builder
+	path.Grow(size)
 	for _, node := range parser.stack {
 		if node.name == "testsuite" {
 			path.WriteString(node.suite)

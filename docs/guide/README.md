@@ -25,13 +25,18 @@ from a verified release.
 
 ## Verify and deliver
 
+[Local merge queue](merge-queue.md) prepares and verifies one candidate for manual landing.
+
 - [Tests](tests.md) covers scopes, evidence, receipts and gates.
+- [Maven Surefire](maven-surefire.md) shows how to judge separate XML reports from test classes.
 - [Reviews](review.md) covers optional Codex and Claude Code reviewers and the recorded verdict.
 - [Numbers, records and cards](records.md) covers shared IDs and project records.
 - [Changelogs and releases](releases.md) covers collection, preparation and publication steps.
 - [What jackstay did](observability.md) covers the local timeline, inventory, journal and diagnostics.
 
 ## Agent integrations
+
+[Session chat](session-chat.md) connects parallel local agents through MCP.
 
 - [Claude Code](claude-code.md) covers the project guard hook, sandbox and reviewer setup.
 - [Codex](codex.md) covers the optional reviewer and guard hook.

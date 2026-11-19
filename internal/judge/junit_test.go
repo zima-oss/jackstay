@@ -3,6 +3,7 @@ package judge
 import (
 	"errors"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -129,3 +130,65 @@ func TestJUnitDoesNotExposeReadDiagnostics(t *testing.T) {
 }
 
 var _ io.Reader = failingJUnitReader{}
+
+func TestJUnitRejectsAnOversizedCaseIdentity(t *testing.T) {
+	report := `<testsuite name="` + strings.Repeat("a", junitIdentityLimit) + `"><testcase name="case"/></testsuite>`
+	facts := readJUnit(strings.NewReader(report))
+	if len(facts.Unjudged) != 1 || !strings.Contains(facts.Unjudged[0], "oversized test identity") {
+		t.Fatalf("facts = %+v", facts)
+	}
+}
+
+func TestJUnitTimingsFromPytestAndNestedSuites(t *testing.T) {
+	const report = `<?xml version="1.0" encoding="utf-8"?>
+<testsuites><testsuite name="pytest" errors="0" failures="0" skipped="1" tests="2">
+<testsuite name="module" tests="2" skipped="1">
+<testcase classname="test_sample" name="test_pass" time="0.125" />
+<testcase classname="test_sample" name="test_skip" time="1.000"><skipped/></testcase>
+</testsuite></testsuite></testsuites>`
+	facts, samples, truncated := readJUnitTimed(strings.NewReader(report), make(map[string]struct{}))
+	if len(facts.Unjudged) != 0 || facts.Counts.Counted != 1 || facts.Counts.Skipped != 1 || truncated || len(samples) != 1 {
+		t.Fatalf("facts=%+v, samples=%+v, truncated=%t", facts, samples, truncated)
+	}
+	sample := samples[0]
+	if !slices.Equal(sample.Suite, []string{"pytest", "module"}) || sample.Class != "test_sample" ||
+		sample.Test != "test_pass" || sample.Seconds != 0.125 {
+		t.Fatalf("sample=%+v", sample)
+	}
+	legacy := readJUnit(strings.NewReader(report))
+	if legacy.Counts != facts.Counts || legacy.Failure != facts.Failure || len(legacy.Unjudged) != 0 {
+		t.Fatalf("legacy facts=%+v, timed facts=%+v", legacy, facts)
+	}
+}
+
+func TestJUnitTimingsOmitMissingAndInvalidMeasurements(t *testing.T) {
+	const report = `<testsuite tests="5">
+<testcase name="missing"/><testcase name="negative" time="-1"/>
+<testcase name="nan" time="NaN"/><testcase name="infinite" time="+Inf"/>
+<testcase name="measured" time="0"/></testsuite>`
+	facts, samples, truncated := readJUnitTimed(strings.NewReader(report), make(map[string]struct{}))
+	if len(facts.Unjudged) != 0 || facts.Counts.Counted != 5 || truncated || len(samples) != 1 ||
+		samples[0].Test != "measured" || samples[0].Seconds != 0 {
+		t.Fatalf("facts=%+v, samples=%+v, truncated=%t", facts, samples, truncated)
+	}
+}
+
+func TestJUnitTimingsBoundSamplesAndRejectPartialReport(t *testing.T) {
+	var report strings.Builder
+	report.WriteString(`<testsuite>`)
+	for index := range junitDurationLimit + 1 {
+		report.WriteString(`<testcase name="test-`)
+		report.WriteString(strconv.Itoa(index))
+		report.WriteString(`" time="0.5"/>`)
+	}
+	report.WriteString(`</testsuite>`)
+	facts, samples, truncated := readJUnitTimed(strings.NewReader(report.String()), make(map[string]struct{}))
+	if len(facts.Unjudged) != 0 || facts.Counts.Counted != junitDurationLimit+1 ||
+		len(samples) != junitDurationLimit || !truncated {
+		t.Fatalf("facts=%+v, samples=%d, truncated=%t", facts, len(samples), truncated)
+	}
+	facts, samples, truncated = readJUnitTimed(strings.NewReader(`<testsuite><testcase name="case" time="0.5"/>`), make(map[string]struct{}))
+	if len(facts.Unjudged) != 1 || len(samples) != 0 || truncated {
+		t.Fatalf("partial report: facts=%+v, samples=%+v, truncated=%t", facts, samples, truncated)
+	}
+}

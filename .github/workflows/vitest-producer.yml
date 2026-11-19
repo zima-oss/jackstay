@@ -51,4 +51,4 @@ jobs:
       - name: Verify real JUnit reports
         env:
           VITEST_ROOT: ${{ runner.temp }}/vitest-producer
-        run: go test -tags integration ./internal/judge -run '^TestVitestJUnitProducer$' -count=1
+        run: go test -tags integration ./internal/judge -run '^TestVitestJUnit' -count=1

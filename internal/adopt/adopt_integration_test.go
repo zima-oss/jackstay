@@ -28,7 +28,7 @@ func TestAGitProjectWithNoJackstayJSONGetsOne(t *testing.T) {
 	}
 	applyTwice(t, options)
 	text := read(t, root, "jackstay.json")
-	if !strings.Contains(text, `"jackstay_schema": 2`) || !strings.Contains(text, `"project": "`+filepath.Base(root)+`"`) {
+	if !strings.Contains(text, `"$schema":`) || !strings.Contains(text, `"jackstay_schema": 2`) || !strings.Contains(text, `"project": "`+filepath.Base(root)+`"`) {
 		t.Fatalf("jackstay.json:\n%s", text)
 	}
 }

@@ -28,6 +28,8 @@ the same rules hold.
   force-push to a shared branch.
 - **Secrets**: never write a token, key or password into a file, a test, a log or a commit message;
   tests use made-up values.
+- **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
+  identifiers and private pilot repository references out of tracked files and commit metadata.
 
 <!-- jackstay-adopt: begin agents-block sha256:84028b9352ac — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project

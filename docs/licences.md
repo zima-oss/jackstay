@@ -36,6 +36,19 @@ site).
 | `google.golang.org/protobuf` | v1.36.12 | BSD-3-Clause | no (tests) |
 | `mvdan.cc/sh/v3` | v3.14.1 | BSD-3-Clause | yes |
 
+## Test report producer fixtures
+
+Separate producer checks use pinned tools to generate representative reports. These dependencies
+are confined to test fixtures and their CI jobs.
+
+| Tool | Version | Licence | Role |
+|---|---|---|---|
+| [Maven](https://maven.apache.org/ref/3.9.11/) | 3.9.11 | Apache-2.0 | Run the JVM fixture |
+| [Maven Surefire](https://maven.apache.org/surefire/maven-surefire-plugin/) | 3.5.4 | Apache-2.0 | Generate JUnit XML |
+| [TestNG](https://github.com/testng-team/testng) | 7.11.0 | Apache-2.0 | Execute JVM fixture cases |
+| [Jest](https://github.com/jestjs/jest) | 30.5.2 | MIT | Generate Jest JSON |
+| [MSTest](https://github.com/microsoft/testfx) | 4.2.3 | MIT | Execute .NET fixture cases through VSTest |
+
 ## The documentation site
 
 The site (`site/`, W-076) is built with tools and code that are not in `jst` and not in `go.mod`,

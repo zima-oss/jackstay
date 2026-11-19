@@ -3,14 +3,18 @@
 package judge
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zima-oss/jackstay/internal/testreport"
 )
 
 // VITEST_ROOT points to a disposable directory containing node_modules/vitest.
@@ -90,5 +94,85 @@ func TestVitestJUnitProducer(t *testing.T) {
 				t.Fatalf("Vitest verdict %+v: %s", verdict, output)
 			}
 		})
+	}
+}
+
+// Shards are a complete result only when every declared output exists and cases do not repeat.
+// A retry that succeeds produces one final JUnit case; its intermediate attempts are not
+// represented by Vitest's JUnit reporter.
+func TestVitestJUnitRetryAndShards(t *testing.T) {
+	root := os.Getenv("VITEST_ROOT")
+	if root == "" {
+		t.Skip("set VITEST_ROOT to a directory with Vitest 5.1.1 installed")
+	}
+	vitest := filepath.Join(root, "node_modules", ".bin", "vitest")
+	version, err := exec.Command(vitest, "--version").CombinedOutput()
+	if err != nil || !strings.Contains(string(version), "vitest/5.1.1 ") {
+		t.Fatalf("expected Vitest 5.1.1, got %q: %v", version, err)
+	}
+	project := t.TempDir()
+	for _, name := range []string{"retry.test.mjs", "pass.test.mjs", "shard.test.mjs"} {
+		contents, err := os.ReadFile(filepath.Join("testdata", "vitest", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(project, name), contents, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := testreport.OpenReports(project, []string{"shard-1.xml", "shard-2.xml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer report.Close()
+	run := func(args ...string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		command := exec.CommandContext(ctx, vitest, append([]string{"run", "--reporter=junit"}, args...)...)
+		command.Dir = project
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("Vitest %v: %v: %s", args, err, output)
+		}
+	}
+	retryPath := filepath.Join(project, "retry.xml")
+	run("retry.test.mjs", "--retry=1", "--outputFile="+retryPath)
+	retry, err := os.ReadFile(retryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts := readJUnit(bytes.NewReader(retry)); facts.Counts.Counted != 1 || facts.Failure != "" || len(facts.Unjudged) != 0 {
+		t.Fatalf("Vitest retry report did not represent one final result: %+v", facts)
+	}
+	for shard := 1; shard <= 2; shard++ {
+		path := filepath.Join(project, "shard-"+strconv.Itoa(shard)+".xml")
+		run("pass.test.mjs", "shard.test.mjs", "--shard="+strconv.Itoa(shard)+"/2", "--outputFile="+path)
+	}
+	reader, err := New(Options{Kind: JUnit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader.ReadReport(report)
+	verdict := reader.Verdict(End{})
+	if verdict.Outcome != Passed || verdict.Counted != 2 || verdict.Skipped != 1 {
+		t.Fatalf("complete Vitest shards: %+v", verdict)
+	}
+	first, err := os.ReadFile(filepath.Join(project, "shard-1.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "shard-2.xml"), first, 0644); err != nil {
+		t.Fatal(err)
+	}
+	reader.ReadReport(report)
+	if verdict := reader.Verdict(End{}); verdict.Outcome != Unjudged {
+		t.Fatalf("duplicate Vitest shard: %+v", verdict)
+	}
+	if err := os.Remove(filepath.Join(project, "shard-2.xml")); err != nil {
+		t.Fatal(err)
+	}
+	reader.ReadReport(report)
+	if verdict := reader.Verdict(End{}); verdict.Outcome != Unjudged {
+		t.Fatalf("missing Vitest shard: %+v", verdict)
 	}
 }

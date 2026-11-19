@@ -386,7 +386,8 @@ func (run *session) lockUnusable(words string) int {
 // knows its holder).
 func commandEnv(environ []string) []string {
 	dropped := []string{lock.OutcomeFileVariable, lock.NoteWordsVariable, lock.GroupWaitVariable,
-		supervise.SessionsFileVariable, supervise.RunIDVariable, supervise.RunProjectVariable, testreport.PathVariable}
+		supervise.SessionsFileVariable, supervise.RunIDVariable, supervise.RunProjectVariable, testreport.PathVariable,
+		testreport.DirectoryVariable}
 	kept := make([]string, 0, len(environ))
 	for _, entry := range environ {
 		name, _, _ := strings.Cut(entry, "=")
@@ -448,7 +449,7 @@ func (run *session) command(evidenceJudge *Evidence, key Key, keyErr error, held
 	var decoder supervise.Sink = evidenceJudge
 	kind := run.adapterKind()
 	if kind != "" {
-		options := judge.Options{Kind: kind}
+		options := judge.Options{Kind: kind, XCResultBundles: texts(run.entry["xcresult_bundles"])}
 		if veto := evidenceJudge.Veto(); veto != nil {
 			options.Vetoes = []string{veto.String()}
 		}
@@ -465,19 +466,27 @@ func (run *session) command(evidenceJudge *Evidence, key Key, keyErr error, held
 	}
 	env := setEnv(setEnv(run.env, supervise.RunIDVariable, did.runID), supervise.RunProjectVariable, run.project)
 	var report *testreport.Report
-	if kind == judge.JUnit {
+	if testreport.FileJudge(string(kind)) {
 		folder, err := os.MkdirTemp("", "jackstay-test-report.")
 		if err != nil {
 			return run.notStarted("the private report directory could not be made: " + err.Error())
 		}
 		defer func() { _ = os.RemoveAll(folder) }()
 		name, _ := run.entry["report"].(string)
-		report, err = testreport.OpenReport(folder, name)
+		names := texts(run.entry["reports"])
+		if name != "" {
+			names = []string{name}
+		}
+		report, err = testreport.OpenReports(folder, names)
 		if err != nil {
-			return run.notStarted("the private JUnit report could not be prepared: " + err.Error())
+			return run.notStarted("the private test report could not be prepared: " + err.Error())
 		}
 		defer func() { _ = report.Close() }()
-		env = setEnv(env, testreport.PathVariable, report.Path())
+		if name != "" {
+			env = setEnv(env, testreport.PathVariable, report.Path())
+		} else {
+			env = setEnv(env, testreport.DirectoryVariable, report.Directory())
+		}
 	}
 	if keyErr == nil && run.storeErr == nil {
 		// The command is about to run for this key: its receipt stops speaking for the tree now, so

@@ -1,0 +1,1231 @@
+{
+  "$id": "https://raw.githubusercontent.com/zima-oss/jackstay/main/schemas/jackstay.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Project configuration for jackstay. Run jst check for semantic and cross-field validation.",
+  "properties": {
+    "$schema": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "adopt": {
+      "additionalProperties": false,
+      "properties": {
+        "exceptions": {
+          "additionalProperties": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "pin": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "profile": {
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "baseline": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "kinds": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "gate": {
+                "type": "boolean"
+              },
+              "name": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "pattern": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "merge_unit": {
+          "enum": [
+            "pr",
+            "commit"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "transcripts": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "cards": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "dir": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "exempt_branches": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "first_new": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "id": {
+          "description": "Go RE2 regular expression; validate with jst check.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "since": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "snapshots": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "pr",
+            "commit"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "changes": {
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "heading": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "internal_into": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "into": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "newest": {
+          "enum": [
+            "first",
+            "last"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "template": {
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "chat": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "codex_bridge": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          }
+        },
+        "required": [
+          "codex_bridge"
+        ]
+      },
+      "properties": {
+        "codex_bridge": {
+          "additionalProperties": false,
+          "properties": {
+            "ack_timeout_seconds": {
+              "default": 30,
+              "maximum": 300,
+              "minimum": 5,
+              "type": "integer"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "poll_interval_ms": {
+              "default": 1000,
+              "maximum": 10000,
+              "minimum": 100,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "max_message_bytes": {
+          "default": 4096,
+          "maximum": 16384,
+          "minimum": 128,
+          "type": "integer"
+        },
+        "max_pending": {
+          "default": 128,
+          "maximum": 512,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_pending_per_session": {
+          "default": 32,
+          "description": "Pending messages per recipient. The default is min(32, max_pending); an explicit value must not exceed max_pending.",
+          "maximum": 512,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_sessions": {
+          "default": 32,
+          "maximum": 64,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "retention_hours": {
+          "default": 72,
+          "maximum": 168,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "then": {
+        "properties": {
+          "enabled": {
+            "const": true
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "type": "object"
+    },
+    "github": {
+      "additionalProperties": false,
+      "properties": {
+        "account": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "remote": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "repository": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "wait": {
+          "additionalProperties": false,
+          "properties": {
+            "interval_seconds": {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            "log_lines": {
+              "type": "integer"
+            },
+            "timeout_seconds": {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "guard": {
+      "additionalProperties": false,
+      "properties": {
+        "deny": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "env": {
+                "additionalProperties": {
+                  "description": "Go RE2 regular expression; validate with jst check.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "id": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "instead": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "unless": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "why": {
+                "pattern": "\\S",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "regenerable": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rules": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "level": {
+                "enum": [
+                  "refuse",
+                  "warn",
+                  "off"
+                ],
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "paths": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ids": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "also_in": {
+            "items": {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "files": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "width": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "jackstay_schema": {
+      "enum": [
+        1,
+        2
+      ],
+      "type": "integer"
+    },
+    "lock": {
+      "additionalProperties": false,
+      "properties": {
+        "also_hold": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "held_env": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "path": {
+                "pattern": "\\S",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "procs": {
+      "additionalProperties": false,
+      "properties": {
+        "default_minutes": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "max_minutes": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "project": {
+      "pattern": "\\S",
+      "type": "string"
+    },
+    "queue": {
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "enabled": {
+            "const": true
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "properties": {
+        "base_ref": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "require_pull_request": {
+          "type": "boolean"
+        },
+        "review_task": {
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "then": {
+        "required": [
+          "base_ref"
+        ]
+      },
+      "type": "object"
+    },
+    "receipts": {
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "argv": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "argv_prefix": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "empty_exit": {
+                "type": "integer"
+              },
+              "evidence": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "judge": {
+                "enum": [
+                  "go-json",
+                  "junit",
+                  "jest-json",
+                  "trx",
+                  "xcresult-json"
+                ],
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "merge_bases": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "refs": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "report": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "reports": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "reuse": {
+                "type": "boolean"
+              },
+              "veto": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "xcresult_bundles": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "env": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "exclude": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "extra_files": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "include_head": {
+          "type": "boolean"
+        },
+        "inputs": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "max_age_hours": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "merge_bases": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "no_reuse_branches": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "refs": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "toolchain": {
+          "items": {
+            "items": {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "records": {
+      "additionalProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "before": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "columns": {
+            "items": {
+              "pattern": "\\S",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "dir": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "template": {
+            "pattern": "\\S",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "type": "object"
+    },
+    "release": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "branch": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "build": {
+          "additionalProperties": false,
+          "properties": {
+            "match": {
+              "description": "Go RE2 regular expression; validate with jst check.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "path": {
+              "pattern": "\\S",
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "files": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "match": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "path": {
+                "pattern": "\\S",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "first": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "merge": {
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "tag": {
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "review": {
+      "additionalProperties": false,
+      "properties": {
+        "blocking": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "brief": {
+          "type": "string"
+        },
+        "cite": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "keep_days": {
+          "type": "integer"
+        },
+        "max_concurrent": {
+          "type": "integer"
+        },
+        "queue_minutes": {
+          "type": "integer"
+        },
+        "repeat_rounds": {
+          "type": "integer"
+        },
+        "repeat_severities": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reviewers": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "effort": {
+                "type": "string"
+              },
+              "isolation": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "model": {
+                "type": "string"
+              },
+              "timeout_minutes": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "round_limit": {
+          "type": "integer"
+        },
+        "severities": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "store": {
+          "type": "string"
+        },
+        "template": {
+          "type": "string"
+        },
+        "triage": {
+          "type": "boolean"
+        },
+        "use": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "telemetry": {
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "enum": [
+            "masked",
+            "skeleton"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "compress_after_days": {
+          "type": "integer"
+        },
+        "keep_days": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "test": {
+      "additionalProperties": false,
+      "properties": {
+        "expect": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "judge": {
+          "enum": [
+            "swift-test",
+            "steps",
+            "exit",
+            "go-json",
+            "junit",
+            "jest-json",
+            "trx",
+            "xcresult-json"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "leftovers": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "fail": {
+                "type": "boolean"
+              },
+              "glob": {
+                "pattern": "\\S",
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "requires_timeout_seconds": {
+          "default": 60,
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "scopes": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "base": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "cwd": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "durations": {
+                "type": "boolean"
+              },
+              "empty_exit": {
+                "type": "integer"
+              },
+              "env": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "evidence": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "expect": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "judge": {
+                "enum": [
+                  "swift-test",
+                  "steps",
+                  "exit",
+                  "go-json",
+                  "junit",
+                  "jest-json",
+                  "trx",
+                  "xcresult-json"
+                ],
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "lock": {
+                "type": "boolean"
+              },
+              "lock_wait": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "report": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "reports": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "requires": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "run": {
+                      "items": {
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "timeout": {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    "why": {
+                      "pattern": "\\S",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "resume": {
+                "type": "boolean"
+              },
+              "run": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "selector": {
+                "enum": [
+                  "go-test",
+                  "jest-test"
+                ],
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "slow": {
+                "additionalProperties": false,
+                "properties": {
+                  "case_seconds": {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  "class_seconds": {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "steps": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "timeout": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "veto": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "when": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "xcresult_bundles": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "selection": {
+          "additionalProperties": false,
+          "properties": {
+            "order": {
+              "items": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "rules": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "glob": {
+                    "pattern": "\\S",
+                    "type": "string"
+                  },
+                  "scope": {
+                    "pattern": "\\S",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "steps": {
+          "additionalProperties": {
+            "additionalProperties": false,
+            "properties": {
+              "base": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "cwd": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "durations": {
+                "type": "boolean"
+              },
+              "empty_exit": {
+                "type": "integer"
+              },
+              "env": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              "evidence": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "expect": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "judge": {
+                "enum": [
+                  "swift-test",
+                  "steps",
+                  "exit",
+                  "go-json",
+                  "junit",
+                  "jest-json",
+                  "trx",
+                  "xcresult-json"
+                ],
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "lock": {
+                "type": "boolean"
+              },
+              "lock_wait": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "report": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "reports": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "requires": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "run": {
+                      "items": {
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "timeout": {
+                      "exclusiveMinimum": 0,
+                      "type": "number"
+                    },
+                    "why": {
+                      "pattern": "\\S",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "resume": {
+                "type": "boolean"
+              },
+              "run": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "selector": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "slow": {
+                "additionalProperties": false,
+                "properties": {
+                  "case_seconds": {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  },
+                  "class_seconds": {
+                    "exclusiveMinimum": 0,
+                    "type": "number"
+                  }
+                },
+                "type": "object"
+              },
+              "steps": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "timeout": {
+                "exclusiveMinimum": 0,
+                "type": "number"
+              },
+              "veto": {
+                "description": "Go RE2 regular expression; validate with jst check.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "when": {
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "xcresult_bundles": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "type": "object"
+          },
+          "type": "object"
+        },
+        "timeout": {
+          "exclusiveMinimum": 0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "trash": {
+      "additionalProperties": false,
+      "properties": {
+        "keep_days": {
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "required": [
+    "jackstay_schema"
+  ],
+  "title": "jackstay.json",
+  "type": "object"
+}

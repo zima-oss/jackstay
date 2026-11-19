@@ -185,6 +185,25 @@ version: give --version V to see them.
 
 example: jst changes view --version 1.4.0
 
+==> jst chat --help
+jst chat: these commands (each answers --help)
+
+  jst chat serve  serve repository-local agent session chat over MCP
+
+exit: 0 this list; 2 `jst chat` alone, or with a word that is no command under it (nothing
+is run); each command's --help names its own.
+
+==> jst chat serve --help
+jst chat serve: serve repository-local agent session chat over MCP
+
+usage: jst chat serve --name NAME
+
+Serve a local stdio MCP session. Set JACKSTAY_CHAT_SESSION_TOKEN to a random 32+ character secret in the host launcher to resume an identity. The project must enable chat in jackstay.json. Messages are delivered when recipients poll their inbox.
+
+exit: 0 end of input; 2 invalid configuration, arguments or transport.
+
+example: jst chat serve --name reviewer
+
 ==> jst check --help
 jst check: [DIR]: is this project's jackstay.json usable? (for the project's gate)
 
@@ -597,6 +616,119 @@ exit: 0 verified. 1 digest, profile or template error. 2 bad arguments.
 
 example: jst profile verify --sha256 "$expected" policy.bundle.json
 
+==> jst queue --help
+jst queue: local single-head merge candidate and manual handoff
+
+usage: jst queue add --head REF
+       jst queue prepare | test | status | handoff | remove
+
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
+holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
+a clean copy and requires counted portable receipts; handoff checks freshness and prints the
+candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+
+exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
+
+example: jst queue add --head refs/heads/my-change
+
+commands under it (each answers --help):
+  jst queue add      pin one head in the local merge queue
+  jst queue handoff  verify freshness and show manual landing evidence
+  jst queue prepare  build a candidate commit without changing refs
+  jst queue remove   empty the local queue without changing refs
+  jst queue status   show the candidate and input freshness
+  jst queue test     run the gate on the candidate and save counted evidence
+
+==> jst queue add --help
+jst queue add: pin one head in the local merge queue
+
+usage: jst queue add --head REF
+       jst queue prepare | test | status | handoff | remove
+
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
+holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
+a clean copy and requires counted portable receipts; handoff checks freshness and prints the
+candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+
+exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
+
+example: jst queue add --head refs/heads/my-change
+
+==> jst queue handoff --help
+jst queue handoff: verify freshness and show manual landing evidence
+
+usage: jst queue add --head REF
+       jst queue prepare | test | status | handoff | remove
+
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
+holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
+a clean copy and requires counted portable receipts; handoff checks freshness and prints the
+candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+
+exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
+
+example: jst queue add --head refs/heads/my-change
+
+==> jst queue prepare --help
+jst queue prepare: build a candidate commit without changing refs
+
+usage: jst queue add --head REF
+       jst queue prepare | test | status | handoff | remove
+
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
+holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
+a clean copy and requires counted portable receipts; handoff checks freshness and prints the
+candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+
+exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
+
+example: jst queue add --head refs/heads/my-change
+
+==> jst queue remove --help
+jst queue remove: empty the local queue without changing refs
+
+usage: jst queue add --head REF
+       jst queue prepare | test | status | handoff | remove
+
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
+holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
+a clean copy and requires counted portable receipts; handoff checks freshness and prints the
+candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+
+exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
+
+example: jst queue add --head refs/heads/my-change
+
+==> jst queue status --help
+jst queue status: show the candidate and input freshness
+
+usage: jst queue add --head REF
+       jst queue prepare | test | status | handoff | remove
+
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
+holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
+a clean copy and requires counted portable receipts; handoff checks freshness and prints the
+candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+
+exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
+
+example: jst queue add --head refs/heads/my-change
+
+==> jst queue test --help
+jst queue test: run the gate on the candidate and save counted evidence
+
+usage: jst queue add --head REF
+       jst queue prepare | test | status | handoff | remove
+
+The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. This first local lane
+holds one head. prepare writes an unreachable Git candidate commit; test runs the project gate on
+a clean copy and requires counted portable receipts; handoff checks freshness and prints the
+candidate and evidence for a manual merge. It never changes a Git ref or calls GitHub.
+
+exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
+
+example: jst queue add --head refs/heads/my-change
+
 ==> jst receipts --help
 jst receipts: the receipts: key, stats, list, export, verify
 
@@ -881,17 +1013,20 @@ example: jst review show parser-fix 2
 ==> jst setup --help
 jst setup: plan and apply selected machine setup repairs
 
-usage: jst setup [--plan] [--json] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]
+usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
 POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
   --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
+  --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
 
-Without options, a terminal offers apply, show and skip. An existing profile is copied to a
+Mail steps report detected engines and their current integration limits. They are guidance only;
+setup does not install an unverified bridge or claim active-turn delivery. Without options, a
+terminal offers apply, show and skip. An existing profile is copied to a
 unique backup beside it before replacement. Unsupported shells and conflicting profiles are
 left for the owner. Open a new shell after applying a PATH repair.
 

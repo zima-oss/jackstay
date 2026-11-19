@@ -23,17 +23,22 @@ type Kind string
 
 // The judges.
 const (
-	SwiftTest Kind = "swift-test"
-	Steps     Kind = "steps"
-	Exit      Kind = "exit"
-	GoJSON    Kind = "go-json"
-	JUnit     Kind = "junit"
+	SwiftTest    Kind = "swift-test"
+	Steps        Kind = "steps"
+	Exit         Kind = "exit"
+	GoJSON       Kind = "go-json"
+	JUnit        Kind = "junit"
+	JestJSON     Kind = "jest-json"
+	TRX          Kind = "trx"
+	XCResultJSON Kind = "xcresult-json"
 )
 
 // AdapterVersion identifies structured evidence in receipt and gate keys. Zero denotes a legacy judge.
 func AdapterVersion(kind Kind) int {
 	switch kind {
-	case GoJSON, JUnit:
+	case JUnit, JestJSON:
+		return 2
+	case GoJSON, TRX, XCResultJSON:
 		return 1
 	default:
 		return 0
@@ -67,6 +72,18 @@ const (
 // Options are a scope's judge and patterns, as jackstay.json declares them. The patterns are RE2.
 type Options struct {
 	Kind Kind
+	// GoSelection requires the Go JSON stream to execute this case in this package.
+	GoSelection *GoSelection
+	// JestSelection checks the selected file and assertion against the report.
+	JestSelection *JestSelection
+	// GoDurations collects bounded elapsed-time samples from completed Go test leaves.
+	GoDurations bool
+	// XCResultBundles names the test bundles the configured scheme must execute.
+	XCResultBundles []string
+	// XCResultDurations collects completed Xcode test case timings.
+	XCResultDurations bool
+	// JUnitDurations collects the reported duration of completed JUnit cases.
+	JUnitDurations bool
 	// Expect are the engines a `swift-test` scope runs; none means XCTest.
 	Expect []Engine
 	// Evidence holds one group for a number; the numbers are added over every matching line of
@@ -81,14 +98,22 @@ type Options struct {
 // A Reader hears the output (supervise.Sink) and gives the verdict. Its methods may be called from
 // several goroutines.
 type Reader struct {
-	mutex     sync.Mutex
-	kind      Kind
-	evidence  *regexp.Regexp
-	vetoes    []*regexp.Regexp
-	swift     *swiftTest
-	goJSON    *goJSONReader
-	report    *Facts
-	emptyExit int
+	mutex             sync.Mutex
+	kind              Kind
+	evidence          *regexp.Regexp
+	vetoes            []*regexp.Regexp
+	swift             *swiftTest
+	goJSON            *goJSONReader
+	report            *Facts
+	jestSelection     *JestSelection
+	junitTimings      bool
+	junitSamples      []JUnitCaseDuration
+	junitTruncated    bool
+	xcresultBundles   []string
+	xcresultTimings   bool
+	xcresultSamples   []XCResultCaseDuration
+	xcresultTruncated bool
+	emptyExit         int
 
 	vetoed        bool
 	vetoLine      string
@@ -104,7 +129,46 @@ type Reader struct {
 
 // New is a Reader for the options, or why they cannot judge.
 func New(options Options) (*Reader, error) {
-	reader := &Reader{kind: options.Kind, emptyExit: options.EmptyExit}
+	reader := &Reader{kind: options.Kind, emptyExit: options.EmptyExit,
+		jestSelection: options.JestSelection, junitTimings: options.JUnitDurations,
+		xcresultTimings: options.XCResultDurations,
+		xcresultBundles: append([]string(nil), options.XCResultBundles...)}
+	if options.JestSelection != nil && options.Kind != JestJSON {
+		return nil, errors.New("judge: Jest selection requires jest-json")
+	}
+	if len(options.XCResultBundles) != 0 && options.Kind != XCResultJSON {
+		return nil, errors.New("judge: Xcode bundles require xcresult-json")
+	}
+	if options.Kind == XCResultJSON {
+		if len(options.XCResultBundles) == 0 || len(options.XCResultBundles) > 32 {
+			return nil, errors.New("judge: xcresult-json needs 1 to 32 expected bundle names")
+		}
+		seen := make(map[string]bool, len(options.XCResultBundles))
+		for _, bundle := range options.XCResultBundles {
+			if bundle == "" || len(bundle) > 512 || seen[bundle] {
+				return nil, errors.New("judge: Xcode bundle names must be distinct and nonempty")
+			}
+			seen[bundle] = true
+		}
+	}
+	if options.XCResultDurations && options.Kind != XCResultJSON {
+		return nil, errors.New("judge: Xcode durations require xcresult-json")
+	}
+	if options.JUnitDurations && options.Kind != JUnit {
+		return nil, errors.New("judge: JUnit durations require junit")
+	}
+	if options.Kind != GoJSON && (options.GoSelection != nil || options.GoDurations) {
+		return nil, errors.New("judge: Go selection and durations require go-json")
+	}
+	if selection := options.GoSelection; selection != nil {
+		if selection.Package == "" || selection.Name == "" ||
+			len(selection.Package) > maxGoJSONName || len(selection.Name) > maxGoJSONName ||
+			strings.ContainsAny(selection.Package, " \t\r\n") ||
+			strings.HasPrefix(selection.Name, "/") || strings.HasSuffix(selection.Name, "/") ||
+			strings.Contains(selection.Name, "//") {
+			return nil, errors.New("judge: Go selection needs a package and a slash-delimited test name")
+		}
+	}
 	switch options.Kind {
 	case SwiftTest:
 		for _, engine := range options.Expect {
@@ -113,15 +177,15 @@ func New(options Options) (*Reader, error) {
 			}
 		}
 		reader.swift = newSwiftTest(options.Expect)
-	case Steps, Exit, GoJSON, JUnit:
+	case Steps, Exit, GoJSON, JUnit, JestJSON, TRX, XCResultJSON:
 		if len(options.Expect) > 0 {
 			return nil, errors.New("judge: `expect` is for the swift-test judge")
 		}
 		if options.Kind == GoJSON {
-			reader.goJSON = &goJSONReader{}
+			reader.goJSON = &goJSONReader{selection: options.GoSelection, withDurations: options.GoDurations}
 		}
 	default:
-		return nil, fmt.Errorf("judge: %q is none of %s, %s, %s, %s, %s", options.Kind, SwiftTest, Steps, Exit, GoJSON, JUnit)
+		return nil, fmt.Errorf("judge: %q is none of %s, %s, %s, %s, %s, %s, %s, %s", options.Kind, SwiftTest, Steps, Exit, GoJSON, JUnit, JestJSON, TRX, XCResultJSON)
 	}
 	if AdapterVersion(options.Kind) != 0 && options.Evidence != "" {
 		return nil, errors.New("judge: a structured judge cannot use an evidence pattern")
@@ -221,16 +285,125 @@ func (reader *Reader) Durations() map[string]map[string]float64 {
 	return durations
 }
 
+// GoDurations returns witnessed Go case timings. Invalid or incomplete streams have no usable samples.
+func (reader *Reader) GoDurations() ([]GoCaseDuration, bool) {
+	reader.mutex.Lock()
+	defer reader.mutex.Unlock()
+	if reader.goJSON == nil || !reader.goJSON.withDurations || len(reader.goJSON.facts().Unjudged) != 0 {
+		return nil, false
+	}
+	return append([]GoCaseDuration(nil), reader.goJSON.durations...), reader.goJSON.durationsTruncated
+}
+
+// JUnitDurations returns bounded timings from the accepted set of JUnit reports.
+func (reader *Reader) JUnitDurations() ([]JUnitCaseDuration, bool) {
+	reader.mutex.Lock()
+	defer reader.mutex.Unlock()
+	if reader.report == nil || len(reader.report.Unjudged) != 0 {
+		return nil, false
+	}
+	return append([]JUnitCaseDuration(nil), reader.junitSamples...), reader.junitTruncated
+}
+
+// XCResultDurations returns bounded measurements from a valid Xcode result.
+func (reader *Reader) XCResultDurations() ([]XCResultCaseDuration, bool) {
+	reader.mutex.Lock()
+	defer reader.mutex.Unlock()
+	if reader.report == nil || len(reader.report.Unjudged) != 0 {
+		return nil, false
+	}
+	return append([]XCResultCaseDuration(nil), reader.xcresultSamples...), reader.xcresultTruncated
+}
+
 var _ supervise.Sink = (*Reader)(nil)
 
-// ReadReport decodes the declared JUnit report after the producer exits and before directory cleanup.
+// ReadReport decodes every declared report after the producer exits and before directory cleanup.
 func (reader *Reader) ReadReport(report *testreport.Report) {
 	reader.mutex.Lock()
 	defer reader.mutex.Unlock()
-	fact := Facts{Kind: JUnit, Unjudged: []string{"the JUnit report is missing or unreadable"}}
-	if file, err := report.Read(); err == nil {
-		defer func() { _ = file.Close() }()
-		fact = readJUnit(file)
+	facts := Facts{Kind: reader.kind, Counts: Counts{Counting: true}}
+	reader.junitSamples = nil
+	reader.junitTruncated = false
+	reader.xcresultSamples = nil
+	reader.xcresultTruncated = false
+	if reader.kind == XCResultJSON {
+		if report.Count() != 2 {
+			reader.report = &Facts{Kind: XCResultJSON, Counts: Counts{Counting: true},
+				Unjudged: []string{"the Xcode result needs a summary and test tree"}}
+			return
+		}
+		summary, summaryError := report.ReadAt(0)
+		if summaryError != nil {
+			reader.report = &Facts{Kind: XCResultJSON, Counts: Counts{Counting: true},
+				Unjudged: []string{"the Xcode result summary is missing or unreadable"}}
+			return
+		}
+		defer func() { _ = summary.Close() }()
+		tests, testsError := report.ReadAt(1)
+		if testsError != nil {
+			reader.report = &Facts{Kind: XCResultJSON, Counts: Counts{Counting: true},
+				Unjudged: []string{"the Xcode result test tree is missing or unreadable"}}
+			return
+		}
+		defer func() { _ = tests.Close() }()
+		decoded, samples, truncated := readXCResultForBundles(summary, tests, reader.xcresultBundles)
+		reader.report = &decoded
+		if reader.xcresultTimings && len(decoded.Unjudged) == 0 {
+			reader.xcresultSamples, reader.xcresultTruncated = samples, truncated
+		}
+		return
 	}
-	reader.report = &fact
+	seen := make(map[string]struct{})
+	duplicate, tooMany := false, false
+	for index := range report.Count() {
+		file, err := report.ReadAt(index)
+		if err != nil {
+			facts.Unjudged = append(facts.Unjudged, "a declared test report is missing or unreadable")
+			continue
+		}
+		var part Facts
+		switch reader.kind {
+		case JestJSON:
+			part = readJestSelected(file, reader.jestSelection)
+		case TRX:
+			part = readTRX(file)
+		default:
+			cases := make(map[string]struct{})
+			if reader.junitTimings {
+				var samples []JUnitCaseDuration
+				var truncated bool
+				part, samples, truncated = readJUnitTimed(file, cases)
+				room := junitDurationLimit - len(reader.junitSamples)
+				reader.junitSamples = append(reader.junitSamples, samples[:min(room, len(samples))]...)
+				reader.junitTruncated = reader.junitTruncated || truncated || len(samples) > room
+			} else {
+				part = readJUnitCases(file, cases)
+			}
+			if report.Count() > 1 && len(part.Unjudged) == 0 {
+				for identity := range cases {
+					if _, exists := seen[identity]; exists {
+						duplicate = true
+					} else if len(seen) == junitCaseLimit {
+						tooMany = true
+					} else {
+						seen[identity] = struct{}{}
+					}
+				}
+			}
+		}
+		_ = file.Close()
+		facts.Counts.Counted += part.Counts.Counted
+		facts.Counts.Skipped += part.Counts.Skipped
+		if facts.Failure == "" {
+			facts.Failure = part.Failure
+		}
+		facts.Unjudged = append(facts.Unjudged, part.Unjudged...)
+	}
+	if duplicate {
+		facts.Unjudged = append(facts.Unjudged, "declared JUnit reports repeat a test case")
+	}
+	if tooMany {
+		facts.Unjudged = append(facts.Unjudged, "declared JUnit reports exceed the combined test case limit")
+	}
+	reader.report = &facts
 }

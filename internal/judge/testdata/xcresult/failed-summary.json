@@ -1,0 +1,16 @@
+{
+  "result": "Failed",
+  "totalTestCount": 7,
+  "passedTests": 3,
+  "failedTests": 2,
+  "skippedTests": 2,
+  "expectedFailures": 0,
+  "devicesAndConfigurations": [
+    {
+      "passedTests": 4,
+      "failedTests": 2,
+      "skippedTests": 2,
+      "expectedFailures": 0
+    }
+  ]
+}

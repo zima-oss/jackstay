@@ -14,12 +14,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/testreport"
@@ -28,6 +30,15 @@ import (
 
 // Name is the project file's name.
 const Name = "jackstay.json"
+
+// EditorSchemaURL is the schema association written in newly adopted projects.
+func EditorSchemaURL() string {
+	return (&url.URL{
+		Scheme: "https",
+		Host:   "raw.githubusercontent.com",
+		Path:   "/zima-oss/jackstay/main/schemas/jackstay.schema.json",
+	}).String()
+}
 
 // Schema is the newest jackstay.json this jackstay reads.
 const Schema = 2
@@ -222,15 +233,19 @@ const (
 )
 
 type schemaType struct {
-	class kind
-	of    *schemaType
-	keys  map[string]*schemaType
+	class                        kind
+	of                           *schemaType
+	keys                         map[string]*schemaType
+	minimum, maximum, defaultInt int64
 }
 
-func str() *schemaType                 { return &schemaType{class: tStr} }
-func text() *schemaType                { return &schemaType{class: tText} }
-func boolean() *schemaType             { return &schemaType{class: tBool} }
-func integer() *schemaType             { return &schemaType{class: tInt} }
+func str() *schemaType     { return &schemaType{class: tStr} }
+func text() *schemaType    { return &schemaType{class: tText} }
+func boolean() *schemaType { return &schemaType{class: tBool} }
+func integer() *schemaType { return &schemaType{class: tInt} }
+func boundedInteger(minimum, maximum, defaultInt int64) *schemaType {
+	return &schemaType{class: tInt, minimum: minimum, maximum: maximum, defaultInt: defaultInt}
+}
 func number() *schemaType              { return &schemaType{class: tNumber} }
 func regex() *schemaType               { return &schemaType{class: tRegex} }
 func list(of *schemaType) *schemaType  { return &schemaType{class: tList, of: of} }
@@ -257,16 +272,82 @@ var testRun = object(
 	"run", texts(), "steps", texts(), "cwd", str(), "judge", str(), "evidence", regex(), "veto", regex(),
 	"timeout", number(), "lock_wait", number(), "lock", boolean(), "env", mapOf(text()), "when", str(),
 	"base", str(), "slow", object("class_seconds", number(), "case_seconds", number()), "durations", boolean(),
-	"expect", texts(), "resume", boolean(),
-	"report", str(), "empty_exit", integer(),
+	"expect", texts(), "resume", boolean(), "selector", str(),
+	"report", str(), "reports", texts(), "empty_exit", integer(), "xcresult_bundles", texts(),
 	"requires", list(object("run", texts(), "why", str(), "timeout", number())),
 )
+
+var codexBridgeSection = object(
+	"enabled", boolean(),
+	"poll_interval_ms", boundedInteger(100, 10000, 1000),
+	"ack_timeout_seconds", boundedInteger(5, 300, 30),
+)
+
+var chatSection = object(
+	"enabled", boolean(),
+	"max_message_bytes", boundedInteger(128, 16384, 4096),
+	"max_pending", boundedInteger(1, 512, 128),
+	"max_pending_per_session", boundedInteger(1, 512, 32),
+	"max_sessions", boundedInteger(2, 64, 32),
+	"retention_hours", boundedInteger(1, 168, 72),
+	"codex_bridge", codexBridgeSection,
+)
+
+var testSection = object(
+	"judge", str(), "timeout", number(), "expect", texts(),
+	"requires_timeout_seconds", boundedInteger(1, 3600, 60),
+	"selection", object("order", texts(), "rules", list(object("glob", str(), "scope", str()))),
+	"leftovers", list(object("glob", str(), "fail", boolean())),
+	"scopes", mapOf(testRun), "steps", mapOf(testRun),
+)
+
+func boundedValue(values map[string]any, shape *schemaType, name string) int {
+	field := shape.keys[name]
+	if configured, present := values[name].(json.Number); present {
+		if number, err := configured.Int64(); err == nil && number >= field.minimum && number <= field.maximum {
+			return int(number)
+		}
+	}
+	return int(field.defaultInt)
+}
+
+// TestRequiresTimeout is the test section's default timeout for prerequisite commands.
+func TestRequiresTimeout(section map[string]any) int {
+	return boundedValue(section, testSection, "requires_timeout_seconds")
+}
+
+// ChatPolicy contains effective limits. The repository validator checks overrides against the table.
+type ChatPolicy struct {
+	Enabled, CodexBridgeEnabled                                                    bool
+	MaxMessageBytes, MaxPending, MaxPendingPerSession, MaxSessions, RetentionHours int
+	CodexPollIntervalMS, CodexAckTimeoutSeconds                                    int
+}
+
+// ChatSettings resolves the settings in a section already checked by Load.
+func ChatSettings(section map[string]any) ChatPolicy {
+	bridge := objectOf(section["codex_bridge"])
+	pending := boundedValue(section, chatSection, "max_pending")
+	return ChatPolicy{
+		Enabled:                section["enabled"] == true,
+		MaxMessageBytes:        boundedValue(section, chatSection, "max_message_bytes"),
+		MaxPending:             pending,
+		MaxPendingPerSession:   min(pending, boundedValue(section, chatSection, "max_pending_per_session")),
+		MaxSessions:            boundedValue(section, chatSection, "max_sessions"),
+		RetentionHours:         boundedValue(section, chatSection, "retention_hours"),
+		CodexBridgeEnabled:     bridge["enabled"] == true,
+		CodexPollIntervalMS:    boundedValue(bridge, codexBridgeSection, "poll_interval_ms"),
+		CodexAckTimeoutSeconds: boundedValue(bridge, codexBridgeSection, "ack_timeout_seconds"),
+	}
+}
 
 // Table is the keys jackstay.json takes; a new key comes with the command that reads it, and projects use
 // it after the switch to Go (docs/design/implementation.md, section 1).
 var Table = object(
+	"$schema", str(),
 	"jackstay_schema", integer(),
 	"project", str(),
+	"chat", chatSection,
+	"queue", object("enabled", boolean(), "base_ref", str(), "require_pull_request", boolean(), "review_task", str()),
 	"guard", object(
 		"regenerable", texts(),
 		"deny", list(object("id", str(), "env", mapOf(regex()), "command", regex(), "unless", regex(), "why", str(), "instead", str())),
@@ -278,7 +359,7 @@ var Table = object(
 		"inputs", texts(), "extra_files", texts(), "exclude", texts(), "env", texts(), "refs", texts(), "merge_bases", texts(),
 		"toolchain", list(texts()), "include_head", boolean(), "no_reuse_branches", texts(), "max_age_hours", number(),
 		"commands", list(object("argv", texts(), "argv_prefix", texts(), "reuse", boolean(), "evidence", regex(), "veto", regex(),
-			"refs", texts(), "merge_bases", texts(), "judge", str(), "report", str(), "empty_exit", integer())),
+			"refs", texts(), "merge_bases", texts(), "judge", str(), "report", str(), "reports", texts(), "empty_exit", integer(), "xcresult_bundles", texts())),
 	),
 	"baseline", object("kinds", list(object("name", str(), "pattern", regex(), "gate", boolean())),
 		"merge_unit", str(), "branch", str(), "transcripts", texts()),
@@ -309,10 +390,7 @@ var Table = object(
 	"adopt", object("pin", str(), "profile", str(), "exceptions", mapOf(str())),
 	// docs/design/observability.md, section 10: the journal's retention and how commands are kept.
 	"telemetry", object("keep_days", integer(), "compress_after_days", integer(), "commands", str()),
-	"test", object("judge", str(), "timeout", number(), "expect", texts(),
-		"selection", object("order", texts(), "rules", list(object("glob", str(), "scope", str()))),
-		"leftovers", list(object("glob", str(), "fail", boolean())),
-		"scopes", mapOf(testRun), "steps", mapOf(testRun)),
+	"test", testSection,
 )
 
 func isInt(value any) bool {
@@ -356,10 +434,16 @@ func typeProblems(value any, wanted *schemaType, where string) []string {
 		}
 		return []string{fmt.Sprintf("`%s` must be true or false", where)}
 	case tInt:
-		if isInt(value) {
-			return nil
+		if !isInt(value) {
+			return []string{fmt.Sprintf("`%s` must be a whole number", where)}
 		}
-		return []string{fmt.Sprintf("`%s` must be a whole number", where)}
+		if wanted.maximum > 0 {
+			number, err := value.(json.Number).Int64()
+			if err != nil || number < wanted.minimum || number > wanted.maximum {
+				return []string{fmt.Sprintf("`%s` must be between %d and %d", where, wanted.minimum, wanted.maximum)}
+			}
+		}
+		return nil
 	case tNumber:
 		if float, ok := numberOf(value); ok && float > 0 {
 			return nil
@@ -464,7 +548,7 @@ func SectionProblems(config Config) Problems {
 		switch {
 		case !known:
 			top = append(top, fmt.Sprintf("unknown key `%s` (the keys here are: %s)", key, Table.names()))
-		case key == "jackstay_schema" || key == "project":
+		case key == "jackstay_schema" || key == "project" || key == "$schema":
 			top = append(top, typeProblems(config[key], sub, key)...)
 		}
 	}
@@ -475,11 +559,11 @@ func SectionProblems(config Config) Problems {
 		}
 	}
 	for _, key := range sortedKeys(config) {
-		if sub, known := Table.keys[key]; known && key != "jackstay_schema" && key != "project" {
+		if sub, known := Table.keys[key]; known && key != "jackstay_schema" && key != "project" && key != "$schema" {
 			problems.add(key, typeProblems(config[key], sub, key)...)
 		}
 	}
-	for _, section := range []string{"receipts", "lock", "guard", "baseline", "test", "github", "telemetry"} {
+	for _, section := range []string{"receipts", "lock", "guard", "baseline", "test", "github", "telemetry", "queue", "chat"} {
 		if _, ok := config[section]; ok && len(problems.found[section]) == 0 {
 			problems.add(section, sectionCheck(section, config)...)
 		}
@@ -537,9 +621,9 @@ func sectionCheck(section string, config Config) []string {
 			entry := objectOf(rawEntry)
 			here := fmt.Sprintf("receipts.commands[%d]", index)
 			kind := stringAt(entry, "judge")
-			structured := kind == "go-json" || kind == "junit"
+			structured := kind == "go-json" || testreport.FileJudge(kind)
 			if kind != "" && !structured {
-				found = append(found, fmt.Sprintf("`%s.judge` must be go-json or junit", here))
+				found = append(found, fmt.Sprintf("`%s.judge` must be go-json, junit, jest-json, trx or xcresult-json", here))
 			}
 			found = append(found, TestAdapterProblems(here, kind, entry)...)
 			if has(entry, "argv") == has(entry, "argv_prefix") {
@@ -608,6 +692,20 @@ func sectionCheck(section string, config Config) []string {
 		if unit, ok := baseline["merge_unit"]; ok && unit != "pr" && unit != "commit" {
 			found = append(found, "`baseline.merge_unit` must be \"pr\" or \"commit\"")
 		}
+	case "chat":
+		chat := objectOf(config["chat"])
+		if has(chat, "max_pending_per_session") &&
+			boundedValue(chat, chatSection, "max_pending_per_session") > boundedValue(chat, chatSection, "max_pending") {
+			found = append(found, "`chat.max_pending_per_session` cannot exceed `chat.max_pending`")
+		}
+		if objectOf(chat["codex_bridge"])["enabled"] == true && chat["enabled"] != true {
+			found = append(found, "`chat.codex_bridge.enabled` requires `chat.enabled`")
+		}
+	case "queue":
+		queue := objectOf(config["queue"])
+		if queue["enabled"] == true && !has(queue, "base_ref") {
+			found = append(found, "`queue.base_ref` is required when the queue is enabled")
+		}
 	case "github":
 		found = githubProblems(objectOf(config["github"]))
 	case "telemetry":
@@ -627,20 +725,52 @@ func sectionCheck(section string, config Config) []string {
 // TestAdapterProblems checks the settings shared by scope and direct structured judges.
 func TestAdapterProblems(where string, kind string, entry map[string]any) []string {
 	var problems []string
-	if kind == "junit" {
-		if !testreport.ValidReportName(stringAt(entry, "report")) {
-			problems = append(problems, fmt.Sprintf("`%s.report` must be a single portable file name for the junit judge", where))
+	if kind == "xcresult-json" {
+		names := items(entry["reports"])
+		if len(names) != 2 || names[0] != "summary.json" || names[1] != "tests.json" || has(entry, "report") {
+			problems = append(problems, fmt.Sprintf("`%s.reports` must be [summary.json, tests.json] for xcresult-json", where))
+		}
+		bundles := items(entry["xcresult_bundles"])
+		valid := len(bundles) > 0 && len(bundles) <= testreport.MaxReports
+		seen := make(map[string]bool)
+		for _, value := range bundles {
+			name, ok := value.(string)
+			valid = valid && ok && name != "" && len(name) <= 512 && strings.TrimSpace(name) == name &&
+				strings.IndexFunc(name, unicode.IsControl) < 0 && !seen[name]
+			seen[name] = true
+		}
+		if !valid {
+			problems = append(problems, fmt.Sprintf("`%s.xcresult_bundles` must name distinct expected unit test bundles", where))
+		}
+		if has(entry, "empty_exit") {
+			problems = append(problems, fmt.Sprintf("`%s.empty_exit` is for junit", where))
+		}
+	} else if testreport.FileJudge(kind) {
+		if has(entry, "reports") {
+			var names []string
+			for _, name := range items(entry["reports"]) {
+				text, _ := name.(string)
+				names = append(names, text)
+			}
+			if kind != "junit" || has(entry, "report") || !testreport.ValidReportNames(names) {
+				problems = append(problems, fmt.Sprintf("`%s.reports` must replace `report` for junit and contain 1–%d distinct portable file names", where, testreport.MaxReports))
+			}
+		} else if !testreport.ValidReportName(stringAt(entry, "report")) {
+			problems = append(problems, fmt.Sprintf("`%s.report` must be a single portable file name for the %s judge", where, kind))
 		}
 		if value, present := entry["empty_exit"]; present {
 			number, ok := numberOf(value)
-			if !ok || number < 1 || number > 125 {
+			if kind != "junit" || !ok || number < 1 || number > 125 {
 				problems = append(problems, fmt.Sprintf("`%s.empty_exit` must be an exit status from 1 to 125", where))
 			}
 		}
-	} else if has(entry, "report") || has(entry, "empty_exit") {
-		problems = append(problems, fmt.Sprintf("`%s.report` and `%s.empty_exit` require the junit judge", where, where))
+	} else if has(entry, "report") || has(entry, "reports") || has(entry, "empty_exit") {
+		problems = append(problems, fmt.Sprintf("`%s` report settings require a file-based judge", where))
 	}
-	if (kind == "go-json" || kind == "junit") && has(entry, "evidence") {
+	if kind != "xcresult-json" && has(entry, "xcresult_bundles") {
+		problems = append(problems, fmt.Sprintf("`%s.xcresult_bundles` is for xcresult-json", where))
+	}
+	if (kind == "go-json" || testreport.FileJudge(kind)) && has(entry, "evidence") {
 		problems = append(problems, fmt.Sprintf("`%s.evidence` cannot be combined with a structured judge", where))
 	}
 	return problems

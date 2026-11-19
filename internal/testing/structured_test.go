@@ -10,6 +10,33 @@ import (
 	"github.com/zima-oss/jackstay/internal/receipts"
 )
 
+func TestJUnitNeedsEveryDeclaredReport(t *testing.T) {
+	const first = `<testsuite name="one" tests="1"><testcase name="first" time="0.125"/></testsuite>`
+	const second = `<testsuite name="two" tests="1"><testcase name="second" time="0.25"/></testsuite>`
+	scope := map[string]any{"judge": "junit", "reports": argv("One.xml", "Two.xml"), "durations": true,
+		"run": argv("sh", "-c", `test "$1" = "$JACKSTAY_TEST_REPORT_DIR" &&
+			printf '%s' "$2" > "$1/One.xml" &&
+			{ test -f "$SIDE/missing" || {
+				if test -f "$SIDE/overlap"; then printf '%s' "$2"; else printf '%s' "$3"; fi
+			} > "$1/Two.xml"; }`, "runner", "{report_dir}", first, second)}
+	world := newWorld(t, map[string]any{"scopes": map[string]any{"x-multi": scope}}, nil)
+	world.expectStatus(world.jst("x-multi"), 0)
+	world.expectLast("outcome=passed", "counted=2")
+	samples := items(world.lastRecord(receipts.EventRun)["case_durations"])
+	if len(samples) != 2 || objectOf(samples[0])["test"] != "first" || objectOf(samples[1])["test"] != "second" {
+		t.Fatalf("expected both report timings, got %v", samples)
+	}
+	world.flag("overlap", true)
+	world.expectStatus(world.jst("x-multi"), receipts.StatusUnjudged)
+	world.expectLast("declared JUnit reports repeat a test case")
+	if _, exists := world.lastRecord(receipts.EventRun)["case_durations"]; exists {
+		t.Fatal("an unjudged set recorded timings")
+	}
+	world.flag("missing", true)
+	world.expectStatus(world.jst("x-multi"), receipts.StatusUnjudged)
+	world.expectLast("a declared test report is missing")
+}
+
 func TestStructuredScopeReusesWithoutRegexAndCleanCopyRunsAfresh(t *testing.T) {
 	command := counted("report", `printf '%s' '<testsuite tests="1"><testcase name="case"/></testsuite>' > "$JACKSTAY_TEST_REPORT"`)
 	section := map[string]any{"scopes": map[string]any{"full": map[string]any{

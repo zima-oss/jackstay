@@ -42,16 +42,35 @@ type result struct {
 
 // words are a leaf's words as they would run now, its base, and `{slow}`'s classes and note.
 type words struct {
-	argv    []string
-	base    string
-	classes []slowClass
-	note    string
-	quick   string
+	argv          []string
+	goSelection   *judge.GoSelection
+	jestSelection *judge.JestSelection
+	base          string
+	classes       []slowClass
+	note          string
+	quick         string
 }
 
 // wordsOf is a leaf's words as they would run now; a refusal when the call cannot fill them.
 func (proj *project) wordsOf(chosen leaf, args []string) (words, error) {
 	found := words{base: proj.options.base}
+	var selectedArgs []string
+	switch chosen.selector {
+	case goSelector:
+		selection, err := parseGoSelection(args)
+		if err != nil {
+			return found, err
+		}
+		found.goSelection = &selection
+		selectedArgs = goSelectionArgs(selection)
+	case jestSelector:
+		selection, err := parseJestSelection(args)
+		if err != nil {
+			return found, err
+		}
+		found.jestSelection = &selection
+		selectedArgs = jestSelectionArgs(selection)
+	}
 	if found.base == "" {
 		found.base = chosen.base
 	}
@@ -72,7 +91,7 @@ func (proj *project) wordsOf(chosen leaf, args []string) (words, error) {
 			found.quick = "everything (no class is slow by the rule)"
 		}
 	}
-	argv, err := expand(chosen, args, found.base, slow)
+	argv, err := expand(chosen, args, found.base, slow, selectedArgs)
 	found.argv = argv
 	return found, err
 }
@@ -97,8 +116,20 @@ func definition(chosen leaf, argv []string, relative string) map[string]any {
 		"judge": chosen.judge, "evidence": evidence, "veto": veto, "timeout": timeout, "env": chosen.env, "expect": expect}
 	if adapter := judge.AdapterVersion(judge.Kind(chosen.judge)); adapter != 0 {
 		material["adapter_version"] = adapter
+		if chosen.selector != "" {
+			material["selector"] = chosen.selector
+		}
+		if chosen.durations && (chosen.judge == string(judge.GoJSON) || chosen.judge == string(judge.JUnit) || chosen.judge == string(judge.XCResultJSON)) {
+			material["durations"] = true
+		}
 		if chosen.report != "" {
 			material["report"], material["empty_exit"] = chosen.report, chosen.emptyExit
+		}
+		if len(chosen.xcresultBundles) != 0 {
+			material["xcresult_bundles"] = chosen.xcresultBundles
+		}
+		if len(chosen.reports) != 0 {
+			material["reports"], material["empty_exit"] = chosen.reports, chosen.emptyExit
 		}
 	}
 	return material
@@ -108,7 +139,8 @@ func definition(chosen leaf, argv []string, relative string) map[string]any {
 // file, its group wait, the sessions file) and the run's own variables, which are set anew.
 func commandEnv(environ []string) []string {
 	dropped := []string{lock.OutcomeFileVariable, lock.NoteWordsVariable, lock.GroupWaitVariable, supervise.SessionsFileVariable,
-		supervise.RunIDVariable, supervise.RunProjectVariable, RunIDVariable, RunTmpVariable, testreport.PathVariable}
+		supervise.RunIDVariable, supervise.RunProjectVariable, RunIDVariable, RunTmpVariable, testreport.PathVariable,
+		testreport.DirectoryVariable}
 	kept := make([]string, 0, len(environ))
 	for _, entry := range environ {
 		name, _, _ := strings.Cut(entry, "=")
@@ -423,6 +455,24 @@ func (out *sink) Line(stream supervise.Stream, text string) error {
 // receipts entry's.
 func (run *leafRun) judgeOptions() judge.Options {
 	options := judge.Options{Kind: judge.Kind(run.leaf.judge), Evidence: run.leaf.evidence, EmptyExit: run.leaf.emptyExit}
+	if options.Kind == judge.GoJSON {
+		options.GoSelection = run.words.goSelection
+		options.GoDurations = run.leaf.durations
+	}
+	options.JUnitDurations = options.Kind == judge.JUnit && run.leaf.durations
+	options.XCResultDurations = options.Kind == judge.XCResultJSON && run.leaf.durations
+	options.XCResultBundles = run.leaf.xcresultBundles
+	if selected := run.words.jestSelection; selected != nil {
+		// Processes see the physical working directory even when the configured cwd uses a link.
+		root := run.runCwd
+		if physical, err := filepath.EvalSymlinks(root); err == nil {
+			root = physical
+		}
+		options.JestSelection = &judge.JestSelection{
+			File: filepath.Join(root, selected.File),
+			Name: selected.Name,
+		}
+	}
 	if run.leaf.judge == "swift-test" {
 		for _, engine := range run.leaf.expect {
 			options.Expect = append(options.Expect, judge.Engine(engine))

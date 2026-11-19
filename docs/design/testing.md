@@ -108,11 +108,12 @@ Keys of a scope (all optional except `run` or `steps`):
   `${VAR}` in a `sh -c` word, `{2}` or `{2,3}` in a filter pattern.
 - `steps`: instead of `run`, a list of step names (`steps` section) or scope names; section 5.
 - `judge`: `swift-test` (section 2), `steps` (a count line declared by `evidence`),
-  `go-json` and `junit` (section 2.1), or `exit` (status only; the outcome is
+  `go-json`, `junit`, `jest-json` and `trx` (section 2.1), or `exit` (status only; the outcome is
   `exited-0` on 0, never `passed`). Default: the section's `judge`, else `exit`.
 - `evidence`, `veto`: as in `receipts.commands`, **added** to legacy judges. Structured judges
   accept a veto and count only structured evidence.
-- `report`, `empty_exit`: the JUnit report's file name and optional no-collection exit status.
+- `report`: a file-based judge's report name. JUnit can use `reports` instead for a bounded list
+  of file names, and `empty_exit` for an optional no-collection exit status.
 - `timeout` (seconds of the command's own run) and `lock_wait` (seconds waiting for the lock,
   counted apart; default: the scope's `timeout`); section 3.
 - `requires`: checks run first, each with its own `timeout` (default 60 s) and the same tree stop
@@ -193,14 +194,33 @@ reports skips separately, and needs a complete stream with package terminal even
 package summary alone adds no test cases. Cached replay, incomplete output and invalid event
 sequences cannot establish a new pass.
 
-`junit` reads one regular XML report produced in a private directory allocated for the attempt.
-Declare its file name in `report`. In a scope, use `{report}` in an argument or read
-`JACKSTAY_TEST_REPORT` from the environment. A direct command declares the same settings in
-`receipts.commands` and its wrapper reads the environment variable. Missing, malformed,
+`junit`, `jest-json` and `trx` read regular files in a private directory allocated for the attempt.
+Declare the file name in `report`. In a scope, use `{report}` in an argument or read
+`JACKSTAY_TEST_REPORT` from the environment. JUnit also accepts `reports`, an explicit list of
+up to 32 distinct file names. Pass its directory with `{report_dir}` or
+`JACKSTAY_TEST_REPORT_DIR`. Each listed report must validate, and a JUnit set cannot repeat a
+case identity across files. An identity includes the suite path, class and case name. The
+combined set may have at most 100,000 distinct cases, with up to 4096 bytes per identity.
+The project's command defines the partitions, checks their exits and maps every declared
+file to one partition. Direct commands declare settings in
+`receipts.commands` and their wrappers read the environment variable. Missing, malformed,
 contradictory and oversized reports make a successful process `unjudged`. A valid report
 with zero executed cases yields `nothing-run`. For a producer such as pytest, set
 `empty_exit: 5` to recognise a nonzero no-collection exit only when its report confirms
-zero cases. Other nonzero statuses retain their failure semantics.
+zero cases. Other nonzero statuses retain their failure semantics. Jest discovery does not
+establish execution. TRX reads one completed VSTest summary and checks it against the test cases.
+
+Scopes may opt into `selector: "go-test"` with the canonical `go test -json -count=1`
+invocation and whole-argument `{test_args}`. The selector expands one package-qualified test ID
+into an exact per-component Go filter and an import path. Go JSON evidence must witness a
+matching test or descendant; ancestor setup alone is a no-match. The `jest-test` selector
+expands a relative file and literal full assertion name. Jest evidence must identify the
+selected file and a unique matching assertion. An unrelated witnessed result makes an otherwise
+successful invocation unjudged. Typed selectors require a standalone `focused` or `x-…` scope.
+
+Go JSON and JUnit scope timings are an opt-in run-log field bounded to 512 samples from a
+counted fresh pass. JUnit uses the reported case `time`, with its suite path, class and test
+name. Unavailable timings are left out. Swift class selection uses its existing history.
 
 The format name, adapter version and semantic report settings are keyed. The allocated report
 path is transport only. Receipt lookup recomputes the saved material's digest and requires a
@@ -209,7 +229,7 @@ records. Structured gate marks also carry the adapter version and counted pass. 
 that durable verdict, even after the private report directory is removed. It still runs
 `requires` before resuming any step that needs an external input. `--commit` runs afresh in a
 clean copy, including for structured judges.
-JUnit producer compatibility has first been exercised with pytest. The
+The [producer guide](../guide/tests.md#structured-test-reports) lists the pinned probes. The
 [compatibility baseline](testing-compatibility.md) records the original exit and reporting contracts.
 
 ## 3. A timeout that ends the whole run
