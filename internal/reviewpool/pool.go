@@ -64,6 +64,7 @@ type Job struct {
 	RetryCapSeconds     int       `json:"retry_cap_seconds,omitempty"`
 	HistoryDays         int       `json:"history_days,omitempty"`
 	Generation          string    `json:"generation,omitempty"`
+	PolicyID            string    `json:"policy_id,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
@@ -78,6 +79,7 @@ type state struct {
 type subscription struct {
 	JobID     string `json:"job_id"`
 	SessionID string `json:"session_id"`
+	Closed    bool   `json:"closed,omitempty"`
 }
 
 // Notification is one durable terminal transition for a subscribed session.
@@ -186,22 +188,27 @@ func (pool Pool) enqueue(ctx context.Context, request Request, sessionID, expect
 	if err != nil {
 		return Job{}, false, err
 	}
-	id := jobID(Job{Repository: root, CommonDir: commonDir, RootDevice: rootDevice, RootInode: rootInode,
-		GitDevice: gitDevice, GitInode: gitInode, Base: base, Head: head, Task: request.Task, Reviewers: chosen})
+	candidate := Job{Repository: root, CommonDir: commonDir, RootDevice: rootDevice, RootInode: rootInode,
+		GitDevice: gitDevice, GitInode: gitInode, Base: base, Head: head, Task: request.Task,
+		Reviewers: chosen, PolicyID: settings.PoolPolicyID(chosen, store.Root), StoreRoot: store.Root}
+	candidate.ID = jobID(candidate)
 	var job Job
 	created := false
 	err = pool.edit(ctx, func(saved *state) error {
 		for _, existing := range saved.Jobs {
-			if existing.ID == id {
-				job = existing
-				if sessionID != "" {
-					saved.subscribe(id, sessionID)
-					if existing.Status == "complete" || existing.Status == "failed" {
-						saved.recordTerminal(existing)
-					}
-				}
-				return nil
+			if existing.ID != candidate.ID && (sessionID == "" || !sameWorktreeReview(existing, candidate)) {
+				continue
 			}
+			job = existing
+			if sessionID != "" {
+				if err := saved.subscribe(existing.ID, sessionID); err != nil {
+					return err
+				}
+				if existing.Status == "complete" || existing.Status == "failed" {
+					saved.recordTerminal(existing)
+				}
+			}
+			return nil
 		}
 		if !settings.Pool.Accepting {
 			return errors.New("repository review pool is paused (review.pool.accepting is false)")
@@ -214,15 +221,18 @@ func (pool Pool) enqueue(ctx context.Context, request Request, sessionID, expect
 			return err
 		}
 		now := time.Now().UTC()
-		job = Job{ID: id, Repository: root, Base: base, Head: head, Task: request.Task, StoreRoot: store.Root,
-			CommonDir: commonDir, RootDevice: rootDevice, RootInode: rootInode, GitDevice: gitDevice, GitInode: gitInode,
-			Reviewers: chosen, Status: "pending", Exit: -1, CreatedAt: now, UpdatedAt: now,
-			MaxPending: settings.Pool.MaxPending, MaxAttempts: settings.Pool.MaxAttempts, RetryInitialSeconds: settings.Pool.RetryInitialSeconds,
-			RetryCapSeconds: settings.Pool.RetryCapSeconds, HistoryDays: settings.Pool.HistoryDays, Generation: generation}
-		saved.Jobs = append(saved.Jobs, job)
+		job = candidate
+		job.Status, job.Exit = "pending", -1
+		job.CreatedAt, job.UpdatedAt = now, now
+		job.MaxPending, job.MaxAttempts = settings.Pool.MaxPending, settings.Pool.MaxAttempts
+		job.RetryInitialSeconds, job.RetryCapSeconds = settings.Pool.RetryInitialSeconds, settings.Pool.RetryCapSeconds
+		job.HistoryDays, job.Generation = settings.Pool.HistoryDays, generation
 		if sessionID != "" {
-			saved.subscribe(id, sessionID)
+			if err := saved.subscribe(job.ID, sessionID); err != nil {
+				return err
+			}
 		}
+		saved.Jobs = append(saved.Jobs, job)
 		created = true
 		return nil
 	})
@@ -232,13 +242,28 @@ func (pool Pool) enqueue(ctx context.Context, request Request, sessionID, expect
 	return job, created, err
 }
 
-func (saved *state) subscribe(jobID, sessionID string) {
+// Linked MCP sessions share one request when the candidate and effective
+// policy agree. The original job keeps its checkout identity for execution.
+func sameWorktreeReview(existing, candidate Job) bool {
+	return existing.FailureClass != "stale-policy" &&
+		existing.CommonDir == candidate.CommonDir && existing.GitDevice == candidate.GitDevice &&
+		existing.GitInode == candidate.GitInode && existing.PolicyID == candidate.PolicyID &&
+		existing.StoreRoot == candidate.StoreRoot && existing.Base == candidate.Base &&
+		existing.Head == candidate.Head && existing.Task == candidate.Task &&
+		slices.Equal(existing.Reviewers, candidate.Reviewers)
+}
+
+func (saved *state) subscribe(jobID, sessionID string) error {
 	for _, item := range saved.Subscriptions {
 		if item.JobID == jobID && item.SessionID == sessionID {
-			return
+			if item.Closed {
+				return errors.New("review subscription was closed for this job generation")
+			}
+			return nil
 		}
 	}
 	saved.Subscriptions = append(saved.Subscriptions, subscription{JobID: jobID, SessionID: sessionID})
+	return nil
 }
 
 // StatusForSession returns only a request this session submitted in this Git repository.
@@ -277,7 +302,7 @@ func (pool Pool) Undelivered(ctx context.Context, sessionID, commonDirectory str
 			continue
 		}
 		for _, subscription := range saved.Subscriptions {
-			if subscription.JobID != item.JobID || subscription.SessionID != sessionID {
+			if subscription.Closed || subscription.JobID != item.JobID || subscription.SessionID != sessionID {
 				continue
 			}
 			for _, job := range saved.Jobs {
@@ -299,7 +324,7 @@ func (pool Pool) MarkDelivered(ctx context.Context, notification Notification, s
 				continue
 			}
 			for _, subscription := range saved.Subscriptions {
-				if subscription.JobID == item.JobID && subscription.SessionID == sessionID {
+				if !subscription.Closed && subscription.JobID == item.JobID && subscription.SessionID == sessionID {
 					if !slices.Contains(item.Delivered, sessionID) {
 						item.Delivered = append(item.Delivered, sessionID)
 					}
@@ -314,7 +339,7 @@ func (pool Pool) MarkDelivered(ctx context.Context, notification Notification, s
 func (saved *state) recordTerminal(job Job) {
 	subscribed := false
 	for _, item := range saved.Subscriptions {
-		if item.JobID == job.ID {
+		if !item.Closed && item.JobID == job.ID {
 			subscribed = true
 			break
 		}
@@ -347,6 +372,12 @@ func (pool Pool) Retry(ctx context.Context, id string) error {
 	err := pool.edit(ctx, func(saved *state) error {
 		for index := range saved.Jobs {
 			if saved.Jobs[index].ID == id && saved.Jobs[index].Status == "failed" {
+				if saved.Jobs[index].FailureClass == "stale-policy" {
+					if err := validatePolicy(saved.Jobs[index]); err != nil {
+						return err
+					}
+					saved.Jobs[index].FailureClass = ""
+				}
 				if saved.Jobs[index].Attempts >= attemptLimit(saved.Jobs[index]) {
 					return errors.New("review pool attempt limit reached")
 				}
@@ -445,6 +476,9 @@ func (pool Pool) RunNext(ctx context.Context, run func(context.Context, Job) (in
 	}
 	recordPoolTransition(job, "start")
 	runErr := validateJob(ctx, job)
+	if runErr == nil {
+		runErr = validatePolicy(job)
+	}
 	exit := review.ExitUsage
 	if runErr == nil {
 		exit, runErr = run(ctx, job)
@@ -490,10 +524,37 @@ func newAttemptID() (string, error) {
 }
 
 func failureClass(exit int, runErr error) string {
+	if errors.Is(runErr, errStalePolicy) {
+		return "stale-policy"
+	}
 	if runErr == nil && exit == review.ExitReviewer {
 		return "retryable"
 	}
 	return "operator"
+}
+
+var errStalePolicy = review.ErrPoolPolicyStale
+
+func validatePolicy(job Job) error {
+	if job.PolicyID == "" {
+		return errStalePolicy
+	}
+	opened, err := project.Open(job.Repository, []string{"review"})
+	if err != nil {
+		return err
+	}
+	settings, problems := review.SettingsOf(opened.Config)
+	if len(problems) > 0 {
+		return errors.New(strings.Join(problems, "; "))
+	}
+	store, err := review.StoreFor(settings, opened.Name)
+	if err != nil {
+		return err
+	}
+	if settings.PoolPolicyID(job.Reviewers, store.Root) != job.PolicyID {
+		return errStalePolicy
+	}
+	return nil
 }
 
 func retryDelay(job Job) time.Duration {
@@ -820,6 +881,10 @@ func validateJob(ctx context.Context, job Job) error {
 func jobID(job Job) string {
 	identity, _ := json.Marshal([]any{job.Repository, job.CommonDir, job.RootDevice, job.RootInode,
 		job.GitDevice, job.GitInode, job.Base, job.Head, job.Task, job.Reviewers})
+	if job.PolicyID != "" {
+		identity, _ = json.Marshal([]any{job.Repository, job.CommonDir, job.RootDevice, job.RootInode,
+			job.GitDevice, job.GitInode, job.Base, job.Head, job.Task, job.Reviewers, job.PolicyID})
+	}
 	digest := sha256.Sum256(identity)
 	return hex.EncodeToString(digest[:])[:24]
 }

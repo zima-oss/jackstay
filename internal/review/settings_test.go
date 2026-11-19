@@ -59,6 +59,36 @@ func TestPoolAdmissionAndHistorySettings(t *testing.T) {
 	}
 }
 
+func TestPoolPolicyIDTracksSelectedReviewAndExecutionSettings(t *testing.T) {
+	settings := Defaults()
+	settings.RepeatSeverities = allButLast(settings.Severities)
+	selected := []string{"codex"}
+	before := settings.PoolPolicyID(selected, "/private/reviews")
+	settings.Pool.Accepting = false
+	settings.Pool.HistoryDays = 90
+	other := settings.Reviewers["claude-code"]
+	other.Model = "another-model"
+	settings.Reviewers["claude-code"] = other
+	if changed := settings.PoolPolicyID(selected, "/private/reviews"); changed != before {
+		t.Fatal("unselected provider or queue operations changed the review policy")
+	}
+	selectedReviewer := settings.Reviewers["codex"]
+	selectedReviewer.Model = "new-model"
+	settings.Reviewers["codex"] = selectedReviewer
+	if changed := settings.PoolPolicyID(selected, "/private/reviews"); changed == before {
+		t.Fatal("selected reviewer model was omitted from the review policy")
+	}
+	settings.Reviewers["codex"] = defaultReviewer("codex")
+	settings.Blocking = []string{"major"}
+	if changed := settings.PoolPolicyID(selected, "/private/reviews"); changed == before {
+		t.Fatal("blocking rules were omitted from the review policy")
+	}
+	settings.Blocking = []string{"blocker"}
+	if changed := settings.PoolPolicyID(selected, "/another/reviews"); changed == before {
+		t.Fatal("resolved review store was omitted from the review policy")
+	}
+}
+
 func TestSettingsRefused(t *testing.T) {
 	cases := map[string]string{
 		`"use": ["unknown"]`:          "unknown reviewer",

@@ -79,7 +79,8 @@ var items = []item{
 			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
 	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
 		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
-			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.")},
+			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
+			"  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(

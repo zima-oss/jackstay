@@ -26,19 +26,24 @@ are full commit object IDs, not moving branch names. The path is canonicalized
 through symlinks. A task must satisfy the same branch-name rule as `jst review`.
 
 The stable job identity is a hash of canonical repository path, its Git common
-directory and filesystem identity, base commit, head commit, task, and sorted
-reviewer set. Identical requests return the same
+directory and filesystem identity, base commit, head commit, task, sorted
+reviewer set, and effective review policy fingerprint. Identical requests return the same
 job, including when it has already finished. Changing any identity field creates
 a new job; a changed branch tip therefore cannot silently alter a queued review.
 The CLI exposes the job ID and whether it was newly queued. The pool never
 deduplicates merely by task name or branch name.
 
-The request is a snapshot of *what to review*. Review configuration and policy
-remain the checked-in `jackstay.json` and the existing review store. At execution,
-`jst review` validates them. A later policy change may refuse an old request or
-require a fresh review. A future slice may pin a configuration digest and show
-staleness before execution; it must not silently accept a verdict under changed
-policy.
+The request pins the effective verdict rules, selected reviewer execution settings, budgets,
+and resolved review store. The worker verifies the pin against its current checkout configuration
+and the review child checks it again before starting. A mismatch records `stale-policy`
+with exit 2. Submit again to pin the new policy, or restore the original policy before retrying.
+Pre-pin jobs remain readable, and already
+recorded work remains eligible for reconciliation with its original store. A legacy pending
+job cannot launch a reviewer until a new pinned request is submitted.
+
+MCP submissions from linked worktrees share one job when the Git common directory identity,
+commits, task, selected reviewers, effective policy, and resolved store match. The original
+submission keeps its execution checkout. CLI submissions remain checkout-scoped.
 
 ## Local commands and state machine
 
@@ -140,6 +145,13 @@ chat store retains an accepted but unacknowledged message until the recipient
 calls `chat.ack`. Pruning the pool does not remove that message or a separate
 `jst review` round report. No automatic pruning or background worker is added.
 
+An operator can list opaque recipient IDs and the job generation with `subscribers`, then
+preview closing a subscriber with `unsubscribe`. Applying requires the exact generation
+so a stale preview cannot close a replacement job. Closing releases that recipient's pending
+handoffs and keeps the other subscriptions. Messages already in chat remain readable and
+acknowledgeable. An in-flight handoff may already have reached chat. A closed subscription
+cannot be recreated for that job generation.
+
 `jst review pool inspect [--json]` reads aggregate state without writing it.
 It shows state counts, eligible and delayed work, unresolved recovery, oldest
 pending age, outcome counts, and notification delivery backlog. The output has
@@ -148,16 +160,14 @@ individual records for explicit local inspection. Pool transition events attach
 to an active caller trace and carry an opaque job ID, action, state, attempt
 count, and exit code. Operator CLI commands keep their journal disabled.
 
-The queue file moves from version 1 to version 2. Readers accept version 1
-without modifying it. An explicit `jst review pool migrate [--apply] [--json]`
-previews or applies the upgrade; a first queue mutation upgrades it in the
-same atomic replacement as that mutation. Legacy jobs use the 30-day retention
-default. The migration preserves pinned revisions, attempts, and events.
-Unknown versions, invalid records, and corrupt or oversized files fail closed.
-Operators who may downgrade back up the version 1 state file before applying
-the migration or making a queue mutation. Version 1 binaries cannot read the
-version 2 file; restoring the backup requires stopping writers first and
-accounting for jobs added after the backup.
+Versions 1 and 2 remain readable. An explicit `jst review pool migrate [--apply] [--json]`
+previews or applies an upgrade to version 3, which adds policy fingerprints and subscriber
+closure. The first queue write can upgrade in the same atomic replacement. Legacy jobs without
+a saved retention period use 30 days. The migration preserves pinned revisions, attempts, and
+events. Unknown versions, invalid records, and corrupt or oversized files fail closed.
+Operators who may downgrade back up the old state file before applying the migration or making
+a queue write. Older binaries cannot read version 3. Before restoring the backup, stop pool
+writers and account for jobs added after it was made.
 
 ## Privacy and trust
 
@@ -225,6 +235,9 @@ scripts with `"$PWD/.build/jst"` as their argument:
   app-server and active-turn delivery.
 - [Claude Code pilot](../../tests/review-pool-claude-pilot.py) exercises the installed
   Claude Code CLI and delivery at a tool boundary.
+- [Mixed-host pilot](../../tests/review-pool-mixed-pilot.py) submits the same request from
+  linked worktrees, restarts the Codex bridge, and checks one execution and two separate
+  acknowledgments.
 
-Both pilots use synthetic repositories, reviewer executables, and loopback model
+The pilots use synthetic repositories, reviewer executables, and loopback model
 endpoints. They need no provider account.

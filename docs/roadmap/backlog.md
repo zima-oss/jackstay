@@ -44,6 +44,10 @@ could be replaced by another entry with the same second-based ID. New
 [trash entries](../../internal/trash/trash.go) now have a random ID suffix so a stale restore or
 prune reference cannot name a later entry. Existing counter-only IDs remain readable.
 
+The [integration review series](integration-readiness.md) maps the branch's 50 commits through
+`2407f44` to dependency-ordered review and verification steps. It records the public-history
+privacy scan and the Linux verification still needed for that exact tip.
+
 ## Issues and proposals
 
 | Priority | Issue | Assessment and first deliverable |

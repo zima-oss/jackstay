@@ -11,14 +11,15 @@ import (
 )
 
 const (
-	legacyStateVersion  = 1
-	currentStateVersion = 2
-	legacyHistoryDays   = 30
-	maximumHistoryDays  = 3650
+	legacyStateVersion   = 1
+	previousStateVersion = 2
+	currentStateVersion  = 3
+	legacyHistoryDays    = 30
+	maximumHistoryDays   = 3650
 )
 
 func supportedStateVersion(version int) bool {
-	return version == legacyStateVersion || version == currentStateVersion
+	return version == legacyStateVersion || version == previousStateVersion || version == currentStateVersion
 }
 
 // Prefer an actionable version error when a future writer also adds fields.
@@ -54,7 +55,7 @@ type Migration struct {
 	Applied bool `json:"applied"`
 }
 
-// Migrate upgrades version 1 under the state lock when apply is requested.
+// Migrate upgrades supported older versions under the state lock when apply is requested.
 // Legacy rows keep their original identity and notification keys. A missing
 // history policy has the same 30-day interpretation before and after upgrade.
 func (pool Pool) Migrate(ctx context.Context, apply bool) (Migration, error) {
@@ -122,7 +123,9 @@ func (pool Pool) Prune(ctx context.Context, now time.Time, apply bool) (PruneRep
 func (saved state) prunePlan(now time.Time) (map[string]bool, PruneReport) {
 	recipients := make(map[string][]string)
 	for _, subscriber := range saved.Subscriptions {
-		recipients[subscriber.JobID] = append(recipients[subscriber.JobID], subscriber.SessionID)
+		if !subscriber.Closed {
+			recipients[subscriber.JobID] = append(recipients[subscriber.JobID], subscriber.SessionID)
+		}
 	}
 	protected := make(map[string]bool)
 	for _, item := range saved.Events {

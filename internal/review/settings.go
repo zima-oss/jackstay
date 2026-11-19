@@ -6,6 +6,7 @@ package review
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -65,6 +66,16 @@ var DefaultIsolation = []string{
 
 // KnownReviewers are the reviewers jackstay knows how to run.
 var KnownReviewers = []string{"codex", claude.Name}
+
+// PoolPolicyIDVariable carries the queued job's policy into the review child.
+const PoolPolicyIDVariable = "JACKSTAY_REVIEW_POOL_POLICY_ID"
+
+// PoolPolicyStaleMarker identifies a child refusal after the worker's last
+// policy check, so the worker can preserve the stale classification.
+const PoolPolicyStaleMarker = "jst review: queued review policy changed before reviewer launch"
+
+// ErrPoolPolicyStale means the selected review policy changed after enqueue.
+var ErrPoolPolicyStale = errors.New("review policy changed since enqueue; submit a new request")
 
 var efforts = []string{"minimal", "low", "medium", "high", "xhigh"}
 
@@ -339,6 +350,26 @@ func (settings Settings) policyID() string {
 		Triage: settings.Triage, RepeatRounds: settings.RepeatRounds, RoundLimit: settings.RoundLimit,
 	}
 	data, _ := json.Marshal(policy) // This value has only scalar and string slice fields.
+	return fmt.Sprintf("v1:%x", sha256.Sum256(data))
+}
+
+// PoolPolicyID identifies the effective policy for a queued review. It includes
+// the verdict rules and the selected providers' execution settings. Pool
+// scheduling, default reviewer choice, and retention do not affect a review
+// submitted with an explicit provider set.
+func (settings Settings) PoolPolicyID(names []string, storeRoot string) string {
+	reviewers := make([]ReviewerSettings, 0, len(names))
+	for _, name := range names {
+		reviewers = append(reviewers, settings.Reviewers[name])
+	}
+	policy := struct {
+		Verdict       string
+		Reviewers     []ReviewerSettings
+		MaxConcurrent int
+		QueueMinutes  int
+		StoreRoot     string
+	}{settings.policyID(), reviewers, settings.MaxConcurrent, settings.QueueMinutes, storeRoot}
+	data, _ := json.Marshal(policy)
 	return fmt.Sprintf("v1:%x", sha256.Sum256(data))
 }
 

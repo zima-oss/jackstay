@@ -165,7 +165,12 @@ jst review pool prune
 jst review pool migrate
 ```
 
-The pool pins both commits when a job is added. One foreground worker runs an eligible
+The pool pins both commits and the effective review policy when a job is added. If verdict
+rules, selected reviewer settings, budgets, or the resolved review store change before launch,
+the job fails with `stale-policy`. Submit again to pin the new policy, or restore the original
+policy before retrying. Older pending
+jobs without a policy pin also require resubmission. An already recorded round can still be
+reconciled when its original store remains available. One foreground worker runs an eligible
 job at a time across the machine. If the worker loses its state update after the review
 saved a completed round, the next worker can recover its exact verdict from that round.
 
@@ -201,14 +206,20 @@ job has been pruned. The review round reports have their own retention setting,
 `review.keep_days`. Submitting the same request after pruning starts a new job
 generation, and an older acknowledgment does not hide its result.
 
+If a session has permanently left a job, use `jst review pool subscribers JOB_ID` to find its
+opaque recipient ID and the job generation. Preview with
+`jst review pool unsubscribe JOB_ID SESSION_ID --generation TOKEN`; add `--apply` to close
+that recipient's subscription. Closed subscriptions stop blocking history cleanup and cannot
+be reopened for that generation. Other recipients remain subscribed. Chat messages already
+accepted or in flight can still arrive and be acknowledged normally.
+
 `jst review pool migrate` previews the state-file upgrade. Use
-`jst review pool migrate --apply` to perform it explicitly. Version 1 can be read without a
-write; the first queue mutation also upgrades it atomically to version 2. Migrated jobs receive
-the default 30-day history period. An unknown version or damaged state is refused. Back up
-the local pool state file before applying a migration or making the first mutation when you
-may need to run an older jackstay. Older binaries cannot read version 2. Use the backup to
-restore version 1 for a downgrade, after stopping pool writers and preserving any newer jobs
-you need. No worker or cleanup timer runs automatically.
+`jst review pool migrate --apply` to perform it explicitly. Versions 1 and 2 can be read without a
+write. The first queue write also upgrades the file atomically to version 3, which adds policy
+pins and subscription closure. Jobs without a saved history period use the 30-day default.
+An unknown version or damaged state is refused. Back up the local pool state file before its
+first write when you may need to run an older jackstay. Older binaries cannot read version 3.
+Before restoring a backup for a downgrade, stop pool writers and account for newer jobs. No worker or cleanup timer runs automatically.
 
 ### Submit and track a review from an agent
 
@@ -216,7 +227,9 @@ Enable `chat.enabled` and connect the repository's `jst chat serve` MCP server. 
 `review.submit` with `base`, `head`, `task`, and an explicit `reviewers` list containing
 `codex`, `claude-code`, or both. Keep the returned `job.id` and pass it as `job_id` to
 `review.status` to see the pinned commits, state, attempts, and exit code. Submitting the
-same pinned request again returns the same job. The operator still runs `jst review pool next`
+same pinned request again returns the same job. Linked worktrees share an MCP job when commits,
+task, reviewers, effective policy, and resolved review store agree. The first submission's
+checkout still runs the review. The operator still runs `jst review pool next`
 to process eligible work.
 
 The requesting session receives a chat message when an attempt settles. Read the result
