@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/homedir"
@@ -189,6 +191,15 @@ func KeepDays(folder string) int {
 // Move puts one file or folder into the trash and records where it came from.
 // keepDays is the project's `trash.keep_days`, recorded on the entry.
 func Move(folder, given, project, session string, keepDays int, now time.Time) (Entry, error) {
+	return move(folder, given, project, session, keepDays, now, nil)
+}
+
+// MoveForDiscard verifies what was moved and holds it until Mark records the replacement.
+func MoveForDiscard(folder, given, project, session string, keepDays int, now time.Time, expected Replaced) (Entry, error) {
+	return move(folder, given, project, session, keepDays, now, &expected)
+}
+
+func move(folder, given, project, session string, keepDays int, now time.Time, expected *Replaced) (Entry, error) {
 	source, err := filepath.Abs(given)
 	if err != nil {
 		return Entry{}, err
@@ -220,11 +231,13 @@ func Move(folder, given, project, session string, keepDays int, now time.Time) (
 	// original may be going; a move that stops part way leaves the entry held.
 	entry := Entry{Path: source, MovedAt: now.Format(time.RFC3339), Project: project, Session: session, Kind: kind,
 		KeepDays: &keepDays, Held: true}
-	place, err := newEntry(folder, &entry, now)
+	place, locked, err := newEntry(folder, &entry, now)
 	if err != nil {
 		return Entry{}, err
 	}
-	if err := moveItem(source, filepath.Join(place, "item", filepath.Base(source))); err != nil {
+	defer func() { _ = locked.Close() }()
+	item := filepath.Join(place, "item", filepath.Base(source))
+	if err := moveItem(source, item); err != nil {
 		var left *originalLeftError
 		if errors.As(err, &left) {
 			// The checked copy may be the only whole one now: the entry stays held.
@@ -234,6 +247,16 @@ func Move(folder, given, project, session string, keepDays int, now time.Time) (
 		_ = os.RemoveAll(place)
 		return Entry{}, err
 	}
+	if expected != nil {
+		actual, err := Describe(item)
+		if err != nil {
+			return entry, fmt.Errorf("the file was kept as %s, but cannot be verified: %w", entry.ID, err)
+		}
+		if actual != *expected {
+			return entry, fmt.Errorf("the working file changed during the move; its changed contents are kept as %s (`jst trash restore %s`)", entry.ID, entry.ID)
+		}
+		return entry, nil
+	}
 	entry.Held = false
 	if err := writeRecord(place, entry); err != nil {
 		entry.Held = true // the record on disk still holds it: kept until restored, never lost
@@ -241,10 +264,10 @@ func Move(folder, given, project, session string, keepDays int, now time.Time) (
 	return entry, nil
 }
 
-// newEntry makes an entry's folder and writes its record; entry.ID is set.
-func newEntry(folder string, entry *Entry, now time.Time) (string, error) {
+// newEntry makes an entry's folder and writes its record under a lock; entry.ID is set.
+func newEntry(folder string, entry *Entry, now time.Time) (string, *os.File, error) {
 	if err := os.MkdirAll(folder, 0o700); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	stamp := now.UTC().Format("20060102-150405")
 	var place string
@@ -255,15 +278,21 @@ func newEntry(folder string, entry *Entry, now time.Time) (string, error) {
 			break
 		}
 		if !errors.Is(err, fs.ErrExist) || number > 10000 {
-			return "", err
+			return "", nil, err
 		}
+	}
+	locked, err := lockEntry(place)
+	if err != nil {
+		_ = os.RemoveAll(place)
+		return "", nil, err
 	}
 	entry.ID = filepath.Base(place)
 	if err := writeRecord(place, *entry); err != nil {
 		_ = os.RemoveAll(place)
-		return "", err
+		_ = locked.Close()
+		return "", nil, err
 	}
-	return place, nil
+	return place, locked, nil
 }
 
 func writeRecord(place string, entry Entry) error {
@@ -283,11 +312,12 @@ func writeRecord(place string, entry Entry) error {
 func Keep(folder, path string, data []byte, executable, link bool, project, session string, keepDays int,
 	now time.Time) (Entry, error) {
 	entry := Entry{Path: path, MovedAt: now.Format(time.RFC3339), Project: project, Session: session, Kind: "staged",
-		Via: "discard", KeepDays: &keepDays}
-	place, err := newEntry(folder, &entry, now)
+		Via: "discard", KeepDays: &keepDays, Held: true}
+	place, locked, err := newEntry(folder, &entry, now)
 	if err != nil {
 		return Entry{}, err
 	}
+	defer func() { _ = locked.Close() }()
 	item := filepath.Join(place, "item", filepath.Base(path))
 	if err := os.MkdirAll(filepath.Dir(item), 0o700); err != nil {
 		_ = os.RemoveAll(place)
@@ -312,15 +342,16 @@ func Keep(folder, path string, data []byte, executable, link bool, project, sess
 // Mark records on an entry what replaced its item and the command that kept it.
 func Mark(folder, id, via string, replaced Replaced) error {
 	place := filepath.Join(folder, id)
-	data, err := os.ReadFile(filepath.Join(place, "entry.json")) // #nosec G304 -- inside the trash
+	locked, err := lockEntry(place)
 	if err != nil {
 		return err
 	}
-	var entry Entry
-	if err := json.Unmarshal(data, &entry); err != nil {
+	defer func() { _ = locked.Close() }()
+	entry, err := readEntry(place)
+	if err != nil {
 		return err
 	}
-	entry.Via, entry.Replaced = via, &replaced
+	entry.Via, entry.Replaced, entry.Held = via, &replaced, false
 	return writeRecord(place, entry)
 }
 
@@ -441,19 +472,43 @@ func Entries(folder string) []Entry {
 	}
 	var found []Entry
 	for _, name := range names {
-		data, err := os.ReadFile(filepath.Join(folder, name.Name(), "entry.json")) // #nosec G304 -- inside the trash
-		if err != nil {
-			continue
+		entry, err := readEntry(filepath.Join(folder, name.Name()))
+		if err == nil {
+			found = append(found, entry)
 		}
-		var entry Entry
-		if json.Unmarshal(data, &entry) != nil {
-			continue
-		}
-		entry.ID = name.Name()
-		found = append(found, entry)
 	}
 	sort.Slice(found, func(first, second int) bool { return found[first].ID > found[second].ID })
 	return found
+}
+
+func readEntry(place string) (Entry, error) {
+	var entry Entry
+	data, err := os.ReadFile(filepath.Join(place, "entry.json")) // #nosec G304 -- inside the trash
+	if err != nil {
+		return entry, err
+	}
+	err = json.Unmarshal(data, &entry)
+	entry.ID = filepath.Base(place)
+	return entry, err
+}
+
+// Lock the directory itself so a pruned entry is never recreated just to hold a lock.
+func lockEntry(place string) (*os.File, error) {
+	file, err := os.Open(place) // #nosec G304 -- inside the trash
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil { // #nosec G115 -- a file descriptor
+		_ = file.Close()
+		return nil, err
+	}
+	opened, openErr := file.Stat()
+	current, statErr := os.Stat(place)
+	if openErr != nil || statErr != nil || !os.SameFile(opened, current) {
+		_ = file.Close()
+		return nil, fs.ErrNotExist
+	}
+	return file, nil
 }
 
 func list(folder string, args []string, stdout, stderr io.Writer) int {
@@ -488,37 +543,35 @@ func restore(folder string, args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	id := args[0]
-	if strings.Contains(id, "/") || id == "." || id == ".." {
+	if id == "" || strings.Contains(id, "/") || id == "." || id == ".." {
 		fmt.Fprintln(stderr, "jst trash: no entry", id)
 		return 1
 	}
 	place := filepath.Join(folder, id)
-	var entry Entry
-	data, err := os.ReadFile(filepath.Join(place, "entry.json")) // #nosec G304 -- inside the trash
-	if err != nil || json.Unmarshal(data, &entry) != nil {
+	locked, err := lockEntry(place)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintln(stderr, "jst trash: no entry", id)
+		} else {
+			fmt.Fprintf(stderr, "jst trash: cannot lock entry %s: %v\n", id, err)
+		}
+		return 1
+	}
+	defer func() { _ = locked.Close() }()
+	entry, err := readEntry(place)
+	if err != nil {
 		fmt.Fprintln(stderr, "jst trash: no entry", id)
 		return 1
 	}
-	target := entry.Path
+	target, expected := entry.Path, entry.Replaced
 	if len(args) == 3 {
+		expected = nil
 		if target, err = filepath.Abs(args[2]); err != nil {
 			fmt.Fprintln(stderr, "jst trash:", err)
 			return 1
 		}
 	}
-	if _, err := os.Lstat(target); err == nil {
-		current, describeErr := Describe(target)
-		if len(args) == 3 || entry.Replaced == nil || describeErr != nil || current != *entry.Replaced {
-			fmt.Fprintf(stderr, "jst trash: %s is there already: nothing restored (use --to PATH)\n", target)
-			return 1
-		}
-		// What jst discard wrote there, unchanged since: git still has it.
-		if err := os.Remove(target); err != nil {
-			fmt.Fprintln(stderr, "jst trash:", err)
-			return 1
-		}
-	}
-	if err := moveItem(filepath.Join(place, "item", filepath.Base(entry.Path)), target); err != nil {
+	if err := restoreItem(filepath.Join(place, "item", filepath.Base(entry.Path)), target, expected); err != nil {
 		fmt.Fprintln(stderr, "jst trash:", err)
 		return 1
 	}
@@ -530,27 +583,86 @@ func restore(folder string, args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// restoreItem keeps both the current target and the trash entry until the replacement is ready.
+// A cross-volume copy is staged next to the target so the last change is always a rename.
+func restoreItem(source, target string, expected *Replaced) error {
+	install := func(candidate string) error {
+		if _, err := os.Lstat(target); errors.Is(err, fs.ErrNotExist) {
+			if err := renameAbsent(candidate, target); !errors.Is(err, fs.ErrExist) {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else if expected != nil && (expected.Kind == "file" || expected.Kind == "link") {
+			current, err := Describe(target)
+			if err != nil {
+				return err
+			}
+			if current == *expected {
+				return renameItem(candidate, target)
+			}
+		}
+		return fmt.Errorf("%s is there already: nothing restored (use --to PATH)", target)
+	}
+	parent := filepath.Dir(target)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return err
+	}
+	err := install(source)
+	if !errors.Is(err, syscall.EXDEV) {
+		return err
+	}
+	staging, err := os.MkdirTemp(parent, ".jackstay-restore-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+	candidate := filepath.Join(staging, "item")
+	if err := copyTree(source, candidate); err != nil {
+		return err
+	}
+	if err := sameTree(source, candidate); err != nil {
+		return err
+	}
+	return install(candidate)
+}
+
 // Prune removes the entries older than the days each records (the `trash.keep_days` of the project it
 // came from), never a held one; an entry written before entries recorded their days reads them from
 // the project it came from, or the default when that is gone. It returns how many went.
 func Prune(folder string, now time.Time) int {
 	removed := 0
 	for _, entry := range Entries(folder) {
-		moved, err := time.Parse(time.RFC3339, entry.MovedAt)
-		if err != nil || entry.Held {
+		if !entry.expired(now) {
 			continue
 		}
-		days := 0
-		if entry.KeepDays != nil {
-			days = *entry.KeepDays
-		} else {
-			days = KeepDays(filepath.Dir(entry.Path))
+		place := filepath.Join(folder, entry.ID)
+		locked, err := lockEntry(place)
+		if err != nil {
+			continue
 		}
-		if now.Sub(moved) > time.Duration(days)*24*time.Hour {
-			if os.RemoveAll(filepath.Join(folder, entry.ID)) == nil {
-				removed++
-			}
+		current, err := readEntry(place)
+		if err == nil && current.expired(now) && os.RemoveAll(place) == nil {
+			removed++
 		}
+		_ = locked.Close()
 	}
 	return removed
+}
+
+func (entry Entry) expired(now time.Time) bool {
+	moved, err := time.Parse(time.RFC3339, entry.MovedAt)
+	if err != nil || entry.Held || !now.After(moved) {
+		return false
+	}
+	var days int
+	if entry.KeepDays != nil {
+		days = *entry.KeepDays
+	} else {
+		days = KeepDays(filepath.Dir(entry.Path))
+	}
+	const day = 24 * time.Hour
+	elapsed := now.Sub(moved)
+	wholeDays := int(elapsed / day)
+	return wholeDays > days || wholeDays == days && elapsed%day > 0
 }

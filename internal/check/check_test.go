@@ -31,6 +31,10 @@ func TestCheck(t *testing.T) {
 	if _, errs, code := call(folder); code != 2 || !strings.Contains(errs, "procs.default_minutes") || !strings.Contains(errs, "ids.A") {
 		t.Errorf("every problem named: %q %d", errs, code)
 	}
+	write(`{"jackstay_schema": 2, "release": {}}`)
+	if _, errs, code := call(folder); code != 2 || !strings.Contains(errs, "needs a `changes` section") {
+		t.Errorf("release without changes: %q %d", errs, code)
+	}
 	write(`{"jackstay_schema": 2, "project": "demo", "receipts": {"toolchain": []}, "test": {"scopes": {"full": {"run": ["make"]}, "gate": {"steps": ["slow", "fast"]}},
 	  "steps": {"slow": {"run": ["a"], "timeout": 1}, "fast": {"run": ["b"], "timeout": 1}}}}`)
 	runs, err := homedir.SharedPath("runs.jsonl")

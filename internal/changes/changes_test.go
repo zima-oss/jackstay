@@ -99,15 +99,6 @@ func TestInsert(t *testing.T) {
 	}
 }
 
-func TestCollectFinishesTypedItems(t *testing.T) {
-	section := "## 1.0.0\n\n### Fixes\n\n- **A**\n- **B**\n"
-	a, _ := Parse("a.md", []byte("---\n{\"type\": \"fix\", \"audience\": \"consumer\"}\n---\n# A\n"))
-	b, _ := Parse("b.md", []byte("---\n{\"type\": \"fix\", \"audience\": \"consumer\"}\n---\n# B\n"))
-	if !holdsLines(section, item(a)) || !holdsLines(section, item(b)) {
-		t.Fatal("typed items not recognised")
-	}
-}
-
 func TestTemplateProblem(t *testing.T) {
 	for _, bad := range []string{"no front matter", "---\nnull\n---\n# T\n", "---\n{}\n---garbage\n# T\n", "---\n{bad}\n---\n"} {
 		if TemplateProblem([]byte(bad)) == "" {

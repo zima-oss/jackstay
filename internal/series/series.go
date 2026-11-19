@@ -35,7 +35,9 @@ func Taken(pattern string) (*regexp.Regexp, error) {
 	prefix, _, _ := strings.Cut(name, "{n}")
 	var text strings.Builder
 	text.WriteString("^")
-	text.WriteString(regexp.QuoteMeta(folder))
+	if folder = Folder(pattern); folder != "" {
+		text.WriteString(regexp.QuoteMeta(folder) + "/")
+	}
 	text.WriteString(glob(prefix))
 	text.WriteString(`([0-9]+)(?:[^0-9/][^/]*)?$`)
 	return regexp.Compile(text.String())

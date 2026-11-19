@@ -47,7 +47,7 @@ func TestAZombieCountsAsEnded(t *testing.T) {
 		row, found, err := procs.Row(pid)
 		return err == nil && found && row.Zombie
 	})
-	if (realWorld{}).Running(pid) {
+	if (realWorld{}).Process(pid).running {
 		t.Fatal("a zombie runs")
 	}
 	var stdout, stderr bytes.Buffer
@@ -61,13 +61,15 @@ func TestARunningProcessRuns(t *testing.T) {
 	child := startShell(t, `echo ready > "$READY"; exec sleep 600`, "READY="+ready)
 	defer func() { _ = child.Process.Kill(); _ = child.Wait() }()
 	until(t, "ready", func() bool { _, err := os.Stat(ready); return err == nil })
-	if !(realWorld{}).Running(child.Process.Pid) {
-		t.Fatal("a running child does not run")
+	first := (realWorld{}).Process(child.Process.Pid)
+	second := (realWorld{}).Process(child.Process.Pid)
+	if !first.running || first.start == 0 || first != second {
+		t.Fatalf("a running child has no stable identity: %+v then %+v", first, second)
 	}
-	if !(realWorld{}).Running(1) {
+	if !(realWorld{}).Process(1).running {
 		t.Fatal("launchd does not run")
 	}
-	if (realWorld{}).Running(99_999_999) {
+	if (realWorld{}).Process(99_999_999).running {
 		t.Fatal("no process runs")
 	}
 }

@@ -20,10 +20,12 @@ const help = usage + `
     --wait S         seconds to wait for it to appear (default 0)
     --state STATE    open (default), closed, merged or all
   pr-status          where this branch and its pull request stand
+    --pr PR|URL      select an open pull request from this branch
   pr-land            push, open the pull request, wait for its checks, squash-merge the head that
                      was checked, delete the remote branch; the plan is printed first. It waits
                      for the checks the base's rules require (every check when they require
                      none); another check that fails stops it, one still pending does not
+    --pr PR|URL      select an existing open pull request from this branch
     --title T        the new pull request's title
     --body-file F    its description, from a file
     --card ID        the card the change is for (repeatable), or none with --reason

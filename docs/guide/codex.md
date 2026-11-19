@@ -1,15 +1,14 @@
 # Codex
 
-jackstay uses [Codex CLI](https://github.com/openai/codex) in two optional ways: as the reviewer
-that `jst review` runs, and as an agent that can load the same guard hook Claude Code does.
+jackstay can use [Codex CLI](https://github.com/openai/codex) as a reviewer selected for
+`jst review`. Codex sessions can also load jackstay's guard hook.
 
 ## What works without Codex
 
-Everything but starting a review round: `jst review [REV | BASE..REV]` exits 6 ("Codex is not
-installed") and changes nothing; install Codex to use it. `jst review check`, `last`, `list`, `show`
-and `prune` still read the rounds already saved, and `jst stats reviews` reports them. No other
-command calls Codex. The AGENTS block `jst adopt` writes tells agents about `jst review` only when
-`jackstay.json` has a `review` section (`"review": {}` takes every default).
+`jst` commands run without Codex. A review round can select Claude Code instead. Stored reviews
+remain available to `jst review check`, `last`, `list`, `show` and `prune`, and `jst stats reviews`
+reports them. The AGENTS block written by `jst adopt` mentions review when the project has a
+`review` section. Reviewer selection is described on the [reviews page](review.md).
 
 ## Codex as the reviewer: `jst review`
 
@@ -20,7 +19,13 @@ codex login
 codex --version
 ```
 
-`jst review` starts Codex itself, read only, in a detached worktree at the reviewed commit, so Codex
+Choose Codex for a round:
+
+```sh
+jst review origin/main..HEAD --task parser --reviewer codex
+```
+
+`jst review` starts Codex read only in a detached worktree at the reviewed commit, so Codex
 cannot change your checkout. It is isolated from your own Codex setup by default (no user config,
 rules, MCP servers or apps); `review.reviewers.codex.isolation` replaces that list. An answer that
 does not fit the review's schema is `unparsable` (exit 5), never guessed at. How Codex is started,
@@ -33,7 +38,7 @@ Set the model and effort per project, or per call:
 ```
 
 ```sh
-jst review origin/main..HEAD --task parser --effort high
+jst review origin/main..HEAD --task parser --reviewer codex --effort high
 ```
 
 `command` may be an absolute path when `codex` is not on the `PATH` of the shell that runs

@@ -284,3 +284,82 @@ func TestTrashingAWholeCheckoutKeepsItsOwnDays(t *testing.T) {
 		t.Fatalf("pruning after 8 days removed %d of a checkout that keeps 30", removed)
 	}
 }
+
+func TestRestoreKeepsTheCurrentFileWhenTheMoveFails(t *testing.T) {
+	folder := filepath.Join(t.TempDir(), ".trash")
+	target := filepath.Join(t.TempDir(), "item")
+	if err := os.WriteFile(target, []byte("edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := Move(folder, target, "p", "", DefaultKeepDays, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("committed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	written, err := Describe(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Mark(folder, entry.ID, "discard", written); err != nil {
+		t.Fatal(err)
+	}
+	renameItem = func(string, string) error { return syscall.EIO }
+	t.Cleanup(func() { renameItem = os.Rename })
+	var out, errs strings.Builder
+	if code := restore(folder, []string{entry.ID}, &out, &errs); code != 1 {
+		t.Fatalf("restore = %d, want 1: %s", code, errs.String())
+	}
+	read, err := os.ReadFile(target)
+	if err != nil || string(read) != "committed" {
+		t.Fatalf("target = %q, %v; want original committed content", read, err)
+	}
+	kept, err := os.ReadFile(filepath.Join(folder, entry.ID, "item", filepath.Base(target)))
+	if err != nil || string(kept) != "edit" {
+		t.Fatalf("trash = %q, %v; want retained edit", kept, err)
+	}
+}
+
+func TestCrossVolumeRestoreKeepsAnEditWrittenBeforeInstallation(t *testing.T) {
+	folder := filepath.Join(t.TempDir(), ".trash")
+	target := filepath.Join(t.TempDir(), "item")
+	if err := os.WriteFile(target, []byte("edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := Move(folder, target, "p", "", 0, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("committed"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	written, err := Describe(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Mark(folder, entry.ID, "discard", written); err != nil {
+		t.Fatal(err)
+	}
+	renameItem = func(string, string) error {
+		if removed := Prune(folder, time.Now().Add(time.Hour)); removed != 0 {
+			t.Errorf("pruned %d entries during restore", removed)
+		}
+		if err := os.WriteFile(target, []byte("new edit"), 0o600); err != nil {
+			return err
+		}
+		return syscall.EXDEV
+	}
+	t.Cleanup(func() { renameItem = os.Rename })
+	var out, errs strings.Builder
+	if code := restore(folder, []string{entry.ID}, &out, &errs); code != 1 || !strings.Contains(errs.String(), "already") {
+		t.Fatalf("restore = %d: %s, want the new edit to block installation", code, errs.String())
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "new edit" {
+		t.Fatalf("target = %q, %v, want the one changed during restore", data, err)
+	}
+	item := filepath.Join(folder, entry.ID, "item", filepath.Base(target))
+	if data, err := os.ReadFile(item); err != nil || string(data) != "edit" {
+		t.Fatalf("original = %q, %v, want the trash copy to remain", data, err)
+	}
+}

@@ -413,7 +413,14 @@ run derives everything from git (inferred from GitHub's documented concurrency b
 release commit the App pushes starts one more run, which finds nothing to do. `jst release pr` and
 `publish` write to GitHub only inside GitHub Actions
 (`GITHUB_ACTIONS=true`) and with `GH_TOKEN` set; elsewhere they run as `--dry-run`, so nothing run
-locally races the workflow.
+locally races the workflow. A dry run fetches and builds its candidate commits in a temporary
+Git repository. It uses the checkout's Git configuration for transport and leaves the checkout's
+refs, objects, index and working files alone.
+
+The commands select one remote by the shared Git rule in
+[implementation.md, section 8](implementation.md#8-github-and-branches-jst-gh-the-github-section-jst-tidy-jst-start-jst-sync-jst-owner).
+A live workflow verifies its effective fetch and push URLs against `GITHUB_REPOSITORY` before writes.
+The settings on the fetched base must name that branch as their release base.
 
 Why the App and not `GITHUB_TOKEN`: events made with `GITHUB_TOKEN` start no workflow, except that
 a pull request it opens, reopens or pushes to gets runs that wait for a person's approval; its `edited`
@@ -602,8 +609,9 @@ Run by the workflow after each landing on the base. Let `T` be the base's tip as
    changed, and each pattern reading the new values), so the workflow never pushes a commit it could
    not later recognise; a failure is exit 2 and nothing is pushed. Then push it with the writing
    App's token: `git push --force-with-lease=refs/heads/<base>:<T>
-   origin <R>:refs/heads/<base>`, a fast-forward accepted only if the base is still `T`. Refused (the
-   base moved): fetch again and start over from step 1, at most three times, then red. Pushed: tag
+   <remote> <R>:refs/heads/<base>`, a fast-forward accepted only if the base is still `T`. A stale
+   lease fetches again and starts over from step 1, at most three times. Server policy refusals
+   are reported as errors and are not retried. Pushed: tag
    R and publish its release as in step 1. A request file that is not releasable at `T` is reported
    (what differs: the version, entries added, removed or changed) and nothing is released; the run
    goes on to step 3 — `jst release pr` refreshes the pull request next.

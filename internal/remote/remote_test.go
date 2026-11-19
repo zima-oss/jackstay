@@ -177,6 +177,22 @@ func TestParseURL(t *testing.T) {
 	}
 }
 
+func TestMalformedRemoteErrorsDoNotIncludeCredentials(t *testing.T) {
+	const marker = "audit-fixture-value"
+	for _, remote := range []string{
+		"https://audit:" + marker + "@gitlab.example/owner/repo",
+		"https://audit:" + marker + "@github.com/only-owner",
+		"https://audit:" + marker + "%zz@github.com/owner/repo",
+		"https://github.com/owner/repo?key=" + marker,
+		"https://github.com/owner/repo#" + marker,
+	} {
+		_, err := ParseURL(remote)
+		if err == nil || strings.Contains(err.Error(), marker) {
+			t.Fatalf("wanted a sanitized parse error, got %v", err)
+		}
+	}
+}
+
 func TestRepositoryOf(t *testing.T) {
 	git := fakeGit{"remote": "origin\nfork\n", "config --get remote.origin.url": "git@github.com:zima-oss/jackstay.git\n",
 		"config --get remote.fork.url": "https://me@github.com/me/jackstay\n"}

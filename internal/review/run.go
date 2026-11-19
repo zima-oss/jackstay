@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +15,9 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/flock"
+	"github.com/zima-oss/jackstay/internal/review/claude"
 	"github.com/zima-oss/jackstay/internal/review/codex"
+	"github.com/zima-oss/jackstay/internal/review/runner"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 )
 
@@ -48,11 +51,11 @@ type Options struct {
 
 // Machine is what a round needs of the machine; Real gives the real one, tests their own.
 type Machine struct {
-	RunReviewer func(ctx context.Context, request codex.Request) codex.Result
-	Probe       func(ctx context.Context, command string) (string, error)
+	RunReviewer func(ctx context.Context, request runner.Request) runner.Result
+	Probe       func(ctx context.Context, reviewer, command string) (string, error)
 	// CheckEnvironment refuses a run that must not start: a reviewer's program is not installed,
 	// or Codex's login cannot be used here. "" when the run may start.
-	CheckEnvironment func(commands []string) string
+	CheckEnvironment func(reviewers []ReviewerSettings) string
 	RecordLogin      func(reason string)
 	SlotsDir         string
 	StartLockPath    string
@@ -76,17 +79,34 @@ func RealMachine(shared func(parts ...string) (string, error)) (Machine, error) 
 		return Machine{}, err
 	}
 	return Machine{
-		RunReviewer: codex.Run,
-		Probe:       codex.Probe,
-		CheckEnvironment: func(commands []string) string {
-			// Installed first: on a machine without Codex, "run `codex login`" would send a
-			// stranger to a program that is not there.
-			for _, command := range commands {
-				if _, err := exec.LookPath(command); err != nil {
-					return "Codex is not installed (`" + command + "` is not on PATH): install it, or leave `jst review` out; nothing else in jackstay needs it"
+		RunReviewer: func(ctx context.Context, request runner.Request) runner.Result {
+			if request.Reviewer == claude.Name {
+				return claude.Run(ctx, request)
+			}
+			return codex.Run(ctx, request)
+		},
+		Probe: func(ctx context.Context, reviewer, command string) (string, error) {
+			if reviewer == claude.Name {
+				return claude.Probe(ctx, command)
+			}
+			return codex.Probe(ctx, command)
+		},
+		CheckEnvironment: func(reviewers []ReviewerSettings) string {
+			usesCodex := false
+			for _, reviewer := range reviewers {
+				usesCodex = usesCodex || reviewer.Name == "codex"
+				if _, err := exec.LookPath(reviewer.Command); err != nil {
+					program := "Codex"
+					if reviewer.Name == claude.Name {
+						program = "Claude Code"
+					}
+					return program + " is not installed (`" + reviewer.Command + "` is not on PATH)"
 				}
 			}
-			return codex.CheckEnvironment(codex.Home(os.Environ()), marker)
+			if usesCodex {
+				return codex.CheckEnvironment(codex.Home(os.Environ()), marker)
+			}
+			return ""
 		},
 		RecordLogin:   func(reason string) { codex.RecordLoginFailure(marker, reason) },
 		SlotsDir:      slots,
@@ -123,13 +143,16 @@ func usage(format string, values ...any) Result {
 // Run makes one attempt and, when every reviewer answers, one round.
 func (round Round) Run(ctx context.Context, options Options) Result {
 	settings := round.Settings
-	if options.Model != "" || options.Effort != "" || options.Timeout != 0 {
-		settings.Reviewers = overridden(settings.Reviewers, options)
-	}
 	names := settings.Use
 	if len(options.Reviewers) > 0 {
 		names = options.Reviewers
 		settings.Use = names
+	}
+	if len(names) == 0 {
+		return usage("choose a reviewer with --reviewer %s, or set review.use in jackstay.json", strings.Join(KnownReviewers, " or "))
+	}
+	if options.Model != "" || options.Effort != "" || options.Timeout != 0 {
+		settings.Reviewers = overridden(settings.Reviewers, names, options)
 	}
 	if problems := settings.problems(); len(problems) > 0 {
 		return usage("%s", strings.Join(problems, "; "))
@@ -166,32 +189,32 @@ func (round Round) Run(ctx context.Context, options Options) Result {
 	if len(task) > 200 || !round.Repo.ValidBranchName(ctx, task) {
 		return usage("task %q is not a name git takes for a branch (at most 200 bytes)", task)
 	}
-	commands := make([]string, 0, len(names))
+	reviewers := make([]ReviewerSettings, 0, len(names))
 	for _, name := range names {
-		commands = append(commands, settings.Reviewers[name].Command)
+		reviewers = append(reviewers, settings.Reviewers[name])
 	}
-	if reason := round.Machine.CheckEnvironment(commands); reason != "" {
+	if reason := round.Machine.CheckEnvironment(reviewers); reason != "" {
 		return Result{Status: ExitEnvironment, Next: reason}
 	}
 	if dirty, err := round.Repo.Dirty(ctx); err == nil && dirty {
 		fmt.Fprintln(round.Errors, "jst review: the checkout has uncommitted changes; only commit "+short(commit)+" is reviewed")
 	}
 
-	taskLock, err := flock.TryFile(round.Store.TaskLockPath(task))
+	releaseTask, err := round.Store.tryTaskLock(task)
 	if errors.Is(err, flock.ErrBusy) {
 		return usage("task %q is busy: another `jst review` of it is running", task)
 	}
 	if err != nil {
 		return usage("the task's lock: %v", err)
 	}
-	defer taskLock.Release()
+	defer releaseTask()
 	if removed, err := round.Store.Prune(settings.KeepDays, round.Machine.Now()); err == nil && len(removed) > 0 {
 		fmt.Fprintf(round.Errors, "jst review: removed %d task(s) older than %d days\n", len(removed), settings.KeepDays)
 	}
 	_ = os.MkdirAll(round.Store.TreesPath(), 0o700)
 	RemoveStaleTrees(ctx, round.Repo, round.Store, round.Machine.TreeAlive)
 
-	plan, refusal := round.plan(ctx, task, commit, givenBase, options)
+	plan, refusal := round.plan(ctx, task, commit, givenBase, settings, options)
 	if refusal != nil {
 		return *refusal
 	}
@@ -207,7 +230,7 @@ type plan struct {
 	streaks                      map[string]int
 }
 
-func (round Round) plan(ctx context.Context, task, commit, givenBase string, options Options) (plan, *Result) {
+func (round Round) plan(ctx context.Context, task, commit, givenBase string, settings Settings, options Options) (plan, *Result) {
 	entries, err := round.Store.Entries(task)
 	if err != nil {
 		result := usage("the task's folder: %v", err)
@@ -250,6 +273,10 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, opt
 		result := usage("this chain reviews from %s; --fresh starts a full review from a new base", short(newest.Base))
 		return plan{}, &result
 	}
+	if newest.Policy != settings.policyID() || !sameReviewers(newest.Runs, settings.Use) {
+		result := usage("the review policy or reviewers changed since round %d; name BASE..REV and use --fresh for a full review", newest.Round)
+		return plan{}, &result
+	}
 	planned.base, planned.previous, planned.follows = newest.Base, newest.Commit, newest.Round
 	planned.ledger = newest.Outcome.Ledger
 	for place, count := range newest.Outcome.Streaks {
@@ -259,6 +286,9 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, opt
 }
 
 func (round Round) attempt(ctx context.Context, settings Settings, planned plan, names []string, options Options) (result Result) {
+	if err := round.Store.prepareTask(planned.task); err != nil {
+		return usage("the task's folder: %v", err)
+	}
 	folder := filepath.Join(round.Store.TaskPath(planned.task), fmt.Sprintf("attempt-%d", planned.attempt))
 	ctx, span := startAttempt(ctx, planned, folder)
 	defer func() { endAttempt(span, result.Record, result.Next, result.Status, result.Folder) }()
@@ -299,15 +329,15 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	reviewersDone.Wait() // jackstay:not-a-process
 
 	record := RoundRecord{Task: planned.task, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
-		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus,
+		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus, Policy: settings.policyID(),
 		PastLimit: options.PastLimit, Made: round.Machine.Now().Format(time.RFC3339), Runs: runs,
 		Summaries: map[string]string{}}
 	allDone := true
 	for _, run := range runs {
-		if run.Outcome != codex.OutcomeDone {
+		if run.Outcome != runner.OutcomeDone {
 			allDone = false
 		}
-		if run.Outcome == codex.OutcomeLogin {
+		if run.Reviewer == "codex" && run.Outcome == runner.OutcomeLogin {
 			round.Machine.RecordLogin(run.Reason)
 		}
 	}
@@ -317,7 +347,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		_ = round.Store.AppendIndex(lines)
 		status := ExitReviewer
 		for _, run := range runs {
-			if run.Outcome == codex.OutcomeLogin || run.Outcome == codex.OutcomeRefused {
+			if run.Outcome == runner.OutcomeLogin || run.Outcome == runner.OutcomeRefused {
 				status = ExitEnvironment
 			}
 		}
@@ -408,7 +438,7 @@ func (round Round) promptData(ctx context.Context, settings Settings, planned pl
 	}, nil
 }
 
-// review is one reviewer's run: a slot, a pinned tree, the start lock, Codex, the answer.
+// review runs a provider under the same pinned tree, scheduling and verdict contract.
 func (round Round) review(ctx context.Context, settings Settings, planned plan, name string, prompt []byte,
 	folder string) (ReviewerRun, Answer) {
 	reviewer := settings.Reviewers[name]
@@ -424,16 +454,22 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 		return run, Answer{}
 	}
 	if err := os.MkdirAll(reviewerFolder, 0o700); err != nil {
-		return finish(codex.OutcomeFailed, err.Error())
+		return finish(runner.OutcomeFailed, err.Error())
 	}
-	version, err := round.Machine.Probe(ctx, reviewer.Command)
+	version, err := round.Machine.Probe(ctx, name, reviewer.Command)
 	if err != nil {
-		return finish(codex.OutcomeRefused, err.Error())
+		return finish(runner.OutcomeRefused, err.Error())
 	}
 	run.Version = version
+	if name == claude.Name {
+		prompt, err = round.claudePrompt(ctx, planned, prompt)
+		if err != nil {
+			return finish(runner.OutcomeFailed, err.Error())
+		}
+	}
 	schemaPath := filepath.Join(reviewerFolder, "schema.json")
 	if err := writeFileWhole(schemaPath, Schema(settings.Severities)); err != nil {
-		return finish(codex.OutcomeFailed, err.Error())
+		return finish(runner.OutcomeFailed, err.Error())
 	}
 
 	queueUntil := round.Machine.Now().Add(time.Duration(settings.QueueMinutes) * time.Minute)
@@ -441,7 +477,10 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 	defer cancelQueue()
 	slot, err := round.takeSlot(queueContext, settings.MaxConcurrent)
 	if err != nil {
-		return finish(OutcomeNoSlot, "no slot within "+fmt.Sprint(settings.QueueMinutes)+" minutes")
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return finish(OutcomeNoSlot, "no slot within "+fmt.Sprint(settings.QueueMinutes)+" minutes")
+		}
+		return finish(runner.OutcomeFailed, "cannot acquire a review slot: "+err.Error())
 	}
 	defer slot.Release()
 
@@ -454,17 +493,20 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 		_ = os.RemoveAll(tree)
 	}()
 	if err := round.Repo.AddTree(ctx, tree, planned.commit, ownReason()); err != nil {
-		return finish(codex.OutcomeFailed, "the pinned tree could not be made: "+err.Error())
+		return finish(runner.OutcomeFailed, "the pinned tree could not be made: "+err.Error())
 	}
 
 	startLock, err := flock.WaitFile(queueContext, round.Machine.StartLockPath)
 	if err != nil {
-		return finish(OutcomeNoSlot, "the start lock was not free within the queue's time")
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return finish(OutcomeNoSlot, "the start lock was not free within the queue's time")
+		}
+		return finish(runner.OutcomeFailed, "cannot acquire the start lock: "+err.Error())
 	}
 	agentCtx, agent := startAgent(ctx, name)
 	defer func() { endAgent(agent, run, reviewerFolder) }()
-	result := round.Machine.RunReviewer(agentCtx, codex.Request{
-		Command: reviewer.Command, Model: reviewer.Model, Effort: reviewer.Effort,
+	result := round.Machine.RunReviewer(agentCtx, runner.Request{
+		Reviewer: name, Command: reviewer.Command, Model: reviewer.Model, Effort: reviewer.Effort,
 		Timeout: time.Duration(reviewer.TimeoutMinutes) * time.Minute, Isolation: reviewer.Isolation,
 		Tree: tree, Folder: reviewerFolder, Prompt: prompt, SchemaPath: schemaPath, Answered: startLock.Release,
 	})
@@ -472,17 +514,17 @@ func (round Round) review(ctx context.Context, settings Settings, planned plan, 
 	run.Argv, run.Exit = result.Argv, result.Exit
 	run.Started, run.Ended = result.Started.Format(time.RFC3339), result.Ended.Format(time.RFC3339)
 	run.Seconds = result.Ended.Sub(result.Started).Seconds()
-	if result.Outcome != codex.OutcomeDone {
+	if result.Outcome != runner.OutcomeDone {
 		return finish(result.Outcome, result.Reason)
 	}
 	answer, outcome, reason := ReadAnswer(result.AnswerPath)
-	if outcome != codex.OutcomeDone {
+	if outcome != runner.OutcomeDone {
 		return finish(outcome, reason)
 	}
 	if problem := CheckAnswer(answer, settings, planned.ledger); problem != "" {
 		return finish(OutcomeInconsistent, problem)
 	}
-	run.Outcome = codex.OutcomeDone
+	run.Outcome = runner.OutcomeDone
 	_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
 	return run, answer
 }
@@ -495,6 +537,9 @@ func (round Round) takeSlot(ctx context.Context, most int) (*flock.File, error) 
 			held, err := flock.TryFile(filepath.Join(round.Machine.SlotsDir, fmt.Sprintf("%d.lock", slot)))
 			if err == nil {
 				return held, nil
+			}
+			if !errors.Is(err, flock.ErrBusy) {
+				return nil, err
 			}
 		}
 		if now := round.Machine.Now(); said.IsZero() || now.Sub(said) >= time.Minute {
@@ -509,9 +554,13 @@ func (round Round) takeSlot(ctx context.Context, most int) (*flock.File, error) 
 	}
 }
 
-func overridden(reviewers map[string]ReviewerSettings, options Options) map[string]ReviewerSettings {
-	changed := map[string]ReviewerSettings{}
-	for name, reviewer := range reviewers {
+func overridden(reviewers map[string]ReviewerSettings, names []string, options Options) map[string]ReviewerSettings {
+	changed := maps.Clone(reviewers)
+	for _, name := range names {
+		reviewer, available := reviewers[name]
+		if !available {
+			continue
+		}
 		if options.Model != "" {
 			reviewer.Model = options.Model
 		}
@@ -538,7 +587,7 @@ func failedLines(planned plan, runs []ReviewerRun, folder string) []IndexLine {
 func failureWords(runs []ReviewerRun) string {
 	var words []string
 	for _, run := range runs {
-		if run.Outcome != codex.OutcomeDone {
+		if run.Outcome != runner.OutcomeDone {
 			words = append(words, fmt.Sprintf("%s %s (%s)", run.Reviewer, run.Outcome, run.Reason))
 		}
 	}

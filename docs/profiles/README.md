@@ -16,6 +16,32 @@ and `jst adopt --apply --profile PATH` (the same path, the first time) records i
 The example: [example/profile.json](example/profile.json), with its own workflow template
 [example/workflows/card-line.yml](example/workflows/card-line.yml). It uses every capability.
 
+## Distribute a profile offline
+
+```sh
+jst profile export profile.json > policy-v1.bundle.json
+jst profile verify --sha256 "$expected" policy-v1.bundle.json
+jst adopt --plan --profile policy-v1.bundle.json
+jst adopt --apply --settings-only --profile policy-v1.bundle.json
+```
+
+Export collects the profile and its referenced workflow templates into one versioned JSON file.
+It prints the exact file's SHA-256 to standard error. Obtain the expected SHA-256 independently
+of the bundle, such as from your team's release metadata. Verification checks that digest and
+reads the bundled profile and templates using the same rules as adoption.
+
+Keep the verified file at a stable path reachable from the checkout. A bundle works directly
+with `adopt --profile`. It carries the template files needed at the destination.
+For identical profile data and workflow bytes, export produces identical bundle bytes. Bundle
+format 1 accepts at most 8 MiB per bundle and 1 MiB per template. The bundle's internal checksum
+also detects accidental edits when `adopt` reads it.
+
+To roll out a policy change, verify a new filename alongside the previous bundle, then preview it
+with `adopt --plan --profile`. The preview shows changes before updating the recorded profile
+path. Land the changed settings first, then run `jst adopt --apply` for the managed files.
+To return to an earlier policy, point the same two-stage flow at its retained, verified bundle.
+The binary pin in `adopt.pin` is still managed through `adopt --pin`.
+
 ## Every capability
 
 The file is read strictly: an unknown key makes the profile invalid, and `jst adopt` stops (exit

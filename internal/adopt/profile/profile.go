@@ -5,7 +5,6 @@ package profile
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -46,17 +45,24 @@ type Profile struct {
 	LeaveOut  []string
 }
 
-// Load reads and checks the profile at path.
+// Load reads a profile or an offline bundle saved by jst profile export.
 func Load(path string) (*Profile, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- the profile the user names
+	data, err := readProfileFile(path, maxBundleBytes)
 	if err != nil {
 		return nil, err
 	}
 	parsed, err := config.Parse(data)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %v", path, err)
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	reader := &reader{folder: filepath.Dir(path)}
+	if _, bundled := parsed[bundleVersionKey]; bundled {
+		return loadBundle(path, data)
+	}
+	return readProfile(path, parsed, templatesFromFolder(filepath.Dir(path)))
+}
+
+func readProfile(path string, parsed config.Config, readTemplate func(string) ([]byte, error)) (*Profile, error) {
+	reader := &reader{readTemplate: readTemplate}
 	result := reader.read(parsed)
 	result.Path = path
 	if len(reader.problems) > 0 {
@@ -66,8 +72,8 @@ func Load(path string) (*Profile, error) {
 }
 
 type reader struct {
-	folder   string
-	problems []string
+	readTemplate func(string) ([]byte, error)
+	problems     []string
 }
 
 func (reader *reader) fail(format string, values ...any) {
@@ -250,7 +256,7 @@ func (reader *reader) workflow(name string, value any, values map[string]string)
 	if !reader.relative(file, where+".file") {
 		return template
 	}
-	data, err := os.ReadFile(filepath.Join(reader.folder, file)) // #nosec G304 G703 -- inside the profile's folder, checked above
+	data, err := reader.readTemplate(file)
 	if err != nil {
 		reader.fail("`%s.file`: %v", where, err)
 		return template

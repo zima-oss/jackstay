@@ -227,16 +227,18 @@ func firstLine(said supervise.Captured) string {
 	return line
 }
 
-// resignPartial is the folder inside a live version folder where its binary is signed again: a
+// resignPartial is the folder inside a live version folder where its replacement is staged: a
 // `.partial` name (layout), removed when the signing ends and before the next one starts.
 const resignPartial = "resign" + layout.PartialSuffix
 
-// Replacement is what Resign did to the live binary.
+// Replacement is what a same-version install did to the live binary.
 type Replacement int
 
 const (
-	// LeftAlone means the live binary keeps its signature.
+	// LeftAlone means the existing binary passed the install's checks.
 	LeftAlone Replacement = iota
+	// Repaired means the unproved live binary was replaced without signing.
+	Repaired
 	// SignedAgain means a copy of the binary being installed was signed and put in its place.
 	SignedAgain
 	// ReplacedAsSigned means the binary being installed keeps its own signature (a release's), so it was
@@ -244,20 +246,37 @@ const (
 	ReplacedAsSigned
 )
 
-// Resign replaces the binary of the live version folder when it does not keep its signature
-// (KeepsItsSignature: it is unsigned or ad-hoc, was installed before the setting, has an earlier
-// identifier (W-075) or does not verify strictly), and says what it did. The copy that replaces it
-// is signed with identity unless it keeps its own signature: a release's binary installed over an
-// ad-hoc build of the same version keeps its notarisation. candidate is the binary being installed, which names the live version
-// and commit: it, not the live file, is what is copied. The live file is never signed in place: the
-// copy in the folder is signed, verified and read back (Sign), proved through its own links as a
-// new folder is (prove.Folder), and only then renamed over the live binary, so an error leaves the
-// live binary as it was.
-func Resign(ctx context.Context, run Runner, identity, folder, candidate, versionText string) (Replacement, error) {
+// refreshLive keeps a same-version binary only if its launchers work and any configured signing
+// requirement holds. On macOS a verified incoming signature can also replace an ad-hoc binary
+// without a local signing identity.
+func refreshLive(ctx context.Context, run Runner, identity, folder, candidate, versionText string) (Replacement, error) {
 	live := filepath.Join(folder, layout.Program)
-	if kept, _, err := KeepsItsSignature(run, live); err != nil || kept {
-		return LeftAlone, err
+	healthy := prove.Folder(ctx, folder, versionText) == nil
+	preserveCertified := false
+	switch {
+	case identity != "":
+		if kept, _, err := KeepsItsSignature(run, live); err != nil || kept && healthy {
+			return LeftAlone, err
+		}
+	case !healthy:
+	case runtime.GOOS != "darwin":
+		return LeftAlone, nil
+	default:
+		if kept, _, err := KeepsItsSignature(run, live); err != nil || kept {
+			return LeftAlone, err
+		}
+		if kept, _, err := KeepsItsSignature(run, candidate); err != nil || !kept {
+			return LeftAlone, err
+		}
+		preserveCertified = true
 	}
+	return replaceLive(ctx, run, identity, folder, candidate, versionText, preserveCertified)
+}
+
+// replaceLive copies and proves the incoming binary in the live folder before the final
+// rename, so preparation failures leave the current executable intact.
+func replaceLive(ctx context.Context, run Runner, identity, folder, candidate, versionText string, preserveCertified bool) (Replacement, error) {
+	live := filepath.Join(folder, layout.Program)
 	work := filepath.Join(folder, resignPartial)
 	if err := os.RemoveAll(work); err != nil {
 		return LeftAlone, err
@@ -280,16 +299,21 @@ func Resign(ctx context.Context, run Runner, identity, folder, candidate, versio
 			}
 		}
 	}
-	done := SignedAgain
-	kept, _, err := KeepsItsSignature(run, signed)
-	switch {
-	case err != nil:
-		return LeftAlone, err
-	case kept:
-		done = ReplacedAsSigned
-	default:
-		if err := Sign(run, identity, signed); err != nil {
+	done := Repaired
+	if identity != "" || preserveCertified {
+		kept, _, err := KeepsItsSignature(run, signed)
+		switch {
+		case err != nil:
 			return LeftAlone, err
+		case kept:
+			done = ReplacedAsSigned
+		case preserveCertified:
+			return LeftAlone, errors.New("the copied binary's signature does not verify")
+		default:
+			if err := Sign(run, identity, signed); err != nil {
+				return LeftAlone, err
+			}
+			done = SignedAgain
 		}
 	}
 	if err := prove.Folder(ctx, work, versionText); err != nil {

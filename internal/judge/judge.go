@@ -15,6 +15,7 @@ import (
 	"sync"
 
 	"github.com/zima-oss/jackstay/internal/supervise"
+	"github.com/zima-oss/jackstay/internal/testreport"
 )
 
 // A Kind is a judge, as jackstay.json's `judge` names it.
@@ -25,7 +26,19 @@ const (
 	SwiftTest Kind = "swift-test"
 	Steps     Kind = "steps"
 	Exit      Kind = "exit"
+	GoJSON    Kind = "go-json"
+	JUnit     Kind = "junit"
 )
+
+// AdapterVersion identifies structured evidence in receipt and gate keys. Zero denotes a legacy judge.
+func AdapterVersion(kind Kind) int {
+	switch kind {
+	case GoJSON, JUnit:
+		return 1
+	default:
+		return 0
+	}
+}
 
 // An Engine is a test engine a `swift-test` scope expects to see run.
 type Engine string
@@ -61,16 +74,21 @@ type Options struct {
 	Evidence string
 	// Vetoes name lines that mean failure whatever the status says.
 	Vetoes []string
+	// EmptyExit is an explicitly configured JUnit producer status for zero collected tests.
+	EmptyExit int
 }
 
 // A Reader hears the output (supervise.Sink) and gives the verdict. Its methods may be called from
 // several goroutines.
 type Reader struct {
-	mutex    sync.Mutex
-	kind     Kind
-	evidence *regexp.Regexp
-	vetoes   []*regexp.Regexp
-	swift    *swiftTest
+	mutex     sync.Mutex
+	kind      Kind
+	evidence  *regexp.Regexp
+	vetoes    []*regexp.Regexp
+	swift     *swiftTest
+	goJSON    *goJSONReader
+	report    *Facts
+	emptyExit int
 
 	vetoed        bool
 	vetoLine      string
@@ -86,7 +104,7 @@ type Reader struct {
 
 // New is a Reader for the options, or why they cannot judge.
 func New(options Options) (*Reader, error) {
-	reader := &Reader{kind: options.Kind}
+	reader := &Reader{kind: options.Kind, emptyExit: options.EmptyExit}
 	switch options.Kind {
 	case SwiftTest:
 		for _, engine := range options.Expect {
@@ -95,12 +113,21 @@ func New(options Options) (*Reader, error) {
 			}
 		}
 		reader.swift = newSwiftTest(options.Expect)
-	case Steps, Exit:
+	case Steps, Exit, GoJSON, JUnit:
 		if len(options.Expect) > 0 {
 			return nil, errors.New("judge: `expect` is for the swift-test judge")
 		}
+		if options.Kind == GoJSON {
+			reader.goJSON = &goJSONReader{}
+		}
 	default:
-		return nil, fmt.Errorf("judge: %q is none of %s, %s, %s", options.Kind, SwiftTest, Steps, Exit)
+		return nil, fmt.Errorf("judge: %q is none of %s, %s, %s, %s, %s", options.Kind, SwiftTest, Steps, Exit, GoJSON, JUnit)
+	}
+	if AdapterVersion(options.Kind) != 0 && options.Evidence != "" {
+		return nil, errors.New("judge: a structured judge cannot use an evidence pattern")
+	}
+	if options.EmptyExit != 0 && (options.Kind != JUnit || options.EmptyExit < 1 || options.EmptyExit > 125) {
+		return nil, errors.New("judge: an empty-selection exit must be between 1 and 125 and requires JUnit")
 	}
 	if options.Evidence != "" {
 		pattern, err := regexp.Compile(options.Evidence)
@@ -132,6 +159,9 @@ func (reader *Reader) Line(stream supervise.Stream, text string) error {
 	if reader.swift != nil {
 		reader.swift.feed(stream, text)
 	}
+	if reader.goJSON != nil && stream == supervise.Stdout {
+		reader.goJSON.line(text)
+	}
 	if !reader.vetoed {
 		for _, veto := range reader.vetoes {
 			if veto.MatchString(text) {
@@ -143,7 +173,7 @@ func (reader *Reader) Line(stream supervise.Stream, text string) error {
 	if reader.evidence != nil {
 		for _, match := range reader.evidence.FindAllStringSubmatch(text, -1) {
 			count, err := strconv.Atoi(strings.TrimSpace(match[1]))
-			if err != nil {
+			if err != nil || count < 0 {
 				if !reader.notNumber {
 					reader.notNumber, reader.uncounted = true, clip(text)
 				}
@@ -167,6 +197,9 @@ func (reader *Reader) Stopping() {
 	if reader.swift != nil {
 		reader.failureAtStop = reader.swift.failure
 	}
+	if reader.goJSON != nil {
+		reader.failureAtStop = reader.goJSON.facts().Failure
+	}
 	reader.vetoedAtStop, reader.vetoAtStop = reader.vetoed, reader.vetoLine
 }
 
@@ -189,3 +222,15 @@ func (reader *Reader) Durations() map[string]map[string]float64 {
 }
 
 var _ supervise.Sink = (*Reader)(nil)
+
+// ReadReport decodes the declared JUnit report after the producer exits and before directory cleanup.
+func (reader *Reader) ReadReport(report *testreport.Report) {
+	reader.mutex.Lock()
+	defer reader.mutex.Unlock()
+	fact := Facts{Kind: JUnit, Unjudged: []string{"the JUnit report is missing or unreadable"}}
+	if file, err := report.Read(); err == nil {
+		defer func() { _ = file.Close() }()
+		fact = readJUnit(file)
+	}
+	reader.report = &fact
+}

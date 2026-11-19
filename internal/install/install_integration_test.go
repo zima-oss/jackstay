@@ -257,6 +257,49 @@ func TestBuildChangedReadsOnlyTheBuildInputs(t *testing.T) {
 	}
 }
 
+func TestBuildUsesThePinnedTreeWhenTheCheckoutChanges(t *testing.T) {
+	repo := testrepo.New(t, nil)
+	input := "cmd/jst/main.go"
+	commit := repo.Commit("the build input", map[string]string{input: "original"})
+	output := filepath.Join(t.TempDir(), "jst")
+	var stagedTree string
+	got, err := buildFromCheckout(context.Background(), repo.Root, output,
+		func(_ context.Context, tree, out, label string) (string, error) {
+			stagedTree = tree
+			repo.Commit("changes the build input", map[string]string{input: "new HEAD"})
+			repo.Write(map[string]string{input: "local edit"})
+			contents, err := os.ReadFile(filepath.Join(tree, input))
+			if err != nil || string(contents) != "original" || label != commit[:7] {
+				t.Fatalf("input = %q (%v), build label = %s, original commit = %s", contents, err, label, commit)
+			}
+			return out, nil
+		})
+	if err != nil || got != output {
+		t.Fatalf("build returned %q: %v", got, err)
+	}
+	if _, err := os.Stat(stagedTree); !os.IsNotExist(err) {
+		t.Fatalf("staged source was left behind: %v", err)
+	}
+}
+
+func TestAnUncommittedCheckoutStillBuildsAsATrial(t *testing.T) {
+	repo := testrepo.New(t, nil)
+	input := "internal/version/version.go"
+	commit := repo.Commit("the build input", map[string]string{input: "original"})
+	repo.Write(map[string]string{input: "local edit"})
+	_, err := buildFromCheckout(context.Background(), repo.Root, "output",
+		func(_ context.Context, tree, out, label string) (string, error) {
+			contents, err := os.ReadFile(filepath.Join(tree, input))
+			if err != nil || string(contents) != "local edit" || label != commit[:7]+"+changes" {
+				t.Fatalf("input = %q (%v), build label = %s, original commit = %s", contents, err, label, commit)
+			}
+			return out, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // signingHome is a jackstay home whose setting names identity; off macOS the test is skipped (nothing
 // is ever signed there).
 func signingHome(t *testing.T, identity string) string {
@@ -563,6 +606,58 @@ func TestAFailedSigningAgainLeavesTheLiveBinary(t *testing.T) {
 		}
 		launchersRun(t, prefix)
 	}
+}
+
+func TestSameVersionRepairsADamagedLiveBinaryWithoutSigning(t *testing.T) {
+	prefix := t.TempDir()
+	first, _, stderr := options(prefix, binaries["1111111"])
+	if code := Install(first); code != 0 {
+		t.Fatalf("first install exited %d: %s", code, stderr)
+	}
+	binary, before := liveBinary(t, prefix)
+	if err := os.WriteFile(binary, []byte("damaged"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	again, stdout, stderr := options(prefix, binaries["1111111"])
+	if code := Install(again); code != 0 || !strings.Contains(stdout.String(), "repaired") {
+		t.Fatalf("repair exited %d: %s %s", code, stdout, stderr)
+	}
+	_, after := liveBinary(t, prefix)
+	if os.SameFile(before, after) {
+		t.Fatal("the damaged live binary was kept")
+	}
+	launchersRun(t, prefix)
+}
+
+func TestSameVersionCanReplaceAdHocWithACertifiedReleaseWithoutSigning(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS signing")
+	}
+	prefix := t.TempDir()
+	first, _, stderr := options(prefix, binaries["1111111"])
+	if code := Install(first); code != 0 {
+		t.Fatalf("first install exited %d: %s", code, stderr)
+	}
+	binary, before := liveBinary(t, prefix)
+	again, stdout, stderr := options(prefix, binaries["1111111"])
+	var calls [][]string
+	certified := fakeCodesign("", signedDisplay, &calls)
+	again.Codesign = func(argv []string) (supervise.Captured, error) {
+		if argv[1] == "--display" && argv[len(argv)-1] == binary {
+			return supervise.Captured{Stderr: []byte(adHocDisplay)}, nil
+		}
+		return certified(argv)
+	}
+	if code := Install(again); code != 0 || !strings.Contains(stdout.String(), "keeps its own signature") {
+		t.Fatalf("install exited %d: %s %s", code, stdout, stderr)
+	}
+	if len(calls) != 4 || slices.ContainsFunc(calls, func(argv []string) bool { return argv[1] == "--sign" }) {
+		t.Fatalf("the release's signature must be verified twice without signing: %q", calls)
+	}
+	if _, after := liveBinary(t, prefix); os.SameFile(before, after) {
+		t.Fatal("the ad-hoc binary was kept")
+	}
+	launchersRun(t, prefix)
 }
 
 // A live binary whose signature names the identity but does not verify (a damaged file) is signed

@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -325,10 +326,10 @@ func AppendLine(folder, day string, line []byte) (bool, error) {
 	}
 	place := filepath.Join(folder, FileName(day))
 	created := true
-	file, err := os.OpenFile(place, os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_EXCL, 0o600) // #nosec G304 -- jackstay's own journal
+	file, err := os.OpenFile(place, os.O_RDWR|os.O_CREATE|os.O_APPEND|os.O_EXCL, 0o600) // #nosec G304 -- jackstay's own journal
 	if errors.Is(err, os.ErrExist) {
 		created = false
-		file, err = os.OpenFile(place, os.O_WRONLY|os.O_APPEND, 0o600) // #nosec G304 -- jackstay's own journal
+		file, err = os.OpenFile(place, os.O_RDWR|os.O_APPEND, 0o600) // #nosec G304 -- jackstay's own journal
 	}
 	if err != nil {
 		return false, err
@@ -338,9 +339,24 @@ func AppendLine(folder, day string, line []byte) (bool, error) {
 		return created, err
 	}
 	defer func() { _ = unix.Flock(int(file.Fd()), unix.LOCK_UN) }() // #nosec G115 -- a descriptor
+	info, err := file.Stat()
+	if err != nil {
+		return created, err
+	}
+	if info.Size() > 0 {
+		var last [1]byte
+		if _, err := file.ReadAt(last[:], info.Size()-1); err != nil {
+			return created, err
+		}
+		if last[0] != '\n' {
+			// A writer lost mid-line must not cause the next valid line to be lost too.
+			// Keep its fragment on a separate line so readers can count it as unreadable.
+			line = append([]byte{'\n'}, line...)
+		}
+	}
 	written, err := file.Write(line)
 	if err == nil && written < len(line) {
-		err = errors.New("a short write")
+		err = io.ErrShortWrite
 	}
 	return created, err
 }

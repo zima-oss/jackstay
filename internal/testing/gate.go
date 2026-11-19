@@ -177,7 +177,9 @@ func (proj *project) stepKey(chosen leaf, argv []string, base, relative string) 
 		digest := sha256.Sum256(data)
 		extra[name] = hex.EncodeToString(digest[:])
 	}
-	facts, err := receipts.EnvironmentFacts(proj.ctx, proj.receipts, proj.environ)
+	cwd := filepath.Clean(filepath.Join(proj.root, chosen.cwd))
+	env := withEnv(commandEnv(proj.environ), chosen.env)
+	facts, err := receipts.EnvironmentFacts(proj.ctx, proj.receipts, cwd, env)
 	if err != nil {
 		return "", err.Error()
 	}

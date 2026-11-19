@@ -74,6 +74,10 @@ const (
 	AttrTestCount   = "jackstay.test.count"
 	AttrTestStep    = "jackstay.test.step"
 
+	AttrGitHubOperation  = "jackstay.github.operation"
+	AttrGitHubRepository = "jackstay.github.repository"
+	AttrGitHubPull       = "jackstay.github.pull_request"
+
 	AttrBgID       = "jackstay.bg.id"
 	AttrBgName     = "jackstay.bg.name"
 	AttrBgDeadline = "jackstay.bg.deadline"
@@ -137,6 +141,7 @@ var kinds = map[string]Kind{
 	AttrReviewOutcome: Plain, AttrReviewDisposition: Plain, AttrReviewReviewer: Plain,
 	AttrTestScope: Plain, AttrTestKey: Identity, AttrTestHead: Identity, AttrTestRunID: Identity,
 	AttrTestOutput: Plain, AttrTestOutcome: Plain, AttrTestCount: Plain, AttrTestStep: Plain,
+	AttrGitHubOperation: Plain, AttrGitHubRepository: Identity, AttrGitHubPull: Identity,
 	AttrBgID: Identity, AttrBgName: Plain, AttrBgDeadline: Plain, AttrBgGroup: Plain, AttrBgFiles: Plain, AttrBgGone: Plain, AttrBgLooked: Plain,
 	AttrLockName: Plain, AttrLockPath: Plain, AttrLockHolderPID: Identity, AttrLockQueued: Plain,
 	AttrWaitGaveUp:   Plain,

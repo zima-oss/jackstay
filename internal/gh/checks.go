@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -84,11 +85,13 @@ func runCIWait(work *session, args []string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	number, err := work.resolvePull(target)
-	if err != nil {
-		return 0, err
-	}
-	return work.ciWait(number, options)
+	return work.withCIWaitBudget(options.timeout, func(started, deadline time.Time) (int, error) {
+		number, err := work.resolvePull(target)
+		if err != nil {
+			return 0, err
+		}
+		return work.ciWaitUntil(number, options, started, deadline)
+	})
 }
 
 func runCIStatus(work *session, args []string) (int, error) {
@@ -114,20 +117,81 @@ func firstOf(words []string) string {
 	return words[0]
 }
 
+// checkEvidence binds the result to the pull request and the commits whose checks were read.
+// With required checks, the test merge SHA also records whether GitHub had made a candidate.
+type checkEvidence struct {
+	repository string
+	pull       githubapi.PullRequest
+	watchMerge bool
+}
+
+func (seen checkEvidence) confirm(repository string, now githubapi.PullRequest) error {
+	before := seen.pull
+	switch {
+	case !strings.EqualFold(seen.repository, repository), before.Number != now.Number, before.Head != now.Head,
+		!strings.EqualFold(before.HeadRepository, now.HeadRepository), !strings.EqualFold(before.BaseRepository, now.BaseRepository):
+		return failf(exitMoved, "the identity of #%d changed after its checks were read; run it again", before.Number)
+	case before.HeadSHA != now.HeadSHA:
+		return failf(exitMoved, "the head of #%d changed from %s to %s after its checks were read; run it again",
+			before.Number, short(before.HeadSHA, 8), short(now.HeadSHA, 8))
+	case before.Base != now.Base:
+		return failf(exitMoved, "the base of #%d changed from %s to %s after its checks were read; run it again",
+			before.Number, before.Base, now.Base)
+	case before.BaseSHA != "" && before.BaseSHA != now.BaseSHA:
+		return failf(exitMoved, "the base commit of #%d changed after its checks were read (checked %s); run it again",
+			before.Number, short(before.BaseSHA, 8))
+	case seen.watchMerge && before.MergeCommitSHA != now.MergeCommitSHA:
+		return failf(exitMoved, "the test merge commit of #%d changed after its checks were read; run it again", before.Number)
+	}
+	return nil
+}
+
 // ciWait blocks until every check on the pull request's head has settled: 0 all passed or
 // skipped, 1 one failed or was cancelled (and why is printed), 3 the deadline passed with checks
 // pending or none registered, 4 the head moved.
 func (work *session) ciWait(number int, options waitOptions) (int, error) {
+	return work.withCIWaitBudget(options.timeout, func(started, deadline time.Time) (int, error) {
+		return work.ciWaitUntil(number, options, started, deadline)
+	})
+}
+
+// withCIWaitBudget bounds the GitHub requests, including authentication and branch lookup when
+// called by ci-wait. pr-land gets its original context back for work outside the check wait.
+func (work *session) withCIWaitBudget(timeout time.Duration, wait func(started, deadline time.Time) (int, error)) (int, error) {
+	started := work.deps.Clock.Now()
+	budget := timeout
+	if budget == 0 {
+		budget = 10 * time.Second // one immediate look may still need several requests
+	}
+	original := work.ctx
+	ctx, cancel := context.WithTimeout(original, budget)
+	work.ctx = ctx
+	defer func() {
+		work.ctx = original
+		cancel()
+	}()
+	code, err := wait(started, started.Add(timeout))
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) && (code != exitNotFine || err != nil) {
+		return 0, failf(exitPending, "the check wait reached its deadline after %s while asking GitHub", humanSeconds(budget))
+	}
+	return code, err
+}
+
+func (work *session) ciWaitUntil(number int, options waitOptions, started, deadline time.Time) (int, error) {
+	work.notePull(number, "")
 	pull, err := work.github.PullRequest(work.ctx, number)
 	if err != nil {
 		return 0, fmt.Errorf("pull request #%d: %w", number, err)
 	}
 	head := pull.HeadSHA
 	work.say("PR #%d (%s) head %s in %s", number, pull.Head, short(head, 8), work.repository)
-	started := work.deps.Clock.Now()
-	deadline := started.Add(options.timeout)
+	nextLook := func() (bool, error) {
+		more, err := work.sleepUntil(deadline, options.interval)
+		return more && work.deps.Clock.Now().Before(deadline), err
+	}
 	announced, mergeSaid := false, false
 	for {
+		work.notePull(number, head)
 		rows, err := work.github.Checks(work.ctx, head)
 		if err != nil {
 			return 0, fmt.Errorf("the checks of %s: %w", short(head, 8), err)
@@ -153,11 +217,20 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			}
 			continue
 		}
-		if len(options.required) > 0 && now.MergeCommitSHA != "" {
-			var onMerge bool
+		evidence := checkEvidence{repository: work.repository, pull: now, watchMerge: len(options.required) > 0}
+		onMerge := false
+		if evidence.watchMerge && now.MergeCommitSHA != "" {
 			if rows, onMerge, err = work.withMergeCommitRows(rows, options.required, now.MergeCommitSHA); err != nil {
 				return 0, err
 			}
+			confirmed, err := work.github.PullRequest(work.ctx, number)
+			if err != nil {
+				return 0, fmt.Errorf("pull request #%d: %w", number, err)
+			}
+			if err := evidence.confirm(work.repository, confirmed); err != nil {
+				return 0, err
+			}
+			evidence.pull = confirmed
 			if onMerge && !mergeSaid {
 				work.say("the test merge commit %s has results: the required checks are judged on it, as GitHub judges them",
 					short(now.MergeCommitSHA, 8))
@@ -170,7 +243,7 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 				work.say("no checks registered for this commit yet — waiting for the run to appear (this is not a pass)")
 				announced = true
 			}
-			more, err := work.sleepUntil(deadline, options.interval)
+			more, err := nextLook()
 			if err != nil {
 				return 0, err
 			}
@@ -183,13 +256,13 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 		}
 		weighed := weigh(rows, options.required)
 		pending := weighed.pending
-		if len(pending) > 0 {
+		if len(pending) > 0 && len(weighed.failed) == 0 {
 			names := strings.Join(pending[:min(4, len(pending))], ", ")
 			if len(pending) > 4 {
 				names += fmt.Sprintf(" (+%d)", len(pending)-4)
 			}
 			work.say("  %s: %d pending — %s", humanSeconds(work.deps.Clock.Now().Sub(started)), len(pending), names)
-			more, err := work.sleepUntil(deadline, options.interval)
+			more, err := nextLook()
 			if err != nil {
 				return 0, err
 			}
@@ -200,7 +273,12 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			continue
 		}
 		work.say("\n%s", summarise(rows))
-		work.say("\n(%d check runs attached to %s)", checkRuns(rows), short(head, 8))
+		if onMerge {
+			work.say("\n(%d check runs judged for head %s and test merge commit %s)",
+				checkRuns(rows), short(head, 8), short(now.MergeCommitSHA, 8))
+		} else {
+			work.say("\n(%d check runs attached to %s)", checkRuns(rows), short(head, 8))
+		}
 		for _, line := range weighed.notes() {
 			work.say("%s", line)
 		}
@@ -210,7 +288,7 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 			return exitNotFine, nil
 		}
 		work.say("\nGREEN: %d checks, %s waiting.", weighed.judged, humanSeconds(work.deps.Clock.Now().Sub(started)))
-		work.judged[number] = head
+		work.judged[number] = evidence
 		return exitFine, nil
 	}
 }
@@ -218,10 +296,12 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 // ciStatus is one look, no waiting: 0 green, 1 a check failed, 3 pending or nothing registered,
 // 4 the head moved while the checks were read.
 func (work *session) ciStatus(number int) (int, error) {
+	work.notePull(number, "")
 	pull, err := work.github.PullRequest(work.ctx, number)
 	if err != nil {
 		return 0, fmt.Errorf("pull request #%d: %w", number, err)
 	}
+	work.notePull(number, pull.HeadSHA)
 	rows, err := work.github.Checks(work.ctx, pull.HeadSHA)
 	if err != nil {
 		return 0, fmt.Errorf("the checks of %s: %w", short(pull.HeadSHA, 8), err)

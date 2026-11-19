@@ -240,6 +240,18 @@ func TestAnUncountableEvidenceGroupIsUnjudged(t *testing.T) {
 	}
 }
 
+func TestNegativeEvidenceCannotCreateADirectPass(t *testing.T) {
+	config := strings.Replace(configFile, `Executed ([0-9]+) tests?`, `Executed (-?[0-9]+) tests?`, 1)
+	w := newWorld(t, config)
+	w.fake = &fakeRun{stdout: []string{"Executed 4 tests", "Executed -1 tests"}}
+	if status := w.test("--", "make", "test"); status != StatusUnjudged {
+		t.Fatalf("status %d; stderr:\n%s", status, w.stderr.String())
+	}
+	if run := w.lastRecord(EventRun); run.Text("outcome") != OutcomeUnjudged || len(w.receipts()) != 0 {
+		t.Fatalf("negative evidence produced a pass or receipt: %v", run)
+	}
+}
+
 // A veto or an uncountable evidence group that matches a blank line counts as much as one that
 // matches text (docs/design/implementation.md section 9.3): the match is the fact, not the text it holds.
 func TestAMatchOnABlankLineStillCounts(t *testing.T) {

@@ -21,18 +21,19 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/runner"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 	"github.com/zima-oss/jackstay/internal/supervise"
 )
 
 // Outcomes of a run (docs/design/review.md section 3.5); review adds unparsable and inconsistent.
 const (
-	OutcomeDone     = "done"
-	OutcomeTimeout  = "timeout"
-	OutcomeFailed   = "failed"
-	OutcomeLogin    = "login"
-	OutcomeNoAnswer = "no-answer"
-	OutcomeRefused  = "refused"
+	OutcomeDone     = runner.OutcomeDone
+	OutcomeTimeout  = runner.OutcomeTimeout
+	OutcomeFailed   = runner.OutcomeFailed
+	OutcomeLogin    = runner.OutcomeLogin
+	OutcomeNoAnswer = runner.OutcomeNoAnswer
+	OutcomeRefused  = runner.OutcomeRefused
 )
 
 // OutputCap is the most of standard output or error kept per run.
@@ -56,35 +57,11 @@ const startHold = 120 * time.Second
 // keptVariables are the only variables Codex gets from jackstay's environment.
 var keptVariables = []string{"PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME"}
 
-// Request is one run.
-type Request struct {
-	Command   string
-	Model     string
-	Effort    string
-	Timeout   time.Duration
-	Isolation []string
-	// Tree is the pinned worktree; Folder the run's own folder (answer, events, errors).
-	Tree, Folder string
-	Prompt       []byte
-	SchemaPath   string
-	// Answered is called once: at Codex's first event that needs the model to have answered, at
-	// its exit, or after startHold, whichever is first (the caller releases its start lock).
-	Answered func()
-	// Environ is the environment to build from (nil: jackstay's own).
-	Environ []string
-}
+// Request is the shared request used by the Codex runner.
+type Request = runner.Request
 
-// Result is what a run did.
-type Result struct {
-	Argv       []string
-	Version    string
-	Started    time.Time
-	Ended      time.Time
-	Exit       int
-	Outcome    string
-	Reason     string
-	AnswerPath string
-}
+// Result is the shared result returned by the Codex runner.
+type Result = runner.Result
 
 // Argv is the command line of a run (section 1): jackstay's own words, then the isolation flags.
 func Argv(request Request, answerPath string) []string {

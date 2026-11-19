@@ -1,8 +1,10 @@
 package gh
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/githubapi"
 	"github.com/zima-oss/jackstay/internal/githubapi/githubfake"
@@ -133,18 +135,80 @@ func workflowRun(id int64, branch, sha, status, conclusion string) githubapi.Wor
 }
 
 func onRuns(hub *fakeGitHub, workflow string, lists ...[]githubapi.WorkflowRun) {
+	onFilteredRuns(hub, githubapi.RunFilter{Workflow: workflow}, lists...)
+}
+
+func onFilteredRuns(hub *fakeGitHub, filter githubapi.RunFilter, lists ...[]githubapi.WorkflowRun) {
 	var answers []githubfake.Result[[]githubapi.WorkflowRun]
 	for _, each := range lists {
 		answers = append(answers, answer(each))
 	}
-	hub.OnWorkflowRuns(githubapi.RunFilter{Workflow: workflow}, answers...)
+	hub.OnWorkflowRuns(filter, answers...)
+}
+
+func TestRunWaitUsesGitHubToFindAnOlderBranchOrExactCommit(t *testing.T) {
+	for _, test := range []struct {
+		ref    string
+		filter githubapi.RunFilter
+	}{
+		{"releases/v1", githubapi.RunFilter{Workflow: "ci.yml", Branch: "releases/v1"}},
+		{strings.ToUpper(shaA), githubapi.RunFilter{Workflow: "ci.yml", HeadSHA: shaA}},
+	} {
+		t.Run(test.ref, func(t *testing.T) {
+			bench := newHarness(t, checkout(shaA))
+			onRuns(bench.hub, "ci.yml", []githubapi.WorkflowRun{workflowRun(110, "main", shaB, "completed", "success")})
+			onFilteredRuns(bench.hub, test.filter, []githubapi.WorkflowRun{workflowRun(5, "releases/v1", shaA, "completed", "failure")})
+			stdout, _ := bench.expect(exitNotFine, "run-wait", "ci.yml", "--ref", test.ref, "--appear", "0")
+			contains(t, stdout, "ci.yml run 5 on releases/v1@aaaaaaa")
+			contains(t, stdout, "completed: failure")
+		})
+	}
+}
+
+type workflowDeadlineHub struct {
+	*fakeGitHub
+	listDeadlines []time.Time
+	runDeadlines  []time.Time
+}
+
+func (hub *workflowDeadlineHub) WorkflowRuns(ctx context.Context, filter githubapi.RunFilter) ([]githubapi.WorkflowRun, error) {
+	deadline, _ := ctx.Deadline()
+	hub.listDeadlines = append(hub.listDeadlines, deadline)
+	return hub.fakeGitHub.WorkflowRuns(ctx, filter)
+}
+
+func (hub *workflowDeadlineHub) WorkflowRun(ctx context.Context, runID int64) (githubapi.WorkflowRun, error) {
+	deadline, _ := ctx.Deadline()
+	hub.runDeadlines = append(hub.runDeadlines, deadline)
+	return hub.fakeGitHub.WorkflowRun(ctx, runID)
+}
+
+func TestRunWaitBoundsAppearanceAndRunReadsSeparately(t *testing.T) {
+	var stdout strings.Builder
+	hub := &workflowDeadlineHub{fakeGitHub: newGitHub()}
+	onRuns(hub.fakeGitHub, "ci.yml", []githubapi.WorkflowRun{workflowRun(5, "main", shaA, "queued", "")}, nil)
+	hub.runsByID[5] = workflowRun(5, "main", shaA, "completed", "success")
+	work := session{ctx: context.Background(), deps: Deps{Stdout: &stdout, Clock: newClock()}, github: hub}
+	const appearance, total = time.Hour, 2 * time.Hour
+	code, err := work.runWait("ci.yml", "", total, time.Minute, appearance)
+	if code != exitFine || err != nil {
+		t.Fatalf("exit %d: %v\n%s", code, err, &stdout)
+	}
+	if len(hub.listDeadlines) != 2 || len(hub.runDeadlines) != 1 {
+		t.Fatalf("list deadlines %v, ID deadlines %v", hub.listDeadlines, hub.runDeadlines)
+	}
+	appearanceDeadline, waitDeadline := hub.listDeadlines[0], hub.listDeadlines[1]
+	if appearanceDeadline.IsZero() || waitDeadline.IsZero() ||
+		!appearanceDeadline.Before(waitDeadline) || !hub.runDeadlines[0].Equal(waitDeadline) {
+		t.Fatalf("appearance %v, wait %v, ID read %v", appearanceDeadline, waitDeadline, hub.runDeadlines[0])
+	}
 }
 
 func TestARunThatNeverAppearsIsExit3WithWhatWasSeen(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
-	onRuns(bench.hub, "ci.yml", []githubapi.WorkflowRun{workflowRun(1, "other", "1111111aaaa", "completed", "success")})
+	onFilteredRuns(bench.hub, githubapi.RunFilter{Workflow: "ci.yml", Branch: "main"}, nil)
 	_, stderr := bench.expect(exitPending, "run-wait", "ci.yml", "--ref", "main", "--appear", "0", "--timeout", "5")
-	contains(t, stderr, "no run of ci.yml for main in owner/checkout within 0s (seen: other@1111111)")
+	contains(t, stderr, "no run of ci.yml for main in owner/checkout within 0s (seen: nothing)")
 }
 
 func TestTheAppearPhaseNeverOutlivesTheDeadline(t *testing.T) {
@@ -160,7 +224,8 @@ func TestTheAppearPhaseNeverOutlivesTheDeadline(t *testing.T) {
 func TestRunVerdicts(t *testing.T) {
 	for conclusion, want := range map[string]int{"success": 0, "skipped": 0, "neutral": 0, "failure": 1, "cancelled": 1, "": 1} {
 		bench := newHarness(t, checkout(shaA))
-		onRuns(bench.hub, "ci.yml", []githubapi.WorkflowRun{workflowRun(5, "main", shaA, "completed", conclusion)})
+		onFilteredRuns(bench.hub, githubapi.RunFilter{Workflow: "ci.yml", Branch: "main"},
+			[]githubapi.WorkflowRun{workflowRun(5, "main", shaA, "completed", conclusion)})
 		bench.expect(want, "run-wait", "ci.yml", "--ref", "main", "--timeout", "5")
 	}
 }
@@ -232,7 +297,8 @@ func TestARunPushedOutOfTheNewestIsAskedForByItsID(t *testing.T) {
 	for index := range 20 {
 		others = append(others, workflowRun(int64(100+index), "main", shaC, "completed", "success"))
 	}
-	onRuns(bench.hub, "ci.yml", []githubapi.WorkflowRun{workflowRun(5, "feat", shaA, "queued", "")}, others)
+	onFilteredRuns(bench.hub, githubapi.RunFilter{Workflow: "ci.yml", Branch: "feat"},
+		[]githubapi.WorkflowRun{workflowRun(5, "feat", shaA, "queued", "")}, others)
 	bench.hub.runsByID[5] = workflowRun(5, "feat", shaA, "completed", "failure")
 	stdout, _ := bench.expect(exitNotFine, "run-wait", "ci.yml", "--ref", "feat", "--interval", "1", "--timeout", "5")
 	contains(t, stdout, "completed: failure")
@@ -240,7 +306,8 @@ func TestARunPushedOutOfTheNewestIsAskedForByItsID(t *testing.T) {
 
 func TestAnAnswerAboutAnotherRunIsAChangedFormat(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
-	onRuns(bench.hub, "ci.yml", []githubapi.WorkflowRun{workflowRun(5, "feat", shaA, "queued", "")}, nil)
+	onFilteredRuns(bench.hub, githubapi.RunFilter{Workflow: "ci.yml", Branch: "feat"},
+		[]githubapi.WorkflowRun{workflowRun(5, "feat", shaA, "queued", "")}, nil)
 	bench.hub.runsByID[5] = workflowRun(6, "feat", shaA, "completed", "success")
 	bench.expect(exitFormat, "run-wait", "ci.yml", "--ref", "feat", "--interval", "1", "--timeout", "5")
 }

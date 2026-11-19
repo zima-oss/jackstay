@@ -669,7 +669,7 @@ func rangeCommand(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if !slices.ContainsFunc(paths, func(name string) bool { return strings.HasPrefix(name, section.Rules.Dir+"/") }) {
+	if section.Rules.Dir != "." && !slices.ContainsFunc(paths, func(name string) bool { return strings.HasPrefix(name, section.Rules.Dir+"/") }) {
 		return project.Fail("there are no card files in %s (cards.dir) in %s: nothing is guessed", section.Rules.Dir, tip)
 	}
 	known := section.Rules.Known(paths)

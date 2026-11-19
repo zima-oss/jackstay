@@ -39,12 +39,36 @@ func (work *session) pushRemote(branch string) (string, error) {
 	return name, nil
 }
 
+// verifyPushRemote checks every destination Git will use, including pushurl and URL rewrites.
+// The URL itself stays out of the error because it can contain credentials.
+func (work *session) verifyPushRemote(remoteName string) error {
+	addresses, err := work.git.Run(work.ctx, "remote", "get-url", "--push", "--all", "--", remoteName)
+	if err != nil {
+		return failf(exitRequest, "cannot verify the push destinations of remote %q for %s", remoteName, work.repository)
+	}
+	for index, address := range strings.Split(strings.TrimSuffix(string(addresses), "\n"), "\n") {
+		repository, err := remote.ParseURL(address)
+		if err != nil {
+			return failf(exitRequest, "cannot verify push destination %d of remote %q as %s", index+1, remoteName, work.repository)
+		}
+		if !strings.EqualFold(repository.String(), work.repository) {
+			return failf(exitRequest, "push destination %d of remote %q names %s, but this pull request is in %s",
+				index+1, remoteName, repository, work.repository)
+		}
+	}
+	return nil
+}
+
 // ahead is how many commits of branch its remote copy lacks; -1 when there is no remote copy.
 func (work *session) ahead(branch string) int {
 	remoteName, err := work.pushRemote(branch)
 	if err != nil {
 		return -1
 	}
+	return work.aheadOn(branch, remoteName)
+}
+
+func (work *session) aheadOn(branch, remoteName string) int {
 	count, err := work.gitLine("rev-list", "--count", remoteName+"/"+branch+".."+branch)
 	if err != nil {
 		return -1
@@ -67,7 +91,9 @@ func (work *session) clean() (bool, error) {
 // --- pr-status ---------------------------------------------------------------------------------
 
 func runPRStatus(work *session, args []string) (int, error) {
-	if _, err := parseFlags(commandFlags("pr-status", work.deps.Stderr), args, 0); err != nil {
+	flags := commandFlags("pr-status", work.deps.Stderr)
+	selected := flags.String("pr", "", "an open pull request from this branch, by number or URL")
+	if _, err := parseFlags(flags, args, 0); err != nil {
 		return 0, err
 	}
 	branch, err := work.currentBranch()
@@ -81,9 +107,16 @@ func runPRStatus(work *session, args []string) (int, error) {
 	if err := work.connect(repository); err != nil {
 		return 0, err
 	}
-	base, err := work.github.DefaultBranch(work.ctx)
+	pull, found, err := work.pullForBranch(branch, *selected)
 	if err != nil {
-		base = "unknown: " + err.Error() // read-only: said, not a stop
+		return 0, err
+	}
+	base := pull.Base
+	if !found || base == "" {
+		base, err = work.github.DefaultBranch(work.ctx)
+		if err != nil {
+			base = "unknown: " + err.Error() // read-only: said, not a stop
+		}
 	}
 	isClean, err := work.clean()
 	if err != nil {
@@ -96,10 +129,6 @@ func runPRStatus(work *session, args []string) (int, error) {
 		work.say("ahead   no upstream yet")
 	} else {
 		work.say("ahead   %d commit(s) unpushed", count)
-	}
-	pull, found, err := work.openPullOf(branch)
-	if err != nil {
-		return 0, err
 	}
 	if !found {
 		work.say("pr      none open for this branch")
@@ -120,7 +149,7 @@ func runPRStatus(work *session, args []string) (int, error) {
 // --- pr-land -----------------------------------------------------------------------------------
 
 type landOptions struct {
-	title, bodyFile, reason           string
+	title, bodyFile, reason, selected string
 	cards                             []string
 	push, create, wait, merge, dryRun bool
 	waiting                           waitOptions
@@ -129,6 +158,7 @@ type landOptions struct {
 func runPRLand(work *session, args []string) (int, error) {
 	timeoutDefault, intervalDefault, linesDefault := work.waitDefaults()
 	flags := commandFlags("pr-land", work.deps.Stderr)
+	selected := flags.String("pr", "", "an open pull request from this branch, by number or URL")
 	title := flags.String("title", "", "the new pull request's title")
 	bodyFile := flags.String("body-file", "", "the new pull request's description, from a file")
 	var cardIDs listFlag
@@ -145,7 +175,7 @@ func runPRLand(work *session, args []string) (int, error) {
 	if _, err := parseFlags(flags, args, 0); err != nil {
 		return 0, err
 	}
-	options := landOptions{title: *title, bodyFile: *bodyFile, reason: *reason, cards: cardIDs,
+	options := landOptions{title: *title, bodyFile: *bodyFile, reason: *reason, selected: *selected, cards: cardIDs,
 		push: !*noPush, create: !*noCreate, wait: !*noWait, merge: !*noMerge, dryRun: *dryRun,
 		waiting: waitOptions{lines: *lines}}
 	var err error
@@ -204,9 +234,12 @@ func (work *session) prLand(options landOptions) (int, error) {
 	if branch == base {
 		return 0, failf(exitRequest, "on %s: this flow needs a feature branch. `%s` takes pull requests only.", branch, branch)
 	}
-	pull, open, err := work.openPullOf(branch)
+	pull, open, err := work.pullForBranch(branch, options.selected)
 	if err != nil {
 		return 0, err
+	}
+	if open && pull.Base != "" {
+		base = pull.Base
 	}
 	// Asked before anything is pushed (asking after the push would leave the branch published).
 	if options.create && !open && options.title == "" {
@@ -216,7 +249,18 @@ func (work *session) prLand(options landOptions) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	ahead := work.ahead(branch)
+	var pushRemote string
+	ahead := -1
+	if options.push {
+		pushRemote, err = work.pushRemote(branch)
+		if err != nil {
+			return 0, err
+		}
+		if err := work.verifyPushRemote(pushRemote); err != nil {
+			return 0, err
+		}
+		ahead = work.aheadOn(branch, pushRemote)
+	}
 	var plan []string
 	if options.push && ahead != 0 {
 		if ahead > 0 {
@@ -228,7 +272,7 @@ func (work *session) prLand(options landOptions) (int, error) {
 	if options.create && !open {
 		plan = append(plan, "open a pull request")
 	}
-	bindRules := func(int) {}
+	bindRules := func(number int) { work.rulesOf[number] = base }
 	if options.wait {
 		line, bind := work.requiredChecks(&options, open, pull, base)
 		plan, bindRules = append(plan, line), bind
@@ -252,7 +296,7 @@ func (work *session) prLand(options landOptions) (int, error) {
 	work.say("")
 
 	if options.push && ahead != 0 {
-		if err := work.pushBranch(branch, ahead < 0); err != nil {
+		if err := work.pushBranch(branch, pushRemote, ahead < 0); err != nil {
 			return 0, err
 		}
 	}
@@ -262,12 +306,13 @@ func (work *session) prLand(options landOptions) (int, error) {
 			return 0, err
 		}
 	case open:
-		work.say("pull request #%d already open", pull.Number)
+		work.say("pull request #%d already open into %s", pull.Number, base)
 	default:
 		work.say("no pull request and --no-create: stopping")
 		return exitFine, nil
 	}
 	number := pull.Number
+	work.notePull(number, "")
 	bindRules(number)
 
 	if options.wait {
@@ -333,7 +378,7 @@ func (work *session) newDescription(options landOptions, open bool, line, branch
 	if line != "" {
 		body, given = withLine(body, line), true
 	}
-	if section != nil {
+	if section != nil && !cardExempt(section, branch) {
 		if !given {
 			return "", failf(exitNotFine, "this project asks for a `Card:` line in the description: pass --card ID "+
 				"(or --card none --reason TEXT), or a --body-file that has one")
@@ -378,16 +423,15 @@ func (work *session) filled(branch, base string) string {
 	return strings.Join(list, "\n")
 }
 
-func (work *session) pushBranch(branch string, newUpstream bool) error {
-	remoteName, err := work.pushRemote(branch)
-	if err != nil {
+func (work *session) pushBranch(branch, remoteName string, newUpstream bool) error {
+	if err := work.verifyPushRemote(remoteName); err != nil {
 		return err
 	}
 	args := []string{"push"}
 	if newUpstream {
 		args = append(args, "-u")
 	}
-	args = append(args, remoteName, "refs/heads/"+branch+":refs/heads/"+branch)
+	args = append(args, "--", remoteName, "refs/heads/"+branch+":refs/heads/"+branch)
 	if _, err := work.git.Run(work.ctx, args...); err != nil {
 		return fmt.Errorf("the push of %s to %s: %w", branch, remoteName, err)
 	}
@@ -400,7 +444,7 @@ func (work *session) pushBranch(branch string, newUpstream bool) error {
 func (work *session) openPull(title, body, base, branch string) (githubapi.PullRequest, error) {
 	created, err := work.github.CreatePullRequest(work.ctx, githubapi.NewPullRequest{Head: branch, Base: base, Title: title, Body: body})
 	if err != nil {
-		found, open, lookErr := work.openPullOf(branch)
+		found, open, lookErr := work.openPullOf(branch, base)
 		if lookErr != nil || !open {
 			return githubapi.PullRequest{}, fmt.Errorf("the pull request could not be opened: %w", err)
 		}
@@ -465,7 +509,7 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 	if err != nil {
 		return 0, err
 	}
-	if err := work.sameBase(state); err != nil {
+	if err := work.checkLandingEvidence(state, options.wait); err != nil {
 		return 0, err
 	}
 	switch state.Mergeable {
@@ -488,15 +532,12 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 	if err != nil {
 		return 0, fmt.Errorf("pull request #%d: %w", number, err)
 	}
-	if err := work.sameBase(viewed); err != nil {
+	if err := work.checkLandingEvidence(viewed, options.wait); err != nil {
 		return 0, err
 	}
-	landing := work.judged[number]
-	if landing == "" {
-		if options.wait {
-			return 0, failf(exitNotFine, "#%d: no head was seen green; not merging", number)
-		}
-		landing = viewed.HeadSHA // with --no-wait, the head seen here
+	landing := viewed.HeadSHA
+	if options.wait {
+		landing = work.judged[number].pull.HeadSHA
 	}
 	if err := work.nothingLeftBehind(number, branch, landing); err != nil {
 		return 0, err
@@ -509,16 +550,16 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 			return 0, err
 		}
 	}
-	// The base is asked once more just before the merge (GitHub's merge holds the head, not the
-	// base). GitHub refuses the merge if the head is no longer the commit whose checks passed, or,
-	// with --no-wait, the one seen here.
+	// Check the evidence immediately before merging. GitHub holds the head SHA and enforces
+	// branch protection when carrying out the merge.
 	last, err := work.github.PullRequest(work.ctx, number)
 	if err != nil {
 		return 0, fmt.Errorf("pull request #%d: %w", number, err)
 	}
-	if err := work.sameBase(last); err != nil {
+	if err := work.checkLandingEvidence(last, options.wait); err != nil {
 		return 0, err
 	}
+	work.notePull(number, landing)
 	_, mergeErr := work.github.Merge(work.ctx, number, landing, "", body)
 	// A merge queue or auto-merge may hold it, and an answer may be lost: asked, not assumed.
 	landed, err := work.github.PullRequest(work.ctx, number)
@@ -533,12 +574,26 @@ func (work *session) mergeAndDelete(number int, branch, base string, options lan
 			"and nothing here changed", number, landed.State)
 		return exitPending, nil
 	}
-	work.say("merged #%d", number)
-	work.deleteRemoteBranch(branch, viewed.Head, landing)
+	if landed.Base != "" {
+		base = landed.Base
+	}
+	work.say("merged #%d into %s", number, base)
+	work.deleteRemoteBranch(branch, landed, landing)
 	work.say("this checkout is left as it is: still on %s. `jst tidy --fix --branch %s` removes the branch once nothing would "+
 		"be lost — from a worktree, with the worktree, when no process works in it; in the main checkout, after you switch "+
 		"away from it. The merge is on the remote's %s.", branch, branch, base)
 	return exitFine, nil
+}
+
+func (work *session) checkLandingEvidence(pull githubapi.PullRequest, waited bool) error {
+	if err := work.sameBase(pull); err != nil || !waited {
+		return err
+	}
+	seen, found := work.judged[pull.Number]
+	if !found {
+		return failf(exitNotFine, "#%d: no head was seen green; not merging", pull.Number)
+	}
+	return seen.confirm(work.repository, pull)
 }
 
 // nothingLeftBehind refuses a merge when this checkout's branch has commits the pull request's
@@ -567,27 +622,52 @@ func (work *session) nothingLeftBehind(number int, branch, landing string) error
 // the head that was merged (a lease): a push made after the merge is not deleted. Only the
 // remote's ref, and git's remote-tracking ref of it, change; a failure is said, since the merge is
 // what was asked for.
-func (work *session) deleteRemoteBranch(branch, headName, landing string) {
+func (work *session) deleteRemoteBranch(branch string, landed githubapi.PullRequest, landing string) {
+	if landed.Head != branch || !strings.EqualFold(landed.HeadRepository, work.repository) || landed.HeadSHA != landing {
+		work.say("the remote branch is not deleted: GitHub did not confirm that %s's %s merged at %s",
+			work.repository, branch, short(landing, 10))
+		return
+	}
+	open, err := work.openPulls(branch)
+	if err != nil {
+		work.say("the remote branch is not deleted: the open pull requests from %s cannot be confirmed", branch)
+		return
+	}
+	for _, sibling := range open {
+		if sibling.Number != landed.Number {
+			work.say("the remote branch is not deleted: pull request #%d into %s is still open", sibling.Number, sibling.Base)
+			return
+		}
+	}
 	remoteName, err := work.pushRemote(branch)
 	if err != nil {
 		work.say("the remote branch is not deleted: %v", err)
 		return
 	}
-	ref := "refs/heads/" + headName
-	_, err = work.git.Run(work.ctx, "push", "--quiet", "--force-with-lease="+ref+":"+landing, remoteName, ":"+ref)
+	if err := work.verifyPushRemote(remoteName); err != nil {
+		work.say("the remote branch is not deleted: %v", err)
+		return
+	}
+	ref := "refs/heads/" + branch
+	_, err = work.git.Run(work.ctx, "push", "--quiet", "--force-with-lease="+ref+":"+landing, "--", remoteName, ":"+ref)
 	if err == nil {
-		work.say("deleted %s/%s", remoteName, headName)
+		work.say("deleted %s/%s", remoteName, branch)
 		return
 	}
 	// GitHub may have deleted it already ("Automatically delete head branches"): asked, not guessed.
-	there, lsErr := work.git.Run(work.ctx, "ls-remote", "--heads", remoteName, ref)
-	if lsErr == nil && strings.TrimSpace(string(there)) == "" {
-		work.say("%s/%s is already deleted", remoteName, headName)
-		return
+	// ls-remote reads from the fetch URL, which can point to a different repository.
+	fetchURL, fetchErr := work.gitLine("remote", "get-url", "--", remoteName)
+	fetchRepo, parseErr := remote.ParseURL(fetchURL)
+	if fetchErr == nil && parseErr == nil && strings.EqualFold(fetchRepo.String(), work.repository) {
+		there, lsErr := work.git.Run(work.ctx, "ls-remote", "--heads", "--", remoteName, ref)
+		if lsErr == nil && strings.TrimSpace(string(there)) == "" {
+			work.say("%s/%s is already deleted", remoteName, branch)
+			return
+		}
 	}
 	reason := err.Error()
 	if len(reason) > 300 {
 		reason = reason[:300]
 	}
-	work.say("the remote branch %s/%s is not deleted: %s", remoteName, headName, reason)
+	work.say("the remote branch %s/%s is not deleted: %s", remoteName, branch, reason)
 }

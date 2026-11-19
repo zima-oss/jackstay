@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+func TestFormattedErrorsDoNotExposeRemoteCredentials(t *testing.T) {
+	const marker = "audit-fixture-value"
+	address := "https://audit:" + marker + "@example.invalid/owner/repo"
+	failure := &ExitError{Args: []string{"fetch", address}, Code: 1, Stderr: "could not read " + address}
+	if strings.Contains(failure.Error(), marker) || strings.Count(failure.Error(), "example.invalid") != 2 {
+		t.Fatal("the displayed error leaked credentials or hid the remote host")
+	}
+}
+
 func TestAnswers(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("GIT_DIR", filepath.Join(dir, "elsewhere")) // taken out: the question is of Dir

@@ -58,14 +58,16 @@ func withLine(body, line string) string {
 	return strings.TrimRight(body, "\n") + "\n\n" + line + "\n"
 }
 
+func cardExempt(section map[string]any, branch string) bool {
+	exempt, _ := section["exempt_branches"].([]any)
+	return slices.ContainsFunc(exempt, func(item any) bool { return item == branch })
+}
+
 // descriptionProblems are the Card line's rules broken by body against the files of a tree (none
 // for a branch the section exempts): internal/lint's, the sentences `jst lint pr`'s.
 func descriptionProblems(section map[string]any, files lint.Files, body, branch string) ([]string, error) {
-	exempt, _ := section["exempt_branches"].([]any)
-	for _, item := range exempt {
-		if name, _ := item.(string); name == branch {
-			return nil, nil
-		}
+	if cardExempt(section, branch) {
+		return nil, nil
 	}
 	found, err := lint.CardLines(section, files, body)
 	if err != nil {

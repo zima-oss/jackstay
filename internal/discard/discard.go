@@ -11,6 +11,8 @@ package discard
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -77,9 +79,10 @@ type Run struct {
 // A change is one path to put back, as git and the disk show it before anything is done.
 type change struct {
 	path      string // relative to the top, as git writes it
+	source    string // resolved HEAD or the empty tree
 	head      *object
 	index     *object
-	onDisk    bool
+	disk      trash.Replaced
 	keepDisk  bool
 	keepIndex bool
 }
@@ -200,10 +203,7 @@ func (run Run) plan(ctx context.Context, specs []string) ([]change, []string, st
 		return nil, nil, fmt.Sprintf("%s is in a merge conflict: finish the merge, or take one side with "+
 			"`git checkout --ours|--theirs -- <path>`", conflicted[0])
 	}
-	head := "HEAD"
-	if _, err := repo.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"); err != nil {
-		head = emptyTree
-	}
+	head := repo.source(ctx)
 	unstaged, err := repo.names(ctx, append([]string{"diff", "--name-only", "-z", "--no-renames", "--"}, specs...)...)
 	if err != nil {
 		return nil, nil, "git diff: " + err.Error()
@@ -227,9 +227,9 @@ func (run Run) plan(ctx context.Context, specs []string) ([]change, []string, st
 	}
 	var changes []change
 	for _, name := range paths {
-		each := change{path: name}
+		each := change{path: name, source: head}
 		if head != emptyTree {
-			if each.head, err = repo.object(ctx, "ls-tree", "-z", "HEAD", "--", name); err != nil {
+			if each.head, err = repo.object(ctx, "ls-tree", "-z", head, "--", name); err != nil {
 				return nil, nil, "git ls-tree: " + err.Error()
 			}
 		}
@@ -244,15 +244,18 @@ func (run Run) plan(ctx context.Context, specs []string) ([]change, []string, st
 		}
 		place := filepath.Join(repo.top, name)
 		info, statErr := os.Lstat(place)
-		each.onDisk = statErr == nil
 		if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
 			return nil, nil, statErr.Error()
 		}
-		if each.onDisk && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
+		if statErr == nil && info.IsDir() {
 			return nil, nil, fmt.Sprintf("%s is a folder on disk where git has a file: move it yourself first (`jst trash %s`)", name, name)
 		}
-		if each.onDisk {
-			same, err := repo.sameAs(ctx, place, each.head)
+		each.disk, err = trash.Describe(place)
+		if err != nil {
+			return nil, nil, err.Error()
+		}
+		if each.disk.Kind != "none" {
+			same, err := repo.sameAs(ctx, each.disk, each.head)
 			if err != nil {
 				return nil, nil, err.Error()
 			}
@@ -260,8 +263,8 @@ func (run Run) plan(ctx context.Context, specs []string) ([]change, []string, st
 		}
 		if each.index != nil && (each.head == nil || *each.index != *each.head) {
 			same := false
-			if each.onDisk {
-				if same, err = repo.sameAs(ctx, place, each.index); err != nil {
+			if each.disk.Kind != "none" {
+				if same, err = repo.sameAs(ctx, each.disk, each.index); err != nil {
 					return nil, nil, err.Error()
 				}
 			}
@@ -277,6 +280,9 @@ func (run Run) plan(ctx context.Context, specs []string) ([]change, []string, st
 func (run Run) putBack(ctx context.Context, each change) (int, error) {
 	repo := run.repo
 	place := filepath.Join(repo.top, each.path)
+	if err := repo.recheck(ctx, each, each.disk); err != nil {
+		return 0, err
+	}
 	var entries []string
 	if each.keepIndex {
 		data, err := repo.git(ctx, "cat-file", "blob", each.index.blob)
@@ -291,20 +297,28 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		run.say("%s: the staged version kept as %s (`jst trash restore %s --to <path>`)", each.path, entry.ID, entry.ID)
 	}
 	if each.keepDisk {
-		entry, err := trash.Move(run.Trash, place, run.Project, run.Session, run.KeepDays, run.Now())
+		entry, err := trash.MoveForDiscard(run.Trash, place, run.Project, run.Session, run.KeepDays, run.Now(), each.disk)
+		if entry.ID != "" {
+			entries = append(entries, entry.ID)
+		}
 		if err != nil {
 			return len(entries), err
 		}
-		entries = append(entries, entry.ID)
 		run.say("%s: what was on disk kept as %s (`jst trash restore %s`)", each.path, entry.ID, entry.ID)
 	}
 	var err error
-	if each.head != nil {
-		_, err = repo.git(ctx, "restore", "--source=HEAD", "--staged", "--worktree", "--", each.path)
-	} else {
-		_, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path)
-		if err == nil && each.onDisk && !each.keepDisk {
-			err = os.Remove(place) // cannot happen: a path HEAD lacks keeps what is on disk
+	if len(entries) > 0 {
+		expected := each.disk
+		if each.keepDisk {
+			expected = trash.Replaced{Kind: "none"}
+		}
+		err = repo.recheck(ctx, each, expected)
+	}
+	if err == nil {
+		if each.head != nil {
+			_, err = repo.git(ctx, "restore", "--source="+each.source, "--staged", "--worktree", "--", each.path)
+		} else {
+			_, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path)
 		}
 	}
 	if err != nil {
@@ -329,6 +343,32 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 	return len(entries), nil
 }
 
+// recheck detects changes between planning and applying a path, including a file that reappears
+// while its previous version is being kept. Git and editors do not share a worktree-wide lock.
+func (repo repository) recheck(ctx context.Context, each change, expected trash.Replaced) error {
+	if repo.source(ctx) != each.source {
+		return errors.New("HEAD changed since discard was planned")
+	}
+	index, err := repo.object(ctx, "ls-files", "-s", "-z", "--", each.path)
+	if err != nil {
+		return err
+	}
+	if (index == nil) != (each.index == nil) || index != nil && *index != *each.index {
+		return errors.New("the index changed since discard was planned")
+	}
+	if link := linkInside(repo.top, each.path); link != "" {
+		return fmt.Errorf("the path is now reached through the link %s", link)
+	}
+	current, err := trash.Describe(filepath.Join(repo.top, each.path))
+	if err != nil {
+		return err
+	}
+	if current != expected {
+		return errors.New("the working file changed while discard was in progress")
+	}
+	return nil
+}
+
 // topOf is the work tree's top folder (a real path), or an error outside one.
 func topOf(ctx context.Context, folder string) (string, error) {
 	out, err := gitcli.Git{Dir: folder}.Run(ctx, "rev-parse", "--is-inside-work-tree", "--show-toplevel")
@@ -348,6 +388,14 @@ type repository struct{ top string }
 func (repo repository) git(ctx context.Context, args ...string) ([]byte, error) {
 	full := append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "--literal-pathspecs"}, args...)
 	return gitcli.Git{Dir: repo.top}.Run(ctx, full...)
+}
+
+func (repo repository) source(ctx context.Context) string {
+	out, err := repo.git(ctx, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err != nil {
+		return emptyTree
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // names are git's NUL-separated answer.
@@ -379,41 +427,31 @@ func (repo repository) object(ctx context.Context, args ...string) (*object, err
 	if args[0] == "ls-tree" {
 		return &object{mode: fields[0], blob: fields[2]}, nil
 	}
+	if fields[2] != "0" {
+		return nil, errors.New("the path is in a merge conflict")
+	}
 	return &object{mode: fields[0], blob: fields[1]}, nil
 }
 
 // sameAs says whether what is on disk at place is byte for byte the object: same kind, same
 // executable bit, the raw bytes of its blob (no filters: a clean filter could hide a difference).
-func (repo repository) sameAs(ctx context.Context, place string, want *object) (bool, error) {
+func (repo repository) sameAs(ctx context.Context, disk trash.Replaced, want *object) (bool, error) {
 	if want == nil {
 		return false, nil
 	}
-	info, err := os.Lstat(place)
-	if err != nil {
-		return false, err
+	kind := "file"
+	if want.link() {
+		kind = "link"
 	}
-	isLink := info.Mode()&os.ModeSymlink != 0
-	switch {
-	case isLink != want.link():
-		return false, nil
-	case !isLink && !info.Mode().IsRegular():
-		return false, nil
-	case !isLink && (info.Mode().Perm()&0o111 != 0) != want.executable():
+	if disk.Kind != kind || disk.Executable != want.executable() {
 		return false, nil
 	}
 	blob, err := repo.git(ctx, "cat-file", "blob", want.blob)
 	if err != nil {
 		return false, err
 	}
-	if isLink {
-		target, err := os.Readlink(place)
-		return err == nil && target == string(blob), err
-	}
-	if info.Size() != int64(len(blob)) {
-		return false, nil
-	}
-	data, err := os.ReadFile(place) // #nosec G304 -- a path inside the work tree the person named
-	return err == nil && bytes.Equal(data, blob), err
+	digest := sha256.Sum256(blob)
+	return disk.SHA256 == hex.EncodeToString(digest[:]), nil
 }
 
 // linkInside is the first folder on a path's way below the top that is a symbolic link, or "":

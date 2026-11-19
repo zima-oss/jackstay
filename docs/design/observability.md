@@ -64,7 +64,8 @@ they get `TRACEPARENT` through the environment and are summed on the phase as
 | `jackstay.test.verdict` | a test step or gate step | `jackstay.test.outcome` (the receipts vocabulary: passed, failed, reused, …), `jackstay.test.count`, `jackstay.test.key`, `jackstay.test.head` |
 | `jackstay.review.verdict` | a round | `jackstay.review.outcome`, `jackstay.review.findings` by severity (`jackstay.review.findings.blocker` …), `jackstay.review.disposition` |
 | `jackstay.codex.turn` | the agent span | the turn's usage (section 6), `jackstay.codex.turn.index`, `jackstay.codex.turn.failed` |
-| `jackstay.bg.started` / `jackstay.bg.requested_outside` | `jst bg`'s span (a confirmed start) / the guard's span (a request: on the guard's decision, allowed or refused, recorded with it) | `jackstay.bg.id`, `jackstay.bg.deadline`; for a request, the guard's outcome on it |
+| `jackstay.bg.started` / `jackstay.bg.requested_outside` | `jst bg`'s span (a confirmed start) / the guard's span (a request: on the guard's decision, allowed or refused, recorded with it) | `jackstay.github.operation`, `jackstay.github.repository`, `jackstay.github.pull_request` | string, string, int | `jst gh`'s subcommand and the repository and number of a resolved pull request |
+| `jackstay.bg.id`, `jackstay.bg.deadline`; for a request, the guard's outcome on it |
 | `jackstay.lock.acquired` | a wait span | `jackstay.lock.holder_pid` (the holder before, from its note), `jackstay.lock.queued`; the note's text is never recorded (it holds the holder's raw argv) |
 | `exception` (semconv, stable) | any span that ends by a panic or a fault | `exception.type`, `exception.message`, `exception.stacktrace` (`runtime/debug.Stack()` at the recover) |
 
@@ -151,9 +152,11 @@ it ends, and a process that crashes after a span ended has written it:
    `go.opentelemetry.io/proto/otlp` stays the reference: package
    `journal/otlpcheck` (imported by tests only) decodes every line of the tests' journals with
    `protojson` into `tracepb.TracesData` and encodes it back, and the two must be equal.
-4. The day file is opened `O_APPEND|O_CREATE`, locked with `flock(LOCK_EX)` tried without blocking
-   every 5 ms for at most 200 ms, written in one `write`, unlocked, closed. A lock not had in
-   200 ms drops the line (the span is lost, nothing else; the next span tries again).
+4. The day file is opened for reading and appending, locked with `flock(LOCK_EX)` tried without
+   blocking every 5 ms for at most 200 ms, written in one `write`, unlocked, and closed. If the
+   last byte is not a newline, the append starts with one. This keeps a fragment from an interrupted
+   write separate from the new span, so readers can report the damaged line and read the new one.
+   A lock not had in 200 ms drops the line.
 5. A line larger than 256 KiB has its largest attribute values cut to 4 KiB each with
    `jackstay.truncated` = true; a span is never split.
 6. When the open created the day's file, the folder's upkeep runs (section 10), after the write.

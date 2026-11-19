@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/adopt/templates"
+	"github.com/zima-oss/jackstay/internal/changes"
+	"github.com/zima-oss/jackstay/internal/delivery"
 )
 
 // The guard hook exactly as the three adopted projects carry it (adoption survey, section 1).
@@ -30,6 +32,7 @@ const projectsSettings = `{
 
 func project(t *testing.T, files map[string]string) string {
 	t.Helper()
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
 	root := t.TempDir()
 	if real, err := filepath.EvalSymlinks(root); err == nil {
 		root = real
@@ -66,6 +69,124 @@ func apply(t *testing.T, options Options) *Plan {
 		t.Fatalf("apply: %v (conflicts %v)", err, ids(made.Conflicts))
 	}
 	return made
+}
+
+func TestApplyPreservesEditsMadeAfterPlanning(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		files := map[string]string{"jackstay.json": `{"jackstay_schema":2}`}
+		if existing {
+			files["AGENTS.md"] = "original instructions\n"
+		}
+		root := project(t, files)
+		made := plan(t, optionsFor(root))
+		target := filepath.Join(root, "AGENTS.md")
+		const edited = "instructions written by another session\n"
+		if err := os.WriteFile(target, []byte(edited), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshot(t, root)
+		if err := made.Apply(); err == nil || !strings.Contains(err.Error(), "AGENTS.md") {
+			t.Fatalf("stale plan was accepted: %v", err)
+		}
+		after := snapshot(t, root)
+		if len(after) != len(before) {
+			t.Fatalf("stale plan wrote extra files: %v", after)
+		}
+		for name, prior := range before {
+			if !bytes.Equal(prior.data, after[name].data) {
+				t.Errorf("stale plan overwrote %s", name)
+			}
+		}
+		apply(t, optionsFor(root))
+		content, err := os.ReadFile(target)
+		if err != nil || !strings.Contains(string(content), edited) {
+			t.Fatalf("fresh plan did not preserve the edit: %v, %q", err, content)
+		}
+	}
+}
+
+func TestApplyRejectsAProfileChangedAfterPlanning(t *testing.T) {
+	const before = `{"jackstay_profile":1,"name":"policy","agents":{"rules":["Original policy."]}}`
+	const after = `{"jackstay_profile":1,"name":"policy","agents":{"rules":["Updated policy."]}}`
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2}`, "profile.json": before})
+	options := optionsFor(root)
+	options.Profile = filepath.Join(root, "profile.json")
+	made := plan(t, options)
+	if err := os.WriteFile(options.Profile, []byte(after), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := made.Apply(); err == nil || !strings.Contains(err.Error(), "profile changed") {
+		t.Fatalf("stale profile was accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "AGENTS.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale plan wrote AGENTS.md: %v", err)
+	}
+}
+
+func TestAdoptReplaysEachInterruptedFileBoundary(t *testing.T) {
+	for _, stopAfter := range []int{1, 2, 3} {
+		root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2}`})
+		options := optionsFor(root)
+		initial := plan(t, options)
+		if len(initial.writes) != 3 {
+			t.Fatalf("fixture should have three writes, got %d", len(initial.writes))
+		}
+		place, err := deliveryPath(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		written := map[string]int{}
+		total := 0
+		stopped := errors.New("stopped after applying a file")
+		recordWrite := func(path string, data []byte) error {
+			if err := changes.WriteFileAtomic(path, data); err != nil {
+				return err
+			}
+			written[path]++
+			total++
+			if total == stopAfter {
+				return stopped
+			}
+			return nil
+		}
+		if err := initial.apply(recordWrite); !errors.Is(err, stopped) {
+			t.Fatalf("attempt did not stop at %d: %v", stopAfter, err)
+		}
+		first, _, err := delivery.Read[adoptionDelivery](place)
+		if err != nil || first.Attempt != 1 || first.Outcome != delivery.Interrupted {
+			t.Fatalf("did not record the interrupted attempt: %+v %v", first, err)
+		}
+		fresh := plan(t, options)
+		if err := fresh.apply(recordWrite); err != nil {
+			t.Fatal(err)
+		}
+		second, _, err := delivery.Read[adoptionDelivery](place)
+		if err != nil || second.ID != first.ID || second.Attempt != 2 || second.Outcome != delivery.Complete {
+			t.Fatalf("did not complete the original delivery: %+v %v", second, err)
+		}
+		if len(written) != 3 {
+			t.Fatalf("wrong number of effects: %v", written)
+		}
+		for path, count := range written {
+			if count != 1 {
+				t.Fatalf("wrote %s %d times", path, count)
+			}
+		}
+	}
+}
+
+func TestRelativeProfileInASymlinkedWorkingDirectory(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2}`})
+	exampleProfile(t, root, `{}`, nil)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(root, alias); err != nil {
+		t.Fatal(err)
+	}
+	options := optionsFor(root)
+	options.WorkingDir, options.Profile = alias, "profiles/profile.json"
+	if made := plan(t, options); made.Profile != options.Profile {
+		t.Fatalf("recorded %q, want %q", made.Profile, options.Profile)
+	}
 }
 
 func ids(conflicts []Conflict) []string {
@@ -612,5 +733,74 @@ func TestASettingsOnlyPlanIsArraysInJSON(t *testing.T) {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("no %s in %s", want, encoded)
 		}
+	}
+}
+
+func TestSettingsOnlyLeavesOtherFileReadsForTheFilesStage(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		bad  func(*testing.T, string)
+	}{
+		{name: "AGENTS file is a directory", bad: func(t *testing.T, root string) {
+			if err := os.Mkdir(filepath.Join(root, "AGENTS.md"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "workflows directory is a file", bad: func(t *testing.T, root string) {
+			if err := os.Mkdir(filepath.Join(root, ".github"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, ".github", "workflows"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p",
+				"cards":{"dir":"docs/cards","id":"C-[0-9]+","unit":"pr","since":"2026-11-17"}}`})
+			options := optionsFor(root)
+			test.bad(t, root)
+			if _, err := Make(options); err == nil {
+				t.Fatal("the files stage accepted the broken file")
+			}
+			options.SettingsOnly = true
+			made := plan(t, options)
+			if got := changeIDs(made.Changes); !slices.Equal(got, []string{"jackstay.json"}) || len(made.Conflicts) != 0 {
+				t.Fatalf("settings plan: changes %v, conflicts %v", got, made.Conflicts)
+			}
+			if err := made.Apply(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestReleaseWorkflowUsesCardsBranchWhenReleaseBaseIsOmitted(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p",
+		"cards":{"dir":"docs/cards","id":"C-[0-9]+","unit":"pr","since":"2026-11-17","branch":"develop"},
+		"changes":{"dir":"changes","into":"CHANGELOG.md","heading":"## {version}"},
+		"release":{"first":"0.1.0","files":[{"path":"VERSION","match":"^(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"}]}}`})
+	applyTwice(t, optionsFor(root))
+	if text := read(t, root, ".github/workflows/release.yml"); !strings.Contains(text, "branches: [develop]") {
+		t.Fatalf("release workflow did not use the effective base:\n%s", text)
+	}
+}
+
+func TestSettingsOnlyPinsAProfileWorkflowBeforeApplyingIt(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p"}`})
+	options := optionsFor(root)
+	options.Profile = exampleProfile(t, root, `{}`, map[string]string{"custom": "name: custom\nenv:\n  VERSION: '@@jackstay_version@@'\n"})
+	options.SettingsOnly = true
+	if got := changeIDs(apply(t, options).Changes); !slices.Equal(got, []string{"jackstay.json"}) {
+		t.Fatalf("settings plan changes: %v", got)
+	}
+	options.Profile = ""
+	options.SettingsOnly = false
+	if made := plan(t, options); made.SplitsSettings() || slices.Contains(changeIDs(made.Changes), "jackstay.json") {
+		t.Fatalf("the files stage also changes settings: %v", changeIDs(made.Changes))
+	}
+	applyTwice(t, options)
+	if got := read(t, root, ".github/workflows/custom.yml"); !strings.Contains(got, "VERSION: 'v0.5.0'") {
+		t.Fatalf("custom workflow did not use the pin:\n%s", got)
 	}
 }

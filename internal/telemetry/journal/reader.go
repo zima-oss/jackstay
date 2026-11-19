@@ -120,6 +120,16 @@ type Result struct {
 // or after from. Files are named by the end date, so every day from from's date through today is
 // read; of one date, the plain file when it exists, else the .gz — never both (section 4).
 func Read(folders []string, from, until, today time.Time, visit func(Span)) Result {
+	return read(folders, from, until, today, 0, visit)
+}
+
+// ReadBounded gives the same window as Read with a byte limit on each line. An oversized
+// line counts as unreadable, and does not prevent reading subsequent lines from the same file.
+func ReadBounded(folders []string, from, until, today time.Time, maximumLineBytes int, visit func(Span)) Result {
+	return read(folders, from, until, today, max(1, maximumLineBytes), visit)
+}
+
+func read(folders []string, from, until, today time.Time, maximumLineBytes int, visit func(Span)) Result {
 	var result Result
 	// Day files are named by the local date: the range's ends are read as local dates (an RFC 3339
 	// bound in UTC names another calendar day near midnight).
@@ -143,7 +153,7 @@ func Read(folders []string, from, until, today time.Time, visit func(Span)) Resu
 				continue
 			}
 			result.Files++
-			if err := readLines(reader, folder, from, until, visit, &result); err != nil {
+			if err := readLines(reader, folder, from, until, maximumLineBytes, visit, &result); err != nil {
 				result.Problems = append(result.Problems, place+": "+err.Error())
 			}
 			closer()
@@ -176,11 +186,26 @@ func openDay(place string) (io.Reader, func(), error) {
 	return reader, func() { _ = reader.Close(); _ = file.Close() }, nil
 }
 
-func readLines(reader io.Reader, folder string, from, until time.Time, visit func(Span), result *Result) error {
+func readLines(reader io.Reader, folder string, from, until time.Time, maximumLineBytes int, visit func(Span), result *Result) error {
 	lines := bufio.NewReader(reader)
+	var line []byte
+	oversized := false
 	for {
-		line, err := lines.ReadBytes('\n')
-		if len(bytes.TrimSpace(line)) > 0 {
+		chunk, err := lines.ReadSlice('\n')
+		if !oversized {
+			if maximumLineBytes > 0 && len(chunk) > maximumLineBytes-len(line) {
+				oversized = true
+			} else {
+				line = append(line, chunk...)
+			}
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		switch {
+		case oversized:
+			result.Unreadable++
+		case len(bytes.TrimSpace(line)) > 0:
 			spans, problem := DecodeLine(line)
 			if problem != nil {
 				result.Unreadable++
@@ -192,6 +217,7 @@ func readLines(reader io.Reader, folder string, from, until time.Time, visit fun
 				}
 			}
 		}
+		line, oversized = line[:0], false
 		if errors.Is(err, io.EOF) {
 			return nil
 		}

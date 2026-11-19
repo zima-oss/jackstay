@@ -11,6 +11,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zima-oss/jackstay/internal/procs"
+	"github.com/zima-oss/jackstay/internal/proctree"
+	"github.com/zima-oss/jackstay/internal/supervise"
 )
 
 func TestParseBg(t *testing.T) {
@@ -248,6 +252,95 @@ func TestAnUnwritableFolderStillSupervises(t *testing.T) {
 	h.clock.advance(31 * time.Minute)
 	if !watching.timedCheck() || h.world.has(leaderPID) {
 		t.Fatal("the deadline did not hold without a file")
+	}
+}
+
+func TestAnUnregisteredKeptProcessIsStopped(t *testing.T) {
+	h := newHarness(t, request{keep: true})
+	h.run.place = store{folder: "/dev/null/procs"}
+	h.begin(t)
+	if h.world.has(leaderPID) || h.control.stopCount() != 1 {
+		t.Fatal("an unregistered kept group was left running")
+	}
+}
+
+func TestTheRegistryMasksRecordsFromOlderVersionsWhenRead(t *testing.T) {
+	const marker = "audit-fixture-value"
+	h := newHarness(t, request{})
+	h.begin(t)
+	legacy := h.entry(t)
+	legacy.Command = []string{"tool", "run", "--password", marker}
+	raw, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.place.entryPath(testID), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := h.place.read(testID)
+	if !ok || len(entry.Command) == 0 || strings.Contains(strings.Join(entry.Command, " "), marker) || entry.Command[0] != "tool" {
+		t.Fatal("the legacy entry leaked an argument or hid the executable")
+	}
+}
+
+func TestTheRegistryMasksRecordedArguments(t *testing.T) {
+	const marker = "audit-fixture-value"
+	for _, test := range []struct {
+		mode string
+		hide string
+	}{
+		{"masked", marker},
+		{"skeleton", "ordinary-argument"},
+	} {
+		t.Run(test.mode, func(t *testing.T) {
+			args := []string{"tool", "run", "--password", marker, "ordinary-argument"}
+			h := newHarness(t, request{argv: args})
+			h.run.here = t.TempDir()
+			config := `{"jackstay_schema":2,"telemetry":{"commands":"` + test.mode + `"}}`
+			if err := os.WriteFile(filepath.Join(h.run.here, "jackstay.json"), []byte(config), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			h.begin(t)
+			raw, err := os.ReadFile(h.place.entryPath(testID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Contains(raw, []byte(test.hide)) || bytes.Contains(raw, []byte(marker)) ||
+				h.run.asked.argv[3] != marker {
+				t.Fatal("the registry persisted unmasked arguments or changed the launch arguments")
+			}
+		})
+	}
+}
+
+func TestTheRegistryKeepsIncompleteCleanup(t *testing.T) {
+	cases := map[string]supervise.Outcome{
+		"no process table": {Unconfirmed: true},
+		"surviving child":  {Survivors: []proctree.Survivor{{Member: proctree.Member{PID: childPID}}}},
+		"foreign child":    {Foreign: []procs.Process{{PID: childPID}}},
+	}
+	for name, outcome := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, request{})
+			watching := h.begin(t)
+			if err := h.place.askStop(testID); err != nil {
+				t.Fatal(err)
+			}
+			if status := watching.finish(outcome, "asked"); status != 1 {
+				t.Fatalf("cleanup failure returned %d", status)
+			}
+			if entry := h.entry(t); entry.Status != stateCleanupIncomplete || h.place.stopAsked(testID) {
+				t.Fatalf("entry %+v, stop pending %v", entry, h.place.stopAsked(testID))
+			}
+		})
+	}
+}
+
+func TestConfirmedCleanupRemovesTheRegistryEntry(t *testing.T) {
+	h := newHarness(t, request{})
+	watching := h.begin(t)
+	if status := watching.finish(supervise.Outcome{Code: 42}, "ended"); status != 42 || h.place.listed(testID) {
+		t.Fatalf("exit %d, listed %v", status, h.place.listed(testID))
 	}
 }
 

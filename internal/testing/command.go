@@ -15,6 +15,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/receipts"
 	"github.com/zima-oss/jackstay/internal/supervise"
+	"github.com/zima-oss/jackstay/internal/testreport"
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
@@ -63,6 +64,22 @@ func (run *leafRun) command(asked time.Time, held *flock.Held) result {
 	}
 	env := setEnv(setEnv(run.env, supervise.RunIDVariable, did.runID), supervise.RunProjectVariable, run.name)
 	env = setEnv(setEnv(env, RunIDVariable, did.runID), RunTmpVariable, runTmp)
+	argv := run.words.argv
+	var report *testreport.Report
+	if options.Kind == judge.JUnit {
+		report, err = testreport.OpenReport(runTmp, run.leaf.report)
+		if err != nil {
+			_ = os.RemoveAll(runTmp)
+			return run.notStarted("the private JUnit report could not be prepared: " + err.Error())
+		}
+		defer func() { _ = report.Close() }()
+		env = setEnv(env, testreport.PathVariable, report.Path())
+		argv = slices.Clone(argv)
+		values := map[string]string{"report": report.Path()}
+		for index := 1; index < len(argv); index++ {
+			argv[index] = replacePlaceholders(argv[index], values)
+		}
+	}
 	scopeFacts := map[string]any{"judge": run.leaf.judge, "timeout": nil}
 	for name, value := range run.facts {
 		scopeFacts[name] = value
@@ -106,7 +123,7 @@ func (run *leafRun) command(asked time.Time, held *flock.Held) result {
 	if !run.log(receipts.EventStart, run.words.argv, run.keyValue(), startFields) {
 		run.notLogged("the start of this run")
 	}
-	spec := supervise.Spec{Argv: run.words.argv, Env: env, Dir: run.runCwd, Mode: supervise.Session,
+	spec := supervise.Spec{Argv: argv, Env: env, Dir: run.runCwd, Mode: supervise.Session,
 		Output: &sink{stdout: run.stdout, stderr: run.stderr, kept: did.kept, reader: reader}, Grace: supervise.SessionGrace,
 		Settle: settle, Say: run.stderr, Who: "jst test", Clock: run.clock, System: run.system,
 		RecordSessionIn: run.getenv(supervise.SessionsFileVariable),
@@ -137,6 +154,9 @@ func (run *leafRun) command(asked time.Time, held *flock.Held) result {
 		return did.finish(receipts.OutcomeFailed, receipts.StatusNoStart, map[string]any{"status": receipts.StatusNoStart},
 			fmt.Sprintf("outcome=failed (exit %d: the command could not be started, %s s)", receipts.StatusNoStart,
 				formatSeconds(secondsBetween(did.started, did.ended))))
+	}
+	if report != nil && !launchedRun.timedOut && launchedRun.outcome.StoppedBy == 0 && run.signals.Context().Err() == nil {
+		reader.ReadReport(report)
 	}
 	return did.judged(launchedRun, reader, seen)
 }
@@ -186,6 +206,9 @@ func (did *ran) judged(launchedRun launched, reader *judge.Reader, seen *leftove
 	if did.leaf.judge == "swift-test" {
 		more["bundles"] = fmt.Sprintf("%d/%d", verdict.BundlesEnded, verdict.BundlesStarted)
 		more["xctest"], more["swift_testing"], more["skipped"] = verdict.XCTest, verdict.SwiftTesting, verdict.Skipped
+	}
+	if judge.AdapterVersion(judge.Kind(did.leaf.judge)) != 0 && verdict.Counting {
+		more["skipped"] = verdict.Skipped
 	}
 	if launchedRun.timedOut {
 		more["timed_out"] = true

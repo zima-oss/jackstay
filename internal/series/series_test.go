@@ -21,6 +21,8 @@ func TestTaken(t *testing.T) {
 		{"docs/work/tasks/APP-{n}-*.md", "docs/work/tasks/XAPP-170.md", ""},
 		{"docs/*-{n}-*.md", "docs/Q-12-x.md", "12"},
 		{"Q-{n}.md", "Q-3.md", "3"},
+		{"./Q-{n}.md", "Q-3.md", "3"},
+		{"./docs//notes/./Q-{n}.md", "docs/notes/Q-3.md", "3"},
 		{"a.b/Q-{n}.md", "aXb/Q-3.md", ""},
 	}
 	for _, c := range cases {

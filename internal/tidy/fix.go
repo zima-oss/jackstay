@@ -38,17 +38,16 @@ func (tidy *tidier) fix(ctx context.Context, found *report, say func(action)) in
 	case len(found.Prunable) > 0 && !found.Scoped:
 		// A record whose folder is gone may be a worktree that was moved, not removed: pruning it
 		// would cut the moved folder off from the repository. Only a record named is pruned.
+		failures += len(found.Prunable)
 		say(action{ID: didNotSweep, Target: strings.Join(found.Prunable, ", "),
 			Detail: "worktree records whose folder is gone are not pruned by a sweep (a moved worktree needs " +
 				"`git worktree repair <new path>`; a removed one: `jst tidy --fix --worktree <path>`)"})
 	case len(found.Prunable) > 0:
-		_, problems := pruneRecords(ctx, main, found.Prunable)
-		if len(problems) > 0 {
-			failures++
-			say(action{ID: didFailPrune, Target: strings.Join(found.Prunable, ", "), Detail: strings.Join(problems, "; ")})
-		} else {
-			say(action{ID: didPrune, Target: strings.Join(found.Prunable, ", "),
-				Detail: "worktree records whose folder is gone (a worktree that was moved, not removed: `git worktree repair <new path>` before this)"})
+		for _, done := range pruneRecords(ctx, main, found.Prunable) {
+			if done.ID == didFailPrune {
+				failures++
+			}
+			say(done)
 		}
 	}
 	gone := map[string]bool{}

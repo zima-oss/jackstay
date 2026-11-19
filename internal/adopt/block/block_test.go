@@ -14,16 +14,18 @@ func everyCommand(string) bool { return true }
 
 var everySection = map[string]any{
 	"jackstay_schema": 2, "project": "sample",
-	"lock":    map[string]any{"enabled": true},
-	"guard":   map[string]any{"rules": map[string]any{}},
-	"github":  map[string]any{"account": "someone"},
-	"cards":   map[string]any{"branch": "trunk"},
-	"ids":     map[string]any{"S": map[string]any{}},
-	"records": map[string]any{"S": map[string]any{}},
-	"changes": map[string]any{},
-	"release": map[string]any{},
-	"review":  map[string]any{},
-	"test":    map[string]any{"scopes": map[string]any{"gate": map[string]any{}, "quick": map[string]any{}}},
+	"lock":     map[string]any{"enabled": true},
+	"guard":    map[string]any{"rules": map[string]any{}},
+	"github":   map[string]any{"account": "someone"},
+	"cards":    map[string]any{"branch": "trunk"},
+	"ids":      map[string]any{"S": map[string]any{}},
+	"records":  map[string]any{"S": map[string]any{}},
+	"changes":  map[string]any{},
+	"release":  map[string]any{},
+	"review":   map[string]any{},
+	"receipts": map[string]any{},
+	"adopt":    map[string]any{},
+	"test":     map[string]any{"scopes": map[string]any{"gate": map[string]any{}, "quick": map[string]any{}}},
 }
 
 func TestTheBlockGolden(t *testing.T) {
@@ -69,7 +71,7 @@ func TestEveryItemIsPrintedForSomeConfig(t *testing.T) {
 	text := Render(Inputs{Config: everySection, Has: everyCommand})
 	for _, word := range []string{"jst test gate", "jst wait", "jst bg", "jst lock", "jst start", "jst discard", "The guard",
 		"jst gh", "jst review", "origin/trunk..HEAD", "jst id next", "jst new", "jst changes new", "jst release prepare",
-		"jst log", "jst owner", "jst adopt --plan"} {
+		"jst log", "jst timeline", "jst inventory", "jst receipts export", "jst profile export", "jst owner", "jst adopt --plan"} {
 		if !strings.Contains(text, word) {
 			t.Errorf("the block lacks %q", word)
 		}

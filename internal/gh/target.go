@@ -3,9 +3,11 @@ package gh
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"math"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -105,7 +107,7 @@ func (work *session) resolvePull(target pullTarget) (int, error) {
 			return number, nil
 		}
 	}
-	pull, found, err := work.openPullOf(ref)
+	pull, found, err := work.openPullOf(ref, "")
 	if err != nil {
 		return 0, err
 	}
@@ -115,19 +117,78 @@ func (work *session) resolvePull(target pullTarget) (int, error) {
 	return pull.Number, nil
 }
 
-// openPullOf is this repository's open pull request from branch.
-func (work *session) openPullOf(branch string) (githubapi.PullRequest, bool, error) {
+// openPulls reads this repository's open pull requests from the branch, excluding same-named
+// branches of other repositories.
+func (work *session) openPulls(branch string) ([]githubapi.PullRequest, error) {
 	owner, _, _ := strings.Cut(work.repository, "/")
 	pulls, err := work.github.PullRequestsByHead(work.ctx, owner+":"+branch, "open")
 	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(slices.Clone(pulls), func(pull githubapi.PullRequest) bool {
+		return pull.Head != branch || (pull.HeadRepository != "" && !strings.EqualFold(pull.HeadRepository, work.repository))
+	}), nil
+}
+
+// openPullOf resolves one open pull request in this repository. A base is supplied only when
+// recovering a lost reply to creating a pull request for that base.
+func (work *session) openPullOf(branch, base string) (githubapi.PullRequest, bool, error) {
+	matching, err := work.openPulls(branch)
+	if err != nil {
 		return githubapi.PullRequest{}, false, err
 	}
-	for _, pull := range pulls {
-		if pull.Head == branch && (pull.HeadRepository == "" || strings.EqualFold(pull.HeadRepository, work.repository)) {
-			return pull, true, nil
+	if base != "" {
+		matching = slices.DeleteFunc(matching, func(pull githubapi.PullRequest) bool { return pull.Base != base })
+	}
+	switch len(matching) {
+	case 0:
+		return githubapi.PullRequest{}, false, nil
+	case 1:
+		return matching[0], true, nil
+	default:
+		slices.SortFunc(matching, func(first, second githubapi.PullRequest) int { return first.Number - second.Number })
+		choices := make([]string, 0, len(matching))
+		for _, pull := range matching {
+			choices = append(choices, fmt.Sprintf("#%d into %s", pull.Number, pull.Base))
+		}
+		return githubapi.PullRequest{}, false, failf(exitRequest,
+			"multiple open pull requests from %s: %s; select a pull request by number or URL (use --pr with pr-land or pr-status)",
+			branch, strings.Join(choices, ", "))
+	}
+}
+
+// pullForBranch handles the optional explicit selection in commands that operate on this checkout.
+func (work *session) pullForBranch(branch, selected string) (githubapi.PullRequest, bool, error) {
+	if selected == "" {
+		return work.openPullOf(branch, "")
+	}
+	target, _, err := parsePullTarget(selected)
+	if err != nil {
+		return githubapi.PullRequest{}, false, err
+	}
+	number := target.number
+	if number == 0 && digits.MatchString(target.ref) {
+		number, err = strconv.Atoi(target.ref)
+		if err != nil {
+			number = 0
 		}
 	}
-	return githubapi.PullRequest{}, false, nil
+	if number <= 0 {
+		return githubapi.PullRequest{}, false, failf(exitRequest, "--pr takes a positive pull request number or its GitHub URL")
+	}
+	if target.repository != "" && !strings.EqualFold(target.repository, work.repository) {
+		return githubapi.PullRequest{}, false, failf(exitRequest, "--pr names %s, but this checkout is in %s", target.repository, work.repository)
+	}
+	pull, err := work.github.PullRequest(work.ctx, number)
+	if err != nil {
+		return githubapi.PullRequest{}, false, fmt.Errorf("pull request #%d: %w", number, err)
+	}
+	if pull.Number != number || pull.State != "open" || pull.Merged || pull.Base == "" || pull.Head != branch ||
+		!strings.EqualFold(pull.HeadRepository, work.repository) || !strings.EqualFold(pull.BaseRepository, work.repository) {
+		return githubapi.PullRequest{}, false, failf(exitRequest,
+			"#%d is not an open pull request from %s in %s", number, branch, work.repository)
+	}
+	return pull, true, nil
 }
 
 func (work *session) currentBranch() (string, error) {

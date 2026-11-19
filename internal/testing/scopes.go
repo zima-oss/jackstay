@@ -289,6 +289,7 @@ func (base *tester) scope(args []string) int {
 	}
 	var signals *supervise.Signals
 	if err == nil && chosen.commit != "" {
+		chosen.noReuse = true
 		// Listening before the copy is made: a stop while it is made removes it too.
 		signals = base.listen(context.Background(), base.clock)
 		defer signals.Close()

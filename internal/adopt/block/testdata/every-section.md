@@ -7,6 +7,8 @@
   Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
   a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
   removes). No scope fits: `jst test -- COMMAND`.
+- **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
+  using the expected digest, revision and key from a trusted source.
 - **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
 - **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or
   `nohup`; `jst procs` lists them, `jst procs stop NAME` stops yours.
@@ -22,8 +24,9 @@
 - **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
   `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
   `jackstay.json` (`github.account`).
-- **Review a change**: `jst review BASE..REV --task NAME` — a cold review by Codex, in rounds;
-  `jst review check BASE..REV --task NAME` says whether it is clear.
+- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.
+  Pick `codex` or `claude-code`, or use the project's `review.use`.
+  `jst review check BASE..REV --task NAME` checks the saved round.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/trunk..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a
@@ -33,6 +36,9 @@
   `jst release prepare` shows the next one.
 - **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a
   surprising failure, before asking.
+- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
+- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
+- **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay).

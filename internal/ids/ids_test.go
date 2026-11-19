@@ -91,6 +91,19 @@ func TestNextSeesEverything(t *testing.T) {
 	}
 }
 
+func TestPeekIncludesARealBranchNamedHEAD(t *testing.T) {
+	repo := testrepo.New(t, map[string]string{"jackstay.json": config})
+	repo.Git("switch", "-c", "numbered")
+	commit := repo.Commit("numbered", map[string]string{"docs/tasks/APP-009-head.md": ""})
+	repo.Git("switch", "main")
+	repo.Git("update-ref", "refs/heads/HEAD", commit)
+	repo.Git("branch", "-D", "numbered")
+	out, errs, code := jackstay(t, "peek", "APP")
+	if code != 0 || strings.TrimSpace(out) != "APP-010" {
+		t.Fatalf("code %d, stdout %q, stderr %q", code, out, errs)
+	}
+}
+
 func TestRefusals(t *testing.T) {
 	repo := testrepo.New(t, map[string]string{"jackstay.json": config})
 	for _, args := range [][]string{{}, {"next"}, {"next", "APP", "--count", "0"}, {"next", "APP", "--count", "101"},
@@ -191,6 +204,9 @@ func TestStrictRecordsBoundsAndPaths(t *testing.T) {
 	}
 	if out, _, code := jackstay(t, "next", "APP"); code != 0 || strings.TrimSpace(out) != "APP-1000000000000" {
 		t.Errorf("at the bound: %q %d", out, code)
+	}
+	if out, _, code := jackstay(t, "peek", "APP"); code != 2 || out != "" {
+		t.Errorf("peek after the bound: %q %d", out, code)
 	}
 	repo.Write(map[string]string{"docs/tasks/APP-9223372036854775807-x.md": ""})
 	if out, _, code := jackstay(t, "next", "APP"); code != 2 || out != "" {

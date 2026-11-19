@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -25,6 +24,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/gitcli"
+	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/supervise"
 	"github.com/zima-oss/jackstay/internal/version"
 )
@@ -96,22 +96,24 @@ type Material struct {
 
 // Rules are the input lists and the command's patterns, so a changed rule is a new key.
 type Rules struct {
-	Inputs     any `json:"inputs"`
-	Exclude    any `json:"exclude"`
-	ExtraFiles any `json:"extra_files"`
-	Evidence   any `json:"evidence"`
-	Veto       any `json:"veto"`
+	Inputs     any            `json:"inputs"`
+	Exclude    any            `json:"exclude"`
+	ExtraFiles any            `json:"extra_files"`
+	Evidence   any            `json:"evidence"`
+	Veto       any            `json:"veto"`
+	Adapter    map[string]any `json:"adapter,omitempty"`
 }
 
 // Facts are the machine and environment the result is taken to depend on.
 type Facts struct {
-	System      string             `json:"system"`
-	Build       string             `json:"build"`
-	Machine     string             `json:"machine"`
-	Toolchain   []ToolSaid         `json:"toolchain"`
-	Env         map[string]string  `json:"env"`
-	EnvPatterns []string           `json:"env_patterns"`
-	Make        map[string]*string `json:"make"`
+	ExecutionVersion int                `json:"execution_version"`
+	System           string             `json:"system"`
+	Build            string             `json:"build"`
+	Machine          string             `json:"machine"`
+	Toolchain        []ToolSaid         `json:"toolchain"`
+	Env              map[string]string  `json:"env"`
+	EnvPatterns      []string           `json:"env_patterns"`
+	Make             map[string]*string `json:"make"`
 }
 
 // ToolSaid is one toolchain command and what it printed.
@@ -175,7 +177,7 @@ func KeyOf(ctx context.Context, keying Keying) (Key, error) {
 		}
 		bases[name] = base
 	}
-	facts, err := environmentFacts(ctx, section, keying.Environ)
+	facts, err := EnvironmentFacts(ctx, section, keying.Dir, keying.Environ)
 	if err != nil {
 		return Key{}, err
 	}
@@ -189,6 +191,12 @@ func KeyOf(ctx context.Context, keying Keying) (Key, error) {
 		Rules: Rules{Inputs: section["inputs"], Exclude: section["exclude"], ExtraFiles: section["extra_files"],
 			Evidence: entry["evidence"], Veto: entry["veto"]},
 		Facts: facts, Refs: refs, MergeBases: bases, Scope: keying.Scope,
+	}
+	if name, _ := entry["judge"].(string); keying.Scope == nil && judge.AdapterVersion(judge.Kind(name)) != 0 {
+		material.Rules.Adapter = map[string]any{"judge": name, "version": judge.AdapterVersion(judge.Kind(name))}
+		if name == string(judge.JUnit) {
+			material.Rules.Adapter["report"], material.Rules.Adapter["empty_exit"] = entry["report"], entry["empty_exit"]
+		}
 	}
 	if section["include_head"] == true {
 		material.Head, _ = askGit(ctx, git, "rev-parse", "HEAD")
@@ -505,16 +513,13 @@ func fileDigest(place string) (string, error) {
 
 // EnvironmentFacts are the machine, the toolchain's words, the named variables and make's, as a
 // key reads them (internal/testing keys a gate's step marks by them); an *Unkeyable on failure.
-func EnvironmentFacts(ctx context.Context, section map[string]any, environ []string) (Facts, error) {
-	return environmentFacts(ctx, section, environ)
-}
-
-// environmentFacts are the machine, the toolchain's words, the named variables and make's.
-func environmentFacts(ctx context.Context, section map[string]any, environ []string) (Facts, error) {
+func EnvironmentFacts(ctx context.Context, section map[string]any, dir string, environ []string) (Facts, error) {
 	if environ == nil {
 		environ = os.Environ()
 	}
-	facts := Facts{System: systemVersion(), Build: systemBuild(), Machine: machine(), Toolchain: []ToolSaid{},
+	// Earlier keys were made with the launcher's toolchain rather than the test's.
+	// A receipt or gate mark using those facts needs a new run.
+	facts := Facts{ExecutionVersion: 1, System: systemVersion(), Build: systemBuild(), Machine: machine(), Toolchain: []ToolSaid{},
 		Env: map[string]string{}, Make: map[string]*string{}}
 	tools, _ := section["toolchain"].([]any)
 	for _, raw := range tools {
@@ -522,7 +527,7 @@ func environmentFacts(ctx context.Context, section map[string]any, environ []str
 		if len(tool) == 0 {
 			return Facts{}, noKey("jackstay.json: receipts.toolchain must be a list of commands, each a list of words")
 		}
-		said, err := runTool(ctx, tool)
+		said, err := runTool(ctx, tool, dir, environ)
 		if err != nil {
 			return Facts{}, err
 		}
@@ -564,20 +569,19 @@ func environmentFacts(ctx context.Context, section map[string]any, environ []str
 }
 
 // runTool runs one toolchain command and returns what it printed (output, then errors).
-func runTool(ctx context.Context, tool []string) (string, error) {
+func runTool(ctx context.Context, tool []string, dir string, env []string) (string, error) {
 	bounded, cancel := context.WithTimeout(ctx, toolchainBudget)
 	defer cancel()
-	command := exec.CommandContext(bounded, tool[0], tool[1:]...)
-	var output, complaints bytes.Buffer
-	command.Stdout, command.Stderr = &output, &complaints
-	if err := command.Run(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			return "", noKey("the toolchain command %s failed (%d)", strings.Join(tool, " "), exitErr.ExitCode())
-		}
+	captured, err := supervise.Capture(bounded, tool, dir, env, nil)
+	switch {
+	case err != nil:
 		return "", noKey("the toolchain command %s could not be run: %v", strings.Join(tool, " "), err)
+	case captured.Status != 0:
+		return "", noKey("the toolchain command %s failed (%d)", strings.Join(tool, " "), captured.Status)
+	case captured.Incomplete != "":
+		return "", noKey("the toolchain command %s gave incomplete output: %s", strings.Join(tool, " "), captured.Incomplete)
 	}
-	return output.String() + complaints.String(), nil
+	return string(captured.Stdout) + string(captured.Stderr), nil
 }
 
 // machine is the machine's kind (arm64, x86_64).

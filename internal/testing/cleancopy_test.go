@@ -10,6 +10,8 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/procs"
+	"github.com/zima-oss/jackstay/internal/proctree"
 	"github.com/zima-oss/jackstay/internal/supervise"
 )
 
@@ -167,5 +169,92 @@ func TestTheCopyHasTheCheckoutsProjectName(t *testing.T) {
 			t.Fatalf("the copy's project is %q, the checkout's %q", got, want)
 		}
 		made.Remove()
+	}
+}
+
+func TestCleanTestUsesCommittedConfigWhenLiveConfigIsUnavailable(t *testing.T) {
+	for _, test := range []struct {
+		name, live, project, want string
+	}{
+		{name: "invalid JSON", live: "{", want: "demo"},
+		{name: "invalid test section", live: `{"jackstay_schema":2,"project":"live-name","test":true}`, want: "live-name"},
+		{name: "missing config", want: "demo"},
+		{name: "explicit project overrides invalid JSON", live: "{", project: "asked", want: "asked"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			w := newCleanWorld(t)
+			if test.live == "" {
+				if err := os.Remove(filepath.Join(w.repo.Root, config.Name)); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				w.repo.Write(map[string]string{config.Name: test.live})
+			}
+
+			runner := w.tester()
+			chosen := options{commit: "HEAD", project: test.project}
+			made, inside, err := runner.makeCopy(chosen)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer made.Remove()
+			runner.here = inside
+			opened, err := runner.open(chosen)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if opened.name != test.want || config.CopyProject(inside, inside) != test.want {
+				t.Fatalf("opened project %q, marked %q; want %q", opened.name, config.CopyProject(inside, inside), test.want)
+			}
+		})
+	}
+}
+
+func TestCleanCopyFindsTheNearestCommittedProject(t *testing.T) {
+	w := newCleanWorld(t)
+	w.repo.Commit("add a project below the root", map[string]string{
+		"..nested/jackstay.json": `{"jackstay_schema":2,"project":"nested"}`,
+		"..nested/deep/marker":   "checked-in",
+	})
+	w.repo.Write(map[string]string{"jackstay.json": "{", "..nested/jackstay.json": "{"})
+	runner := w.tester()
+	runner.here = filepath.Join(w.repo.Root, "..nested", "deep")
+	made, inside, err := runner.makeCopy(options{commit: "HEAD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer made.Remove()
+	if want := filepath.Join(made.Tree, "..nested", "deep"); inside != want {
+		t.Fatalf("copy working folder %s, want %s", inside, want)
+	}
+	if name := config.CopyProject("", inside); name != "nested" {
+		t.Fatalf("the copy is marked as %q, want nested", name)
+	}
+}
+
+func TestCleanScopeRunsAgainWithAReusableReceipt(t *testing.T) {
+	w := newWorld(t, reuseSection(), reuseReceipts())
+	w.commit()
+	run := func(args ...string) int {
+		runner := w.tester()
+		// The world's launcher is a fake. Its result does not depend on access to the host table.
+		runner.system = &proctree.System{Read: func() (map[int]procs.Process, error) { return nil, nil }}
+		return runner.scope(args)
+	}
+	// Use Git's worktree mode on both sides before testing for a matching key.
+	if err := os.Remove(filepath.Join(w.repo.Root, "Sources", "a.swift")); err != nil {
+		t.Fatal(err)
+	}
+	w.repo.Git("checkout", "--", "Sources/a.swift")
+	// A detached copy of work can reuse this key by the ordinary rules, because main
+	// still points at the earlier fixture commit.
+	w.expectStatus(run("full"), 0)
+	w.expectStatus(run("full"), 0)
+	w.expectLast("outcome=reused")
+	w.expectStatus(run("full", "--commit", "HEAD"), 0)
+	w.expectLast("outcome=passed")
+	w.expectCounters("full", 2)
+	if hit := w.lastRecord("would-hit"); hit["receipt"] != true || hit.Text("reason") != "--commit requests a fresh run" {
+		t.Fatalf("the clean run did not bypass a matching receipt: %v", hit)
 	}
 }

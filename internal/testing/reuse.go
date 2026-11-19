@@ -14,6 +14,8 @@ import (
 // with `"reuse": true` (testing.md "Details of the behaviour").
 func (run *leafRun) refusal() string {
 	switch {
+	case run.options.commit != "":
+		return "--commit requests a fresh run"
 	case run.options.noReuse:
 		return "--no-reuse"
 	case run.getenv(receipts.NoReuseVariable) != "":

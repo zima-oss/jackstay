@@ -42,6 +42,9 @@ func hasSection(name string) func(map[string]any) bool {
 
 var items = []item{
 	{id: "test", commands: []string{"test", "test list", "test last"}, wanted: always, text: testText},
+	{id: "evidence", commands: []string{"receipts export", "receipts verify"}, wanted: hasSection("receipts"), text: fixed(
+		"- **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`\n" +
+			"  using the expected digest, revision and key from a trusted source.")},
 	{id: "wait", commands: []string{"wait"}, wanted: always, text: fixed(
 		"- **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.")},
 	{id: "bg", commands: []string{"bg", "procs", "procs stop"}, wanted: always, text: fixed(
@@ -66,11 +69,11 @@ var items = []item{
 		"- **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,\n" +
 			"  `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in\n" +
 			"  `jackstay.json` (`github.account`).")},
-	// Review only where the project says it reviews with jackstay (a `review` section, even empty):
-	// a project without Codex would otherwise be told to run what exits 6.
+	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
-		"- **Review a change**: `jst review BASE..REV --task NAME` — a cold review by Codex, in rounds;\n" +
-			"  `jst review check BASE..REV --task NAME` says whether it is clear.")},
+		"- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.\n" +
+			"  Pick `codex` or `claude-code`, or use the project's `review.use`.\n" +
+			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(
@@ -81,8 +84,14 @@ var items = []item{
 	{id: "log", commands: []string{"log", "stats"}, wanted: always, text: fixed(
 		"- **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a\n" +
 			"  surprising failure, before asking.")},
+	{id: "timeline", commands: []string{"timeline"}, wanted: always, text: fixed(
+		"- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.")},
+	{id: "inventory", commands: []string{"inventory"}, wanted: always, text: fixed(
+		"- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.")},
 	{id: "owner", commands: []string{"owner"}, wanted: always, text: fixed(
 		"- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.")},
+	{id: "profiles", commands: []string{"profile export", "profile verify"}, wanted: hasSection("adopt"), text: fixed(
+		"- **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.")},
 	{id: "doctor", commands: []string{"doctor", "check", "adopt"}, wanted: always, text: fixed(
 		"- **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is\n" +
 			"  this project up to date with jackstay).")},

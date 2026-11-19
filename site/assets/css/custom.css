@@ -1,0 +1,76 @@
+/* The home page follows a repository's work from an edit through verification. */
+:root { --primary-hue: 192deg; --primary-saturation: 67%; --primary-lightness: 38%; }
+.dark { --primary-hue: 190deg; --primary-saturation: 74%; --primary-lightness: 64%; }
+#content .content { font-family: "Avenir Next", "Segoe UI", sans-serif; }
+#content .content h1, #content .content h2, #content .content h3 { letter-spacing: -.025em; }
+#content .content h2 { border-color: #90afbe; }
+#content .content :focus-visible { outline: 3px solid #087796; outline-offset: 3px; }
+.jackstay-home {
+  --js-ink: #172b47;
+  --js-blue: #166a86;
+  --js-line: #bdcbd6;
+  --js-paper: #f2f7fa;
+  --js-muted: #50657a;
+  width: 100%;
+  color: var(--js-ink);
+  font-family: "Avenir Next", "Segoe UI", sans-serif;
+}
+
+.jackstay-home * { box-sizing: border-box; }
+.jackstay-home a { text-decoration: none; }
+.jackstay-home a:focus-visible { outline: 3px solid #087796; outline-offset: 4px; }
+.jackstay-home code, .jackstay-terminal { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+.jackstay-home code { font-size: .88em; }
+.jackstay-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.06fr) minmax(19rem, .94fr);
+  align-items: center;
+  gap: clamp(2rem, 5vw, 6rem);
+  padding: clamp(2rem, 5vw, 5rem) 0 clamp(3rem, 7vw, 6rem);
+}
+.jackstay-hero h1 { margin: 0; font-size: clamp(3.3rem, 5.8vw, 6.8rem); line-height: .99; letter-spacing: -.065em; font-weight: 750; }
+.jackstay-intro { max-width: 38rem; margin: 1.6rem 0 1.9rem; color: var(--js-muted); font-size: clamp(1.1rem, 1.4vw, 1.3rem); line-height: 1.55; }
+.jackstay-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; }
+.jackstay-actions a { display: inline-flex; align-items: center; min-height: 3.1rem; padding: .68rem 1.1rem; font-weight: 650; }
+.jackstay-primary { background: var(--js-ink); color: white !important; border-radius: .2rem; }
+.jackstay-primary:hover { background: var(--js-blue); }
+.jackstay-secondary { color: var(--js-ink) !important; border-bottom: 1px solid var(--js-blue); }
+.jackstay-terminal { min-width: 0; overflow: hidden; background: #17314d; color: #eaf5f8; border-radius: .55rem; box-shadow: 1.25rem 1.25rem 0 #dbe8ee; font-size: .9rem; }
+.jackstay-terminal-head { display: flex; justify-content: space-between; gap: 1rem; padding: .9rem 1.2rem; border-bottom: 1px solid #3d5871; color: #b8cfda; font-size: .8rem; }
+.jackstay-terminal-body { padding: 1.5rem 1.2rem 1.7rem; }
+.jackstay-terminal p { margin: 0 0 .4rem; white-space: normal; overflow-wrap: anywhere; }
+.jackstay-terminal p + p:not(.jackstay-output) { margin-top: 1.25rem; }
+.jackstay-terminal .jackstay-output { padding-left: 1.1rem; color: #b8c9d6; }
+.jackstay-prompt, .jackstay-success { color: #74d5dd !important; }
+.jackstay-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 2rem; border-top: 2px solid var(--js-ink); padding: 1.4rem 0 1.6rem; }
+.jackstay-section-heading h2, .jackstay-start h2 { margin: 0; font-size: clamp(1.8rem, 2.7vw, 2.8rem); line-height: 1.14; letter-spacing: -.035em; }
+.jackstay-section-heading p { max-width: 29rem; margin: 0; color: var(--js-muted); line-height: 1.5; }
+.jackstay-route { display: grid; grid-template-columns: minmax(0, 1fr) minmax(12rem, .36fr); gap: 1rem; align-items: end; border-top: 1px solid var(--js-line); padding: 1.45rem 0; }
+.jackstay-route h3 { margin: 0 0 .35rem; font-size: 1.22rem; font-weight: 700; }
+.jackstay-route p { max-width: 48rem; margin: 0; line-height: 1.5; color: var(--js-muted); }
+.jackstay-route-links { display: flex; flex-direction: column; gap: .55rem; padding-bottom: .15rem; }
+.jackstay-route-links a, .jackstay-start a { width: fit-content; color: var(--js-blue) !important; border-bottom: 1px solid currentColor; font-weight: 650; }
+.jackstay-route-links a:hover, .jackstay-start a:hover { color: var(--js-ink) !important; }
+.jackstay-start { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; align-items: center; margin: 2.5rem 0 3rem; padding: clamp(1.5rem, 3vw, 3rem); background: var(--js-paper); border-left: .35rem solid var(--js-blue); }
+.jackstay-start p { max-width: 37rem; color: var(--js-muted); line-height: 1.5; }
+.jackstay-command { min-width: 0; margin: 0; padding: 1.3rem 1.5rem; background: white; border: 1px solid var(--js-line); color: var(--js-ink); line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jackstay-command code { font-size: .98rem; }
+@media (max-width: 800px) {
+  .jackstay-hero { grid-template-columns: 1fr; }
+  .jackstay-terminal { max-width: 38rem; margin-right: 1rem; }
+  .jackstay-section-heading { display: block; }
+  .jackstay-section-heading p { margin-top: .75rem; }
+  .jackstay-route { grid-template-columns: 1fr; }
+  .jackstay-route-links { flex-direction: row; flex-wrap: wrap; gap: .65rem 1.5rem; }
+  .jackstay-start { grid-template-columns: 1fr; }
+}
+@media (max-width: 420px) {
+  .jackstay-hero h1 { font-size: 3rem; }
+  .jackstay-terminal { margin-right: .7rem; font-size: .78rem; }
+  .jackstay-terminal-head { flex-wrap: wrap; }
+}
+.dark .jackstay-home { --js-ink: #e8f2f6; --js-blue: #7ac9db; --js-line: #496071; --js-paper: #1b303f; --js-muted: #b8cdd6; }
+.dark .jackstay-primary { background: #b1dfec; color: #193248 !important; }
+.dark .jackstay-primary:hover { background: white; }
+.dark .jackstay-terminal { background: #10263a; box-shadow: 1.25rem 1.25rem 0 #263f50; }
+.dark .jackstay-command { background: #172938; color: #e7f4f7; }

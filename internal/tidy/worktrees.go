@@ -2,6 +2,7 @@ package tidy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -280,52 +281,99 @@ func processReasons(found seen, err error) []reason {
 	return reasons
 }
 
-// pruneRecords removes the worktree records of exactly paths whose folders are gone (not every
-// prunable record, as `git worktree prune` would: a record outside what was asked about stays).
-func pruneRecords(ctx context.Context, main string, paths []string) (int, []string) {
+// pruneRecords removes only records of the requested paths whose folders are still gone.
+// Every requested path gets its own outcome, including when the admin record cannot be read.
+func pruneRecords(ctx context.Context, main string, paths []string) []action {
 	bounded, cancel := context.WithTimeout(ctx, gitTimeout)
+	defer cancel()
 	common, err := repo{dir: main}.git().CommonDir(bounded)
-	cancel()
 	if err != nil {
-		return 0, []string{"git rev-parse failed: " + gitSaid(err, 160)}
-	}
-	wanted := map[string]bool{}
-	for _, one := range paths {
-		wanted[filepath.Clean(one)] = true
-		wanted[realPath(one)] = true
+		return failedPrunes(paths, "git rev-parse failed: "+gitSaid(err, 160))
 	}
 	folder := filepath.Join(common, "worktrees")
 	names, err := os.ReadDir(folder)
 	if err != nil {
-		return 0, nil
+		return failedPrunes(paths, "could not read worktree records: "+err.Error())
 	}
-	removed := 0
-	var problems []string
+	result := failedPrunes(paths, "no matching worktree record could be verified")
+	type record struct{ admin, place, gitdir string }
+	matches := make([][]record, len(paths))
+	wanted := make(map[string]int, len(paths))
+	for index, place := range paths {
+		wanted[filepath.Clean(place)] = index
+		wanted[realPath(place)] = index
+	}
 	for _, entry := range names {
+		if !entry.IsDir() {
+			continue
+		}
 		admin := filepath.Join(folder, entry.Name())
 		pointed, err := os.ReadFile(filepath.Join(admin, "gitdir"))
 		if err != nil {
 			continue
 		}
 		gitdir := strings.TrimSpace(string(pointed))
+		if filepath.Base(gitdir) != ".git" {
+			continue
+		}
 		if !filepath.IsAbs(gitdir) {
 			gitdir = filepath.Join(admin, gitdir) // worktree.useRelativePaths
 		}
 		place := filepath.Dir(filepath.Clean(gitdir))
-		if !wanted[place] && !wanted[realPath(place)] {
-			continue
+		index, found := wanted[place]
+		if !found {
+			index, found = wanted[realPath(place)]
 		}
-		if _, err := os.Lstat(place); err == nil { // #nosec G703 -- a worktree's folder as git recorded it, only looked at
-			continue
+		if found {
+			matches[index] = append(matches[index], record{admin: admin, place: place, gitdir: string(pointed)})
 		}
-		if _, err := os.Lstat(filepath.Join(admin, "locked")); err == nil {
-			continue
-		}
-		if err := os.RemoveAll(admin); err != nil {
-			problems = append(problems, fmt.Sprintf("%s: %v", place, err))
-			continue
-		}
-		removed++
 	}
-	return removed, problems
+	for index, matched := range matches {
+		switch len(matched) {
+		case 0:
+		case 1:
+			record := matched[0]
+			if err := pruneRecord(bounded, record.admin, record.place, record.gitdir); err != nil {
+				result[index].Detail = err.Error()
+				continue
+			}
+			result[index].ID = didPrune
+			result[index].Detail = "the folder is still gone"
+		default:
+			result[index].Detail = "more than one worktree record points to this folder"
+		}
+	}
+	return result
+}
+
+func failedPrunes(paths []string, why string) []action {
+	result := make([]action, 0, len(paths))
+	for _, place := range paths {
+		result = append(result, action{ID: didFailPrune, Target: place, Detail: why})
+	}
+	return result
+}
+
+func pruneRecord(ctx context.Context, admin, place, expectedGitdir string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(place); err == nil { // #nosec G703 -- inspect the worktree path recorded by Git
+		return errors.New("the worktree folder exists again")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking the worktree folder: %w", err)
+	}
+	if _, err := os.Lstat(filepath.Join(admin, "locked")); err == nil {
+		return errors.New("the worktree is now locked")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("checking the worktree lock: %w", err)
+	}
+	current, err := os.ReadFile(filepath.Join(admin, "gitdir"))
+	if err != nil {
+		return fmt.Errorf("rechecking the worktree record: %w", err)
+	}
+	if string(current) != expectedGitdir {
+		return errors.New("the worktree record changed during pruning")
+	}
+	return os.RemoveAll(admin)
 }

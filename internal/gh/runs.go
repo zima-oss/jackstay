@@ -1,7 +1,10 @@
 package gh
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -64,15 +67,34 @@ func runRunWait(work *session, args []string) (int, error) {
 	return work.runWait(positional[0], *ref, timeoutSpan, intervalSpan, appearSpan)
 }
 
-// matchingRuns are the runs matching ref (a branch, or a SHA prefix of at least seven characters:
-// a shorter one is not an identity), newest first; every run when ref is "".
+var runSHA = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
+// workflowRunFilter lets GitHub find branch and exact-SHA runs outside the newest unfiltered page.
+// Its head_sha filter takes a full SHA, so an abbreviated SHA is still looked up in that page.
+func workflowRunFilter(workflow, ref string) githubapi.RunFilter {
+	filter := githubapi.RunFilter{Workflow: workflow}
+	if !runSHA.MatchString(ref) {
+		filter.Branch = ref
+	} else if len(ref) == 40 {
+		filter.HeadSHA = strings.ToLower(ref)
+	}
+	return filter
+}
+
+// matchingRuns checks the returned identity and preserves GitHub's newest-first order.
 func matchingRuns(runs []githubapi.WorkflowRun, ref string) []githubapi.WorkflowRun {
 	if ref == "" {
 		return runs
 	}
+	filter := workflowRunFilter("", ref)
+	prefix := strings.ToLower(ref)
 	var out []githubapi.WorkflowRun
 	for _, run := range runs {
-		if run.HeadBranch == ref || (len(ref) >= 7 && strings.HasPrefix(run.HeadSHA, ref)) {
+		switch {
+		case filter.Branch != "" && run.HeadBranch == filter.Branch,
+			filter.HeadSHA != "" && strings.EqualFold(run.HeadSHA, filter.HeadSHA),
+			filter.Branch == "" && filter.HeadSHA == "" &&
+				(run.HeadBranch == ref || strings.HasPrefix(strings.ToLower(run.HeadSHA), prefix)):
 			out = append(out, run)
 		}
 	}
@@ -105,37 +127,62 @@ func (work *session) runWait(workflow, ref string, timeout, interval, appear tim
 	appear = min(appear, timeout)
 	started := work.deps.Clock.Now()
 	deadline, appearBy := started.Add(timeout), started.Add(appear)
+	filter := workflowRunFilter(workflow, ref)
+	// A zero budget still allows one immediate lookup, with a bounded request.
+	waitBudget := timeout
+	if waitBudget == 0 {
+		waitBudget = appearStep
+	}
+	appearBudget := appear
+	if appearBudget == 0 {
+		appearBudget = min(appearStep, waitBudget)
+	}
+	waitContext, stopWait := context.WithTimeout(work.ctx, waitBudget)
+	defer stopWait()
+	appearContext, stopAppear := context.WithTimeout(waitContext, appearBudget)
+	defer stopAppear()
+
 	var chosen *githubapi.WorkflowRun
+	var lastList []githubapi.WorkflowRun
+	looked := false
 	for {
-		runs, err := work.github.WorkflowRuns(work.ctx, githubapi.RunFilter{Workflow: workflow})
+		phaseContext, phaseEnd := waitContext, deadline
+		if chosen == nil {
+			phaseContext, phaseEnd = appearContext, appearBy
+		}
+		now := work.deps.Clock.Now()
+		if errors.Is(phaseContext.Err(), context.DeadlineExceeded) || (looked && !now.Before(phaseEnd)) {
+			if chosen == nil {
+				return 0, work.noRun(workflow, ref, appear, lastList)
+			}
+			_, verdict := runVerdict(*chosen)
+			work.say("%s still %s after %s", workflow, verdict, humanSeconds(timeout))
+			return exitPending, nil
+		}
+		looked = true
+		runs, err := work.github.WorkflowRuns(phaseContext, filter)
 		if err != nil {
+			if errors.Is(phaseContext.Err(), context.DeadlineExceeded) {
+				continue
+			}
 			return 0, fmt.Errorf("the runs of %s: %w", workflow, err)
 		}
+		lastList = runs
 		if chosen == nil {
 			matches := matchingRuns(runs, ref)
 			if len(matches) == 0 {
-				if !work.deps.Clock.Now().Before(appearBy) {
-					var seen []string
-					for _, run := range runs[:min(5, len(runs))] {
-						seen = append(seen, run.HeadBranch+"@"+short(run.HeadSHA, 7))
-					}
-					if len(seen) == 0 {
-						seen = []string{"nothing"}
-					}
-					asked := ref
-					if asked == "" {
-						asked = "any ref"
-					}
-					return 0, failf(exitPending, "no run of %s for %s in %s within %s (seen: %s)", workflow, asked, work.repository,
-						humanSeconds(appear), strings.Join(seen, ", "))
+				pause := min(interval, appearStep, appearBy.Sub(work.deps.Clock.Now()))
+				if pause > 0 {
+					err = work.deps.Clock.Sleep(phaseContext, pause)
 				}
-				if err := work.deps.Clock.Sleep(work.ctx, min(interval, appearStep, appearBy.Sub(work.deps.Clock.Now()))); err != nil {
+				if err != nil && !errors.Is(phaseContext.Err(), context.DeadlineExceeded) {
 					return 0, err
 				}
 				continue
 			}
 			first := matches[0]
 			chosen = &first
+			stopAppear()
 			if len(matches) > 1 {
 				var others []string
 				for _, run := range matches[1:min(4, len(matches))] {
@@ -153,8 +200,11 @@ func (work *session) runWait(workflow, ref string, timeout, interval, appear tim
 		}
 		if !found {
 			// Pushed out of the newest listed by later runs: asked for by its id, never the stale row.
-			current, err = work.github.WorkflowRun(work.ctx, chosen.ID)
+			current, err = work.github.WorkflowRun(waitContext, chosen.ID)
 			if err != nil {
+				if errors.Is(waitContext.Err(), context.DeadlineExceeded) {
+					continue
+				}
 				return 0, fmt.Errorf("run %d: %w", chosen.ID, err)
 			}
 			if current.ID != chosen.ID {
@@ -166,15 +216,30 @@ func (work *session) runWait(workflow, ref string, timeout, interval, appear tim
 			work.say("%s %s", workflow, verdict)
 			return code, nil
 		}
-		now := work.deps.Clock.Now()
-		if !now.Before(deadline) {
-			work.say("%s still %s after %s", workflow, verdict, humanSeconds(timeout))
-			return exitPending, nil
+		*chosen = current
+		pause := min(interval, deadline.Sub(work.deps.Clock.Now()))
+		if pause > 0 {
+			err = work.deps.Clock.Sleep(waitContext, pause)
 		}
-		if err := work.deps.Clock.Sleep(work.ctx, min(interval, deadline.Sub(now))); err != nil {
+		if err != nil && !errors.Is(waitContext.Err(), context.DeadlineExceeded) {
 			return 0, err
 		}
 	}
+}
+
+func (work *session) noRun(workflow, ref string, appear time.Duration, runs []githubapi.WorkflowRun) error {
+	var seen []string
+	for _, run := range runs[:min(5, len(runs))] {
+		seen = append(seen, run.HeadBranch+"@"+short(run.HeadSHA, 7))
+	}
+	if len(seen) == 0 {
+		seen = []string{"nothing"}
+	}
+	if ref == "" {
+		ref = "any ref"
+	}
+	return failf(exitPending, "no run of %s for %s in %s within %s (seen: %s)", workflow, ref, work.repository,
+		humanSeconds(appear), strings.Join(seen, ", "))
 }
 
 // --- pr-find -----------------------------------------------------------------------------------

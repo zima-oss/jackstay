@@ -1,7 +1,8 @@
 # Getting started
 
-From nothing to a project whose agents run their tests through jackstay and are stopped before a
-destructive command, in four steps. Each step links the page that says more.
+Install jackstay, add its project files, run a test with evidence and check the guard. The first
+three steps work in a terminal. The fourth checks the optional agent hook in a Claude Code
+session.
 
 ## What an install leaves to you
 
@@ -14,7 +15,7 @@ walks through each:
 | Let Claude Code's sandbox write `~/.jackstay` | `sandbox.filesystem.allowWrite` in `~/.claude/settings.json` | records of runs in sandboxed sessions ([Claude Code](claude-code.md#the-sandbox)) |
 | `jst adopt --apply`, then commit what it wrote | each project | the guard hook and the `AGENTS.md` block |
 | Accept Claude Code's trust dialog | the first session in each project | Claude Code loading the hook |
-| Optional: install Codex and run `codex login` | your terminal | `jst review` ([Codex](codex.md)) |
+| Optional: install Codex or Claude Code and authenticate | your terminal | Review rounds with the selected provider ([Reviews](review.md)) |
 | Optional: `gh auth login`, and `github.account` in `jackstay.json` | your terminal; the project | `jst gh` and GitHub in `jst tidy` ([Branches and GitHub](branches-and-github.md#the-account)) |
 
 `jst doctor` checks what it can of these, and names the fix of each problem it finds.
@@ -121,6 +122,15 @@ To ask the guard about a command yourself, without an agent, use `jst guard chec
 judges the command as the hook would, whether or not any session has loaded the hook. What the
 guard refuses, and how to change a rule's level: [The guard](guard.md). Claude Code's sandbox
 needs `~/.jackstay` writable: [Claude Code](claude-code.md#the-sandbox).
+
+To use Codex as the reviewing agent, select it explicitly. Claude Code can also review. The
+reviewer choice lives in each call or in `review.use`:
+
+```sh
+jst review origin/main..HEAD --reviewer codex --task my-change
+```
+
+See [Reviews](review.md) for the result and the check that ties it to a revision.
 
 ## Next
 

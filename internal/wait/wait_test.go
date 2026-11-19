@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/zima-oss/jackstay/internal/cli"
 )
 
@@ -18,13 +20,14 @@ type fakeWorld struct {
 	pauses  []time.Duration
 	events  map[int]func() // run during the n-th pause, from 1
 	running map[int]bool
+	starts  map[int]int64
 	// onRunning runs each time the wait asks whether a process runs.
 	onRunning func()
 	readied   bool
 }
 
 func newFake(t *testing.T) *fakeWorld {
-	return &fakeWorld{t: t, now: time.Unix(10_000, 0), events: map[int]func(){}, running: map[int]bool{}}
+	return &fakeWorld{t: t, now: time.Unix(10_000, 0), events: map[int]func(){}, running: map[int]bool{}, starts: map[int]int64{}}
 }
 
 func (w *fakeWorld) Now() time.Time { return w.now }
@@ -43,11 +46,11 @@ func (w *fakeWorld) Sleep(pause time.Duration) {
 	}
 }
 
-func (w *fakeWorld) Running(pid int) bool {
-	if w.onRunning != nil {
+func (w *fakeWorld) Process(pid int) processState {
+	if w.readied && w.onRunning != nil {
 		w.onRunning()
 	}
-	return w.running[pid]
+	return processState{running: w.running[pid], start: w.starts[pid]}
 }
 
 func (w *fakeWorld) Ready() { w.readied = true }
@@ -198,12 +201,45 @@ func TestAProcessThatEnds(t *testing.T) {
 	}
 }
 
+func TestAReusedProcessIDDoesNotKeepTheWaitAlive(t *testing.T) {
+	for _, each := range []struct {
+		name string
+		args []string
+		code int
+	}{
+		{"pid", []string{"--pid", "42"}, 0},
+		{"writer", []string{"--file", filepath.Join(t.TempDir(), "never"), "--while-pid", "42"}, 1},
+	} {
+		t.Run(each.name, func(t *testing.T) {
+			world := newFake(t)
+			world.running[42], world.starts[42] = true, 100
+			world.events[1] = func() { world.starts[42] = 200 }
+			code, out := world.wait(append(each.args, "--timeout", "10")...)
+			if code != each.code || !strings.Contains(out, "process 42") || len(world.pauses) != 1 {
+				t.Fatalf("code %d, pauses %v, output %q", code, world.pauses, out)
+			}
+		})
+	}
+}
+
+func TestATemporarilyUnreadableProcessKeepsItsOriginalIdentity(t *testing.T) {
+	world := newFake(t)
+	world.running[42], world.starts[42] = true, 100
+	world.events[1] = func() { world.starts[42] = 0 }
+	world.events[2] = func() { world.starts[42] = 200 }
+	code, out := world.wait("--pid", "42", "--timeout", "10")
+	if code != 0 || !strings.Contains(out, "process 42 has ended") || len(world.pauses) != 2 {
+		t.Fatalf("code %d, pauses %v, output %q", code, world.pauses, out)
+	}
+}
+
 func TestAProcessWhoseLastWordsAreAFailure(t *testing.T) {
 	log := logIn(t)
 	write(t, log, "")
 	world := newFake(t)
 	// Its last words come between the look at the file and the look at the process.
-	world.onRunning = func() { write(t, log, "ERROR at the end") }
+	world.running[42] = true
+	world.onRunning = func() { write(t, log, "ERROR at the end"); world.running[42] = false }
 	code, out := world.wait("--pid", "42", "--in", log, "--fail", "ERROR", "--timeout", "5")
 	if code != 1 || !strings.Contains(out, "jst wait: a line matched --fail: ERROR at the end") {
 		t.Fatalf("%d %q", code, out)
@@ -380,7 +416,7 @@ func TestBadRequestsAre2(t *testing.T) {
 		{"--file", "x", "--timeout", "nan"}, {"--file", "x", "--timeout", "inf"}, {"--file", "x", "--timeout", "soon"},
 		{"--quiet", "-1", "--in", "x"}, {"--quiet", "0", "--in", "x"}, {"--quiet", "NaN", "--in", "x"},
 		{"--pid", "0"}, {"--pid", "-3"}, {"--file", "x", "--while-pid", "0"}, {"--file", "x", "extra"},
-		{"--line", "x", "--in", "y", "--fail", "("},
+		{"--line", "x", "--in", "y", "--fail", "("}, {"--file", "", "--timeout", "0"}, {"--gone", "", "--timeout", "0"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -420,5 +456,71 @@ func TestTheReadyFileIsCreatedAndTheCommandRuns(t *testing.T) {
 	}
 	if _, err := os.Stat(ready); err != nil {
 		t.Fatal("no ready file")
+	}
+}
+
+func TestAWaitDoesNotTreatAFIFOAsALog(t *testing.T) {
+	log := logIn(t)
+	if err := unix.Mkfifo(log, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	args := []string{"--line", "ready", "--in", log, "--timeout", "0", "--tail", "0"}
+	if code := command(args, nil, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "regular file") {
+		t.Fatalf("wait on FIFO = %d: %s %s", code, stdout.String(), stderr.String())
+	}
+	if tail := lastLines(log, 20); len(tail) != 0 {
+		t.Fatalf("FIFO tail = %q, want no lines", tail)
+	}
+}
+
+func TestADisappearingFileDoesNotCountAsQuiet(t *testing.T) {
+	log := logIn(t)
+	write(t, log, "written\n")
+	world := newFake(t)
+	world.events[1] = func() {
+		if err := os.Remove(log); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code, out := world.wait("--quiet", "1", "--in", log, "--timeout", "2"); code != 3 {
+		t.Fatalf("quiet after disappearance = %d: %s", code, out)
+	}
+}
+
+func TestALogSnapshotKeepsFailurePrecedenceAcrossReadWindows(t *testing.T) {
+	log := logIn(t)
+	padding := strings.Repeat("line of output\n", readWindow/5)
+	write(t, log, "READY\n"+padding+"ERROR\n")
+	world := newFake(t)
+	code, out := world.wait("--line", "READY", "--fail", "ERROR", "--in", log, "--timeout", "5", "--tail", "0")
+	if code != 1 || !strings.Contains(out, "--fail after 0 s: ERROR") || len(world.pauses) != 0 {
+		t.Fatalf("wait = %d: %q after pauses %v, want the later failure", code, out, world.pauses)
+	}
+}
+
+func TestAPatternWaitReportsAnOverlongLine(t *testing.T) {
+	log := logIn(t)
+	write(t, log, strings.Repeat("x", maxLogLine+1)+"\nREADY\n")
+	code, out := newFake(t).wait("--line", "READY", "--in", log, "--timeout", "5", "--tail", "0")
+	if code != 1 || !strings.Contains(out, "exceeds") {
+		t.Fatalf("wait = %d: %q, want an overlong-line error", code, out)
+	}
+}
+
+func TestAnExistingLogReplacedByFIFODoesNotHoldItsTail(t *testing.T) {
+	log := logIn(t)
+	write(t, log, "a regular file first\n")
+	world := newFake(t)
+	world.events[1] = func() {
+		if err := os.Remove(log); err != nil {
+			t.Fatal(err)
+		}
+		if err := unix.Mkfifo(log, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code, out := world.wait("--line", "ready", "--in", log, "--timeout", "1"); code != 3 {
+		t.Fatalf("wait = %d: %s, want its normal deadline", code, out)
 	}
 }

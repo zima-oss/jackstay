@@ -1,9 +1,10 @@
-// Package review is `jst review`: cold code reviews by Codex run by the framework, in rounds, with
+// Package review is `jst review`: cold code reviews run by the framework in rounds, with
 // W-048's triage and W-019's redesign rule kept by the tool (docs/design/review.md). New in Go,
 // written as if the one switch had happened (W-051).
 package review
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/claude"
+	"github.com/zima-oss/jackstay/internal/review/runner"
 )
 
 // ReviewerSettings are one reviewer's keys (`review.reviewers.<name>`).
@@ -50,7 +53,7 @@ var DefaultIsolation = []string{
 }
 
 // KnownReviewers are the reviewers jackstay knows how to run.
-var KnownReviewers = []string{"codex"}
+var KnownReviewers = []string{"codex", claude.Name}
 
 var efforts = []string{"minimal", "low", "medium", "high", "xhigh"}
 
@@ -65,15 +68,21 @@ var ownedWords = []string{
 var ownedKeys = []string{"sandbox_mode", "sandbox_permissions", "approval_policy", "model", "model_reasoning_effort"}
 
 func defaultReviewer(name string) ReviewerSettings {
+	if name == claude.Name {
+		return ReviewerSettings{Name: name, Command: "claude", TimeoutMinutes: 20}
+	}
 	return ReviewerSettings{Name: name, Command: "codex", Effort: "medium", TimeoutMinutes: 20,
 		Isolation: append([]string(nil), DefaultIsolation...)}
 }
 
 // Defaults are the settings of a project with no `review` section.
 func Defaults() Settings {
+	reviewers := make(map[string]ReviewerSettings, len(KnownReviewers))
+	for _, name := range KnownReviewers {
+		reviewers[name] = defaultReviewer(name)
+	}
 	return Settings{
-		Reviewers:        map[string]ReviewerSettings{"codex": defaultReviewer("codex")},
-		Use:              []string{"codex"},
+		Reviewers:        reviewers,
 		Severities:       []string{"blocker", "major", "minor"},
 		Blocking:         []string{"blocker"},
 		Triage:           true,
@@ -98,14 +107,13 @@ func SettingsOf(loaded config.Config) (Settings, []string) {
 		return settings, nil
 	}
 	if raw, ok := section["reviewers"].(map[string]any); ok {
-		settings.Reviewers = map[string]ReviewerSettings{}
 		for name, rawEntry := range raw {
 			if !slices.Contains(KnownReviewers, name) {
 				problem("`review.reviewers.%s`: jackstay knows how to run only %s", name, strings.Join(KnownReviewers, ", "))
 				continue
 			}
 			entry, _ := rawEntry.(map[string]any)
-			reviewer := defaultReviewer(name)
+			reviewer := settings.Reviewers[name]
 			if value, ok := entry["command"].(string); ok {
 				reviewer.Command = value
 			}
@@ -190,16 +198,23 @@ func (settings Settings) problems() []string {
 		} else if strings.Contains(reviewer.Command, "/") && !filepath.IsAbs(reviewer.Command) {
 			problem("`review.reviewers.%s.command` is a relative path: a name on PATH or an absolute path", name)
 		}
-		if reviewer.Effort != "" && !slices.Contains(efforts, reviewer.Effort) {
-			problem("`review.reviewers.%s.effort` is %q: one of %s", name, reviewer.Effort, strings.Join(efforts, ", "))
+		allowedEfforts := efforts
+		if name == claude.Name {
+			allowedEfforts = []string{"low", "medium", "high", "xhigh", "max", "ultracode"}
+		}
+		if reviewer.Effort != "" && !slices.Contains(allowedEfforts, reviewer.Effort) {
+			problem("`review.reviewers.%s.effort` is %q: one of %s", name, reviewer.Effort, strings.Join(allowedEfforts, ", "))
 		}
 		if reviewer.TimeoutMinutes < 1 || reviewer.TimeoutMinutes > 120 {
 			problem("`review.reviewers.%s.timeout_minutes` is %d: 1–120", name, reviewer.TimeoutMinutes)
 		}
-		found = append(found, isolationProblems(name, reviewer.Isolation)...)
-	}
-	if len(settings.Use) == 0 {
-		problem("`review.use` names no reviewer: a round with no reviewer would pass with no review")
+		if name == claude.Name {
+			if len(reviewer.Isolation) > 0 {
+				problem("`review.reviewers.%s.isolation` is fixed by jackstay", name)
+			}
+		} else {
+			found = append(found, isolationProblems(name, reviewer.Isolation)...)
+		}
 	}
 	seen := map[string]bool{}
 	for _, name := range settings.Use {
@@ -208,7 +223,7 @@ func (settings Settings) problems() []string {
 		}
 		seen[name] = true
 		if _, ok := settings.Reviewers[name]; !ok {
-			problem("`review.use` names %s, which is not in `review.reviewers`", name)
+			problem("unknown reviewer %q: choose %s", name, strings.Join(KnownReviewers, " or "))
 		}
 	}
 	if len(settings.Severities) == 0 {
@@ -270,6 +285,46 @@ func isolationProblems(name string, words []string) []string {
 		}
 	}
 	return found
+}
+
+// policyID records the configuration that decides what a round reviews and what blocks.
+// Scheduling, storage and per-run reviewer overrides do not change that policy.
+func (settings Settings) policyID() string {
+	policy := struct {
+		Brief, Template                              string
+		Cite, Severities, Blocking, RepeatSeverities []string
+		Triage                                       bool
+		RepeatRounds, RoundLimit                     int
+	}{
+		Brief: settings.Brief, Template: settings.Template, Cite: settings.Cite,
+		Severities: settings.Severities, Blocking: settings.Blocking, RepeatSeverities: settings.RepeatSeverities,
+		Triage: settings.Triage, RepeatRounds: settings.RepeatRounds, RoundLimit: settings.RoundLimit,
+	}
+	data, _ := json.Marshal(policy) // This value has only scalar and string slice fields.
+	return fmt.Sprintf("v1:%x", sha256.Sum256(data))
+}
+
+func completedReviewers(runs []ReviewerRun) map[string]bool {
+	completed := make(map[string]bool, len(runs))
+	for _, run := range runs {
+		if run.Outcome == runner.OutcomeDone {
+			completed[run.Reviewer] = true
+		}
+	}
+	return completed
+}
+
+func sameReviewers(runs []ReviewerRun, names []string) bool {
+	completed := completedReviewers(runs)
+	if len(completed) != len(names) {
+		return false
+	}
+	for _, name := range names {
+		if !completed[name] {
+			return false
+		}
+	}
+	return true
 }
 
 // Blocks is the one predicate of section 4: whether a finding blocks a round while it is open.

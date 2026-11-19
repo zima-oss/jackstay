@@ -42,6 +42,9 @@ func New(dir, id string) (Rules, error) {
 	if err != nil {
 		return Rules{}, fmt.Errorf("cards.id: %w", err)
 	}
+	if whole.MatchString("") {
+		return Rules{}, errors.New("cards.id must match a nonempty ID")
+	}
 	return Rules{Dir: strings.Trim(path.Clean(dir), "/"), ID: whole, start: regexp.MustCompile(`^(?:` + id + `)`),
 		anywhere: regexp.MustCompile(`[^A-Za-z0-9-](` + id + `)(?:[^A-Za-z0-9]|$)`)}, nil
 }
@@ -236,6 +239,10 @@ func (rules Rules) Anywhere(text string) []string {
 			return found
 		}
 		id := rest[match[2]:match[3]]
+		if id == "" {
+			rest = rest[match[3]:]
+			continue
+		}
 		if !slices.Contains(found, id) {
 			found = append(found, id)
 		}

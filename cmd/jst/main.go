@@ -18,6 +18,7 @@ import (
 	_ "github.com/zima-oss/jackstay/internal/guard"
 	_ "github.com/zima-oss/jackstay/internal/ids"
 	_ "github.com/zima-oss/jackstay/internal/install"
+	_ "github.com/zima-oss/jackstay/internal/inventory"
 	_ "github.com/zima-oss/jackstay/internal/landed"
 	_ "github.com/zima-oss/jackstay/internal/lint"
 	_ "github.com/zima-oss/jackstay/internal/lock"
@@ -31,6 +32,7 @@ import (
 	_ "github.com/zima-oss/jackstay/internal/stats"
 	_ "github.com/zima-oss/jackstay/internal/testing"
 	_ "github.com/zima-oss/jackstay/internal/tidy"
+	_ "github.com/zima-oss/jackstay/internal/timeline"
 	_ "github.com/zima-oss/jackstay/internal/trash"
 	_ "github.com/zima-oss/jackstay/internal/wait"
 )

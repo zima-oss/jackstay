@@ -84,6 +84,9 @@ func TreeRules(loaded config.Config, files Files, history History) ([]Finding, e
 }
 
 func hasFileUnder(paths []string, dir string) bool {
+	if dir == "." {
+		return len(paths) > 0
+	}
 	for _, filePath := range paths {
 		if strings.HasPrefix(filePath, dir+"/") {
 			return true

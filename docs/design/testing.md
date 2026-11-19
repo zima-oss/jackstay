@@ -8,6 +8,12 @@ with jackstay helping), from a study of the test scopes and scripts of projects 
 
 Status: built.
 
+The [verdict compatibility baseline](testing-compatibility.md) pins the direct command, scope,
+gate and Swift fixture outcomes before structured runner adapters are added.
+
+The [multi-runner testing proposal](testing-multirunner-proposal.md) describes a staged path to
+structured test evidence across languages.
+
 Nothing here names a project. A project declares its commands, checks and paths in `jackstay.json`;
 jackstay supplies the behaviour. Any project with `swift test`, or with any command and the `exit`
 judge, uses the same keys.
@@ -90,15 +96,17 @@ Keys of a scope (all optional except `run` or `steps`):
   `Target.Class` → `^Target\.Class(/|$)`; a bare `Class` → `(^|\.)Class(/|$)`, so it matches in
   any target, since `swift test --filter` matches `Target.Class/test`; refused when no ARGS are
   given), `{base}` (the scope's `base`, or `--base REF` on the command line),
-  `{slow}` (section 4). A placeholder is `{name}` of lower-case letters and `_`, not preceded by
+  `{slow}` (section 4) and `{report}` (the private JUnit report path). A placeholder is `{name}`
+  of lower-case letters and `_`, not preceded by
   `$`; an unknown such name is an error in `jackstay.json` (a typo). Any other brace is literal:
   `${VAR}` in a `sh -c` word, `{2}` or `{2,3}` in a filter pattern.
 - `steps`: instead of `run`, a list of step names (`steps` section) or scope names; section 5.
-- `judge`: `swift-test` (section 2), `steps` (the command prints a count line declared by
-  `evidence`, as `receipts.commands` does), or `exit` (status only; the outcome is
+- `judge`: `swift-test` (section 2), `steps` (a count line declared by `evidence`),
+  `go-json` and `junit` (section 2.1), or `exit` (status only; the outcome is
   `exited-0` on 0, never `passed`). Default: the section's `judge`, else `exit`.
-- `evidence`, `veto`: as in `receipts.commands`, **added** to the judge (a project's own lines:
-  `INVARIANT-BROKEN`, `select-tests: FAILED`).
+- `evidence`, `veto`: as in `receipts.commands`, **added** to legacy judges. Structured judges
+  accept a veto and count only structured evidence.
+- `report`, `empty_exit`: the JUnit report's file name and optional no-collection exit status.
 - `timeout` (seconds of the command's own run) and `lock_wait` (seconds waiting for the lock,
   counted apart; default: the scope's `timeout`); section 3.
 - `requires`: checks run first, each with its own `timeout` (default 60 s) and the same tree stop
@@ -171,6 +179,27 @@ The patterns are SwiftPM's and XCTest's documented forms, held in one table in j
 appear only when it ran something (with a filter that matches none of its tests, SwiftPM prints
 none of its lines), so `expect` must name the engines a scope's words really run. A Swift
 release that changes a form is a jackstay change, made once for every project.
+
+### 2.1. Structured evidence
+
+`go-json` reads stdout from `go test -json -count=1`. It counts executed leaf test cases,
+reports skips separately, and needs a complete stream with package terminal events. A successful
+package summary alone adds no test cases. Cached replay, incomplete output and invalid event
+sequences cannot establish a new pass.
+
+`junit` reads one regular XML report produced in a private directory allocated for the attempt.
+Declare its file name in `report`. In a scope, use `{report}` in an argument or read
+`JACKSTAY_TEST_REPORT` from the environment. A direct command declares the same settings in
+`receipts.commands` and its wrapper reads the environment variable. Missing, malformed,
+contradictory and oversized reports make a successful process `unjudged`. A valid report
+with zero executed cases yields `nothing-run`. For a producer such as pytest, set
+`empty_exit: 5` to recognise a nonzero no-collection exit only when its report confirms
+zero cases. Other nonzero statuses retain their failure semantics.
+
+The format name, adapter version and semantic report settings are keyed. The allocated report
+path is transport only. Receipts and gate outcomes record the verdict and its counts.
+JUnit producer compatibility has first been exercised with pytest. The
+[compatibility baseline](testing-compatibility.md) records the original exit and reporting contracts.
 
 ## 3. A timeout that ends the whole run
 

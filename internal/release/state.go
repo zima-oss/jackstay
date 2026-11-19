@@ -270,33 +270,21 @@ func short(commit string) string {
 	return commit
 }
 
-// SettingsProblemsAt is what keeps a commit's settings from working: the whole jackstay.json table, and,
-// with a `release` section, ValidateAt, each version file there holding last (the version a
-// release's settings must leave in place: the last release, or release.first when there is none),
-// and each version and build pattern reading back its value raised by one. For the owner's
-// settings pull request (D0), judged before it lands.
-func (repo Repo) SettingsProblemsAt(commit string, last *Version) ([]string, error) {
-	loaded, err := repo.ConfigAt(commit)
-	if err != nil {
-		return []string{"jackstay.json cannot be read: " + err.Error()}, nil
-	}
-	var problems []string
-	sectionProblems := config.SectionProblems(loaded)
-	for _, section := range sectionProblems.Sections() {
-		problems = append(problems, sectionProblems.Of(section)...)
-	}
-	if loaded.Section("release") == nil || len(problems) > 0 {
-		return problems, nil
+// SettingsTreeProblemsAt checks the tree dependencies of previously validated settings. D0
+// uses it to ensure a settings-only change keeps the last version readable and incrementable.
+func (repo Repo) SettingsTreeProblemsAt(commit string, loaded config.Config, last *Version) ([]string, error) {
+	if loaded.Section("release") == nil {
+		return nil, nil
 	}
 	settings, settingsProblems := SettingsOf(loaded)
 	if len(settingsProblems) > 0 {
-		return append(problems, settingsProblems...), nil
+		return settingsProblems, nil
 	}
 	treeProblems, err := repo.ValidateAt(commit, settings)
 	if err != nil {
 		return nil, err
 	}
-	problems = append(problems, treeProblems...)
+	problems := treeProblems
 	expected := settings.First
 	if last != nil {
 		expected = *last

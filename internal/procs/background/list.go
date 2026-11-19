@@ -15,9 +15,11 @@ const procsUsage = "usage: jst procs [--all] [--json] | jst procs stop [--all] I
 
 // States an entry is shown in.
 const (
-	stateRunning  = "running"
-	stateOrphaned = "orphaned"
-	stateGone     = "gone"
+	stateRunning           = "running"
+	stateOrphaned          = "orphaned"
+	stateGone              = "gone"
+	stateUnknown           = "unknown"
+	stateCleanupIncomplete = "cleanup-incomplete"
 )
 
 // orphanedDeadline is the reason a look gives when it enforces a dead supervisor's deadline.
@@ -76,13 +78,19 @@ func listCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 }
 
 // state is `running` or `held` (its supervisor lives), `orphaned` (the supervisor is gone and its
-// group is not) or `gone`.
+// group is not), `gone`, `unknown` or `cleanup-incomplete`.
 func (look *looker) state(table map[int]procs.Process, entry Entry) string {
+	if entry.Status == stateCleanupIncomplete {
+		return stateCleanupIncomplete
+	}
 	if look.host.supervisorAlive(table, entry) {
 		if entry.Status != "" {
 			return entry.Status
 		}
 		return stateRunning
+	}
+	if table == nil {
+		return stateUnknown
 	}
 	if look.host.groupAlive(table, entry.Group) {
 		return stateOrphaned
@@ -188,6 +196,9 @@ func (look *looker) writeList(listed []shown, now float64, thisSession bool, oth
 			if entry.sandboxed {
 				fmt.Fprintf(look.stdout, "    this command cannot signal group %d: run outside the sandbox\n", entry.Group)
 			}
+		}
+		if entry.State == stateCleanupIncomplete {
+			fmt.Fprintln(look.stdout, "    its supervisor could not confirm that all processes it started ended")
 		}
 		if len(entry.Held) > 0 {
 			fmt.Fprintf(look.stdout, "    held open for writing: %s\n", strings.Join(entry.Held[:min(len(entry.Held), 5)], ", "))
@@ -321,19 +332,25 @@ func (look *looker) choose(listed []Entry, wanted string, every bool, mine strin
 // and the group is signalled from here only once the supervisor is proven gone.
 func (look *looker) stopOne(entry Entry) bool {
 	table := look.host.table()
+	if entry.Status == stateCleanupIncomplete {
+		return look.incompleteStop(entry)
+	}
 	if look.host.supervisorAlive(table, entry) {
-		answered, gone := look.askSupervisor(entry)
-		if answered {
+		switch look.askSupervisor(entry) {
+		case stopConfirmed:
 			fmt.Fprintf(look.stdout, "jst procs: %s%s stopped\n", entry.ID, inBrackets(entry.nameOf()))
 			return true
-		}
-		if !gone {
+		case stopIncomplete:
+			return look.incompleteStop(entry)
+		case stopPending:
 			fmt.Fprintf(look.stderr, "jst procs: %s: its supervisor (process %d) was asked to stop it and has not finished "+
-				"within %s; it still runs, and the request stays: it stops the group when it can\n", entry.ID,
-				entry.Supervisor, supervise.Seconds(answerBound))
+				"within %s; the request stays\n", entry.ID, entry.Supervisor, supervise.Seconds(answerBound))
+			return false
+		case stopSupervisorGone:
+			table = look.host.table()
+		default:
 			return false
 		}
-		table = look.host.table()
 	}
 	if !look.host.supervisorGone(table, entry) {
 		fmt.Fprintf(look.stderr, "jst procs: %s: whether its supervisor (process %d) still runs cannot be told here; "+
@@ -357,27 +374,45 @@ func (look *looker) stopOne(entry Entry) bool {
 	return false
 }
 
-// askSupervisor writes the stop file and waits for the supervisor's answer: its entry removed (it
-// removes the request with it, once the command has ended). answered is true then; gone is true
-// when the supervisor was proven gone meanwhile (its request is taken back: nobody will answer
-// it). A supervisor that lives and has not answered within the bound keeps the request.
-func (look *looker) askSupervisor(entry Entry) (answered, gone bool) {
+func (look *looker) incompleteStop(entry Entry) bool {
+	fmt.Fprintf(look.stderr, "jst procs: %s: cleanup incomplete; whether all processes stopped cannot be confirmed; it stays listed\n", entry.ID)
+	return false
+}
+
+type stopAnswer int
+
+const (
+	stopRequestFailed stopAnswer = iota
+	stopConfirmed
+	stopIncomplete
+	stopPending
+	stopSupervisorGone
+)
+
+// askSupervisor writes the stop file and waits for a confirmed removal, an incomplete cleanup
+// record, or the supervisor's disappearance. A timed-out request remains for the supervisor.
+func (look *looker) askSupervisor(entry Entry) stopAnswer {
 	if err := look.place.askStop(entry.ID); err != nil {
 		fmt.Fprintf(look.stderr, "jst procs: cannot ask %s to stop (%v)\n", entry.ID, err)
-		return false, false
+		return stopRequestFailed
 	}
 	until := look.host.clock.Now().Add(answerBound)
 	for look.place.listed(entry.ID) {
+		if latest, ok := look.place.read(entry.ID); ok && latest.Status == stateCleanupIncomplete {
+			_ = look.place.removeStop(entry.ID)
+			return stopIncomplete
+		}
 		if look.host.supervisorGone(look.host.table(), entry) {
 			_ = look.place.removeStop(entry.ID)
-			return false, true
+			return stopSupervisorGone
 		}
 		if !look.host.clock.Now().Before(until) {
-			return false, false
+			return stopPending
 		}
 		look.host.clock.Sleep(answerPoll)
 	}
-	return true, false
+	_ = look.place.removeStop(entry.ID)
+	return stopConfirmed
 }
 
 // signalOrphan stops a group whose supervisor is gone and whose leader is proven, unless this

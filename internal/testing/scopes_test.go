@@ -237,6 +237,19 @@ func TestNothingCountedIsNothingRun(t *testing.T) {
 	w.expectLast("outcome=nothing-run (exit 76")
 }
 
+func TestNegativeEvidenceCannotCreateAScopePass(t *testing.T) {
+	w := newWorld(t, map[string]any{"scopes": map[string]any{
+		"full": map[string]any{"run": argv("sh", "-c", "echo 'ran 4 tests'; echo 'ran -1 tests'"),
+			"judge": "steps", "evidence": `ran (-?[0-9]+) tests`},
+	}}, nil)
+	w.expectStatus(w.jst("full"), receipts.StatusUnjudged)
+	w.expectLast("outcome=unjudged", "counted=4")
+	if run := w.lastRecord("run"); run.Text("outcome") != receipts.OutcomeUnjudged ||
+		!strings.Contains(run.Text("why"), "not a number") || run["stored"] == true {
+		t.Fatalf("negative evidence produced a pass or receipt: %v", run)
+	}
+}
+
 func TestAVetoFails(t *testing.T) {
 	w := newWorld(t, scopesSection(), nil)
 	w.expectStatus(w.jst("x-veto"), 1)

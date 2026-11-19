@@ -6,9 +6,9 @@ weight: 100000
 jackstay_source: site/content/guide/integrations/_index.md
 ---
 
-jackstay works on its own; these pages say how it fits the agents that use it. Both are optional.
+Choose the integration that matches the agent in your repository. Either agent can review a
+change when you select it with `jst review --reviewer`.
 
-- [Claude Code](../../../../docs/guide/claude-code.md): the guard as a `PreToolUse` hook, the
-  sandbox, warnings that reach the agent, the block `jst adopt` writes into `AGENTS.md`.
-- [Codex](../../../../docs/guide/codex.md): the reviewer `jst review` runs, and the guard as a
-  Codex hook.
+- [Claude Code](../../../../docs/guide/claude-code.md) covers the project guard hook,
+  sandbox settings and optional reviewer.
+- [Codex](../../../../docs/guide/codex.md) covers its reviewer and guard hook.

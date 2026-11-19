@@ -173,7 +173,7 @@ func WriteNotable(out io.Writer, prefix string, lines []string, more int) {
 type tee struct {
 	stdout, stderr io.Writer
 	kept           *Kept
-	judge          Judge
+	judge          supervise.Sink
 }
 
 func (sink *tee) Line(stream supervise.Stream, text string) error {

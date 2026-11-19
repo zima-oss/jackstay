@@ -13,9 +13,6 @@ import (
 	"github.com/zima-oss/jackstay/internal/supervise"
 )
 
-// emptyTree is git's tree with nothing in it: the base of a root commit.
-const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
-
 // Repository is what a round asks of git (section 3.1); tests give a fake.
 type Repository interface {
 	Resolve(ctx context.Context, name string) (string, error)
@@ -25,6 +22,7 @@ type Repository interface {
 	Dirty(ctx context.Context) (bool, error)
 	Subject(ctx context.Context, commit string) (string, error)
 	DiffStat(ctx context.Context, from, to string) (string, error)
+	Diff(ctx context.Context, from, to string) ([]byte, error)
 	Show(ctx context.Context, commit, path string) ([]byte, error)
 	Exists(ctx context.Context, commit, path string) bool
 	AddTree(ctx context.Context, path, commit, reason string) error
@@ -55,6 +53,8 @@ func (repo gitRepository) run(ctx context.Context, args ...string) ([]byte, erro
 		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 	case captured.Status != 0:
 		return nil, &gitcli.ExitError{Args: args, Code: captured.Status, Stderr: string(captured.Stderr)}
+	case captured.Incomplete != "":
+		return nil, fmt.Errorf("git %s: %s", args[0], captured.Incomplete)
 	}
 	return captured.Stdout, nil
 }
@@ -80,15 +80,34 @@ func (repo gitRepository) Resolve(ctx context.Context, name string) (string, err
 }
 
 func (repo gitRepository) FirstParent(ctx context.Context, commit string) (string, error) {
-	parent, err := repo.line(ctx, "rev-parse", "--verify", "--quiet", commit+"^1")
-	if err != nil || parent == "" {
-		var exitErr *gitcli.ExitError
-		if errors.As(err, &exitErr) || parent == "" {
-			return emptyTree, nil
+	parent, err := repo.line(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", commit+"^1")
+	if err == nil {
+		if parent == "" {
+			return "", fmt.Errorf("git gave no first parent for %s", commit)
 		}
+		return parent, nil
+	}
+	var missing *gitcli.ExitError
+	if !errors.As(err, &missing) || missing.Code != 1 {
 		return "", err
 	}
-	return parent, nil
+
+	// A shallow checkout also cannot resolve ^1. Only a commit with no parent header
+	// is an actual root and can use the empty tree as its base.
+	data, readErr := repo.run(ctx, "cat-file", "commit", "--", commit)
+	if readErr != nil {
+		return "", readErr
+	}
+	header, _, ok := strings.Cut(string(data), "\n\n")
+	if !ok {
+		return "", fmt.Errorf("git gave no complete commit header for %s", commit)
+	}
+	for line := range strings.SplitSeq(header, "\n") {
+		if unavailable, found := strings.CutPrefix(line, "parent "); found {
+			return "", fmt.Errorf("the first parent of %s (%s) is unavailable in this checkout", commit, unavailable)
+		}
+	}
+	return repo.line(ctx, "hash-object", "-t", "tree", os.DevNull)
 }
 
 func (repo gitRepository) Branch(ctx context.Context) (string, error) {
@@ -117,6 +136,10 @@ func (repo gitRepository) Subject(ctx context.Context, commit string) (string, e
 func (repo gitRepository) DiffStat(ctx context.Context, from, to string) (string, error) {
 	out, err := repo.run(ctx, "diff", "--stat=120", from, to)
 	return strings.TrimRight(string(out), "\n"), err
+}
+
+func (repo gitRepository) Diff(ctx context.Context, from, to string) ([]byte, error) {
+	return repo.run(ctx, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--full-index", from, to, "--")
 }
 
 func (repo gitRepository) Show(ctx context.Context, commit, path string) ([]byte, error) {
@@ -203,5 +226,5 @@ func RemoveStaleTrees(ctx context.Context, repo Repository, store Store, alive f
 
 // treePath is a new pinned tree's folder.
 func treePath(store Store, task string, round int, reviewer string) string {
-	return filepath.Join(store.TreesPath(), fmt.Sprintf("%s-r%d-%s-%s", TaskFolder(task), round, reviewer, pinned.RandomName()))
+	return filepath.Join(store.TreesPath(), fmt.Sprintf("%s-r%d-%s-%s", taskKey(task), round, reviewer, pinned.RandomName()))
 }

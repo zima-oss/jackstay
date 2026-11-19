@@ -4,11 +4,15 @@ package changes
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zima-oss/jackstay/internal/delivery"
 )
 
 func TestBlobIDMatchesGit(t *testing.T) {
@@ -143,11 +147,142 @@ func TestCollectStageOne(t *testing.T) {
 
 func TestCollectFinishesAStoppedRun(t *testing.T) {
 	project := repo(t, stageOneJSON, map[string]string{"changes/a.md": "- a\n",
-		"CHANGELOG.md": "# Changelog\n\n## 1.0.0 — 2026-03-04\n\n- a\n"})
+		"CHANGELOG.md": "# Changelog\n"})
+	indexLock := filepath.Join(project.Root, ".git", "index.lock")
+	if err := os.WriteFile(indexLock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	var out, errOut bytes.Buffer
-	code, err := Collect(project, "1.0.0", "2026-03-09", false, &out, &errOut)
-	if err != nil || code != 0 || !strings.Contains(out.String(), "already") {
-		t.Fatalf("code %d %v %s %s", code, err, out.String(), errOut.String())
+	code, err := Collect(project, "1.0.0", "2026-03-04", false, &out, &errOut)
+	if err == nil || code != 2 || !strings.Contains(err.Error(), "index.lock") {
+		t.Fatalf("expected to stop at git rm: code %d, error %v, output %s", code, err, &out)
+	}
+	planPath := filepath.Join(project.Root, ".git", "jackstay-changes.json")
+	first, _, err := delivery.Read[collectPlan](planPath)
+	if err != nil || first.Attempt != 1 || first.Phase != "remove-entries" || first.Outcome != delivery.Interrupted {
+		t.Fatalf("expected interrupted removal record, got %+v (%v)", first, err)
+	}
+	before, err := os.ReadFile(filepath.Join(project.Root, "CHANGELOG.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(indexLock); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteInRepo(project.Root, "changes/new.md", []byte("- a\n")); err != nil {
+		t.Fatal(err)
+	}
+	code, err = Collect(project, "1.0.0", "2026-03-09", false, &out, &errOut)
+	if err != nil || code != 0 {
+		t.Fatalf("code %d %v %s %s", code, err, &out, &errOut)
+	}
+	if _, err := os.Stat(filepath.Join(project.Root, "changes/a.md")); !os.IsNotExist(err) {
+		t.Fatalf("collected entry was kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(project.Root, "changes/new.md")); err != nil {
+		t.Fatalf("unrelated entry was removed: %v", err)
+	}
+	second, _, err := delivery.Read[collectPlan](planPath)
+	if err != nil || second.ID != first.ID || second.Attempt != 2 || second.Outcome != delivery.Complete {
+		t.Fatalf("collection did not complete its original delivery: %+v (%v)", second, err)
+	}
+	after, err := os.ReadFile(filepath.Join(project.Root, "CHANGELOG.md"))
+	if err != nil || !bytes.Equal(before, after) || bytes.Count(after, []byte("## 1.0.0")) != 1 {
+		t.Fatalf("collection rewrote the existing entry: %s (%v)", after, err)
+	}
+}
+
+func TestCollectMigratesAnUnfinishedLegacyPlan(t *testing.T) {
+	project := repo(t, stageOneJSON, map[string]string{"changes/a.md": "- a\n", "CHANGELOG.md": "# Changelog\n"})
+	head, err := project.Git.Line(context.Background(), "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changelog := []byte("# Changelog\n\n## 1.0.0 — 2026-03-04\n\n- a\n")
+	if err := WriteInRepo(project.Root, "CHANGELOG.md", changelog); err != nil {
+		t.Fatal(err)
+	}
+	files, err := project.Worktree().List("changes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := collectPlan{Head: head, Version: "1.0.0", Destination: "CHANGELOG.md",
+		Changelog: BlobID(project.Format, changelog), Files: files}
+	record, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	place := filepath.Join(project.Root, ".git", "jackstay-changes.json")
+	if err := os.WriteFile(place, record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code, err := Collect(project, "1.0.0", "2026-03-14", false, &out, &errOut)
+	if err != nil || code != 0 {
+		t.Fatalf("legacy resume exit %d: %v (%s)", code, err, &errOut)
+	}
+	done, _, err := delivery.Read[collectPlan](place)
+	if err != nil || done.Attempt != 1 || done.Outcome != delivery.Complete || !done.Plan.same(legacy) {
+		t.Fatalf("legacy plan was not migrated: %+v (%v)", done, err)
+	}
+	if _, err := os.Stat(filepath.Join(project.Root, "changes/a.md")); !os.IsNotExist(err) {
+		t.Fatalf("legacy plan did not remove its entry: %v", err)
+	}
+}
+
+func TestCollectKeepsNewEntriesThatMatchAnExistingVersion(t *testing.T) {
+	for _, name := range []string{"changes/new.md", "changes/ignored.md"} {
+		t.Run(name, func(t *testing.T) {
+			project := repo(t, stageOneJSON, map[string]string{
+				"changes/.gitignore": "ignored.md\n",
+				"CHANGELOG.md":       "# Changelog\n\n## 1.0.0 — 2026-03-04\n\n- a\n",
+			})
+			if err := WriteInRepo(project.Root, name, []byte("- a\n")); err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			code, err := Collect(project, "1.0.0", "2026-03-04", false, &out, &errOut)
+			kept, readErr := os.ReadFile(filepath.Join(project.Root, name))
+			if code != 1 || err != nil || readErr != nil || string(kept) != "- a\n" {
+				t.Fatalf("entry was not kept: code %d, collect %v, file %q (%v), output %s", code, err, kept, readErr, &out)
+			}
+		})
+	}
+}
+
+func TestCollectRefusesIgnoredEntriesBeforeWritingTheChangelog(t *testing.T) {
+	const original = "# Changelog\n"
+	project := repo(t, stageOneJSON, map[string]string{
+		"changes/.gitignore": "ignored.md\n",
+		"changes/a.md":       "- a\n",
+		"CHANGELOG.md":       original,
+	})
+	if err := WriteInRepo(project.Root, "changes/ignored.md", []byte("- ignored\n")); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code, err := Collect(project, "1.0.0", "2026-03-04", false, &out, &errOut)
+	changelog, readErr := os.ReadFile(filepath.Join(project.Root, "CHANGELOG.md"))
+	if code != 1 || err != nil || readErr != nil || string(changelog) != original {
+		t.Fatalf("changelog changed: code %d, collect %v, file %q (%v), output %s", code, err, changelog, readErr, &out)
+	}
+	if _, err := os.Stat(filepath.Join(project.Root, "changes/ignored.md")); err != nil {
+		t.Fatalf("ignored entry was removed: %v", err)
+	}
+}
+
+func TestCollectDryRunCreatesNoLockOrPlan(t *testing.T) {
+	project := repo(t, stageOneJSON, map[string]string{"changes/a.md": "- a\n", "CHANGELOG.md": "# Changelog\n"})
+	t.Chdir(project.Root)
+	var out, errOut bytes.Buffer
+	code := runCollect([]string{"--version", "1.0.0", "--date", "2026-03-04", "--dry-run"}, nil, &out, &errOut)
+	if code != 0 || !strings.Contains(out.String(), "- a") {
+		t.Fatalf("code %d, output %s, stderr %s", code, &out, &errOut)
+	}
+	for _, name := range []string{"jackstay-changes.lock", "jackstay-changes.json"} {
+		if _, err := os.Stat(filepath.Join(project.Root, ".git", name)); !os.IsNotExist(err) {
+			t.Fatalf("preview created %s: %v", name, err)
+		}
 	}
 }
 

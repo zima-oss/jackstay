@@ -110,9 +110,10 @@ go build -o .build/jst ./cmd/jst
 .build/jst install
 ```
 
-Run inside the checkout, `jst install` builds the checkout again (with its commit) and installs it.
-The checkout must have no uncommitted change to `cmd`, `internal`, `go.mod` or `go.sum`. To install
-from a checkout elsewhere, use `jst install --checkout DIR`.
+Run inside the checkout, `jst install` builds a private snapshot of the selected commit. Changes
+made in your checkout while it builds do not enter the installed binary. The default prefix needs
+clean build inputs in `cmd`, `internal`, `go.mod` and `go.sum`. To build from a checkout elsewhere,
+use `jst install --checkout DIR`.
 
 ### With go install
 
@@ -132,6 +133,10 @@ Install at a version tag (`@v0.5.11`), not a branch or a commit: `jst version` t
 Run the quick install again, or install a newer release by any of the ways above. The new version
 goes live in one step, so a running hook never sees half an install. A version only moves forward:
 installing a lower version than the live one is refused, and there is no rollback command.
+
+Reinstall the same version and commit from a trusted binary to repair an installation whose
+launchers fail their probes. `jst install` verifies the replacement before it switches the live
+executable.
 
 ## Remove
 

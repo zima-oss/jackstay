@@ -32,6 +32,17 @@ type Settings struct {
 	Build   *VersionFile
 }
 
+// BaseOf is the effective base branch used by release commands and generated workflows.
+func BaseOf(loaded config.Config) string {
+	if branch, _ := loaded.Section("release")["base"].(string); branch != "" {
+		return branch
+	}
+	if branch, _ := loaded.Section("cards")["branch"].(string); branch != "" {
+		return branch
+	}
+	return "main"
+}
+
 // SettingsOf reads the `release` and `changes` sections of a jackstay.json. Problems are the rules of
 // docs/design/release.md section 1 that need no repository; the ones that do are Validate's.
 func SettingsOf(loaded config.Config) (Settings, []string) {
@@ -50,17 +61,11 @@ func SettingsOf(loaded config.Config) (Settings, []string) {
 		}
 		return fallback
 	}
-	base := "main"
-	if cardsSection := loaded.Section("cards"); cardsSection != nil {
-		if branch, ok := cardsSection["branch"].(string); ok && branch != "" {
-			base = branch
-		}
-	}
 	settings := Settings{
 		Changes: changeSettings,
 		Merge:   text("merge", "owner"),
 		Branch:  text("branch", "jackstay/release"),
-		Base:    text("base", base),
+		Base:    BaseOf(loaded),
 		Tag:     text("tag", "v{version}"),
 	}
 	if settings.Merge != "owner" && settings.Merge != "agents" {

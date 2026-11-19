@@ -336,6 +336,34 @@ func TestEvidenceAndVeto(t *testing.T) {
 	}
 }
 
+func TestEvaluateUsesOneVerdictForDecodedEvidence(t *testing.T) {
+	cases := []struct {
+		name    string
+		facts   Facts
+		end     End
+		policy  Policy
+		outcome Outcome
+		why     string
+	}{
+		{"counted pass", Facts{Kind: Steps, Counts: Counts{Counting: true, Counted: 3}}, End{}, ScopePolicy, Passed, ""},
+		{"no matching case", Facts{Kind: Steps, Counts: Counts{Counting: true}}, End{}, DirectPolicy, NothingRun, ""},
+		{"no evidence", Facts{Kind: Exit}, End{}, DirectPolicy, ExitedZero, ""},
+		{"veto", Facts{Kind: Steps, Counts: Counts{Counting: true, Counted: 3}, Vetoed: true, VetoLine: "FAIL"}, End{}, DirectPolicy, Failed, "a veto line: FAIL"},
+		{"unreadable output", Facts{Kind: Steps, Counts: Counts{Counting: true, Counted: 3}}, End{ReadProblem: "stream incomplete"}, DirectPolicy, Unjudged, "stream incomplete"},
+		{"cleanup failure", Facts{Kind: Steps, Counts: Counts{Counting: true, Counted: 3}}, End{LeftRunning: "child[7]"}, ScopePolicy, Unjudged, "child[7]"},
+		{"scope failure before stop", Facts{Kind: Steps, Failure: "assertion failed"}, End{Signal: "SIGTERM"}, ScopePolicy, Failed, "assertion failed"},
+		{"direct stop before failure", Facts{Kind: Steps, Failure: "assertion failed"}, End{Signal: "SIGTERM"}, DirectPolicy, Stopped, ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			verdict := Evaluate(testCase.facts, testCase.end, testCase.policy)
+			if verdict.Outcome != testCase.outcome || !strings.Contains(verdict.Why, testCase.why) {
+				t.Fatalf("got %s (%s), want %s (%s)", verdict.Outcome, verdict.Why, testCase.outcome, testCase.why)
+			}
+		})
+	}
+}
+
 func TestOrderOfVerdicts(t *testing.T) {
 	unjudgedText := "Test Suite 'A.xctest' started at 1."
 	passing := "◇ Test run started.\n✔ Test a() passed after 0.001 seconds.\n✔ Test run with 1 test passed after 0.001 seconds."

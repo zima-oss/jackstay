@@ -3,6 +3,7 @@
 package lint
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -101,6 +102,25 @@ func TestTreeRules(t *testing.T) {
 	want := "duplicate-number,new-card-commits,record-out-of-place,frozen-ledger-row"
 	if got := ruleIDs(found); got != want {
 		t.Fatalf("got %s want %s\n%+v", got, want, found)
+	}
+}
+
+func TestCardsCanBeInTheRepositoryRoot(t *testing.T) {
+	const settings = `{"jackstay_schema":2,"cards":{"dir":".","id":"P-[0-9]+","unit":"pr","since":"2026-01-01"}}`
+	repo := newRepo(t, settings, map[string]string{"P-1-example.md": "# Example"})
+	loaded, err := config.Parse([]byte(settings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	git := gitcli.Git{Dir: repo.dir}
+	tree := worktreeFiles{root: repo.dir, git: git}
+	found, err := TreeRules(loaded, tree, gitHistory{revisions: []string{"HEAD"}, git: git})
+	if err != nil || len(found) != 0 {
+		t.Fatalf("root cards in tree: %v %v", found, err)
+	}
+	found, err = CardLines(loaded.Section("cards"), tree, "Card: P-1")
+	if err != nil || len(found) != 0 {
+		t.Fatalf("root cards in PR: %v %v", found, err)
 	}
 }
 
@@ -283,6 +303,31 @@ func TestMergeKeepsTheReleasedValuesAfterABaseMigration(t *testing.T) {
 	}
 	if !strings.Contains(ruleIDs(found), "D3-merge-version") {
 		t.Fatalf("got %s", ruleIDs(found))
+	}
+}
+
+func TestLintTreeValidatesTheSelectedRevisionSettings(t *testing.T) {
+	repo := newRepo(t, `{"jackstay_schema":999}`, map[string]string{"README.md": "a"})
+	historical := repo.git("rev-parse", "HEAD")
+	repo.commit("usable settings", map[string]string{"jackstay.json": `{"jackstay_schema":2}`})
+	t.Chdir(repo.dir)
+	var stdout, stderr bytes.Buffer
+	code := runTree([]string{"--rev", historical}, nil, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "jackstay_schema") {
+		t.Fatalf("code %d, stdout %s, stderr %s", code, &stdout, &stderr)
+	}
+}
+
+func TestD0RejectsSemanticallyInvalidTestSettings(t *testing.T) {
+	repo := newRepo(t, `{"jackstay_schema":2}`, map[string]string{"README.md": "a"})
+	base := repo.git("rev-parse", "HEAD")
+	head := repo.commit("invalid settings", map[string]string{"jackstay.json": `{"jackstay_schema":2,
+		"receipts":{"toolchain":[]}, "test":{"scopes":{"quick":{"run":["true"],"steps":["format"]}},"steps":{"format":{"run":["true"]}}}}`})
+	baseConfig, _ := config.Parse([]byte(`{"jackstay_schema":2}`))
+	changes, _, err := ReleaseRules(release.NewRepo(repo.dir), baseConfig,
+		Change{Base: base, Head: head, MergeBase: base})
+	if err != nil || ruleIDs(changes) != RuleSettingsAlone || !strings.Contains(changes[0].Text, "test.scopes.quick") {
+		t.Fatalf("invalid test settings accepted: %v, %v", changes, err)
 	}
 }
 

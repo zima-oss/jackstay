@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/testreport"
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
@@ -257,6 +258,7 @@ var testRun = object(
 	"timeout", number(), "lock_wait", number(), "lock", boolean(), "env", mapOf(text()), "when", str(),
 	"base", str(), "slow", object("class_seconds", number(), "case_seconds", number()), "durations", boolean(),
 	"expect", texts(), "resume", boolean(),
+	"report", str(), "empty_exit", integer(),
 	"requires", list(object("run", texts(), "why", str(), "timeout", number())),
 )
 
@@ -276,7 +278,7 @@ var Table = object(
 		"inputs", texts(), "extra_files", texts(), "exclude", texts(), "env", texts(), "refs", texts(), "merge_bases", texts(),
 		"toolchain", list(texts()), "include_head", boolean(), "no_reuse_branches", texts(), "max_age_hours", number(),
 		"commands", list(object("argv", texts(), "argv_prefix", texts(), "reuse", boolean(), "evidence", regex(), "veto", regex(),
-			"refs", texts(), "merge_bases", texts())),
+			"refs", texts(), "merge_bases", texts(), "judge", str(), "report", str(), "empty_exit", integer())),
 	),
 	"baseline", object("kinds", list(object("name", str(), "pattern", regex(), "gate", boolean())),
 		"merge_unit", str(), "branch", str(), "transcripts", texts()),
@@ -533,6 +535,12 @@ func sectionCheck(section string, config Config) []string {
 		for index, rawEntry := range items(receipts["commands"]) {
 			entry := objectOf(rawEntry)
 			here := fmt.Sprintf("receipts.commands[%d]", index)
+			kind := stringAt(entry, "judge")
+			structured := kind == "go-json" || kind == "junit"
+			if kind != "" && !structured {
+				found = append(found, fmt.Sprintf("`%s.judge` must be go-json or junit", here))
+			}
+			found = append(found, TestAdapterProblems(here, kind, entry)...)
 			if has(entry, "argv") == has(entry, "argv_prefix") {
 				found = append(found, fmt.Sprintf("`%s` must have exactly one of `argv` and `argv_prefix`", here))
 			}
@@ -544,7 +552,7 @@ func sectionCheck(section string, config Config) []string {
 				if !has(entry, "argv") {
 					found = append(found, fmt.Sprintf("`%s` has `\"reuse\": true` and so must name the command by `argv`, all its words", here))
 				}
-				if !has(entry, "evidence") {
+				if !has(entry, "evidence") && !structured {
 					found = append(found, fmt.Sprintf("`%s` has `\"reuse\": true` and no `evidence` pattern: nothing would show that tests ran", here))
 				}
 			}
@@ -615,6 +623,28 @@ func sectionCheck(section string, config Config) []string {
 	return found
 }
 
+// TestAdapterProblems checks the settings shared by scope and direct structured judges.
+func TestAdapterProblems(where string, kind string, entry map[string]any) []string {
+	var problems []string
+	if kind == "junit" {
+		if !testreport.ValidReportName(stringAt(entry, "report")) {
+			problems = append(problems, fmt.Sprintf("`%s.report` must be a single portable file name for the junit judge", where))
+		}
+		if value, present := entry["empty_exit"]; present {
+			number, ok := numberOf(value)
+			if !ok || number < 1 || number > 125 {
+				problems = append(problems, fmt.Sprintf("`%s.empty_exit` must be an exit status from 1 to 125", where))
+			}
+		}
+	} else if has(entry, "report") || has(entry, "empty_exit") {
+		problems = append(problems, fmt.Sprintf("`%s.report` and `%s.empty_exit` require the junit judge", where, where))
+	}
+	if (kind == "go-json" || kind == "junit") && has(entry, "evidence") {
+		problems = append(problems, fmt.Sprintf("`%s.evidence` cannot be combined with a structured judge", where))
+	}
+	return problems
+}
+
 // telemetryProblems are the bounds of the `telemetry` section (docs/design/observability.md, section 10).
 func telemetryProblems(section map[string]any) []string {
 	var found []string
@@ -683,8 +713,11 @@ func stage1Problems(config Config) []sectionProblem {
 				add("cards", "`cards.id` is used inside larger patterns: write it without inline flags such as (?i)")
 				return found
 			}
-			if first := stringAt(cards, "first_new"); first != "" {
-				if compiled, err := regexp.Compile(`^(?:` + id + `)$`); err == nil && !compiled.MatchString(first) {
+			if compiled, err := regexp.Compile(`^(?:` + id + `)$`); err == nil {
+				if compiled.MatchString("") {
+					add("cards", "`cards.id` must match a nonempty ID")
+				}
+				if first := stringAt(cards, "first_new"); first != "" && !compiled.MatchString(first) {
 					add("cards", "`cards.first_new` (%q) does not match `cards.id`", first)
 				}
 			}

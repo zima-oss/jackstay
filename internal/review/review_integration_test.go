@@ -3,7 +3,9 @@
 package review
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/gitcli"
+	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/testrepo"
 )
@@ -43,9 +47,9 @@ func TestPinnedTreeWithRealGit(t *testing.T) {
 		t.Fatal("an option taken for a revision")
 	}
 	root := strings.TrimSpace(repo.Git("rev-list", "--max-parents=0", "HEAD"))
-	parent, _ := git.FirstParent(ctx, root)
-	if parent != emptyTree {
-		t.Fatalf("a root commit's base is the empty tree, not %s", parent)
+	parent, err := git.FirstParent(ctx, root)
+	if want := repo.Git("hash-object", "-t", "tree", os.DevNull); err != nil || parent != want {
+		t.Fatalf("a root commit's base is %q, %v; want %q", parent, err, want)
 	}
 	if !git.Exists(ctx, first, "AGENTS.md") || git.Exists(ctx, first, "missing.md") {
 		t.Fatal("exists")
@@ -160,5 +164,95 @@ func TestPinnedTreeWithRealGit(t *testing.T) {
 	}
 	if !reasonAlive(ownReason()) {
 		t.Fatal("our own process is not alive by its reason")
+	}
+}
+
+func TestFirstParentUsesAFormatCorrectEmptyTreeAndRefusesAShallowBoundary(t *testing.T) {
+	t.Setenv("GIT_DEFAULT_HASH", "sha256")
+	repo := testrepo.New(t, map[string]string{"file": "contents\n"})
+	root := repo.Git("rev-parse", "HEAD")
+	child := repo.Commit("child", nil)
+	repository := RepositoryAt(repo.Root)
+	ctx := context.Background()
+	base, err := repository.FirstParent(ctx, root)
+	if want := repo.Git("hash-object", "-t", "tree", os.DevNull); err != nil || base != want {
+		t.Fatalf("SHA-256 root base is %q, %v; want %q", base, err, want)
+	}
+	if stat, err := repository.DiffStat(ctx, base, root); err != nil || !strings.Contains(stat, "file") {
+		t.Fatalf("root review diff = %q, %v", stat, err)
+	}
+	if got, err := repository.FirstParent(ctx, child); err != nil || got != root {
+		t.Fatalf("first parent = %q, %v; want %q", got, err, root)
+	}
+
+	shallow := t.TempDir()
+	repo.Git("clone", "--quiet", "--depth=1", "--no-local", repo.Root, shallow)
+	if _, err := RepositoryAt(shallow).FirstParent(ctx, child); err == nil || !strings.Contains(err.Error(), "is unavailable") {
+		t.Fatalf("shallow boundary gave %v; want an unavailable-parent error", err)
+	}
+
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repository.FirstParent(canceled, child); !errors.Is(err, gitcli.ErrTimeout) {
+		t.Fatalf("canceled command gave %v; want Git timeout", err)
+	}
+}
+
+func TestClaudeCodeReviewThroughTheRealDispatcher(t *testing.T) {
+	repo := testrepo.New(t, map[string]string{"reviewed.txt": "before\n"})
+	base := repo.Git("rev-parse", "HEAD")
+	revision := repo.Commit("change", map[string]string{"reviewed.txt": "pinned-after\n"})
+	repo.Write(map[string]string{"reviewed.txt": "uncommitted\n"})
+
+	binary := filepath.Join(t.TempDir(), "claude-fixture")
+	const script = `#!/bin/sh
+set -eu
+if [ "${1:-}" = "--version" ]; then
+  printf '%s\n' '2.1.248 (Claude Code)'
+  exit 0
+fi
+arguments="$*"
+case "$arguments" in
+  *--restricted*--safe-mode*--no-session-persistence*--json-schema*--permission-mode*dontAsk*--tools*Read,Glob,Grep*--disallowedTools*mcp__*) ;;
+  *) exit 21 ;;
+esac
+case "$arguments" in *dangerously*|*Bash*|*--add-dir*) exit 22 ;; esac
+[ "$(cat reviewed.txt)" = pinned-after ]
+[ -z "${CLAUDECODE:-}" ] && [ -z "${UNRELATED_FIXTURE_MARKER:-}" ]
+prompt=$(cat)
+case "$prompt" in
+  *'diff --git a/reviewed.txt b/reviewed.txt'*'-before'*'+pinned-after'*) ;;
+  *) exit 23 ;;
+esac
+case "$prompt" in *uncommitted*) exit 24 ;; esac
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"verdict":"approve","summary":"pinned diff inspected","findings":[],"prior":[]},"usage":{"input_tokens":12,"output_tokens":4}}'
+`
+	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "absent"))
+	t.Setenv("CLAUDECODE", "nested")
+	t.Setenv("UNRELATED_FIXTURE_MARKER", "not-forwarded")
+
+	settings := Defaults()
+	settings.Use = []string{"claude-code"}
+	configured := defaultReviewer("claude-code")
+	configured.Command = binary
+	settings.Reviewers["claude-code"] = configured
+	machine, err := RealMachine(homedir.SharedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out, complaints bytes.Buffer
+	round := Round{Settings: settings, Repo: RepositoryAt(repo.Root),
+		Store: Store{Root: filepath.Join(t.TempDir(), "review-store")}, Machine: machine,
+		Out: &out, Errors: &complaints}
+	result := round.Run(context.Background(), Options{Revision: base + ".." + revision, Task: "claude-test"})
+	if result.Status != ExitClear || result.Record == nil || result.Record.Summaries["claude-code"] != "pinned diff inspected" {
+		t.Fatalf("unexpected result %+v, stdout %q, stderr %q", result, &out, &complaints)
+	}
+	if outcomes, _ := CheckReasons(settings, round.Store, "claude-test", base, revision); len(outcomes) != 0 {
+		t.Fatalf("recorded review cannot be checked: %v", outcomes)
 	}
 }
