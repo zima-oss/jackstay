@@ -84,3 +84,16 @@ func TestAProfilesValuesAndWorkflowsAreRead(t *testing.T) {
 		t.Fatalf("%+v", loaded.Workflows)
 	}
 }
+
+func TestExportRefusesATemplateSymlinkLeavingTheProfileFolder(t *testing.T) {
+	folder := t.TempDir()
+	outside := write(t, t.TempDir(), "elsewhere.yml", "name: outside\n")
+	if err := os.Symlink(outside, filepath.Join(folder, "w.yml")); err != nil {
+		t.Fatal(err)
+	}
+	path := write(t, folder, "profile.json", `{"jackstay_profile":1,"name":"team","workflows":{"w":{"file":"w.yml"}}}`)
+	encoded, err := export(path)
+	if err == nil || !strings.Contains(err.Error(), "leaves the profile's folder") || len(encoded) != 0 {
+		t.Fatalf("export of symlink: %v, %d bytes", err, len(encoded))
+	}
+}

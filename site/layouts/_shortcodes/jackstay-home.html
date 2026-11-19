@@ -1,0 +1,49 @@
+<div class="jackstay-home">
+  <section class="jackstay-hero" aria-labelledby="jackstay-title">
+    <div class="jackstay-hero-copy">
+      <h1 id="jackstay-title">Git workflows for coding agents</h1>
+      <p class="jackstay-intro">jackstay gives agents a reliable way to protect edits, run tests with evidence, and finish work across parallel sessions. One Go binary adds the commands and records.</p>
+      <div class="jackstay-actions">
+        <a class="jackstay-primary" href="{{ "guide/getting-started/" | relURL }}">Get started</a>
+        <a class="jackstay-secondary" href="{{ "guide/" | relURL }}">Browse the guide</a>
+      </div>
+    </div>
+    <div class="jackstay-terminal" aria-label="Example jackstay workflow">
+      <div class="jackstay-terminal-head"><span>my-service</span><span>agent session</span></div>
+      <div class="jackstay-terminal-body">
+        <p><span class="jackstay-prompt">$</span> jst adopt --plan</p>
+        <p class="jackstay-output">changes (4) · conflicts (0)</p>
+        <p><span class="jackstay-prompt">$</span> jst test gate</p>
+        <p class="jackstay-output jackstay-success">jst test: outcome=passed</p>
+        <p><span class="jackstay-prompt">$</span> jst timeline --since 4h</p>
+        <p class="jackstay-output">local test, review and process history</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="jackstay-routes" aria-labelledby="jackstay-routes-title">
+    <div class="jackstay-section-heading">
+      <h2 id="jackstay-routes-title">Follow the work from edit to delivery</h2>
+      <p>Each command answers <code>--help</code>. The guide follows the same tasks you do in a repository.</p>
+    </div>
+    <div class="jackstay-route-list">
+      <div class="jackstay-route">
+        <div><h3>Protect edits</h3><p>The guard catches destructive shell commands. Discard keeps recoverable copies, and background jobs stop at a deadline.</p></div>
+        <div class="jackstay-route-links"><a href="{{ "guide/guard/" | relURL }}">Guard and recovery</a><a href="{{ "guide/background/" | relURL }}">Processes and waits</a></div>
+      </div>
+      <div class="jackstay-route">
+        <div><h3>Verify a change</h3><p>Test scopes collect evidence from the project’s own runner. Receipts bind counted passes to the tree that produced them.</p></div>
+        <div class="jackstay-route-links"><a href="{{ "guide/tests/" | relURL }}">Tests and receipts</a><a href="{{ "guide/review/" | relURL }}">Optional code reviews</a></div>
+      </div>
+      <div class="jackstay-route">
+        <div><h3>Deliver and trace</h3><p>Worktrees, GitHub checks, records and releases have explicit steps. The local timeline helps reconstruct what happened.</p></div>
+        <div class="jackstay-route-links"><a href="{{ "guide/branches-and-github/" | relURL }}">Branches and GitHub</a><a href="{{ "guide/observability/" | relURL }}">Timeline and diagnostics</a></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="jackstay-start" aria-labelledby="jackstay-start-title">
+    <div><h2 id="jackstay-start-title">Start in an existing repository</h2><p>Install on macOS or Linux, inspect the adoption plan, then apply and commit the project files it writes.</p><a href="{{ "guide/install/" | relURL }}">Installation options</a></div>
+    <pre class="jackstay-command"><code>{{ strings.TrimSpace .Inner }}</code></pre>
+  </section>
+</div>

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -798,5 +799,37 @@ func TestCloserUndoesLastFirstAndOnce(t *testing.T) {
 	closer.Close()
 	if len(order) != 2 || order[0] != 2 || order[1] != 1 {
 		t.Fatalf("order %v", order)
+	}
+}
+
+func TestExecutableUsesTheChildDirectoryAndPath(t *testing.T) {
+	parent := t.TempDir()
+	child := t.TempDir()
+	first := filepath.Join(parent, "audit-check")
+	second := filepath.Join(child, "audit-check")
+	for _, program := range []string{first, second} {
+		if err := os.WriteFile(program, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", parent)
+	for _, test := range []struct {
+		name, argv, want string
+		env              []string
+		wantError        error
+	}{
+		{name: "explicit path", argv: "./audit-check", want: child + "/./audit-check"},
+		{name: "scope path", argv: "audit-check", env: []string{"PATH=" + child}, want: second},
+		{name: "inherited path", argv: "audit-check", want: first},
+		{name: "current directory is not a program", argv: ".", env: []string{"PATH=" + second}, wantError: exec.ErrNotFound},
+		{name: "no child path", argv: "audit-check", env: []string{"OTHER=1"}, wantError: exec.ErrNotFound},
+		{name: "relative child path", argv: "audit-check", env: []string{"PATH=.:" + parent}, wantError: exec.ErrDot},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := executable(test.argv, child, test.env)
+			if !errors.Is(err, test.wantError) || (err == nil && got != test.want) {
+				t.Fatalf("executable = %q, %v; want %q, %v", got, err, test.want, test.wantError)
+			}
+		})
 	}
 }

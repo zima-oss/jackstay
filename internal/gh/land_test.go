@@ -2,6 +2,8 @@ package gh
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -10,7 +12,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/githubapi/githubfake"
 )
 
-const deleteFeat = "push --quiet --force-with-lease=refs/heads/feat:" + shaA + " origin :refs/heads/feat"
+const deleteFeat = "push --quiet --force-with-lease=refs/heads/feat:" + shaA + " -- origin :refs/heads/feat"
 
 // landing is a bench for pr-land: a checkout on feat at A, pushed; #7 open from it, green and
 // mergeable; GitHub's default branch main; the merge lands.
@@ -61,6 +63,88 @@ func neverChangesTheCheckout(t *testing.T, git *scriptedGit) {
 	}
 }
 
+func TestImplicitPullRequestSelectionRefusesMultipleBases(t *testing.T) {
+	for _, operation := range []string{"ci-wait", "ci-status", "pr-land", "pr-status"} {
+		t.Run(operation, func(t *testing.T) {
+			git := checkout(shaA)
+			bench := newHarness(t, git)
+			bench.hub.OnDefaultBranch(answer("main"))
+			main := pull(7, "feat", shaA)
+			alternate := pull(8, "feat", shaA)
+			alternate.Base = "release"
+			bench.hub.OnPullRequestsByHead("owner:feat", "open", answer([]githubapi.PullRequest{alternate, main}))
+			_, stderr := bench.expect(exitRequest, operation)
+			contains(t, stderr, "#7 into main, #8 into release")
+			if len(git.callsStarting("push")) != 0 || len(bench.hub.Merges()) != 0 {
+				t.Fatal("an ambiguous selection made a write")
+			}
+		})
+	}
+}
+
+func TestExplicitPullRequestSelectionUsesItsActualBase(t *testing.T) {
+	bench, git := landing(t)
+	selected := pull(8, "feat", shaA)
+	selected.Base = "release"
+	bench.hub.OnPullRequest(8, answer(selected))
+	bench.hub.OnMerge(8, answer(githubapi.MergeResult{Merged: true}))
+	landed := merged(8, "feat", shaA)
+	landed.Base = "release"
+	bench.hub.afterMerge = landed
+
+	stdout, _ := bench.expect(exitFine, "pr-status", "--pr", "https://github.com/owner/checkout/pull/8")
+	contains(t, stdout, "branch  feat  (base release)")
+	stdout, _ = bench.expect(exitFine, "pr-land", "--pr", "8", "--no-wait")
+	contains(t, stdout, "merged #8 into release")
+	contains(t, stdout, "The merge is on the remote's release.")
+	if merges := bench.hub.Merges(); len(merges) != 1 || merges[0].Number != 8 {
+		t.Fatalf("merges %+v", merges)
+	}
+	contains(t, stdout, "pull request #7 into main is still open")
+	if bench.hub.count("PullRequestsByHead") != 1 || len(git.callsStarting("push")) != 0 {
+		t.Fatal("landing did not check for open sibling pull requests before deleting the branch")
+	}
+}
+
+func TestExplicitLandingRefusesUnrelatedPullRequest(t *testing.T) {
+	for _, test := range []struct {
+		selection string
+		update    func(*githubapi.PullRequest)
+	}{
+		{"https://github.com/other/checkout/pull/8", nil},
+		{"999999999999999999999999999999", nil},
+		{"8", func(pull *githubapi.PullRequest) { pull.Head = "different" }},
+		{"8", func(pull *githubapi.PullRequest) { pull.HeadRepository = "other/checkout" }},
+		{"8", func(pull *githubapi.PullRequest) { pull.State = "closed" }},
+	} {
+		bench, git := landing(t)
+		selected := pull(8, "feat", shaA)
+		if test.update != nil {
+			test.update(&selected)
+		}
+		bench.hub.OnPullRequest(8, answer(selected))
+		bench.expect(exitRequest, "pr-land", "--pr", test.selection)
+		if len(git.callsStarting("push")) != 0 || len(bench.hub.Merges()) != 0 {
+			t.Fatal("an unrelated selection made a write")
+		}
+	}
+}
+
+func TestAnExemptBranchCanOpenWithoutACardLine(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	settings := `{"jackstay_schema": 2, "cards": {"dir": "docs/cards", "id": "APP-[0-9]+", "unit": "pr", "since": "2026-01-01", "exempt_branches": ["feat"]}}`
+	if err := os.WriteFile(filepath.Join(bench.dir, "jackstay.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bench.hub.OnDefaultBranch(answer("main"))
+	bench.hub.OnPullRequestsByHead("owner:feat", "open", answer([]githubapi.PullRequest{}))
+	bench.hub.OnCreatePullRequest("feat", answer(pull(7, "feat", shaA)))
+	bench.expect(exitFine, "pr-land", "--title", "exempt", "--no-push", "--no-wait", "--no-merge")
+	if created := bench.hub.Created(); len(created) != 1 {
+		t.Fatalf("created %+v", created)
+	}
+}
+
 func TestTheWholeFlowMergesTheGreenHeadAndDeletesOnlyTheRemoteBranch(t *testing.T) {
 	bench, git := landing(t)
 	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
@@ -80,6 +164,69 @@ func TestTheWholeFlowMergesTheGreenHeadAndDeletesOnlyTheRemoteBranch(t *testing.
 		t.Fatalf("pushes %v", git.callsStarting("push"))
 	}
 	neverChangesTheCheckout(t, git)
+}
+
+func TestLandingRefusesToPushOutsideThePRRepository(t *testing.T) {
+	for _, test := range []struct {
+		name, remote, pushURLs, diagnostic string
+	}{
+		{"another upstream", "fork", "git@github.com:other/checkout.git\n", "other/checkout"},
+		{"an overridden push URL", "origin", "https://github.com/owner/elsewhere.git\n", "owner/elsewhere"},
+		{"another destination after the right one", "origin", "git@github.com:Owner/Checkout.git\ngit@github.com:owner/elsewhere.git\n", "owner/elsewhere"},
+		{"a URL whose repository cannot be verified", "origin", "https://someone:fake-value@example.invalid/owner/checkout.git\n", "cannot verify"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bench, git := landing(t)
+			git.on("remote", ok("origin\nfork\n"))
+			git.on("config --get branch.feat.remote", ok(test.remote+"\n"))
+			git.on("rev-list --count "+test.remote+"/feat..feat", ok("1\n"))
+			git.on("remote get-url --push --all -- "+test.remote, ok(test.pushURLs))
+			_, stderr := bench.expect(exitRequest, "pr-land", "--no-wait")
+			contains(t, stderr, test.diagnostic)
+			lacks(t, stderr, "fake-value")
+			if len(git.callsStarting("push")) != 0 || len(bench.hub.Merges()) != 0 {
+				t.Fatal("push or merge ran despite the unverified destination")
+			}
+		})
+	}
+}
+
+func TestLandingChecksThePushDestinationAgainBeforeDeleting(t *testing.T) {
+	bench, git := landing(t)
+	git.on("remote get-url --push --all -- origin", ok("git@github.com:Owner/Checkout.git\n"))
+	bench.hub.onMerge = func() {
+		git.on("remote get-url --push --all -- origin", ok("git@github.com:owner/elsewhere.git\n"))
+	}
+	stdout, _ := bench.expect(exitFine, "pr-land", "--no-wait")
+	contains(t, stdout, "merged #7")
+	contains(t, stdout, "is not deleted")
+	contains(t, stdout, "owner/elsewhere")
+	if len(git.callsStarting("push")) != 0 {
+		t.Fatal("deleted on the remote's changed destination")
+	}
+}
+
+func TestLandingKeepsABranchWhenTheMergedHeadRepositoryDoesNotMatch(t *testing.T) {
+	bench, git := landing(t)
+	bench.hub.afterMerge.HeadRepository = "owner/elsewhere"
+	stdout, _ := bench.expect(exitFine, "pr-land", "--no-wait", "--no-push")
+	contains(t, stdout, "merged #7")
+	contains(t, stdout, "is not deleted")
+	if len(git.callsStarting("push")) != 0 {
+		t.Fatal("deleted without a matching merged head repository")
+	}
+}
+
+func TestAFailedDeleteDoesNotLookForTheBranchInADifferentRepository(t *testing.T) {
+	bench, git := landing(t)
+	git.on(deleteFeat, exit(128))
+	git.on("remote get-url -- origin", ok("https://github.com/owner/elsewhere.git\n"))
+	git.on("ls-remote --heads -- origin refs/heads/feat", ok(""))
+	stdout, _ := bench.expect(exitFine, "pr-land", "--no-wait", "--no-push")
+	contains(t, stdout, "origin/feat is not deleted")
+	if len(git.callsStarting("ls-remote")) != 0 {
+		t.Fatal("queried the wrong repository for a deletion result")
+	}
 }
 
 func TestThePlanIsPrintedFirstAndDryRunChangesNothing(t *testing.T) {
@@ -146,7 +293,7 @@ func TestANewPullRequestWithoutATitleIsRefusedBeforeThePush(t *testing.T) {
 func TestNoMergeOpensThePullRequestAndLeavesTheBranch(t *testing.T) {
 	git := checkout(shaA)
 	git.on("rev-list --count origin/feat..feat", exit(128))
-	git.on("push -u origin refs/heads/feat:refs/heads/feat", ok(""))
+	git.on("push -u -- origin refs/heads/feat:refs/heads/feat", ok(""))
 	git.on("log --reverse --format=%s%x1f%b%x1e refs/remotes/origin/main..refs/heads/feat", ok("one\x1fits body\n\x1e\n"))
 	bench := newHarness(t, git)
 	bench.hub.OnDefaultBranch(answer("main"))
@@ -168,7 +315,10 @@ func TestALostAnswerToTheCreateIsSettledByLookingAgain(t *testing.T) {
 	git := checkout(shaA)
 	bench := newHarness(t, git)
 	bench.hub.OnDefaultBranch(answer("main"))
-	bench.hub.OnPullRequestsByHead("owner:feat", "open", answer([]githubapi.PullRequest{}), answer([]githubapi.PullRequest{pull(7, "feat", shaA)}))
+	alternate := pull(8, "feat", shaA)
+	alternate.Base = "release"
+	bench.hub.OnPullRequestsByHead("owner:feat", "open", answer([]githubapi.PullRequest{}),
+		answer([]githubapi.PullRequest{alternate, pull(7, "feat", shaA)}))
 	bench.hub.OnCreatePullRequest("feat", githubfake.Fail[githubapi.PullRequest](errors.New("connection reset")))
 	git.on("log --reverse --format=%s%x1f%b%x1e refs/remotes/origin/main..refs/heads/feat", ok(""))
 	stdout, _ := bench.expect(exitFine, "pr-land", "--title", "x", "--no-wait", "--no-merge")
@@ -256,7 +406,7 @@ func TestAMergeGitHubRefusesIsExit1(t *testing.T) {
 func TestABranchGitHubDeletedAlreadyIsSaidSo(t *testing.T) {
 	bench, git := landing(t)
 	git.on(deleteFeat, gitAnswer{code: 1, out: "error: unable to delete 'feat': remote ref does not exist"})
-	git.on("ls-remote --heads origin refs/heads/feat", ok(""))
+	git.on("ls-remote --heads -- origin refs/heads/feat", ok(""))
 	stdout, _ := bench.expect(exitFine, "pr-land", "--no-wait")
 	contains(t, stdout, "origin/feat is already deleted")
 }
@@ -264,7 +414,7 @@ func TestABranchGitHubDeletedAlreadyIsSaidSo(t *testing.T) {
 func TestARemoteThatCannotBeReachedAfterTheMergeIsSaid(t *testing.T) {
 	bench, git := landing(t)
 	git.on(deleteFeat, gitAnswer{code: 128, out: "fatal: could not read from remote repository"})
-	git.on("ls-remote --heads origin refs/heads/feat", exit(128))
+	git.on("ls-remote --heads -- origin refs/heads/feat", exit(128))
 	stdout, _ := bench.expect(exitFine, "pr-land", "--no-wait", "--no-push")
 	contains(t, stdout, "merged #7")
 	contains(t, stdout, "the remote branch origin/feat is not deleted")
@@ -279,7 +429,7 @@ func TestBehindThenUpdateBranchThenMergeTheNewHead(t *testing.T) {
 	git.on("cat-file -e "+shaB+"^{commit}", exit(1), ok(""))
 	git.on("fetch --quiet origin refs/pull/7/head", ok(""))
 	git.on("merge-base --is-ancestor "+shaA+" "+shaB, ok(""))
-	git.on("push --quiet --force-with-lease=refs/heads/feat:"+shaB+" origin :refs/heads/feat", ok(""))
+	git.on("push --quiet --force-with-lease=refs/heads/feat:"+shaB+" -- origin :refs/heads/feat", ok(""))
 	stdout, _ := bench.expect(exitFine, "pr-land", "--no-wait", "--no-push")
 	contains(t, stdout, "BEHIND the base; updating the branch on GitHub")
 	if len(bench.hub.updates) != 1 || bench.hub.updates[0] != shaA {
@@ -299,7 +449,7 @@ func TestBehindWithWaitWaitsForTheNewHeadsChecks(t *testing.T) {
 	onChecks(bench.hub, shaB, []githubapi.Check{passed("test")})
 	git.on("cat-file -e "+shaB+"^{commit}", ok(""))
 	git.on("merge-base --is-ancestor "+shaA+" "+shaB, ok(""))
-	git.on("push --quiet --force-with-lease=refs/heads/feat:"+shaB+" origin :refs/heads/feat", ok(""))
+	git.on("push --quiet --force-with-lease=refs/heads/feat:"+shaB+" -- origin :refs/heads/feat", ok(""))
 	bench.expect(exitFine, "pr-land", "--no-push")
 	if merges := bench.hub.Merges(); len(merges) != 1 || merges[0].HeadSHA != shaB {
 		t.Fatalf("merges %+v: the green head after the update is the one merged", merges)
@@ -339,11 +489,13 @@ func TestItWaitsWhileGitHubComputesMergeability(t *testing.T) {
 	}
 }
 
-func TestTheGreenHeadIsMergedEvenWhenTheViewMovesOn(t *testing.T) {
-	// GitHub refuses a merge at a head that is no longer the pull request's: jackstay asks for the one
-	// whose checks it saw pass, never a later one.
-	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{pull(7, "feat", shaA), pull(7, "feat", shaA),
-		pull(7, "feat", shaA), pull(7, "feat", shaB)}, mergeErr: errors.New("409 Head branch was modified")})
+func TestGitHubRejectsAHeadThatMovesAfterTheLastRead(t *testing.T) {
+	// GitHub still holds the checked head SHA if it moves after jackstay's last look.
+	open := pull(7, "feat", shaA)
+	bench, _ := landing(t, landSetup{
+		pulls:    []githubapi.PullRequest{open, open, open, open, open, pull(7, "feat", shaB)},
+		mergeErr: errors.New("409 Head branch was modified"),
+	})
 	bench.expect(exitNotFine, "pr-land")
 	if merges := bench.hub.Merges(); len(merges) != 1 || merges[0].HeadSHA != shaA {
 		t.Fatalf("merges %+v", merges)
@@ -520,12 +672,65 @@ func TestRequiredChecksAreNotSplitAcrossTheTwoCommits(t *testing.T) {
 // With nothing on the head, a required check on the test merge commit is found.
 func TestARequiredCheckOnlyOnTheTestMergeCommitIsFound(t *testing.T) {
 	open := pull(7, "feat", shaA)
+	open.BaseSHA = shaB
 	open.MergeCommitSHA = shaC
 	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open}, checks: []githubapi.Check{}})
 	onChecks(bench.hub, shaC, []githubapi.Check{{Name: "external", Kind: githubapi.StatusContext, State: "SUCCESS"}})
 	bench.hub.required = []RequiredCheck{{Name: "external"}}
 	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
 	contains(t, stdout, "GREEN: 1 checks")
+	if merges := bench.hub.Merges(); len(merges) != 1 || merges[0].HeadSHA != shaA {
+		t.Fatalf("merges %+v", merges)
+	}
+}
+
+func TestATestMergeCommitThatMovesWhileReadingItsChecksStopsLanding(t *testing.T) {
+	open := pull(7, "feat", shaA)
+	open.BaseSHA, open.MergeCommitSHA = shaB, shaC
+	changed := open
+	changed.MergeCommitSHA = shaB
+	bench, _ := landing(t, landSetup{pulls: []githubapi.PullRequest{open, open, changed}, checks: []githubapi.Check{}})
+	onChecks(bench.hub, shaC, []githubapi.Check{passed("gate")})
+	bench.hub.required = []RequiredCheck{{Name: "gate"}}
+	stdout, stderr := bench.expect(exitMoved, "pr-land", "--timeout", "30")
+	contains(t, stderr, "test merge commit of #7 changed")
+	lacks(t, stdout, "GREEN")
+	if len(bench.hub.Merges()) != 0 {
+		t.Fatal("merged on checks for the old test merge commit")
+	}
+}
+
+func TestAChangeAfterTheGreenVerdictStopsTheMerge(t *testing.T) {
+	for _, test := range []struct {
+		name, diagnostic string
+		change           func(*githubapi.PullRequest)
+	}{
+		{"head commit", "head of #7 changed", func(pull *githubapi.PullRequest) { pull.HeadSHA = shaB }},
+		{"base commit", "base commit of #7 changed", func(pull *githubapi.PullRequest) { pull.BaseSHA = shaC }},
+		{"test merge commit", "test merge commit of #7 changed", func(pull *githubapi.PullRequest) { pull.MergeCommitSHA = shaB }},
+		{"head repository", "identity of #7 changed", func(pull *githubapi.PullRequest) { pull.HeadRepository = "other/checkout" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			open := pull(7, "feat", shaA)
+			open.BaseSHA, open.MergeCommitSHA = shaB, shaC
+			changed := open
+			test.change(&changed)
+			// Two reads surround head checks, a third follows merge checks. GitHub is then asked
+			// about mergeability, the judged body and the state immediately before the merge.
+			bench, git := landing(t, landSetup{
+				pulls:  []githubapi.PullRequest{open, open, open, open, open, changed},
+				checks: []githubapi.Check{},
+			})
+			onChecks(bench.hub, shaC, []githubapi.Check{passed("gate")})
+			bench.hub.required = []RequiredCheck{{Name: "gate"}}
+			stdout, stderr := bench.expect(exitMoved, "pr-land", "--timeout", "30")
+			contains(t, stdout, "GREEN")
+			contains(t, stderr, test.diagnostic)
+			if len(bench.hub.Merges()) != 0 || len(git.callsStarting("push")) != 0 {
+				t.Fatal("merged or deleted a branch on stale evidence")
+			}
+		})
+	}
 }
 
 // When the test merge commit has a result for a required check, it is the one that must pass.

@@ -73,16 +73,24 @@ var reports = []entry{
 	{"load", "per project and day: busy time of jackstay commands and of their children, the most at once", Load},
 }
 
-// Compute runs a report by name.
-func Compute(name string, input Input) (Report, bool) {
+func reportNamed(name string) reportFunc {
 	for _, candidate := range reports {
 		if candidate.name == name {
-			report := candidate.compute(input)
-			report.Name = name
-			return report, true
+			return candidate.compute
 		}
 	}
-	return Report{}, false
+	return nil
+}
+
+// Compute runs a report by name.
+func Compute(name string, input Input) (Report, bool) {
+	compute := reportNamed(name)
+	if compute == nil {
+		return Report{}, false
+	}
+	report := compute(input)
+	report.Name = name
+	return report, true
 }
 
 // By splits a report by a key (version, project, day), the key a first column. A version or a
@@ -91,6 +99,10 @@ func Compute(name string, input Input) (Report, bool) {
 // parent whatever day it began, its counts fall on the day it ended and its time is clipped to each
 // day it overlaps (Input.Owns).
 func By(name, key string, input Input) (Report, error) {
+	compute := reportNamed(name)
+	if compute == nil {
+		return Report{}, fmt.Errorf("no report %q (jst stats lists them)", name)
+	}
 	parts := map[string]Input{}
 	switch key {
 	case "version", "project":
@@ -135,7 +147,7 @@ func By(name, key string, input Input) (Report, error) {
 	sort.Strings(keys)
 	combined := Report{Name: name}
 	for _, found := range keys {
-		report, _ := Compute(name, parts[found])
+		report := compute(parts[found])
 		combined.Columns = append([]string{key}, report.Columns...)
 		for _, row := range report.Rows {
 			combined.Rows = append(combined.Rows, append([]any{found}, row...))

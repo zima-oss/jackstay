@@ -59,30 +59,90 @@ type Verdict struct {
 	judge Kind
 }
 
+// Facts are the evidence a runner decoded before its process outcome is considered.
+// A structured adapter can supply these directly after validating its report.
+type Facts struct {
+	Kind         Kind
+	Counts       Counts
+	Failure      string
+	Vetoed       bool
+	VetoLine     string
+	CountProblem string
+	Unjudged     []string
+}
+
+// Policy preserves the direct command's historical stop precedence while scopes use the
+// documented failure-before-stop order.
+type Policy bool
+
+const (
+	// ScopePolicy lets a proven failure win over a stop request.
+	ScopePolicy Policy = false
+	// DirectPolicy preserves the direct command's stop-first contract.
+	DirectPolicy Policy = true
+)
+
 // Verdict combines the reading with how the command ended, by the order of verdicts. Lines read
 // after it do not change it.
 func (reader *Reader) Verdict(end End) Verdict {
+	return reader.VerdictWithPolicy(end, ScopePolicy)
+}
+
+// VerdictWithPolicy applies the same decoder to a scoped or direct command.
+func (reader *Reader) VerdictWithPolicy(end End, policy Policy) Verdict {
 	reader.mutex.Lock()
 	defer reader.mutex.Unlock()
-	verdict := Verdict{judge: reader.kind}
+	facts := Facts{Kind: reader.kind}
 	var unjudged []string
-	if reader.swift != nil {
-		verdict.Counts, unjudged = reader.swift.counts()
-		verdict.Counting = true
-		verdict.Failure = reader.swift.failure
-	} else {
-		verdict.Counted, verdict.Counting = reader.evidenceCount, reader.evidence != nil
+	switch {
+	case reader.swift != nil:
+		facts.Counts, unjudged = reader.swift.counts()
+		facts.Counts.Counting = true
+		facts.Failure = reader.swift.failure
+	case reader.goJSON != nil:
+		facts = reader.goJSON.facts()
+		unjudged = facts.Unjudged
+	case reader.kind == JUnit:
+		if reader.report != nil {
+			facts = *reader.report
+		}
+		unjudged = facts.Unjudged
+		if reader.report == nil {
+			unjudged = []string{"the JUnit report is missing or unreadable"}
+		}
+		if reader.emptyExit != 0 && end.Status == reader.emptyExit && facts.Counts.Counting &&
+			facts.Counts.Counted == 0 && facts.Counts.Skipped == 0 && facts.Failure == "" && len(unjudged) == 0 {
+			end.Status = 0
+		}
+	default:
+		facts.Counts.Counted, facts.Counts.Counting = reader.evidenceCount, reader.evidence != nil
 	}
-	verdict.EvidenceCount = reader.evidenceCount
+	facts.Counts.EvidenceCount = reader.evidenceCount
 	vetoed, vetoLine := reader.vetoed, reader.vetoLine
 	stopped := end.TimedOut || end.Signal != ""
 	if stopped && reader.stopping {
-		verdict.Failure, vetoed, vetoLine = reader.failureAtStop, reader.vetoedAtStop, reader.vetoAtStop
+		facts.Failure, vetoed, vetoLine = reader.failureAtStop, reader.vetoedAtStop, reader.vetoAtStop
 	}
-	if vetoed {
-		verdict.VetoLine = vetoLine
+	facts.Vetoed, facts.VetoLine = vetoed, vetoLine
+	if reader.notNumber {
+		facts.CountProblem = fmt.Sprintf("the evidence pattern matched a line whose group is not a number: '%s'", reader.uncounted)
 	}
+	facts.Unjudged = unjudged
+	return Evaluate(facts, end, policy)
+}
 
+// Evaluate combines decoded evidence with the process result for every test entry point.
+// Diagnostics from a report adapter belong in Facts.Unjudged, while output and cleanup
+// problems belong in End. No count is distinct from a confirmed zero count.
+func Evaluate(facts Facts, end End, policy Policy) Verdict {
+	verdict := Verdict{Counts: facts.Counts, Failure: facts.Failure, judge: facts.Kind}
+	if facts.Vetoed {
+		verdict.VetoLine = facts.VetoLine
+	}
+	stopped := end.TimedOut || end.Signal != ""
+	if policy == DirectPolicy && stopped {
+		return verdict.with(Stopped, nil)
+	}
 	var failures []string
 	if !stopped && end.Status != 0 {
 		failures = append(failures, "exit "+strconv.Itoa(end.Status))
@@ -90,8 +150,8 @@ func (reader *Reader) Verdict(end End) Verdict {
 	if verdict.Failure != "" {
 		failures = append(failures, verdict.Failure)
 	}
-	if vetoed {
-		failures = append(failures, "a veto line: "+vetoLine)
+	if facts.Vetoed {
+		failures = append(failures, "a veto line: "+facts.VetoLine)
 	}
 	if len(end.Leftovers.Failed) > 0 {
 		failures = append(failures, "left behind: "+strings.Join(firstThree(end.Leftovers.Failed), ", "))
@@ -106,14 +166,13 @@ func (reader *Reader) Verdict(end End) Verdict {
 	}
 
 	var why []string
-	switch {
-	case end.ReadProblem != "":
+	if end.ReadProblem != "" {
 		why = append(why, end.ReadProblem)
-	case reader.notNumber:
-		why = append(why, fmt.Sprintf("the evidence pattern matched a line whose group is not a number: '%s'", reader.uncounted))
+	} else if facts.CountProblem != "" {
+		why = append(why, facts.CountProblem)
 	}
-	if len(unjudged) > 0 {
-		why = append(why, strings.Join(unjudged, "; "))
+	if len(facts.Unjudged) > 0 {
+		why = append(why, strings.Join(facts.Unjudged, "; "))
 	}
 	if end.LeftRunning != "" {
 		why = append(why, "the command ended and left processes running, which were stopped: "+end.LeftRunning)
@@ -128,7 +187,7 @@ func (reader *Reader) Verdict(end End) Verdict {
 	switch {
 	case len(why) > 0:
 		return verdict.with(Unjudged, why)
-	case reader.kind == Exit:
+	case facts.Kind == Exit:
 		return verdict.with(ExitedZero, nil)
 	case verdict.Counted <= 0:
 		return verdict.with(NothingRun, nil)
@@ -146,6 +205,9 @@ func (verdict Verdict) with(outcome Outcome, why []string) Verdict {
 // `counted=2290 bundles=9/9 xctest=2290 swift-testing=0 skipped=1` for `swift-test`,
 // `counted=N` (or `counted=-` when nothing counts) for the others.
 func (verdict Verdict) Detail() string {
+	if AdapterVersion(verdict.judge) != 0 && verdict.Counting {
+		return fmt.Sprintf("counted=%d skipped=%d", verdict.Counted, verdict.Skipped)
+	}
 	if verdict.judge != SwiftTest {
 		if !verdict.Counting {
 			return "counted=-"

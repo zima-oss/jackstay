@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/changes"
+	"github.com/zima-oss/jackstay/internal/check"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/release"
 )
@@ -77,7 +78,7 @@ func ReleaseRules(repo release.Repo, baseConfig config.Config, change Change) (f
 				last = &version
 			}
 		}
-		problems, err := repo.SettingsProblemsAt(change.Head, last)
+		problems, err := settingsProblemsAt(repo, change.Head, last)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -168,6 +169,19 @@ func ReleaseRules(repo release.Repo, baseConfig config.Config, change Change) (f
 	}
 	versionFindings, err := versionRules(repo, baseState, change, diff)
 	return append(found, versionFindings...), nil, err
+}
+
+// settingsProblemsAt uses the same semantic checks as check and adopt before inspecting the
+// version files in the candidate commit.
+func settingsProblemsAt(repo release.Repo, commit string, last *release.Version) ([]string, error) {
+	loaded, err := repo.ConfigAt(commit)
+	if err != nil {
+		return []string{"jackstay.json cannot be read: " + err.Error()}, nil
+	}
+	if problems := check.ConfigProblems(loaded); len(problems) > 0 {
+		return problems, nil
+	}
+	return repo.SettingsTreeProblemsAt(commit, loaded, last)
 }
 
 // requestRules is D4: the release pull request changes the request file and nothing else, and the

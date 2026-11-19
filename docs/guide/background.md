@@ -16,7 +16,8 @@ any background command: with the agent tool's background flag, or `&` in a termi
 - `--for MINUTES`: the deadline. Default `procs.default_minutes` (30), never more than
   `procs.max_minutes` (240).
 - `--name NAME`: a name to stop it by.
-- `--keep`: no deadline and no session check; only `jst procs stop` ends it.
+- `--keep`: no deadline or session check. Stop it with `jst procs stop`. If jackstay cannot
+  save the process entry at startup, it requests shutdown immediately.
 
 It runs the command in a session of its own and, besides the deadline, checks every 30 seconds that
 the process it was started under still lives. In a Claude Code session with the guard hook, that is
@@ -30,7 +31,7 @@ exception.
 
 ```sh
 jst bg --for 20 --name server -- npm run dev
-jst bg --for 45 --name review-parser -- jst review origin/main..HEAD --task parser
+jst bg --for 45 --name review-parser -- jst review origin/main..HEAD --task parser --reviewer codex
 ```
 
 Exit: the command's own status (128+N for signal N); 2 a bad request; 126 the command could not
@@ -44,7 +45,8 @@ jst procs stop [--all] ID|NAME...   # TERM, 5 seconds, then KILL
 ```
 
 `jst procs` lists id, name, state (`running`, `held`, `orphaned`, `gone`), age, deadline, session,
-folder and command. On the way it stops orphans past their deadline and removes gone entries.
+folder and command. New entries record arguments using the project’s telemetry masking mode.
+On the way it stops orphans past their deadline and removes gone entries.
 
 `stop` by ID stops that one, whoever started it. By NAME it stops this session's entries of that
 name; when jackstay cannot tell which session this is (a plain terminal), a NAME is refused: give
@@ -57,7 +59,8 @@ jst procs stop --all server
 jst procs stop 1794955688-45037
 ```
 
-Exit of `stop`: 0 stopped; 1 a name or id not stopped; 2 a bad request.
+Exit of `stop`: 0 stopped; 1 a task was not stopped or cleanup could not be confirmed;
+2 a bad request. A task whose cleanup could not be confirmed stays listed as `cleanup-incomplete`.
 
 ## `jst wait`
 

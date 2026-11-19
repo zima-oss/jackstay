@@ -42,7 +42,16 @@ after `git rm --cached` and leaves a staged addition on disk):
      second entry (`trash.Keep`: an entry made from bytes and a mode, kind `staged`).
 3. **Then the path is written back**: present in HEAD, `git restore --source=HEAD --staged
    --worktree -- <path>`; absent from HEAD, `git rm --cached --quiet --ignore-unmatch -- <path>`
-   (what was on disk is already in the trash, so the path is gone as at HEAD).
+   (what was on disk is already in the trash, so the path is gone as at HEAD). The source commit
+   is the HEAD that was read during planning. Before changing a path, discard checks that HEAD,
+   the path's index entry and the working file still match the plan. It checks again after keeping
+   an entry, before writing the path back. If the file changes as it moves, discard keeps the
+   moved version and stops before changing the index. The backup stays held until discard has
+   recorded what replaced it, or the user restores it.
+
+The checks narrow the interval in which a concurrent write can be missed. Git and editors do
+not share a lock with discard, so concurrent writes between the last check and Git's update
+remain possible.
 
 So a staged deletion with the file made again on disk keeps that file; a staged addition (or a
 rename's new name) leaves nothing behind and keeps the file; a file with staged and unstaged edits
@@ -76,7 +85,10 @@ content or of the link's target (read with `Lstat`/`Readlink`, never followed). 
 ENTRY` puts the item back as now; and when the target exists, it replaces it **only** when the
 target's kind, executable bit and SHA-256 all equal `replaced` (nothing changed since the discard,
 and what is replaced is HEAD's version, which git still has). Otherwise it refuses ("is
-there already … use --to PATH"). A `staged` entry is restored as a working file, not staged again
+there already … use --to PATH"). Restore installs the saved version with a single rename, staging
+a checked copy beside the target first if the volumes differ. A failed rename leaves the current
+file and the trash entry in place. A destination that appears while restoring to an empty path is
+left alone. A `staged` entry is restored as a working file, not staged again
 (the restore line says so).
 
 **Package.** `internal/discard`, registered as `jst discard`; `internal/trash` holds `Keep` and the
@@ -147,7 +159,8 @@ behind):
 1. Under `<jackstay home>/<project>/clean-copies/<short commit>-<8 random hex>/` (never the system temp
    folder), jackstay writes `owner` (`jst test <pid> <start-micros>`, the same owner words and liveness
    check as `jst review`'s lock reason) and makes the copy in `<repository folder name>/` inside it:
-   `git init --quiet`, the repository's object folder as an absolute path (`git rev-parse
+   `git init --quiet --object-format=<source format>`, with the storage format from
+   `git rev-parse --show-object-format`. The repository's object folder as an absolute path (`git rev-parse
    --path-format=absolute --git-path objects`) written to `objects/info/alternates`, then `git fetch --quiet --no-tags --update-head-ok <top>
    '+refs/heads/*:refs/heads/*' '+refs/remotes/*:refs/remotes/*' '+refs/tags/*:refs/tags/*'` and
    `git checkout --quiet --detach <commit>`, hooks off. The copy has **the repository's own refs**
@@ -155,15 +168,12 @@ behind):
    not its local `main`), its tags — and each of its remotes' URLs
    (`remote.<name>.url`, `remote.<name>.fetch`): the same `for-each-ref` as the repository, a
    clean status, a small `.git`. Nothing is written in the repository.
-2. **The project's identity.** A name derived again in the copy — from its folder, from
-   jackstay.json — would differ from the checkout's whenever the checkout is a linked worktree, has
-   no `project` key, or was called with `--project`. So jackstay writes the outer
-   call's **effective** project name (jackstay.json's `project`, `--project`, or the name derived in the
-   checkout) into the copy's `.git/jackstay-project`, and `config.ProjectName` reads that file **first**
-   when the folder's `.git` is a folder holding it. Every `jst` command a step runs inside the copy
-   (a nested `jst test`, `jst receipts`, `jst lock`) therefore has the outer call's name, by one rule,
-   with no variable to pass through the step's environment. Only jackstay writes the file, and only in a
-   copy it made; it is inside `.git`, so the tree stays clean.
+2. **The project's identity.** An explicit `--project` sets the name. Otherwise jackstay takes
+   the name from the live checkout's project metadata when readable, including its normal
+   checkout-based default. With missing or unreadable live metadata it looks up the nearest
+   `jackstay.json` at REV, starting from the corresponding subfolder. The scope's settings are
+   always validated in the committed tree. The effective name is written to the copy's
+   `.git/jackstay-project` so commands run within the copy share that name.
 3. The scope runs with the copy as its checkout: `root` and the working folder are the copy (the
    same subfolder when jackstay was called below the top), so receipts, marks, bars, durations and the
    lock are the project's own. The run lines' `worktree` is the copy (under `clean-copies/`) and
@@ -177,9 +187,9 @@ behind):
    first removes every copy folder whose `owner` names a process that is gone (the same rule as
    `review.RemoveStaleTrees`: an owner that cannot be read counts as alive).
 
-**Refused** (`not-started`, 2): `--commit` with `--resume` (the two are not combined: a gate on a
-clean copy of REV is a whole run, and resume is for the checkout a session works in); a `REV` that is not a commit; the copy cannot be made (the line says git's
-words).
+Every selected command runs afresh, even when a matching receipt exists. `--commit` exits 2
+(`not-started`) with `--resume`, an invalid commit, or a failure to make the copy. The error
+includes Git's response when available.
 
 **Limits:** submodules are not checked out in the copy;
 the copy has no ignored files (no `.build`, no `node_modules`): a step that needs them builds

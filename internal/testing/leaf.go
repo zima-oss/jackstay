@@ -19,6 +19,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/receipts"
 	"github.com/zima-oss/jackstay/internal/supervise"
+	"github.com/zima-oss/jackstay/internal/testreport"
 )
 
 // Variables every scope's command gets (testing.md section 6).
@@ -91,15 +92,22 @@ func definition(chosen leaf, argv []string, relative string) map[string]any {
 	if chosen.veto != "" {
 		veto = chosen.veto
 	}
-	return map[string]any{"name": chosen.name, "kind": chosen.kind, "run": chosen.run, "words": argv, "cwd": relative,
+	material := map[string]any{"name": chosen.name, "kind": chosen.kind, "run": chosen.run, "words": argv, "cwd": relative,
 		"judge": chosen.judge, "evidence": evidence, "veto": veto, "timeout": timeout, "env": chosen.env, "expect": expect}
+	if adapter := judge.AdapterVersion(judge.Kind(chosen.judge)); adapter != 0 {
+		material["adapter_version"] = adapter
+		if chosen.report != "" {
+			material["report"], material["empty_exit"] = chosen.report, chosen.emptyExit
+		}
+	}
+	return material
 }
 
 // commandEnv is an environment less what jackstay tells the process around it (the lock's outcome
 // file, its group wait, the sessions file) and the run's own variables, which are set anew.
 func commandEnv(environ []string) []string {
 	dropped := []string{lock.OutcomeFileVariable, lock.NoteWordsVariable, lock.GroupWaitVariable, supervise.SessionsFileVariable,
-		supervise.RunIDVariable, supervise.RunProjectVariable, RunIDVariable, RunTmpVariable}
+		supervise.RunIDVariable, supervise.RunProjectVariable, RunIDVariable, RunTmpVariable, testreport.PathVariable}
 	kept := make([]string, 0, len(environ))
 	for _, entry := range environ {
 		name, _, _ := strings.Cut(entry, "=")
@@ -189,7 +197,7 @@ func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bo
 	material["leftovers"] = items(proj.section["leftovers"])
 	run.entry = receipts.CommandEntry(proj.receipts, found.argv)
 	run.keyed = receipts.Keying{Root: proj.root, Config: proj.loaded, Project: proj.name, Command: found.argv, Dir: run.runCwd,
-		Scope: material, Environ: proj.environ}
+		Scope: material, Environ: run.env}
 	run.store, err = receipts.OpenStore(proj.name, proj.receipts, proj.clock)
 	run.storeOK = err == nil
 	// A scope takes part in receipts (the lookups, would-hit) only when its words are a
@@ -413,7 +421,7 @@ func (out *sink) Line(stream supervise.Stream, text string) error {
 // judgeOptions are the leaf's judge: its kind, engines, evidence, and its own veto with the
 // receipts entry's.
 func (run *leafRun) judgeOptions() judge.Options {
-	options := judge.Options{Kind: judge.Kind(run.leaf.judge), Evidence: run.leaf.evidence}
+	options := judge.Options{Kind: judge.Kind(run.leaf.judge), Evidence: run.leaf.evidence, EmptyExit: run.leaf.emptyExit}
 	if run.leaf.judge == "swift-test" {
 		for _, engine := range run.leaf.expect {
 			options.Expect = append(options.Expect, judge.Engine(engine))

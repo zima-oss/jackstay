@@ -2,6 +2,7 @@ package receipts
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,9 +19,11 @@ import (
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/lock"
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/supervise"
+	"github.com/zima-oss/jackstay/internal/testreport"
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
@@ -121,7 +124,7 @@ func (base *tester) raw(asked request) int {
 		run.project = config.ProjectName(root, loaded, run.here)
 	}
 	run.entry = CommandEntry(run.section, asked.argv)
-	judge, err := NewEvidence(run.entry)
+	evidence, err := NewEvidence(run.entry)
 	if err != nil {
 		return run.notStarted(err.Error())
 	}
@@ -154,13 +157,17 @@ func (base *tester) raw(asked request) int {
 	if run.lookUp(key, keyErr, "under-lock") {
 		return 0
 	}
-	return run.command(judge, key, keyErr, held)
+	return run.command(evidence, key, keyErr, held)
 }
 
 // key is the key of this run, or why there is none.
 func (run *session) key() (Key, error) {
+	env := run.env
+	if env == nil {
+		env = commandEnv(run.environ)
+	}
 	return KeyOf(run.ctx, Keying{Root: run.root, Config: run.loaded, Project: run.project, Command: run.asked.argv,
-		Dir: run.here, Environ: run.environ})
+		Dir: run.here, Environ: env})
 }
 
 // refusal is why a receipt may not stand in for a run here, ("" when it may).
@@ -175,7 +182,7 @@ func (run *session) refusal() string {
 	case run.entry["reuse"] != true:
 		return "the command is not opted in (reuse is not true)"
 	}
-	if text, _ := run.entry["evidence"].(string); text == "" {
+	if text, _ := run.entry["evidence"].(string); text == "" && judge.AdapterVersion(run.adapterKind()) == 0 {
 		return noEvidence
 	}
 	if _, written := run.section["env"].([]any); !written {
@@ -379,7 +386,7 @@ func (run *session) lockUnusable(words string) int {
 // knows its holder).
 func commandEnv(environ []string) []string {
 	dropped := []string{lock.OutcomeFileVariable, lock.NoteWordsVariable, lock.GroupWaitVariable,
-		supervise.SessionsFileVariable, supervise.RunIDVariable, supervise.RunProjectVariable}
+		supervise.SessionsFileVariable, supervise.RunIDVariable, supervise.RunProjectVariable, testreport.PathVariable}
 	kept := make([]string, 0, len(environ))
 	for _, entry := range environ {
 		name, _, _ := strings.Cut(entry, "=")
@@ -420,23 +427,58 @@ func (base *tester) groupWait() time.Duration {
 
 // ran is what the command did, for the run's line.
 type ran struct {
-	key       Key
-	keyErr    error
-	runID     string
-	started   time.Time
-	ended     time.Time
-	kept      *Kept
-	judge     *Evidence
-	facts     map[string]any
-	setAside  bool
-	outcome   supervise.Outcome
-	firstStop time.Time
+	key        Key
+	keyErr     error
+	runID      string
+	started    time.Time
+	ended      time.Time
+	kept       *Kept
+	judge      *Evidence
+	structured *judge.Reader
+	facts      map[string]any
+	setAside   bool
+	outcome    supervise.Outcome
+	firstStop  time.Time
 }
 
 // command runs the command for the key in its group with the terminal, judges it, records it and
 // stores a receipt for a counted pass.
-func (run *session) command(judge *Evidence, key Key, keyErr error, held *flock.Held) int {
-	did := &ran{key: key, keyErr: keyErr, judge: judge, runID: RunID(run.clock.Now(), run.pid)}
+func (run *session) command(evidenceJudge *Evidence, key Key, keyErr error, held *flock.Held) int {
+	did := &ran{key: key, keyErr: keyErr, judge: evidenceJudge, runID: RunID(run.clock.Now(), run.pid)}
+	var decoder supervise.Sink = evidenceJudge
+	kind := run.adapterKind()
+	if kind != "" {
+		options := judge.Options{Kind: kind}
+		if veto := evidenceJudge.Veto(); veto != nil {
+			options.Vetoes = []string{veto.String()}
+		}
+		if value, ok := run.entry["empty_exit"].(json.Number); ok {
+			numeric, _ := value.Int64()
+			options.EmptyExit = int(numeric)
+		}
+		var err error
+		did.structured, err = judge.New(options)
+		if err != nil {
+			return run.notStarted(err.Error())
+		}
+		decoder = did.structured
+	}
+	env := setEnv(setEnv(run.env, supervise.RunIDVariable, did.runID), supervise.RunProjectVariable, run.project)
+	var report *testreport.Report
+	if kind == judge.JUnit {
+		folder, err := os.MkdirTemp("", "jackstay-test-report.")
+		if err != nil {
+			return run.notStarted("the private report directory could not be made: " + err.Error())
+		}
+		defer func() { _ = os.RemoveAll(folder) }()
+		name, _ := run.entry["report"].(string)
+		report, err = testreport.OpenReport(folder, name)
+		if err != nil {
+			return run.notStarted("the private JUnit report could not be prepared: " + err.Error())
+		}
+		defer func() { _ = report.Close() }()
+		env = setEnv(env, testreport.PathVariable, report.Path())
+	}
 	if keyErr == nil && run.storeErr == nil {
 		// The command is about to run for this key: its receipt stops speaking for the tree now, so
 		// a run that is stopped or fails leaves none behind.
@@ -452,8 +494,8 @@ func (run *session) command(judge *Evidence, key Key, keyErr error, held *flock.
 	}
 	did.kept = kept
 	var evidence any
-	if judge.pattern != nil {
-		evidence = judge.pattern.String()
+	if evidenceJudge.pattern != nil {
+		evidence = evidenceJudge.pattern.String()
 	}
 	var output any
 	if kept != nil {
@@ -461,6 +503,9 @@ func (run *session) command(judge *Evidence, key Key, keyErr error, held *flock.
 	}
 	did.facts = map[string]any{"run_id": did.runID, "pid": run.pid, "locked": run.lockedRun || run.getenv(flock.HeldVariable) != "",
 		"evidence": evidence, "receipt_removed": did.setAside, "output": output}
+	if kind != "" {
+		did.facts["judge"] = string(kind)
+	}
 	sessions, err := os.CreateTemp("", "jackstay-test-sessions.")
 	sessionsFile := ""
 	if err == nil {
@@ -468,18 +513,21 @@ func (run *session) command(judge *Evidence, key Key, keyErr error, held *flock.
 		_ = sessions.Close()
 		defer func() { _ = os.Remove(sessionsFile) }()
 	}
-	env := setEnv(setEnv(run.env, supervise.RunIDVariable, did.runID), supervise.RunProjectVariable, run.project)
 	if sessionsFile != "" {
 		env = setEnv(env, supervise.SessionsFileVariable, sessionsFile)
 	}
 	did.started = run.clock.Now()
-	if !run.runLog.Write(EventStart, did.keyValue(), map[string]any{"run_id": did.runID, "pid": run.pid,
-		"started_epoch": epochOf(did.started), "locked": did.facts["locked"]}) {
+	startFields := map[string]any{"run_id": did.runID, "pid": run.pid,
+		"started_epoch": epochOf(did.started), "locked": did.facts["locked"]}
+	if kind != "" {
+		startFields["judge"] = string(kind)
+	}
+	if !run.runLog.Write(EventStart, did.keyValue(), startFields) {
 		run.notLogged("the start of this run")
 	}
 	outcome, runErr := run.run(run.signals, supervise.Spec{Argv: run.asked.argv, Env: env, Dir: run.here,
 		Mode: supervise.Group, Terminal: true, Stdin: os.Stdin,
-		Output: &tee{stdout: run.stdout, stderr: run.stderr, kept: kept, judge: judge},
+		Output: &tee{stdout: run.stdout, stderr: run.stderr, kept: kept, judge: decoder},
 		Grace:  run.groupWait(), ReadBound: run.readBound, SessionsFile: sessionsFile,
 		Say: run.stderr, Who: "jst test", Clock: run.clock,
 		Started: func(group int) {
@@ -499,7 +547,15 @@ func (run *session) command(judge *Evidence, key Key, keyErr error, held *flock.
 		return run.notAPass(did, OutcomeFailed, StatusNoStart, map[string]any{"status": StatusNoStart},
 			fmt.Sprintf("outcome=failed (exit %d, %g s)", StatusNoStart, secondsBetween(did.started, did.ended)))
 	}
+	if report != nil && outcome.StoppedBy == 0 && run.signals.Context().Err() == nil {
+		did.structured.ReadReport(report)
+	}
 	return run.judged(did, held)
+}
+
+func (run *session) adapterKind() judge.Kind {
+	kind, _ := run.entry["judge"].(string)
+	return judge.Kind(kind)
 }
 
 func (did *ran) keyValue() string {
@@ -513,8 +569,28 @@ func (did *ran) keyValue() string {
 func (run *session) judged(did *ran, held *flock.Held) int {
 	outcome := did.outcome
 	reading := did.judge.Reading()
-	took := secondsBetween(did.started, did.ended)
+	end := judge.End{Status: outcome.Status(), ReadProblem: unjudgedWhy(outcome, reading)}
 	if outcome.StoppedBy != 0 {
+		end.Signal = supervise.SignalName(outcome.StoppedBy)
+	}
+	var verdict judge.Verdict
+	if did.structured != nil {
+		end.LeftRunning = supervise.Names(outcome.Left)
+		verdict = did.structured.VerdictWithPolicy(end, judge.DirectPolicy)
+		reading.Veto, reading.Counted = verdict.VetoLine, verdict.Counted
+		if verdict.Counting {
+			did.facts["counted"], did.facts["skipped"] = verdict.Counted, verdict.Skipped
+		}
+	} else {
+		facts := judge.Facts{Kind: judge.Exit, Counts: judge.Counts{Counted: reading.Counted, Counting: reading.Counts},
+			Vetoed: reading.Vetoed, VetoLine: reading.Veto}
+		if reading.Counts {
+			facts.Kind = judge.Steps
+		}
+		verdict = judge.Evaluate(facts, end, judge.DirectPolicy)
+	}
+	took := secondsBetween(did.started, did.ended)
+	if verdict.Outcome == judge.Stopped {
 		name := supervise.SignalName(outcome.StoppedBy)
 		ended := !did.firstStop.IsZero() && did.firstStop.After(did.ended)
 		state := "the command was running"
@@ -529,29 +605,39 @@ func (run *session) judged(did *ran, held *flock.Held) int {
 		run.signals.Close()
 		return run.endBy(outcome.StoppedBy)
 	}
-	if status := outcome.Status(); status != 0 {
+	if status := outcome.Status(); verdict.Outcome == judge.Failed && status != 0 {
 		return run.notAPass(did, OutcomeFailed, status, map[string]any{"status": status},
 			fmt.Sprintf("outcome=failed (exit %d, %g s)", status, took))
 	}
-	if reading.Vetoed {
+	if verdict.Outcome == judge.Failed {
+		if did.structured != nil && verdict.Failure != "" {
+			return run.notAPass(did, OutcomeFailed, StatusVeto,
+				map[string]any{"status": StatusVeto, "command_status": 0, "why": verdict.Why},
+				fmt.Sprintf("outcome=failed (exit %d: %s, %g s)", StatusVeto, verdict.Why, took))
+		}
 		run.say("the command ended 0, but its output holds a line its veto pattern names: %q. That is a failure, whatever the status says.",
 			reading.Veto)
 		return run.notAPass(did, OutcomeFailed, StatusVeto,
 			map[string]any{"status": StatusVeto, "command_status": 0, "veto_line": reading.Veto},
 			fmt.Sprintf("outcome=failed (exit %d: a veto line in the output of a command that ended 0, %g s)", StatusVeto, took))
 	}
-	if why := unjudgedWhy(outcome, reading); why != "" {
+	if verdict.Outcome == judge.Unjudged {
+		why := verdict.Why
 		run.say("the command ended 0, but %s. This is not a pass.", why)
 		return run.notAPass(did, OutcomeUnjudged, StatusUnjudged,
 			map[string]any{"status": StatusUnjudged, "command_status": 0, "why": why},
 			fmt.Sprintf("outcome=unjudged (exit %d: the output of a command that ended 0 could not be judged, %g s)", StatusUnjudged, took))
 	}
-	if reading.Counts && reading.Counted <= 0 {
-		evidence, _ := run.entry["evidence"].(string)
-		run.say("the command ended 0 but its output shows no test (%q counted nothing). This is not a pass.", evidence)
+	if verdict.Outcome == judge.NothingRun {
+		if did.structured != nil {
+			run.say("the structured report shows no executed tests.")
+		} else {
+			evidence, _ := run.entry["evidence"].(string)
+			run.say("the command ended 0 but its output shows no test (%q counted nothing). This is not a pass.", evidence)
+		}
 		return run.notAPass(did, OutcomeNothingRun, StatusNothingRun, nil, fmt.Sprintf("outcome=nothing-run (%g s)", took))
 	}
-	if !reading.Counts {
+	if verdict.Outcome == judge.ExitedZero {
 		written := run.line(did, OutcomeExited0, map[string]any{"evidence_count": nil, "stored": false,
 			"not_stored": reading.NoCount, "not_stored_kind": NotStoredNoEvidence})
 		run.say("the command ended 0; nothing counted its tests, so this is not a pass, and no receipt stored: %s.", reading.NoCount)

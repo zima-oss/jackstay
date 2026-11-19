@@ -3,15 +3,21 @@ package changes
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
-	"syscall"
 	"time"
+
+	"github.com/zima-oss/jackstay/internal/delivery"
+	"github.com/zima-oss/jackstay/internal/flock"
+	"github.com/zima-oss/jackstay/internal/strictjson"
 )
 
 func runCollect(args []string, _ io.Reader, stdout, stderr io.Writer) int {
@@ -34,11 +40,6 @@ func runCollect(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if *date == "" {
 		*date = time.Now().Format("2006-01-02") // the default of a command run by hand
 	}
-	unlock, err := lockCollect(project)
-	if err != nil {
-		return report(stderr, "changes collect", err)
-	}
-	defer unlock()
 	code, err := Collect(project, *version, *date, *dryRun, stdout, stderr)
 	if err != nil {
 		return report(stderr, "changes collect", err)
@@ -58,20 +59,23 @@ func lockCollect(project Project) (func(), error) {
 			lockPath = filepath.Join(project.Root, lockPath)
 		}
 	}
-	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600) // #nosec G304 -- git's own folder
+	held, err := flock.WaitFile(ctx, lockPath)
 	if err != nil {
-		return nil, &Problem{Code: 2, Message: "the collectors' lock cannot be opened: " + err.Error()}
-	}
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil { // #nosec G115 -- a descriptor fits an int
-		_ = file.Close()
 		return nil, &Problem{Code: 2, Message: "the collectors' lock: " + err.Error()}
 	}
-	return func() { _ = file.Close() }, nil
+	return held.Release, nil
 }
 
 // Collect is `jst changes collect`: write the section of every entry under the version's heading into
 // `changes.into`, then remove the entries. A rerun after a stop finishes the first run.
 func Collect(project Project, version, date string, dryRun bool, stdout, stderr io.Writer) (int, error) {
+	if !dryRun {
+		unlock, err := lockCollect(project)
+		if err != nil {
+			return 2, err
+		}
+		defer unlock()
+	}
 	settings := project.Settings
 	worktree := project.Worktree()
 	listed, err := ListEntries(worktree, settings.Dir)
@@ -82,14 +86,16 @@ func Collect(project Project, version, date string, dryRun bool, stdout, stderr 
 		fmt.Fprintf(stderr, "jst changes: %s is not an entry (an entry is `<slug>.md`, as `jst changes new` writes it); left as it is\n", other)
 	}
 	entries := make([]Entry, 0, len(listed.Entries))
-	read := map[string][]byte{}
+	files := make([]File, 0, len(listed.Entries))
 	var invalid []string
 	for _, listing := range listed.Entries {
 		for _, problem := range EntryProblems(listing, settings) {
 			invalid = append(invalid, listing.File.Path+": "+problem)
 		}
 		entries = append(entries, listing.Entry)
-		read[listing.File.Path] = listing.Data // what was rendered is what may be removed
+		file := listing.File
+		file.Blob = BlobID(project.Format, listing.Data)
+		files = append(files, file)
 	}
 	if len(invalid) > 0 {
 		fmt.Fprintf(stderr, "jst changes: invalid entries, nothing collected:\n  %s\n", strings.Join(invalid, "\n  "))
@@ -101,17 +107,25 @@ func Collect(project Project, version, date string, dryRun bool, stdout, stderr 
 	}
 	text := string(changelog)
 	heading := Heading(settings.Heading, version, date)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	if existing := VersionHeading(text, settings.Heading, version); existing != "" {
-		return finishRerun(project, listed, text, existing, dryRun, stdout, stderr)
+		if dryRun {
+			fmt.Fprintf(stderr, "jst changes: %s has %s already; no new section to write\n", settings.Into, existing)
+			return 1, nil
+		}
+		return resumeCollect(ctx, project, version, existing, stdout, stderr)
 	}
 	if len(entries) == 0 {
 		fmt.Fprintf(stderr, "jst changes: no entries in %s: nothing to collect\n", settings.Dir)
 		return 1, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	// The paths collect writes and removes are clean, so git holds what was there: after a stop,
-	// `git restore` (W-047).
+	head, err := project.Git.Line(ctx, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return 2, err
+	}
+	// The paths collect writes and removes must be clean. Ignored entries do not appear in
+	// status, so also require each entry to be in the index before writing the changelog.
 	status, err := project.Git.Run(ctx, "status", "--porcelain", "--untracked-files=all", "--", settings.Into, settings.Dir)
 	if err != nil {
 		return 2, err
@@ -119,6 +133,17 @@ func Collect(project Project, version, date string, dryRun bool, stdout, stderr 
 	if len(bytes.TrimSpace(status)) > 0 {
 		fmt.Fprintf(stderr, "jst changes: %s or %s has uncommitted changes; commit or drop them first\n", settings.Into, settings.Dir)
 		return 1, nil
+	}
+	paths := collectPaths(files)
+	tracked, err := trackedPaths(ctx, project, paths)
+	if err != nil {
+		return 2, err
+	}
+	for _, name := range paths {
+		if !tracked[name] {
+			fmt.Fprintf(stderr, "jst changes: %s is not tracked; commit or move it first\n", name)
+			return 1, nil
+		}
 	}
 	section := Section(heading, entries)
 	if dryRun {
@@ -129,26 +154,178 @@ func Collect(project Project, version, date string, dryRun bool, stdout, stderr 
 		fmt.Fprintf(stderr, "jst changes: %s changed while the section was made; nothing collected\n", settings.Into)
 		return 1, nil
 	}
-	if err := WriteInRepo(project.Root, settings.Into, []byte(Insert(text, section, settings.Newest, HeadingPattern(settings.Heading)))); err != nil {
+	next := []byte(Insert(text, section, settings.Newest, HeadingPattern(settings.Heading)))
+	plan := collectPlan{Head: head, Version: version, Destination: settings.Into, Changelog: BlobID(project.Format, next), Files: files}
+	planPath, err := collectPlanPath(ctx, project)
+	if err != nil {
 		return 2, err
 	}
-	var removed, changed []string
-	for _, listing := range listed.Entries {
-		now, _, err := worktree.Read(listing.File.Path)
-		if err != nil || !bytes.Equal(now, read[listing.File.Path]) {
-			changed = append(changed, listing.File.Path)
-			continue
-		}
-		removed = append(removed, listing.File.Path)
-	}
-	if err := Remove(project, removed); err != nil {
+	record, err := readCollection(planPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return 2, err
+	}
+	if record == nil || record.Outcome == delivery.Complete || !record.Plan.same(plan) {
+		record = delivery.New(plan)
+	}
+	if err := record.Begin(planPath, "write-changelog"); err != nil {
+		return 2, fmt.Errorf("saving the collection plan: %w", err)
+	}
+	if err := WriteInRepo(project.Root, settings.Into, next); err != nil {
+		return collectOutcome(planPath, record, 2, err)
 	}
 	fmt.Fprint(stdout, section)
-	fmt.Fprintf(stdout, "\njst changes: wrote `%s` into %s and removed %d entr%s\n", heading, settings.Into, len(removed), plural(len(removed), "y", "ies"))
+	return finishCollect(ctx, project, planPath, record, heading, stdout, stderr)
+}
+
+// collectPlan identifies the exact files that produced a changelog, in one worktree at one HEAD.
+// Rendered text alone cannot tell an entry from a later file that happens to say the same thing.
+type collectPlan struct {
+	Head        string
+	Version     string
+	Destination string
+	Changelog   string
+	Files       []File
+}
+
+func (plan collectPlan) same(other collectPlan) bool {
+	return plan.Head == other.Head && plan.Version == other.Version && plan.Destination == other.Destination &&
+		plan.Changelog == other.Changelog && slices.Equal(plan.Files, other.Files)
+}
+
+func readCollection(planPath string) (*delivery.Record[collectPlan], error) {
+	record, legacy, err := delivery.Read[collectPlan](planPath)
+	if !errors.Is(err, delivery.ErrUnversioned) {
+		return record, err
+	}
+	var plan collectPlan
+	if err := strictjson.Unmarshal(legacy, &plan); err != nil {
+		return nil, fmt.Errorf("reading the legacy collection plan: %w", err)
+	}
+	return delivery.New(plan), nil
+}
+
+func collectPlanPath(ctx context.Context, project Project) (string, error) {
+	return project.Git.Line(ctx, "rev-parse", "--path-format=absolute", "--git-path", "jackstay-changes.json")
+}
+
+func collectPaths(files []File) []string {
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		paths = append(paths, file.Path)
+	}
+	return paths
+}
+
+func trackedPaths(ctx context.Context, project Project, paths []string) (map[string]bool, error) {
+	out, err := project.Git.Run(ctx, append([]string{"ls-files", "-z", "--"}, paths...)...)
+	if err != nil {
+		return nil, err
+	}
+	tracked := make(map[string]bool, len(paths))
+	for _, name := range strings.Split(string(out), "\x00") {
+		tracked[name] = true
+	}
+	return tracked, nil
+}
+
+func resumeCollect(ctx context.Context, project Project, version, heading string, stdout, stderr io.Writer) (int, error) {
+	planPath, err := collectPlanPath(ctx, project)
+	if err != nil {
+		return 2, err
+	}
+	record, err := readCollection(planPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		fmt.Fprintf(stderr, "jst changes: %s has %s already and no saved collection plan; entries were left in place\n", project.Settings.Into, heading)
+		return 1, nil
+	}
+	if err != nil {
+		return 2, err
+	}
+	plan := record.Plan
+	if plan.Version != version || plan.Destination != project.Settings.Into || len(plan.Files) == 0 {
+		fmt.Fprintf(stderr, "jst changes: the saved collection plan does not match %s; entries were left in place\n", heading)
+		return 1, nil
+	}
+	if record.Outcome == delivery.Complete {
+		fmt.Fprintf(stderr, "jst changes: the collection of %s already completed; entries were left in place\n", heading)
+		return 1, nil
+	}
+	if err := record.Begin(planPath, "remove-entries"); err != nil {
+		return 2, err
+	}
+	fmt.Fprintf(stdout, "jst changes: resuming delivery %s (attempt %d)\n", record.ID, record.Attempt)
+	return finishCollect(ctx, project, planPath, record, heading, stdout, stderr)
+}
+
+func finishCollect(ctx context.Context, project Project, planPath string, record *delivery.Record[collectPlan], heading string, stdout, stderr io.Writer) (int, error) {
+	if record.Phase != "remove-entries" {
+		if err := record.Checkpoint(planPath, "remove-entries", delivery.Running); err != nil {
+			return 2, err
+		}
+	}
+	code, err := removeCollectedEntries(ctx, project, record.Plan, heading, stdout, stderr)
+	return collectOutcome(planPath, record, code, err)
+}
+
+func collectOutcome(planPath string, record *delivery.Record[collectPlan], code int, err error) (int, error) {
+	outcome := delivery.Interrupted
+	if code == 0 && err == nil {
+		outcome = delivery.Complete
+	}
+	if checkpointErr := record.Checkpoint(planPath, record.Phase, outcome); checkpointErr != nil {
+		return 2, errors.Join(err, fmt.Errorf("recording the collection outcome: %w", checkpointErr))
+	}
+	return code, err
+}
+
+func removeCollectedEntries(ctx context.Context, project Project, plan collectPlan, heading string, stdout, stderr io.Writer) (int, error) {
+	onDisk, err := project.Worktree().List(project.Settings.Dir)
+	if err != nil {
+		return 2, err
+	}
+	current := make(map[string]File, len(onDisk))
+	for _, file := range onDisk {
+		current[file.Path] = file
+	}
+	tracked, err := trackedPaths(ctx, project, collectPaths(plan.Files))
+	if err != nil {
+		return 2, err
+	}
+	var remove, changed []string
+	for _, expected := range plan.Files {
+		if path.Dir(expected.Path) != path.Clean(project.Settings.Dir) || !expected.Regular() {
+			return 2, fmt.Errorf("the collection plan names an invalid entry: %q", expected.Path)
+		}
+		actual, exists := current[expected.Path]
+		switch {
+		case exists && (actual != expected || !tracked[expected.Path]):
+			changed = append(changed, expected.Path)
+		case tracked[expected.Path]:
+			remove = append(remove, expected.Path)
+		}
+	}
+	head, err := project.Git.Line(ctx, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return 2, err
+	}
+	changelog, _, err := project.Worktree().Read(plan.Destination)
+	if err != nil {
+		return 2, err
+	}
+	if head != plan.Head || BlobID(project.Format, changelog) != plan.Changelog {
+		fmt.Fprintln(stderr, "jst changes: HEAD or the changelog differs from the saved collection plan; entries were left in place")
+		return 1, nil
+	}
+	if len(remove) > 0 {
+		// git rm also verifies the disk and index against HEAD and never removes untracked files.
+		if _, err := project.Git.Run(ctx, append([]string{"rm", "-q", "--"}, remove...)...); err != nil {
+			return 2, err
+		}
+	}
+	fmt.Fprintf(stdout, "\njst changes: %s is in %s; removed %d entr%s\n", heading, plan.Destination, len(remove), plural(len(remove), "y", "ies"))
 	if len(changed) > 0 {
-		fmt.Fprintf(stderr, "jst changes: kept %s: changed while being collected; its new text is not in %s (put it there by hand, then remove the entry)\n",
-			strings.Join(changed, ", "), settings.Into)
+		fmt.Fprintf(stderr, "jst changes: kept %s: changed while being collected; check their current text against %s\n",
+			strings.Join(changed, ", "), plan.Destination)
 		return 1, nil
 	}
 	return 0, nil
@@ -186,132 +363,6 @@ func VersionHeading(text, template, version string) string {
 		}
 	}
 	return ""
-}
-
-// finishRerun removes the entries when every one is already a block of the version's section:
-// the first run wrote the changelog and stopped before removing them.
-func finishRerun(project Project, listed Listed, text, heading string, dryRun bool, stdout, stderr io.Writer) (int, error) {
-	lines := strings.Split(text, "\n")
-	anyHeading := HeadingPattern(project.Settings.Heading)
-	start := 0
-	for index, line := range lines {
-		if strings.TrimRight(line, " \t") == heading {
-			start = index
-			break
-		}
-	}
-	end := len(lines)
-	for index := start + 1; index < len(lines); index++ {
-		if anyHeading.MatchString(lines[index]) {
-			end = index
-			break
-		}
-	}
-	own := strings.TrimRight(strings.Join(lines[start:end], "\n"), "\n")
-	var done, missing []string
-	for _, listing := range listed.Entries {
-		held := holdsBlock(own, listing.Entry.Text)
-		if listing.Entry.Typed {
-			held = holdsLines(own, item(listing.Entry))
-		}
-		if held {
-			done = append(done, listing.File.Path)
-		} else {
-			missing = append(missing, listing.File.Path)
-		}
-	}
-	if len(listed.Entries) > 0 && len(missing) == 0 {
-		if !dryRun {
-			// Each entry is removed only if it is still the bytes that were found in the section.
-			var unchanged, changed []string
-			for _, listing := range listed.Entries {
-				now, _, err := project.Worktree().Read(listing.File.Path)
-				if err != nil || !bytes.Equal(now, listing.Data) {
-					changed = append(changed, listing.File.Path)
-					continue
-				}
-				unchanged = append(unchanged, listing.File.Path)
-			}
-			if err := Remove(project, unchanged); err != nil {
-				return 2, err
-			}
-			if len(changed) > 0 {
-				fmt.Fprintf(stderr, "jst changes: kept %s: changed since it was read\n", strings.Join(changed, ", "))
-				return 1, nil
-			}
-			done = unchanged
-		}
-		suffix := ""
-		if dryRun {
-			suffix = " (dry run: nothing removed)"
-		}
-		fmt.Fprintf(stdout, "%s is in %s already; removed the %d entr%s it holds%s\n", heading, project.Settings.Into, len(done), plural(len(done), "y", "ies"), suffix)
-		return 0, nil
-	}
-	message := fmt.Sprintf("jst changes: %s has `%s` already", project.Settings.Into, heading)
-	if len(missing) > 0 {
-		message += ", and entries not in it: " + strings.Join(missing, ", ")
-	}
-	fmt.Fprintln(stderr, message)
-	return 1, nil
-}
-
-// holdsBlock says whether block is a whole block of section: after a blank line or the start,
-// before a blank line or the end.
-func holdsBlock(section, block string) bool {
-	pattern := regexp.MustCompile(`(?:^|\n\n)` + regexp.QuoteMeta(strings.TrimSpace(block)) + `(?:\n\n|$)`)
-	return pattern.MatchString(section)
-}
-
-// holdsLines says whether lines are whole lines of section (typed items follow each other without
-// a blank line between them).
-func holdsLines(section, lines string) bool {
-	pattern := regexp.MustCompile(`(?:^|\n)` + regexp.QuoteMeta(lines) + `(?:\n|$)`)
-	return pattern.MatchString(section)
-}
-
-// Remove deletes files of the project: tracked ones with `git rm`, the others from disk.
-func Remove(project Project, paths []string) error {
-	if len(paths) == 0 {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	for _, filePath := range paths {
-		if _, err := InRepo(project.Root, filePath); err != nil {
-			return err
-		}
-	}
-	tracked := map[string]bool{}
-	out, err := project.Git.Run(ctx, append([]string{"ls-files", "-z", "--"}, paths...)...)
-	if err != nil {
-		return err
-	}
-	for _, name := range strings.Split(string(out), "\x00") {
-		if name != "" {
-			tracked[name] = true
-		}
-	}
-	var gitPaths []string
-	for _, filePath := range paths {
-		if tracked[filePath] {
-			gitPaths = append(gitPaths, filePath)
-			continue
-		}
-		full, err := InRepo(project.Root, filePath)
-		if err != nil {
-			return err
-		}
-		if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	if len(gitPaths) > 0 {
-		if _, err := project.Git.Run(ctx, append([]string{"rm", "-q", "--"}, gitPaths...)...); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // InRepo is the absolute path of a path of the repository, refused when it leaves the repository

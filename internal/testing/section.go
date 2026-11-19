@@ -8,14 +8,17 @@ import (
 	"slices"
 	"sort"
 	"strings"
+
+	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/judge"
 )
 
 // The judges and engines a scope names.
 var (
-	judges  = []string{"swift-test", "steps", "exit"}
+	judges  = []string{"swift-test", "steps", "exit", string(judge.GoJSON), string(judge.JUnit)}
 	engines = []string{"xctest", "swift-testing"}
 	// placeholderNames are the placeholders of a run's words.
-	placeholderNames = []string{"tests", "base", "slow"}
+	placeholderNames = []string{"tests", "base", "slow", "report"}
 )
 
 const (
@@ -221,7 +224,7 @@ func expectProblems(values []string, where string) []string {
 }
 
 // listOnlyKeys are the keys that belong to a step running a command, never to a list of steps.
-var listOnlyKeys = []string{"judge", "evidence", "veto", "env", "base", "slow", "expect", "cwd", "durations", "timeout",
+var listOnlyKeys = []string{"judge", "evidence", "veto", "env", "base", "slow", "expect", "cwd", "durations", "timeout", "report", "empty_exit",
 	"lock_wait", "lock", "resume"}
 
 func definitionProblems(section map[string]any, kind, name string, entry map[string]any) []string {
@@ -245,16 +248,20 @@ func definitionProblems(section map[string]any, kind, name string, entry map[str
 	if len(words) == 0 {
 		return append(found, fmt.Sprintf("`%s.run` names no command (an empty list)", here))
 	}
-	judge := judgeOf(section, entry)
-	if !slices.Contains(judges, judge) {
+	judgeName := judgeOf(section, entry)
+	if !slices.Contains(judges, judgeName) {
 		found = append(found, fmt.Sprintf("`%s.judge` must be one of %s", here, joinComma(judges)))
 	}
+	found = append(found, config.TestAdapterProblems(here, judgeName, entry)...)
 	used := map[string]bool{}
 	for _, token := range placeholdersOf(words) {
 		used[token] = true
 		if !slices.Contains(placeholderNames, token) {
-			found = append(found, fmt.Sprintf("`%s.run` holds {%s}: the placeholders are {tests}, {base} and {slow}", here, token))
+			found = append(found, fmt.Sprintf("`%s.run` holds {%s}: the placeholders are {tests}, {base}, {slow} and {report}", here, token))
 		}
+	}
+	if used["report"] && (judgeName != string(judge.JUnit) || slices.Contains(placeholdersOf(words[:1]), "report")) {
+		found = append(found, fmt.Sprintf("`%s.run` allows {report} only in arguments to a junit producer", here))
 	}
 	slow, hasSlow := entry["slow"]
 	switch {
@@ -269,7 +276,7 @@ func definitionProblems(section map[string]any, kind, name string, entry map[str
 	if has(entry, "base") && !used["base"] {
 		found = append(found, fmt.Sprintf("`%s.base` is for {base}, which its words do not hold", here))
 	}
-	if judge == "steps" {
+	if judgeName == "steps" {
 		evidence := textOf(entry["evidence"])
 		if evidence == "" {
 			found = append(found, fmt.Sprintf("`%s` has judge `steps` and no `evidence` pattern: it must name the line that counts its tests", here))
@@ -277,13 +284,13 @@ func definitionProblems(section map[string]any, kind, name string, entry map[str
 			found = append(found, fmt.Sprintf("`%s.evidence` has no group: the pattern must capture the number of tests", here))
 		}
 	}
-	if judge == "swift-test" && slices.Contains(words, "--parallel") {
+	if judgeName == "swift-test" && slices.Contains(words, "--parallel") {
 		found = append(found, fmt.Sprintf("`%s` runs `swift test --parallel` under the `swift-test` judge: SwiftPM then hides the lines a pass "+
 			"is proven by (judge `exit` remains possible: its outcome is exited-0, never passed)", here))
 	}
 	if expect, present := entry["expect"]; present {
 		found = append(found, expectProblems(textsOf(expect), here+".expect")...)
-		if judge != "swift-test" {
+		if judgeName != "swift-test" {
 			found = append(found, fmt.Sprintf("`%s.expect` is for the `swift-test` judge", here))
 		}
 	}
@@ -395,12 +402,14 @@ type slowRule struct {
 type leaf struct {
 	name, kind string
 	// scope is the name when the leaf is a scope ("" for a step).
-	scope    string
-	run      []string
-	cwd      string
-	judge    string
-	evidence string
-	veto     string
+	scope     string
+	run       []string
+	cwd       string
+	judge     string
+	evidence  string
+	veto      string
+	report    string
+	emptyExit int
 	// timeout and lockWait are seconds; zero is none.
 	timeout   float64
 	lockWait  float64
@@ -425,6 +434,8 @@ func resolve(section map[string]any, name, kind string, entry map[string]any) le
 	resolved := leaf{name: name, kind: kind, run: textsOf(entry["run"]), cwd: ".", judge: judgeOf(section, entry),
 		evidence: textOf(entry["evidence"]), veto: textOf(entry["veto"]), lock: !slices.Contains(unlockedByDefault, name),
 		env: map[string]string{}, base: textOf(entry["base"]), resume: true, when: textOf(entry["when"])}
+	resolved.report = textOf(entry["report"])
+	resolved.emptyExit = int(secondsOf(entry["empty_exit"]))
 	if kind == kindScope {
 		resolved.scope = name
 	}

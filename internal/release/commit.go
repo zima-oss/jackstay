@@ -32,7 +32,7 @@ func (repo Repo) commitOn(parent string, writes map[string][]byte, removes []str
 		env = append(env, "GIT_AUTHOR_NAME="+who.Name, "GIT_COMMITTER_NAME="+who.Name,
 			"GIT_AUTHOR_EMAIL="+who.Email, "GIT_COMMITTER_EMAIL="+who.Email)
 	}
-	git := gitcli.Git{Dir: repo.Root, Env: env}
+	git := repo.commitGit(env)
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	if _, err := git.Run(ctx, "read-tree", parent); err != nil {
@@ -66,7 +66,7 @@ func (repo Repo) commitOn(parent string, writes map[string][]byte, removes []str
 			return "", err
 		}
 	}
-	tree, err := git.Line(ctx, "write-tree")
+	tree, err := git.Run(ctx, "write-tree")
 	if err != nil {
 		return "", err
 	}
@@ -74,7 +74,8 @@ func (repo Repo) commitOn(parent string, writes map[string][]byte, removes []str
 	if err := os.WriteFile(messageFile, []byte(message), 0o600); err != nil {
 		return "", err
 	}
-	return git.Line(ctx, "commit-tree", strings.TrimSpace(tree), "-p", parent, "-F", messageFile)
+	commit, err := git.Run(ctx, "commit-tree", strings.TrimSpace(string(tree)), "-p", parent, "-F", messageFile)
+	return strings.TrimSpace(string(commit)), err
 }
 
 func parentDir(filePath string) string {
@@ -131,14 +132,19 @@ func (repo Repo) RemoteRefs(remote string, patterns ...string) (map[string]strin
 func (repo Repo) pushLeased(remote, branch, commit, expected string) (refused bool, err error) {
 	ref := "refs/heads/" + branch
 	// Not --porcelain: its per-ref report goes to standard output, which a failed run's error does
-	// not carry; git's own refusal ("stale info", "rejected") is on standard error.
+	// not carry; the client-side lease refusal is on standard error.
 	_, err = repo.run("push", "--force-with-lease="+ref+":"+expected, remote, commit+":"+ref)
 	if err == nil {
 		return false, nil
 	}
-	if exitErr, ok := err.(*gitcli.ExitError); ok && (strings.Contains(exitErr.Stderr, "stale info") ||
-		strings.Contains(exitErr.Stderr, "rejected") || strings.Contains(exitErr.Stderr, "non-fast-forward")) {
-		return true, nil
+	if exitErr, ok := err.(*gitcli.ExitError); ok {
+		for _, line := range strings.Split(exitErr.Stderr, "\n") {
+			// A failed client-side lease is its own per-ref status. A remote hook can also
+			// reject an update, but retrying that refusal as a moving branch hides its cause.
+			if strings.HasPrefix(strings.TrimSpace(line), "! [rejected]") && strings.HasSuffix(line, " (stale info)") {
+				return true, nil
+			}
+		}
 	}
 	return false, err
 }

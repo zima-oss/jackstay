@@ -29,7 +29,7 @@ the same rules hold.
 - **Secrets**: never write a token, key or password into a file, a test, a log or a commit message;
   tests use made-up values.
 
-<!-- jackstay-adopt: begin agents-block sha256:2c087ea330d7 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:fe4da405beaf — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed on this machine. Reach for it before a hand-written shell loop:
@@ -39,6 +39,8 @@ the same rules hold.
   Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
   a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
   removes). No scope fits: `jst test -- COMMAND`.
+- **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
+  using the expected digest, revision and key from a trusted source.
 - **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
 - **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or
   `nohup`; `jst procs` lists them, `jst procs stop NAME` stops yours.
@@ -50,11 +52,14 @@ the same rules hold.
 - **The guard** refuses destructive commands and names what to run instead: run that, never a
   workaround. A line `jst guard let this command run, with a warning` means read it before going
   on.
-- **Review a change**: `jst review BASE..REV --task NAME` — a cold review by Codex, in rounds;
-  `jst review check BASE..REV --task NAME` says whether it is clear.
+- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.
+  Pick `codex` or `claude-code`, or use the project's `review.use`.
+  `jst review check BASE..REV --task NAME` checks the saved round.
 - **Numbers** come from `jst id next SERIES`, never by hand.
 - **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a
   surprising failure, before asking.
+- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
+- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay).

@@ -1,4 +1,4 @@
-# `jst review`: cold code reviews by Codex, run by the framework
+# `jst review`: cold code reviews
 
 Status: built ([W-051](../decisions/W-051-jst-review-codex-rounds.md)). It follows
 [W-019](../decisions/W-019-repeated-findings-mean-redesign.md) (a place failing two rounds running
@@ -27,7 +27,10 @@ on reviews run by hand):
 
 ## 1. The `review` section of `jackstay.json`
 
-Every key is optional; a project with no `review` section gets every default. Unknown keys and a
+Every key is optional. Choose a built-in reviewer explicitly with `--reviewer` or configure the
+project's selection in `review.use`. Both providers' settings are available with or without a
+`review` section. If neither source selects a reviewer, the command exits 2 before starting a round.
+Unknown keys and a
 key written twice are refused, as everywhere in `jackstay.json` (`internal/config`, strict). Paths are
 relative to the repository's root and read **from the reviewed commit's tree** (section 3.1), never
 the live checkout, so a brief edited after the commit cannot change what was reviewed; `--brief`
@@ -65,13 +68,13 @@ on the command line is the exception (a file outside the tree, copied into the r
 
 | Key | Meaning | Default |
 |---|---|---|
-| `reviewers` | the reviewers this project may use, by name. Only `codex` is known now; another name is refused until jackstay knows how to run it | `{"codex": {}}` |
+| `reviewers` | overrides for built-in `codex` and `claude-code` settings, by name | built-in settings for both |
 | `reviewers.codex.command` | the Codex program: a name looked up on `PATH`, or an absolute path | `codex` |
 | `reviewers.codex.model` | passed as `-m`; empty means Codex's own default (with `--ignore-user-config` that is Codex's built-in one, not the user's `config.toml`) | empty |
 | `reviewers.codex.effort` | reasoning effort, passed as `-c model_reasoning_effort="…"`; one of `minimal`, `low`, `medium`, `high`, `xhigh`; empty passes nothing | `medium` |
 | `reviewers.codex.timeout_minutes` | the hard deadline of one run (section 3.4); 1–120 | 20 |
 | `reviewers.codex.isolation` | the isolation flags, a list of argv words that **replaces** the default list whole. Words jackstay owns are refused here (below) | the set above |
-| `use` | the reviewers a round runs when `--reviewer` is not given; each must be in `reviewers`, none twice, and the list not empty (a round with no reviewer would pass with no review) | `["codex"]` |
+| `use` | the built-in reviewers a round runs when `--reviewer` is absent, and the reviewers required by `review check`; names must be unique | `[]` |
 | `brief` | the project's standing brief: what a reviewer of this project must know (its threat model, what to ignore). Put at the top of every prompt | none |
 | `template` | a whole prompt template (Go `text/template`, section 3.2) replacing jackstay's own; for a project whose reviews differ in kind. Its output must still ask for the verdict form, which jackstay appends itself whatever the template says | jackstay's embedded template |
 | `cite` | files and folders (a trailing `/`) the reviewer is told to read as the measure: rules, decisions, specs. Each must exist in the reviewed tree, or the round refuses to start | `["AGENTS.md"]` if it exists, else none |
@@ -86,7 +89,7 @@ on the command line is the exception (a file outside the tree, copied into the r
 | `store` | where results are kept: an absolute path or one beginning `~/`; empty means `~/.jackstay/<project>/reviews` | empty |
 | `keep_days` | a task whose newest round is older than this is removed (section 5); 1–3650 | 30 |
 
-**Words jackstay owns** and refuses in `isolation`, because each would break a promise of this spec:
+**Words jackstay owns** and refuses in Codex `isolation`, because each would break a promise of this spec:
 `exec`, `-a`/`--ask-for-approval`, `-s`/`--sandbox`, `--dangerously-bypass-approvals-and-sandbox`,
 `--full-auto`, `--approve-for-me`, `--add-dir`, `-C`/`--cd`, `-o`/`--output-last-message`,
 `--output-schema`, `--json`, `-m`/`--model`, `-p`/`--profile`, `--worktree`, `-i`/`--image`, `-`,
@@ -98,9 +101,39 @@ always (section 3.4):
               [-m <model>] [-c model_reasoning_effort="<effort>"] <isolation…> -
 
 Projects configure it in their `jackstay.json` `review` section. The section's
-types go into `config.Table`; its meaning (the refused words, ranges, `use` ⊆ `reviewers`, `blocking`
+types go into `config.Table`; its meaning (the refused words, ranges, known names in `use`, `blocking`
 ⊆ `severities`, `cite` present in the tree) is `internal/review`'s validator, which `jst check` runs
 as it runs the release's.
+
+### 1.1. Claude Code adapter
+
+Select it with `--reviewer claude-code` or include it in `review.use`. Its defaults are command `claude`,
+the CLI's own model and effort defaults, and the same 20-minute timeout as Codex. Available effort
+overrides are `low`, `medium`, `high`, `xhigh`, `max` and `ultracode`. Set
+`reviewers.claude-code` to override its settings. Claude Code safety flags
+are fixed. Configuration with a nonempty Claude Code `isolation` array is refused.
+
+Jackstay verifies `claude --version` locally and requires 2.1.248 or newer before the run. It
+starts the CLI in the detached worktree with `--print --restricted --safe-mode
+--no-session-persistence`. The built-in tool allowlist is `Read,Glob,Grep`, the permission mode is
+`dontAsk`, and MCPs are disabled by a strict empty configuration and a tool denial. The child
+receives the environment variables needed for local CLI use and its chosen authentication. The
+CLI consumes the prompt through stdin and uses existing CLI credentials. Managed policies and
+managed hooks still apply on machines where administrators configure them.
+[Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
+
+Since Claude Code cannot run Git in the review session, jackstay generates the patch from the
+pinned commits and includes it in the prompt as source data. Incremental rounds receive both the
+full-chain and incremental patches. An incomplete patch or a prompt larger than 128 KiB fails the
+review before launch. The working copy can contain unrelated edits without changing this input.
+
+Claude Code gets the same verdict JSON Schema via `--json-schema` and returns a JSON envelope via
+`--output-format json`. Jackstay accepts `structured_output` only in a successful result,
+writes that field as the round's answer, and passes it through the same schema validation and
+ledger as Codex. A second file can carry numeric token counts. The run record omits the provider's
+raw stdout and stderr. The machine-wide start lock is released when the subprocess finishes or
+after 120 seconds, because the JSON envelope arrives only at completion.
+[Claude Code headless mode](https://code.claude.com/docs/en/headless)
 
 ## 2. Codex runs outside the sandbox, and its login is refreshed by one run at a time
 
@@ -291,15 +324,18 @@ N (section 4, "Attempts and rounds").
 
 A **task** is what is reviewed in rounds: by default the session's current branch name, else
 `--task NAME` (required on a detached head); a name is any text git accepts as a branch name, at
-most 200 bytes. Its folder name is the name percent-encoded (every byte outside `[A-Za-z0-9._-]`
-as `%XX`, so `feature/review` is `feature%2Freview`): reversible, one folder per name, no `/`.
+most 200 bytes. New tasks use the lower-case SHA-256 of that name as a fixed-length folder
+component. A `task.json` inside stores the original name, so the store can enumerate tasks. An
+exactly named legacy percent-encoded folder stays readable and writable. Case variants remain
+distinct on filesystems that fold case.
 
-**One run of a task at a time.** A run takes the task's lock, `<store>/.locks/<folder>.lock`
+**One run of a task at a time.** A run takes the task's lock, `<store>/.locks/v2/<task hash>.lock`
 (`flock`, outside the task's folder so pruning cannot remove it under a holder), before it reads
 the round number and keeps it until its report and index line are written. A second `jst review` of
 the same task while one runs refuses at once (exit 2, "task busy", naming the holder's process),
 so two runs can never take one number or write one folder. Pruning takes the same lock without
-waiting and skips a task it cannot take.
+waiting and skips a task it cannot take. A writer of an existing legacy folder also takes that
+folder's old lock to avoid colliding with a previous binary that already holds it.
 
 **Attempts and rounds.** Every run is an *attempt*, written from its first byte into
 `<task>/attempt-<k>/` (k counts every attempt of the task, never reused). When every reviewer of
@@ -315,6 +351,8 @@ another (a full review of `BASE..REV` with an empty ledger), every other round c
 chain of the round before it, from the same base (3.1). So a chain at commit C has reviewed,
 between its rounds, every change from its base to C: the first round the whole range, each later
 one the tree difference since the round before (a rebase included, since the diff is of trees).
+Every round in a chain uses the same review policy and the same reviewer names. A change to either,
+or an older round without a policy ID, requires a full BASE..REV review with `--fresh`.
 
 The **ledger** of a chain is jackstay's list of its findings, computed from the rounds' answers and kept
 whole in each `round.json` (section 5): every field the reviewer gave, plus the **ledger id** jackstay
@@ -366,8 +404,9 @@ finding; `--focus` only says where to look hardest.
 ```
 <store>/                                  ~/.jackstay/<project>/reviews unless `store` says otherwise
   index.jsonl                             one line per reviewer run
-  .locks/<task>.lock                      the task's lock (section 4)
-  <task>/                                 the task's name, percent-encoded
+  .locks/v2/<task hash>.lock              the task's lock (section 4)
+  .tasks/<task hash>/                     a new task's folder
+    task.json                            the original task name
     round-1/                              an attempt that became round 1 (renamed last)
       attempt.json  report.md  round.json  prompt.md
       codex/  answer.json  events.jsonl  stderr.txt  schema.json  run.json
@@ -377,7 +416,7 @@ finding; `--focus` only says where to look hardest.
 
 `attempt.json` is written first, so a failed attempt keeps what it was for (task, attempt, commit,
 base). `round.json` is the round's record: task, round, chain, commit, base, the round it follows,
-reviewers, the ledger after the round (each finding whole — ledger id, reviewer, place, severity,
+reviewers, the versioned review policy ID, the ledger after the round (each finding whole — ledger id, reviewer, place, severity,
 ratings, title, detail, `repeats` — with its status `open`, `fixed` or `deferred`, the round and
 commit that opened it and the round that fixed it), the places hit, `blocks`, `redesign_due`,
 `over_limit`. Later rounds read the ledger from the newest round's `round.json`, never from the
@@ -404,8 +443,10 @@ can never land in a file that a rewrite is about to replace. The index is a conv
 
 **Pruning.** At the start of every `jst review` of a project and by `jst review prune`, a task whose
 newest round or attempt is older than `keep_days` is removed whole, and the index rewritten
-without it (atomically, under `<store>/index.lock`). The rounds of a task are kept together while it
-is alive, so W-019's count never loses a round in the middle of a chain.
+without it. Pruning acquires the index lock before removing tasks and holds it through the atomic
+rewrite. A review of a recreated task can append its results after pruning releases that lock.
+The rounds of a task are kept together while it is alive, so W-019's count never loses a round in
+the middle of a chain.
 
 ## 6. In the background, and several at once
 
@@ -426,7 +467,8 @@ with `flock` and released by the kernel if jackstay dies. A reviewer run of a pr
 `max_concurrent` is M may hold only a slot k < M; it tries them in order and, if none is free,
 waits (printing once that it waits, then every minute how many runs hold slots); if the slot and
 then the start lock are not both held within `queue_minutes`, it ends `failed` ("no slot") and
-Codex is never started. Within one round, reviewers run concurrently,
+Codex is never started. File or permission errors opening a lock fail immediately with their cause.
+Within one round, reviewers run concurrently,
 each as a goroutine that always returns a result value (a failure is a result, not a lost error),
 collected in order; no goroutine outlives the call. The start lock (section 2) is taken after the
 slot.
@@ -442,7 +484,8 @@ slot.
     jst review prune                                remove tasks past keep_days, now
 
 `last`, `check`, `list`, `show` and `prune` are two-word entries of the command table and win over a
-revision of that name; a branch named `list` is reviewed as `jst review -- list`. `--model`,
+revision of that name; a branch named `list` can be reviewed as
+`jst review --reviewer codex -- list`. `--model`,
 `--effort` and `--timeout` override the configuration for this call and apply to every reviewer
 named. `--json` prints the round's
 result as one JSON object (`round.json`'s fields, or the attempt's outcome) instead of the
@@ -472,6 +515,11 @@ nothing is inferred: exit 0 only when all hold, otherwise exit 1 with each reaso
   attempt is reported as a note) was made at exactly REV;
 - its chain's base is exactly BASE — so, by section 4, the chain reviewed every change from BASE to
   REV; a chain from any other base, nearer or farther, does not answer for this range;
+- the latest round records the current review policy and at least one completed reviewer. Every
+  reviewer in `review.use` must have finished successfully. With `review.use` empty, either
+  provider's completed round can qualify. The policy covers prompt configuration (`brief`, `template`, `cite`), severity,
+  triage, repetition and round limits. Scheduling, storage and per-run model, effort and timeout
+  overrides are independent of this policy;
 - after it, no open finding of the ledger blocks;
 - it is not redesign-due, and not past `round_limit` without `--past-limit` having been given.
 No other field promises anything; `blocks: false` on a record is not "reviewed". A single commit
@@ -492,7 +540,9 @@ status, worktree add/remove/prune, diff --stat, log), `internal/homedir` (`Proje
 
 **Interfaces where used** (W-037): `internal/review` declares `Reviewer` (`Review(ctx, Request)
 Result`, a result always, never only an error) and a small git interface (resolve, status, add and
-remove a pinned tree, diff stat); `internal/review/codex` satisfies `Reviewer`; tests use
+remove a pinned tree, diff and diff stat). `internal/review/runner` holds the shared subprocess
+request and result types. The dispatcher selects `internal/review/codex` or
+`internal/review/claude` by reviewer name. Tests use
 hand-written fakes of both (a fake reviewer returning a scripted answer, a timeout, an unparsable
 file, a login failure). `log/slog` only if a diagnostic log is kept; the outcomes go in `run.json`.
 

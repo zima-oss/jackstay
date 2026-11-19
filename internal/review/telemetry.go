@@ -11,7 +11,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"github.com/zima-oss/jackstay/internal/review/codex"
+	"github.com/zima-oss/jackstay/internal/review/claude"
+	"github.com/zima-oss/jackstay/internal/review/runner"
 	"github.com/zima-oss/jackstay/internal/telemetry"
 	"github.com/zima-oss/jackstay/internal/telemetry/genai"
 )
@@ -66,12 +67,23 @@ func startAgent(ctx context.Context, name string) (context.Context, *telemetry.S
 // its outcome, then ends it — after the run is over, so nothing is lost.
 func endAgent(span *telemetry.Span, run ReviewerRun, folder string) {
 	agentRun := codexRunOf(filepath.Join(folder, "events.jsonl"))
-	agentRun.Provider, agentRun.Agent, agentRun.Model, agentRun.Effort = "openai", run.Reviewer, run.Model, run.Effort
+	agentRun.Provider = "openai"
+	if run.Reviewer == claude.Name {
+		agentRun = genai.AgentRun{Provider: "anthropic"}
+		data, err := os.ReadFile(filepath.Join(folder, claude.UsageFile)) // #nosec G304 -- the round's own usage counters
+		var usage claude.Usage
+		if err == nil && json.Unmarshal(data, &usage) == nil {
+			agentRun.Turns = []genai.Usage{{Input: usage.Input + usage.CachedInput + usage.CacheWrite,
+				CachedInput: usage.CachedInput, CacheWrite: usage.CacheWrite, Output: usage.Output}}
+			agentRun.TurnFailed = []bool{run.Outcome != runner.OutcomeDone}
+		}
+	}
+	agentRun.Agent, agentRun.Model, agentRun.Effort = run.Reviewer, run.Model, run.Effort
 	genai.FinishAgentRun(span, agentRun)
 	span.Set(attribute.String(telemetry.AttrReviewStore, folder))
-	if run.Outcome != codex.OutcomeDone {
+	if run.Outcome != runner.OutcomeDone {
 		errorType := run.Outcome
-		if run.Outcome == codex.OutcomeFailed && run.Exit > 0 {
+		if run.Outcome == runner.OutcomeFailed && run.Exit > 0 {
 			errorType = fmt.Sprintf("exit_%d", run.Exit)
 		}
 		span.Fail(errorType, run.Reason)

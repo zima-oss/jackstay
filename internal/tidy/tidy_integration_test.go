@@ -763,7 +763,10 @@ func TestARecordWhoseFolderIsGoneIsPrunedOnlyWhenNamed(t *testing.T) {
 	if !slices.Equal(found.Prunable, []string{place}) {
 		t.Fatalf("prunable %v", found.Prunable)
 	}
-	_, done := fix.fix(found)
+	failures, done := fix.fix(found)
+	if failures != 1 {
+		t.Errorf("sweep reported %d failures while leaving a finished record", failures)
+	}
 	if !strings.Contains(fix.repo.Git("worktree", "list"), place) {
 		t.Error("a sweep pruned: the worktree may have been moved")
 	}
@@ -773,6 +776,66 @@ func TestARecordWhoseFolderIsGoneIsPrunedOnlyWhenNamed(t *testing.T) {
 	fix.fix(fix.plain(scope{worktrees: []string{place}}))
 	if strings.Contains(fix.repo.Git("worktree", "list"), place) {
 		t.Error("the named record was not pruned")
+	}
+}
+
+func TestPruneReportsWhichRecordsWereKept(t *testing.T) {
+	fix := newFixture(t)
+	gone, returned := fix.add("gone", nil), fix.add("returned", nil)
+	for _, place := range []string{gone, returned} {
+		if err := os.RemoveAll(place); err != nil {
+			t.Fatal(err)
+		}
+	}
+	found := fix.plain(scope{worktrees: []string{gone, returned}})
+	if !slices.Contains(found.Prunable, gone) || !slices.Contains(found.Prunable, returned) {
+		t.Fatalf("prunable %v", found.Prunable)
+	}
+	if err := os.Mkdir(returned, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	failures, done := fix.fix(found)
+	if failures != 1 || !slices.ContainsFunc(done, func(one action) bool {
+		return one.Target == returned && one.ID == didFailPrune && strings.Contains(one.Detail, "exists")
+	}) || !slices.ContainsFunc(done, func(one action) bool {
+		return one.Target == gone && one.ID == didPrune
+	}) {
+		t.Fatalf("failures %d, actions %+v", failures, done)
+	}
+	listed := fix.repo.Git("worktree", "list")
+	if strings.Contains(listed, gone) || !strings.Contains(listed, returned) {
+		t.Fatalf("worktree list: %s", listed)
+	}
+}
+
+func TestPruneDoesNotClaimARecordItCannotFindWasPruned(t *testing.T) {
+	fix := newFixture(t)
+	unknown := filepath.Join(t.TempDir(), "unknown")
+	failures, done := fix.fix(&report{Repository: fix.root, Scoped: true, Prunable: []string{unknown}})
+	if failures != 1 || len(done) != 1 || done[0].ID != didFailPrune {
+		t.Fatalf("failures %d, actions %+v", failures, done)
+	}
+}
+
+func TestPruneReportsAnUnreadableRecordsDirectory(t *testing.T) {
+	fix := newFixture(t)
+	target := fix.add("missing", nil)
+	if err := os.RemoveAll(target); err != nil {
+		t.Fatal(err)
+	}
+	found := fix.plain(scope{worktrees: []string{target}})
+	if !slices.Equal(found.Prunable, []string{target}) {
+		t.Fatalf("prunable %v", found.Prunable)
+	}
+	admin := filepath.Join(fix.root, ".git", "worktrees")
+	if err := os.Rename(admin, admin+".old"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, admin, "not a directory")
+	failures, done := fix.fix(found)
+	if failures != 1 || len(done) != 1 || done[0].ID != didFailPrune ||
+		!strings.Contains(done[0].Detail, "could not read worktree records") {
+		t.Fatalf("failures %d, actions %+v", failures, done)
 	}
 }
 

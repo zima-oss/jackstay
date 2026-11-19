@@ -19,10 +19,13 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/githubapi"
+	"github.com/zima-oss/jackstay/internal/telemetry"
 )
 
 func init() {
@@ -44,8 +47,8 @@ const usage = `usage:
   jst gh ci-status [PR|URL]
   jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
   jst gh pr-find [--head BRANCH] [--search TEXT] [--repo URL] [--wait S] [--state open|closed|merged|all]
-  jst gh pr-status
-  jst gh pr-land [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
+  jst gh pr-status [--pr PR|URL]
+  jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
                 [--no-wait] [--no-merge] [--dry-run] [--timeout S] [--interval S] [--lines N]
 `
 
@@ -128,6 +131,7 @@ func Main(args []string, deps Deps) int {
 		fmt.Fprintf(deps.Stderr, "jst gh: no command %q\n%s", args[0], usage)
 		return exitRequest
 	}
+	telemetry.Annotate(attribute.String(telemetry.AttrGitHubOperation, args[0]))
 	// Only pr-land reads the cards section: a broken one stops no other command.
 	need := []string{"github"}
 	if args[0] == "pr-land" {
@@ -195,8 +199,8 @@ type session struct {
 	github   GitHub
 	// repository is the owner/name GitHub was connected for.
 	repository string
-	// judged is the head each pull request's checks were seen green on: pr-land merges that one.
-	judged map[int]string
+	// judged binds each green verdict to the pull request and commits pr-land may merge.
+	judged map[int]checkEvidence
 	// rulesOf is the base whose rules pr-land read for each pull request: one retargeted since stops.
 	rulesOf map[int]string
 }
@@ -213,7 +217,7 @@ func newSession(deps Deps, need []string) (*session, error) {
 	settings, _ := loaded.GitHub()
 	ctx, cancel := context.WithTimeout(context.Background(), commandBound)
 	return &session{deps: deps, ctx: ctx, cancel: cancel, git: deps.Git(deps.Dir), config: loaded,
-		settings: settings, judged: map[int]string{}, rulesOf: map[int]string{}}, nil
+		settings: settings, judged: map[int]checkEvidence{}, rulesOf: map[int]string{}}, nil
 }
 
 func (work *session) say(format string, values ...any) {
@@ -234,6 +238,17 @@ func (work *session) connect(repository string) error {
 	}
 	work.github, work.repository = client, repository
 	return nil
+}
+
+// notePull records the remote scope of a known pull request for local correlation.
+func (work *session) notePull(number int, head string) {
+	if number > 0 && work.repository != "" {
+		telemetry.Annotate(attribute.String(telemetry.AttrGitHubRepository, work.repository),
+			attribute.Int(telemetry.AttrGitHubPull, number))
+	}
+	if head != "" {
+		telemetry.Annotate(attribute.String(telemetry.AttrHead, head))
+	}
 }
 
 // gitLine is git's answer, trimmed.

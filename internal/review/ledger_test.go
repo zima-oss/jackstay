@@ -8,6 +8,7 @@ import (
 
 func testSettings() Settings {
 	s := Defaults()
+	s.Use = []string{"codex"}
 	s.RepeatSeverities = allButLast(s.Severities)
 	return s
 }

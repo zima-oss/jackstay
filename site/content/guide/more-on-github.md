@@ -17,6 +17,9 @@ How each command works inside, and why it was built that way, is in the reposito
 - **The decision records.** [The index](../../../docs/decisions/README.md) lists each decision in
   force, why it was made and what follows from it. The guide and the design cite them by their W
   number.
+- **The roadmap.** [Backlog assessment](../../../docs/roadmap/backlog.md) and
+  [ecosystem research](../../../docs/roadmap/ecosystem.md) describe candidate work and the
+  evidence behind it.
 - **Contributing.** [CONTRIBUTING](../../../CONTRIBUTING.md) says how to build jackstay, run its checks
   and propose a change.
 

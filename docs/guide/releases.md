@@ -34,7 +34,11 @@ jst changes collect --version 1.4.0 --dry-run
 jst changes collect --version 1.4.0
 ```
 
-`collect` refuses while `CHANGELOG.md` or the entries folder has uncommitted changes.
+`collect` requires tracked entry files and a clean changelog and entries folder. If interrupted,
+rerun the same version in the same worktree. jackstay resumes from its saved plan and only removes
+the unchanged tracked entries listed there. The worktree’s Git directory keeps the latest attempt
+and its outcome. An existing version without a matching unfinished plan leaves the entries in
+place.
 
 ### Typed entries
 
@@ -96,7 +100,10 @@ jst release override --version 1.0.0 --reason 'the API is stable'
 ```
 
 `pr` and `publish` write to GitHub only inside GitHub Actions with `GH_TOKEN` set; anywhere else they
-are dry runs, so nothing run locally races the workflow. A tag is never moved.
+are dry runs. A dry run can fetch the remote base into a temporary Git repository and leaves your
+checkout's refs and objects unchanged. The commands use the project's Git remote
+(`github.remote` when set), and the fetched branch must agree with its release base.
+A tag is never moved.
 
 ### What the release workflow needs
 

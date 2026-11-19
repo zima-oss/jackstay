@@ -33,6 +33,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/layout"
+	"github.com/zima-oss/jackstay/internal/release"
 )
 
 // Options are what a plan is made from besides the project's files.
@@ -73,36 +74,14 @@ func (plan *Plan) SplitsSettings() bool {
 	return settings && files
 }
 
-// settingsOnly keeps jackstay.json's changes, writes and conflicts; the other files' are left to
-// the apply after the settings merge, which plans them again. An --accept of another file's
-// conflict is refused: it is given in that apply.
-func (planner *planner) settingsOnly(accepted []string) error {
-	plan := planner.plan
-	changes := []Change{}
-	for _, change := range plan.Changes {
-		if change.Path == config.Name {
-			changes = append(changes, change)
-			continue
-		}
-		if slices.Contains(accepted, change.ID) {
-			return &UsageError{fmt.Sprintf("--accept %s is for %s, not %s: give it to the apply after the settings merge",
-				change.ID, change.Path, config.Name)}
+// fileConflict identifies conflicts that belong to the files-only adoption stage.
+func fileConflict(id string) bool {
+	for _, prefix := range []string{"agents:", "file:", "hook:", "workflow:"} {
+		if strings.HasPrefix(id, prefix) {
+			return true
 		}
 	}
-	var writes []write
-	for _, pending := range plan.writes {
-		if pending.path == config.Name {
-			writes = append(writes, pending)
-		}
-	}
-	conflicts := []Conflict{}
-	for _, conflict := range plan.Conflicts {
-		if conflict.Path == config.Name {
-			conflicts = append(conflicts, conflict)
-		}
-	}
-	plan.Changes, plan.writes, plan.Conflicts = changes, writes, conflicts
-	return nil
+	return false
 }
 
 // Change is one write the plan makes.
@@ -145,7 +124,14 @@ type Plan struct {
 	Exceptions  []Exception `json:"exceptions"`
 	Notes       []string    `json:"notes"`
 
-	writes []write
+	writes  []write
+	inputs  map[string]fileInput
+	profile *profile.Profile
+}
+
+type fileInput struct {
+	text   string
+	exists bool
 }
 
 type write struct {
@@ -184,7 +170,7 @@ type planner struct {
 // that reads a recorded profile (Make, BlockOf) reads it from the main checkout.
 func newPlanner(options Options, root string) *planner {
 	return &planner{options: options, root: root, base: mainFolder(root),
-		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}}}
+		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}, inputs: map[string]fileInput{}}}
 }
 
 // Make computes the plan; an error is a usage or reading problem (exit 2).
@@ -203,23 +189,24 @@ func Make(options Options) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	planner.plan.profile = chosen
 	planner.prospective(original, chosen)
 	planner.configChange(original, existed)
 	if chosen != nil {
 		planner.profileRules(chosen)
 	}
-	rules, leaveOut := []string(nil), []string(nil)
-	if chosen != nil {
-		rules, leaveOut = chosen.Rules, chosen.LeaveOut
-	}
-	body := block.Render(block.Inputs{Config: planner.plain, Has: options.Has, Rules: rules, LeaveOut: leaveOut})
-	if err := planner.agents(body); err != nil {
-		return nil, err
-	}
-	if err := planner.hook(); err != nil {
-		return nil, err
-	}
-	if err := planner.workflows(chosen); err != nil {
+	if options.SettingsOnly {
+		for _, id := range options.Accept {
+			if fileConflict(id) {
+				return nil, &UsageError{fmt.Sprintf("--accept %s is for a managed file: give it to the apply after the settings merge", id)}
+			}
+		}
+		for id := range exceptions {
+			if fileConflict(id) {
+				delete(exceptions, id)
+			}
+		}
+	} else if err := planner.managedFiles(chosen); err != nil {
 		return nil, err
 	}
 	planner.except(exceptions)
@@ -227,12 +214,23 @@ func Make(options Options) (*Plan, error) {
 		return nil, err
 	}
 	planner.sort()
-	if options.SettingsOnly {
-		if err := planner.settingsOnly(options.Accept); err != nil {
-			return nil, err
-		}
-	}
 	return planner.plan, nil
+}
+
+func (planner *planner) managedFiles(chosen *profile.Profile) error {
+	rules, leaveOut := []string(nil), []string(nil)
+	if chosen != nil {
+		planner.profileFiles(chosen)
+		rules, leaveOut = chosen.Rules, chosen.LeaveOut
+	}
+	body := block.Render(block.Inputs{Config: planner.plain, Has: planner.options.Has, Rules: rules, LeaveOut: leaveOut})
+	if err := planner.agents(body); err != nil {
+		return err
+	}
+	if err := planner.hook(); err != nil {
+		return err
+	}
+	return planner.workflows(chosen)
 }
 
 // projectRoot is the folder of the nearest jackstay.json, else the git work tree's top.
@@ -261,17 +259,18 @@ func projectRoot(dir string) (string, error) {
 // readConfig is the project's jackstay.json as an ordered object (a new one when there is none).
 func (planner *planner) readConfig() (*jsondoc.Object, bool, error) {
 	path := filepath.Join(planner.root, config.Name)
-	data, err := os.ReadFile(path) // #nosec G304 -- the project's own jackstay.json
-	if errors.Is(err, os.ErrNotExist) {
+	text, exists, err := planner.read(config.Name)
+	if err != nil {
+		return nil, false, err
+	}
+	if !exists {
 		fresh := jsondoc.NewObject()
 		fresh.Set("jackstay_schema", json.Number(fmt.Sprint(config.Schema)))
 		fresh.Set("project", filepath.Base(planner.root))
 		planner.plan.Project = filepath.Base(planner.root)
 		return fresh, false, nil
 	}
-	if err != nil {
-		return nil, false, &UsageError{err.Error()}
-	}
+	data := []byte(text)
 	parsed, err := config.Parse(data)
 	if err != nil {
 		return nil, false, &UsageError{fmt.Sprintf("%s: %v", path, err)}
@@ -329,7 +328,11 @@ func (planner *planner) resolveGiven(given string) (string, string, error) {
 	case filepath.IsAbs(given):
 		return given, given, nil
 	}
-	absolute := filepath.Join(planner.options.WorkingDir, given)
+	working := planner.options.WorkingDir
+	if real, err := filepath.EvalSymlinks(working); err == nil {
+		working = real
+	}
+	absolute := filepath.Join(working, given)
 	relative, err := filepath.Rel(planner.base, absolute)
 	if err != nil {
 		return "", "", &UsageError{err.Error()}
@@ -506,8 +509,8 @@ func short(value any) string {
 	return text
 }
 
-// profileRules are the profile's required and forbidden files, scopes and keys.
-func (planner *planner) profileRules(chosen *profile.Profile) {
+// profileFiles judges the profile's required and forbidden files.
+func (planner *planner) profileFiles(chosen *profile.Profile) {
 	for _, rule := range chosen.Required {
 		if _, err := os.Lstat(filepath.Join(planner.root, filepath.FromSlash(rule.Path))); errors.Is(err, os.ErrNotExist) {
 			planner.conflict(Conflict{ID: "file:" + rule.Path + ":missing", Path: rule.Path, exceptable: true,
@@ -522,6 +525,10 @@ func (planner *planner) profileRules(chosen *profile.Profile) {
 				Settle: "instead: " + rule.Instead + " (a migration of the project's own), or an exception with the reason and its card"})
 		}
 	}
+}
+
+// profileRules judges the profile's requirements for scopes and settings.
+func (planner *planner) profileRules(chosen *profile.Profile) {
 	for _, key := range chosen.RequiredKeys {
 		if !hasKey(planner.plain, key) {
 			planner.conflict(Conflict{ID: "jackstay.json:" + key + ":missing", Path: config.Name, exceptable: true,
@@ -600,15 +607,35 @@ func sortedKeys(members map[string]any) []string {
 	return keys
 }
 
-func (planner *planner) read(relative string) (string, bool, error) {
-	data, err := os.ReadFile(filepath.Join(planner.root, filepath.FromSlash(relative))) // #nosec G304 -- a file of the project
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
+func readInput(root, relative string) (fileInput, error) {
+	target, err := changes.InRepo(root, relative)
+	if err != nil {
+		return fileInput{}, err
 	}
+	info, err := os.Lstat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return fileInput{}, nil
+	}
+	if err != nil {
+		return fileInput{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return fileInput{}, fmt.Errorf("%s is not a regular file", relative)
+	}
+	data, err := os.ReadFile(target) // #nosec G304 -- a validated project file
+	if err != nil {
+		return fileInput{}, err
+	}
+	return fileInput{text: string(data), exists: true}, nil
+}
+
+func (planner *planner) read(relative string) (string, bool, error) {
+	input, err := readInput(planner.root, relative)
 	if err != nil {
 		return "", false, &UsageError{err.Error()}
 	}
-	return string(data), true, nil
+	planner.plan.inputs[relative] = input
+	return input.text, input.exists, nil
 }
 
 // agents plans the block in AGENTS.md and CLAUDE.md's reference to it (spec section 3.2).
@@ -952,10 +979,7 @@ func wantedTemplates(chosen *profile.Profile, plain map[string]any) []templates.
 func (planner *planner) workflows(chosen *profile.Profile) error {
 	values := map[string]string{
 		"jackstay_repository": templates.Repository,
-		"release_base":        "main",
-	}
-	if base, _ := planner.plain.Section("release")["base"].(string); base != "" {
-		values["release_base"] = base
+		"release_base":        release.BaseOf(planner.plain),
 	}
 	if pin, _ := planner.plain.Section("adopt")["pin"].(string); pin != "" {
 		values["jackstay_version"] = pin
@@ -1038,11 +1062,13 @@ func (planner *planner) existingWorkflows() (map[string]string, error) {
 		if entry.IsDir() || !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(folder, name)) // #nosec G304 -- a workflow of the project
+		text, exists, err := planner.read(workflowsDir + "/" + name)
 		if err != nil {
-			return nil, &UsageError{err.Error()}
+			return nil, err
 		}
-		found[name] = string(data)
+		if exists {
+			found[name] = text
+		}
 	}
 	return found, nil
 }
@@ -1060,7 +1086,7 @@ func sortedFiles(files map[string]string) []string {
 // conflict is a note.
 func (planner *planner) except(exceptions map[string]string) {
 	used := map[string]bool{}
-	var kept []Conflict
+	kept := make([]Conflict, 0, len(planner.plan.Conflicts))
 	for _, conflict := range planner.plan.Conflicts {
 		why, excepted := exceptions[conflict.ID]
 		switch {
@@ -1134,22 +1160,13 @@ func (planner *planner) sort() {
 	sort.SliceStable(plan.writes, func(left, right int) bool { return plan.writes[left].path < plan.writes[right].path })
 }
 
-// Apply writes the plan's changes; with a conflict left it writes nothing (ErrConflicts).
-func (plan *Plan) Apply() error {
-	if len(plan.Conflicts) > 0 {
-		return ErrConflicts
+func (plan *Plan) checkInput(relative string, expected fileInput) error {
+	actual, err := readInput(plan.Root, relative)
+	if err != nil {
+		return fmt.Errorf("checking %s before apply: %w", relative, err)
 	}
-	for _, pending := range plan.writes {
-		target := filepath.Join(plan.Root, filepath.FromSlash(pending.path))
-		if pending.remove {
-			if err := os.Remove(target); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			continue
-		}
-		if err := changes.WriteFileAtomic(target, pending.data); err != nil {
-			return fmt.Errorf("%s: %w", pending.path, err)
-		}
+	if actual != expected {
+		return fmt.Errorf("%s changed after planning; rerun jst adopt to review the new state", relative)
 	}
 	return nil
 }

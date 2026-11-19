@@ -234,3 +234,14 @@ func TestProjectNameOfARelativeFolder(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestCardsRejectsAPatternThatCanMatchEmptyText(t *testing.T) {
+	loaded, err := Parse([]byte(`{"jackstay_schema":2,"cards":{"dir":"cards","id":"A*","unit":"pr","since":"2026-01-01"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	problems := SectionProblems(loaded).Of("cards")
+	if len(problems) != 1 || !strings.Contains(problems[0], "nonempty ID") {
+		t.Fatalf("card ID was not rejected: %v", problems)
+	}
+}

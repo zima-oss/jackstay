@@ -153,6 +153,20 @@ func TestAnEnvironmentVariableTheKeyReadsIsPartOfIt(t *testing.T) {
 	w.expectCounters("cheap", 2)
 }
 
+func TestStepKeyUsesTheStepDirectoryAndEnvironmentForToolchain(t *testing.T) {
+	w := newGateWorld(t)
+	proj, err := w.tester().open(options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj.receipts["toolchain"] = []any{argv("/bin/sh", "-c", `test -f a.swift && test "$SDK_MODE" = pinned`)}
+	chosen := leaf{name: "cheap", kind: "step", cwd: "Sources", env: map[string]string{"SDK_MODE": "pinned"}}
+	key, why := proj.stepKey(chosen, []string{"tests"}, "", "Sources")
+	if key == "" {
+		t.Fatalf("step key refused: %s", why)
+	}
+}
+
 func TestAStepThatRewritesAFileGetsNoMark(t *testing.T) {
 	w := newGateWorld(t)
 	w.configure(with(gateSection(), "steps", "cheap", map[string]any{"run": counted("cheap", "cp Sources/a.swift x.tmp; mv x.tmp Sources/a.swift")}), nil)

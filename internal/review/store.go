@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,8 +33,8 @@ func StoreFor(settings Settings, project string) (Store, error) {
 	return Store{Root: root}, err
 }
 
-// TaskFolder is a task's folder name: every byte outside [A-Za-z0-9._-] as %XX (reversible).
-func TaskFolder(task string) string {
+// legacyTaskFolder encodes a task as releases before the hashed layout did.
+func legacyTaskFolder(task string) string {
 	var builder strings.Builder
 	for _, octet := range []byte(task) {
 		switch {
@@ -47,8 +48,8 @@ func TaskFolder(task string) string {
 	return builder.String()
 }
 
-// TaskName is TaskFolder undone ("" and false when the folder is not one).
-func TaskName(folder string) (string, bool) {
+// legacyTaskName reverses the old encoding ("" and false when the folder is not one).
+func legacyTaskName(folder string) (string, bool) {
 	var out []byte
 	for index := 0; index < len(folder); index++ {
 		if folder[index] != '%' {
@@ -68,12 +69,77 @@ func TaskName(folder string) (string, bool) {
 	return string(out), len(out) > 0
 }
 
-// TaskPath is a task's folder.
-func (store Store) TaskPath(task string) string { return filepath.Join(store.Root, TaskFolder(task)) }
+// taskKey is fixed-length and lower-case, so case folding and filesystem name limits
+// cannot confuse or exclude task names.
+func taskKey(task string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(task)))
+}
 
-// TaskLockPath is a task's lock, outside its folder so pruning cannot remove it under a holder.
+func (store Store) tasksPath() string { return filepath.Join(store.Root, ".tasks") }
+
+const taskNameFile = "task.json"
+
+// TaskPath finds the task's current folder or an exactly named legacy folder. Work
+// already written in the legacy layout stays readable and can still be pruned.
+func (store Store) TaskPath(task string) string {
+	current := filepath.Join(store.tasksPath(), taskKey(task))
+	if _, err := os.Stat(current); !errors.Is(err, fs.ErrNotExist) {
+		return current
+	}
+	folder := legacyTaskFolder(task)
+	if folder == "" || len(folder) > 255 {
+		return current
+	}
+	legacy := filepath.Join(store.Root, folder)
+	if info, err := os.Lstat(legacy); err != nil || !info.IsDir() {
+		return current
+	}
+	// Stat alone can also find a differently cased name on Darwin.
+	listed, _ := os.ReadDir(store.Root)
+	for _, item := range listed {
+		if item.Name() == folder && item.IsDir() {
+			return legacy
+		}
+	}
+	return current
+}
+
+// prepareTask records the original spelling for enumeration. The caller holds the
+// task lock and keeps writing to an existing legacy folder.
+func (store Store) prepareTask(task string) error {
+	folder := store.TaskPath(task)
+	if filepath.Dir(folder) != store.tasksPath() {
+		return nil
+	}
+	return writeJSON(filepath.Join(folder, taskNameFile), task)
+}
+
+// TaskLockPath is the same lock in both layouts, even if pruning removes the old folder.
 func (store Store) TaskLockPath(task string) string {
-	return filepath.Join(store.Root, ".locks", TaskFolder(task)+".lock")
+	return filepath.Join(store.Root, ".locks", "v2", taskKey(task)+".lock")
+}
+
+// tryTaskLock also takes the old lock while writing an existing legacy task, so
+// an earlier binary already using that folder cannot write it at the same time.
+func (store Store) tryTaskLock(task string) (func(), error) {
+	held, err := flock.TryFile(store.TaskLockPath(task))
+	if err != nil {
+		return nil, err
+	}
+	folder := store.TaskPath(task)
+	legacyName := filepath.Base(folder) + ".lock"
+	if filepath.Dir(folder) == store.tasksPath() || len(legacyName) > 255 {
+		return held.Release, nil
+	}
+	legacy, err := flock.TryFile(filepath.Join(store.Root, ".locks", legacyName))
+	if err != nil {
+		held.Release()
+		return nil, err
+	}
+	return func() {
+		legacy.Release()
+		held.Release()
+	}, nil
 }
 
 // TreesPath holds the pinned worktrees while they run.
@@ -114,6 +180,7 @@ type RoundRecord struct {
 	Commit    string            `json:"commit"`
 	Follows   int               `json:"follows"` // the round before it in the chain, 0 for a chain's first
 	Focus     string            `json:"focus"`
+	Policy    string            `json:"policy,omitempty"`
 	PastLimit bool              `json:"past_limit"`
 	OverLimit bool              `json:"over_limit"`
 	Made      string            `json:"made"`
@@ -144,7 +211,8 @@ type Entry struct {
 
 // Entries are a task's rounds and attempts, oldest attempt first.
 func (store Store) Entries(task string) ([]Entry, error) {
-	listed, err := os.ReadDir(store.TaskPath(task))
+	folder := store.TaskPath(task)
+	listed, err := os.ReadDir(folder)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -156,7 +224,7 @@ func (store Store) Entries(task string) ([]Entry, error) {
 		if !item.IsDir() {
 			continue
 		}
-		entry := Entry{Name: item.Name(), Path: filepath.Join(store.TaskPath(task), item.Name())}
+		entry := Entry{Name: item.Name(), Path: filepath.Join(folder, item.Name())}
 		if info, err := item.Info(); err == nil {
 			entry.Changed = info.ModTime()
 		}
@@ -351,13 +419,8 @@ func (store Store) ReadIndex() ([]IndexLine, int, error) {
 	return lines, skipped, scanner.Err()
 }
 
-// rewriteIndex keeps the index's lines that keep says, under its lock.
+// rewriteIndex keeps the index's lines that keep says. The caller holds the lock.
 func (store Store) rewriteIndex(keep func(IndexLine) bool) error {
-	held, err := store.lockIndex()
-	if err != nil {
-		return err
-	}
-	defer held.Release()
 	current, _, err := store.ReadIndex()
 	if err != nil {
 		return err
@@ -393,14 +456,32 @@ func (store Store) Tasks() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	var tasks []string
+	found := map[string]bool{}
 	for _, item := range listed {
 		if !item.IsDir() || strings.HasPrefix(item.Name(), ".") {
 			continue
 		}
-		if task, ok := TaskName(item.Name()); ok && TaskFolder(task) == item.Name() {
-			tasks = append(tasks, task)
+		if task, ok := legacyTaskName(item.Name()); ok && legacyTaskFolder(task) == item.Name() {
+			found[task] = true
 		}
+	}
+	current, err := os.ReadDir(store.tasksPath())
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, err
+	}
+	for _, item := range current {
+		if !item.IsDir() {
+			continue
+		}
+		var task string
+		data, err := os.ReadFile(filepath.Join(store.tasksPath(), item.Name(), taskNameFile))
+		if err == nil && json.Unmarshal(data, &task) == nil && task != "" && taskKey(task) == item.Name() {
+			found[task] = true
+		}
+	}
+	tasks := make([]string, 0, len(found))
+	for task := range found {
+		tasks = append(tasks, task)
 	}
 	sort.Strings(tasks)
 	return tasks, nil
@@ -413,19 +494,29 @@ func (store Store) Prune(keepDays int, now time.Time) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	// Appends cannot commit to the index between removing a task and rewriting its
+	// rows. Task locks here must stay nonblocking: a running review takes them first.
+	indexLock, err := store.lockIndex()
+	if err != nil {
+		return nil, err
+	}
+	defer indexLock.Release()
 	cutoff := now.Add(-time.Duration(keepDays) * 24 * time.Hour)
 	var removed []string
 	for _, task := range tasks {
 		// The lock first, then the decision: a run that ends between a look and a removal
 		// cannot lose its fresh round.
-		held, err := flock.TryFile(store.TaskLockPath(task))
+		release, err := store.tryTaskLock(task)
 		if err != nil {
 			continue
 		}
 		if store.expired(task, cutoff) && os.RemoveAll(store.TaskPath(task)) == nil {
 			removed = append(removed, task)
 		}
-		held.Release()
+		release()
 	}
 	if len(removed) > 0 {
 		gone := map[string]bool{}

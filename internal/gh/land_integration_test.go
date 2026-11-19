@@ -35,7 +35,25 @@ func newLandRepo(t *testing.T, settings string, files map[string]string) *landRe
 	repo := testrepo.New(t, all)
 	origin := filepath.Join(filepath.Dir(repo.Root), "origin.git")
 	repo.Git("init", "-q", "--bare", origin)
-	repo.Git("remote", "add", "origin", origin)
+	// Use real Git with a local SSH transport so the configured repository has a GitHub identity
+	// and no test connects to GitHub.
+	transport := filepath.Join(filepath.Dir(repo.Root), "local-ssh")
+	const script = `#!/bin/sh
+while [ "$#" -gt 2 ]; do shift; done
+[ "$1" = git@github.com ] || exit 2
+case "$2" in
+	"git-upload-pack 'owner/checkout.git'") exec git upload-pack "$JST_TEST_BARE_REPO" ;;
+	"git-receive-pack 'owner/checkout.git'") exec git receive-pack "$JST_TEST_BARE_REPO" ;;
+	*) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(transport, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_SSH_COMMAND", transport)
+	t.Setenv("GIT_SSH_VARIANT", "ssh")
+	t.Setenv("JST_TEST_BARE_REPO", origin)
+	repo.Git("remote", "add", "origin", "git@github.com:owner/checkout.git")
 	repo.Git("push", "-q", "-u", "origin", "main")
 	repo.Git("checkout", "-q", "-b", "feat")
 	repo.Commit("b", map[string]string{"b.txt": "two\n"})
@@ -145,6 +163,20 @@ func TestARemoteNotCalledOriginIsPushedTo(t *testing.T) {
 	}
 	if land.Git("config", "--get", "branch.feat.remote") != "upstream-x" {
 		t.Fatal("upstream not set")
+	}
+}
+
+func TestALandingRefusesAPushURLThatPointsOutsideThePRRepository(t *testing.T) {
+	land := newLandRepo(t, plainSettings, nil)
+	other := filepath.Join(filepath.Dir(land.Root), "other.git")
+	land.Git("init", "-q", "--bare", other)
+	land.Git("config", "--add", "remote.origin.pushurl", "git@github.com:owner/checkout.git")
+	land.Git("config", "--add", "remote.origin.pushurl", other)
+	land.bench.hub.OnPullRequestsByHead("owner:feat", "open", answer([]githubapi.PullRequest{}))
+	_, stderr := land.bench.expect(exitRequest, "pr-land", "--title", "x", "--no-wait", "--no-merge")
+	contains(t, stderr, "cannot verify push destination 2")
+	if land.remoteBranch("feat") != "" || land.GitIn(other, "for-each-ref", "refs/heads/feat") != "" {
+		t.Fatal("an unverified remote caused a push")
 	}
 }
 

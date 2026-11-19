@@ -80,27 +80,33 @@ jst gh ci-wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
 jst gh ci-status [PR|URL]
 jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
 jst gh pr-find [--head BRANCH] [--search TEXT] [--repo URL] [--wait S] [--state open|closed|merged|all]
-jst gh pr-status
-jst gh pr-land [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
+jst gh pr-status [--pr PR|URL]
+jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
                [--no-wait] [--no-merge] [--dry-run] [--timeout S] [--interval S] [--lines N]
 ```
 
 - `ci-wait` waits until every check on a pull request's current head settles (default: this
-  branch's), and prints the failing step's log of each red check. `ci-status` is the same, once.
+  branch's), and prints the failing step's log of each red check if time remains. Its timeout
+  includes GitHub requests and retries. `--timeout 0` makes one look, with up to 10 seconds for
+  its requests. `ci-status` is one look.
 - `run-wait` waits for one workflow run on a branch or commit.
 - `pr-find` finds one pull request by head branch or search text; none found is exit 1.
-- `pr-status` says where this branch and its pull request stand.
+- `pr-status` says where this branch and its pull request stand, including the pull request's base.
+- When a branch has multiple open pull requests, select one by number or URL. For `pr-status` and
+  `pr-land`, use `--pr PR|URL` to select an open pull request from this branch and repository.
 - `pr-land` pushes, opens the pull request, waits for its checks, squash-merges the head that was
   checked and deletes the remote branch. The checks it waits for are the ones the base branch's
   rules (rulesets and branch protection) require; another check that fails still stops it, one
-  still pending does not. When the rules require none, it waits for every check. The plan is printed
-  first; `--dry-run` stops there. It
+  still pending does not. When the rules require none, it waits for every check. A change in the
+  head, reported base commit or selected test merge commit after the checks stops the merge.
+  The plan is printed first; `--dry-run` stops there. It
   never switches, pulls or deletes anything in your checkout; `jst tidy` removes the local branch
   afterwards.
 
 Exit codes are a contract, because these run inside loops: 0 fine; 1 not fine (the reason
 printed); 2 a bad request (also: no account configured, a wrong login); 3 still pending at the
-deadline; 4 the head moved while waiting; 5 GitHub answered in a shape jackstay does not know.
+deadline; 4 the pull request changed and the check results no longer apply; 5 GitHub answered in
+a shape jackstay does not know.
 
 ```sh
 jst gh pr-land --title 'Fix the parser' --dry-run
@@ -132,7 +138,10 @@ overrides the account for one call. A `GH_TOKEN` in your environment is ignored 
 github.com is supported.
 
 The account covers jackstay's API calls only. `pr-land`'s push and the remote branch delete go
-through git, with git's own credentials.
+through git, with git's own credentials. Every effective push URL of the selected remote must
+name the GitHub repository of the pull request, including URLs set by `pushurl` or URL rewrites.
+After merging, `pr-land` skips deletion if it cannot verify the destination or if another open
+pull request in the repository still uses the branch.
 
 Without `github.account`: `jst gh` exits 2, `jst tidy` does not ask GitHub, and `jst lint pr --pr`
 exits 2. Everything else keeps working.
@@ -143,7 +152,7 @@ exits 2. Everything else keeps working.
 |---|---|
 | `jst gh`: set github.account in jackstay.json | No account configured. |
 | Exit 2: the login is not the account | `gh` holds a token under a stale name; sign in again. |
-| `pr-land` refuses before pushing | You are on the default branch, the tree is dirty, or a new pull request has no `--title`. In a project with `cards`, the description has no valid `Card:` line ([records](records.md)). |
+| `pr-land` refuses before pushing | You are on the default branch, the tree is dirty, or a new pull request has no `--title`. In a project with `cards`, the description of a non-exempt branch has no valid `Card:` line ([records](records.md)). |
 | `pr-land` exit 3 after merging | A merge queue or auto-merge holds the pull request; the branch is kept. |
 | `ci-wait` exit 4 | Someone pushed while you waited. Wait again, or use `--any-head`. |
 | `jst sync` exit 1 naming an ignored file | The merge would write over it. Move the file, then sync. |

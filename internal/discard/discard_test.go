@@ -352,3 +352,55 @@ func TestTheRootFolderIsNotTheTree(t *testing.T) {
 		t.Fatalf("exit %d, file %q", code, w.read("a.txt"))
 	}
 }
+
+func TestAWorkingFileChangedAfterPlanningIsLeftAlone(t *testing.T) {
+	w := newWorld(t, map[string]string{"a.txt": "head\n"})
+	w.repo.Write(map[string]string{"a.txt": "staged\n"})
+	w.repo.Git("add", "a.txt")
+	w.repo.Write(map[string]string{"a.txt": "head\n"})
+	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Now: time.Now,
+		Out: &w.out, Errors: &w.errors, repo: repository{top: w.repo.Root}}
+	ctx := context.Background()
+	planned, _, problem := run.plan(ctx, []string{"a.txt"})
+	if problem != "" || len(planned) != 1 {
+		t.Fatalf("plan = %+v, %q, want one change", planned, problem)
+	}
+	w.repo.Write(map[string]string{"a.txt": "another session\n"})
+	if _, err := run.putBack(ctx, planned[0]); err == nil {
+		t.Fatal("discard accepted a file that changed after its plan")
+	}
+	if disk := w.read("a.txt"); disk != "another session\n" {
+		t.Fatalf("working file = %q, want the concurrent edit", disk)
+	}
+	if staged := w.repo.Git("show", ":a.txt"); staged != "staged" {
+		t.Fatalf("staged file = %q, want the existing staged edit", staged)
+	}
+}
+
+func TestAWorkingFileChangedDuringTheMoveKeepsBothVersions(t *testing.T) {
+	w := newWorld(t, map[string]string{"a.txt": "head\n"})
+	w.repo.Write(map[string]string{"a.txt": "staged\n"})
+	w.repo.Git("add", "a.txt")
+	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 0,
+		Now: func() time.Time {
+			w.repo.Write(map[string]string{"a.txt": "another session\n"})
+			return time.Now()
+		}, Out: &w.out, Errors: &w.errors, repo: repository{top: w.repo.Root}}
+	ctx := context.Background()
+	planned, _, problem := run.plan(ctx, []string{"a.txt"})
+	if problem != "" || len(planned) != 1 {
+		t.Fatalf("plan = %+v, %q, want one change", planned, problem)
+	}
+	if _, err := run.putBack(ctx, planned[0]); err == nil || !strings.Contains(err.Error(), "changed during the move") {
+		t.Fatalf("discard error = %v, want a refused move with a recovery path", err)
+	}
+	if staged := w.repo.Git("show", ":a.txt"); staged != "staged" {
+		t.Fatalf("index = %q, want the previous staged version", staged)
+	}
+	if removed := trash.Prune(w.trash, time.Now().Add(time.Hour)); removed != 0 {
+		t.Fatalf("pruned %d entries, want the concurrent edit held for recovery", removed)
+	}
+	if kept := w.kept()["file"]; len(kept) != 1 || kept[0] != "another session\n" {
+		t.Fatalf("trash = %q, want the concurrent edit", kept)
+	}
+}

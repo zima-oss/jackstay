@@ -318,3 +318,19 @@ func TestCommandEntry(t *testing.T) {
 		t.Fatal("not listed")
 	}
 }
+
+func TestToolchainKeyUsesTheCommandsDirectoryAndEnvironment(t *testing.T) {
+	f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "toolchain": [["audit-toolchain"]]}}`,
+		map[string]string{"src/marker": "selected checkout"})
+	f.dir = filepath.Join(f.repo.Root, "src")
+	tools := t.TempDir()
+	program := "#!/bin/sh\ncat marker\nprintf ':%s' \"$SDK_MODE\"\n"
+	if err := os.WriteFile(filepath.Join(tools, "audit-toolchain"), []byte(program), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.environ = []string{"PATH=" + tools + ":/bin", "SDK_MODE=pinned"}
+	key := f.must()
+	if len(key.Material.Facts.Toolchain) != 1 || key.Material.Facts.Toolchain[0].Said != "selected checkout:pinned" {
+		t.Fatalf("probed the wrong execution context: %+v", key.Material.Facts.Toolchain)
+	}
+}

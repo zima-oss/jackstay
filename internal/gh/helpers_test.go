@@ -230,10 +230,12 @@ func checkout(tip string) *scriptedGit {
 	git.on("status --porcelain", ok(""))
 	git.on("remote", ok("origin\n"))
 	git.on("config --get remote.origin.url", ok("https://github.com/owner/checkout.git\n"))
+	git.on("remote get-url --push --all -- origin", ok("https://github.com/owner/checkout.git\n"))
+	git.on("remote get-url -- origin", ok("https://github.com/owner/checkout.git\n"))
 	git.on("config --get branch.feat.remote", ok("origin\n"))
 	git.on("rev-list --count origin/feat..feat", ok("0\n"))
 	git.on("rev-parse --verify --quiet refs/heads/feat", ok(tip+"\n"))
-	git.on("push --quiet --force-with-lease=refs/heads/feat:"+tip+" origin :refs/heads/feat", ok(""))
+	git.on("push --quiet --force-with-lease=refs/heads/feat:"+tip+" -- origin :refs/heads/feat", ok(""))
 	return git
 }
 

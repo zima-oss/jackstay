@@ -80,7 +80,13 @@ func TestBadSections(t *testing.T) {
 		{scope("full", map[string]any{"run": argv("swift", "test", "--parallel"), "judge": "exit"}), ""},
 		{scope("changed", map[string]any{"run": argv("x"), "judge": "steps"}), "no `evidence`"},
 		{scope("changed", map[string]any{"run": argv("x"), "judge": "steps", "evidence": "ran tests"}), "no group"},
-		{scope("full", map[string]any{"run": argv("x"), "judge": "junit"}), "must be one of"},
+		{scope("full", map[string]any{"run": argv("x"), "judge": "pytest"}), "must be one of"},
+		{scope("full", map[string]any{"run": argv("x"), "judge": "junit"}), "single portable file name"},
+		{scope("full", map[string]any{"run": argv("x", "{report}"), "judge": "junit", "report": "tests.xml", "empty_exit": 5}), ""},
+		{scope("full", map[string]any{"run": argv("x"), "judge": "junit", "report": "../tests.xml"}), "single portable file name"},
+		{scope("full", map[string]any{"run": argv("x"), "judge": "junit", "report": "tests.xml", "empty_exit": 126}), "from 1 to 125"},
+		{scope("full", map[string]any{"run": argv("x", "{report}"), "judge": "go-json"}), "only in arguments to a junit producer"},
+		{scope("full", map[string]any{"run": argv("x"), "judge": "go-json", "evidence": "ran ([0-9]+)"}), "cannot be combined"},
 		{map[string]any{"scopes": map[string]any{"gate": map[string]any{"steps": argv("a")}},
 			"steps": map[string]any{"a": map[string]any{"steps": argv("gate")}}}, "circle"},
 		{scope("gate", map[string]any{"steps": argv("nope")}), "neither a step nor a scope"},
@@ -109,7 +115,7 @@ func TestBadSections(t *testing.T) {
 			"full": map[string]any{"run": argv("x")}}}, "why` is missing"},
 		{map[string]any{"scopes": map[string]any{"gate": map[string]any{"steps": argv("full"), "timeout": 5},
 			"full": map[string]any{"run": argv("x")}}}, "each step has its own"},
-		{map[string]any{"judge": "junit", "scopes": map[string]any{}}, "`test.judge` must be one of"},
+		{map[string]any{"judge": "pytest", "scopes": map[string]any{}}, "`test.judge` must be one of"},
 	}
 	for _, each := range cases {
 		found := sectionProblems(t, each.test, nil)

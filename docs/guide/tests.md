@@ -1,9 +1,10 @@
 # Tests
 
-`jst test` runs a test command, judges its output, records the run and keeps its output. A single
-command is a pass only when its tests were counted; a gate is a pass when its steps are, and its
-line shows each step's outcome (a step judged by its exit status alone counts no tests). A pass is keyed by the exact tree it ran on, so a later run of
-the same tree can be skipped where you opt in.
+`jst test` runs a project's test command, reads its evidence, records the run and keeps its output.
+Go JSON and pytest JUnit XML can supply structured evidence. Existing `steps`, `swift-test` and
+`exit` judges remain available. A single command passes when its tests were counted. A gate line
+shows each step's outcome. A pass is keyed by the exact tree it ran on, so a later run of the same
+tree can be skipped where you opt in.
 
 ## Read the last `jst test:` line
 
@@ -89,10 +90,51 @@ Keys of a scope or step: `run` (the words; placeholders `{tests}`, the names giv
 one regular expression, made for `swift test --filter`; `{base}`, the scope's `base` or `--base REF`;
 `{slow}`, the slow classes `quick` skips) or `steps`;
 `judge` (`steps`: an `evidence` pattern with one number group counts the tests; `exit`: status only,
-so `exited-0` at best; `swift-test`: built in for `swift test`); `evidence` and `veto` (RE2);
+so `exited-0` at best; `swift-test`: built in for `swift test`; `go-json`: Go test events;
+`junit`: a declared XML report); `evidence` and `veto` (RE2);
 `timeout` (seconds; the whole process tree is stopped at it); `requires` (checks run first); `env`;
 `lock`; `when`. A scope that lists `steps` needs `receipts.toolchain` written out, even as an empty
 list.
+
+### Structured evidence from Go and pytest
+
+For Go, ask the runner for JSON events and select the `go-json` judge:
+
+```json
+"test": {
+  "scopes": {
+    "full": {"run": ["go", "test", "-json", "-count=1", "./..."],
+             "judge": "go-json", "when": "before handing over"}
+  }
+}
+```
+
+The judge reads Go's stdout events, including package and nested-test results. Use `-count=1` for
+a fresh execution. An incomplete event stream or cached result is `unjudged`. A filtered run with
+no executed tests gives `nothing-run`.
+
+For pytest, declare the report name and give its attempt-specific path to the runner:
+
+```json
+"test": {
+  "scopes": {
+    "full": {"run": ["python3", "-m", "pytest", "--junitxml={report}"],
+             "judge": "junit", "report": "report.xml", "empty_exit": 5,
+             "when": "before handing over"}
+  }
+}
+```
+
+`{report}` expands to a private path for this attempt. The same path is available to wrappers in
+`JACKSTAY_TEST_REPORT`. The judge reads the declared XML after the command exits. It counts
+executed cases and treats an all-skipped or empty report as `nothing-run`. `empty_exit: 5`
+recognizes pytest's no-tests-collected status only when a valid empty report accompanies it. A
+missing, unreadable or incomplete report is `unjudged` when the command otherwise succeeds.
+
+For `jst test -- COMMAND`, put the same `judge`, `report` and `empty_exit` fields in that command's
+`receipts.commands` entry. A direct command receives `JACKSTAY_TEST_REPORT`; its wrapper must use
+that path when it writes the declared report. The [design proposal](../design/testing-multirunner-proposal.md)
+tracks additional producers and selection capabilities.
 
 ### The gate
 
@@ -160,6 +202,24 @@ jst receipts stats [--project NAME] [--json]   # runs, reuses and seconds saved
 The key cannot see what lies outside the checkout (an SDK, a daemon, the network), files the
 committed `.gitignore` hides (a build folder), unlisted environment variables, or a flaky test.
 Tests that depend on those are not candidates for reuse.
+
+### Share a counted pass
+
+Export an unexpired stored receipt by key. The file holds the receipt key, checkout HEAD, measured
+input manifest, and counted outcome. It omits arguments, environment values, paths, toolchain
+output and test output.
+
+```sh
+jst receipts export "$receipt_key" > evidence.json
+jst receipts verify --sha256 "$expected_digest" --head "$expected_head" --key "$expected_key" evidence.json
+```
+
+Export prints the SHA-256 of the exact file bytes to standard error. Send the expected digest,
+HEAD and key over a trusted channel or in pinned CI metadata. Verification can run on another
+machine without the original checkout or receipt store. It checks the record against those
+expectations. The digest is neither a signature nor proof that an independent runner ran the
+tests. The key describes the measured inputs and policy, so the checkout HEAD by itself says
+nothing about uncommitted inputs.
 
 ## The machine-wide lock: `jst lock`
 

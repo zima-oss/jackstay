@@ -123,3 +123,11 @@ func TestCardLineDecisions(t *testing.T) {
 		t.Errorf("anywhere longest: %v", got)
 	}
 }
+
+func TestCardIDCannotMatchEmptyText(t *testing.T) {
+	for _, pattern := range []string{"A*", "(?:APP-[0-9]+)?"} {
+		if _, err := New("cards", pattern); err == nil {
+			t.Errorf("accepted card ID pattern %q that can match empty text", pattern)
+		}
+	}
+}

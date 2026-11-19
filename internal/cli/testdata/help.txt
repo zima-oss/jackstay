@@ -76,7 +76,8 @@ background flag.
   --watch PID, --check-every SECONDS   for jackstay's own tests only
 
 exit: the command's own status (128+N for signal N); 2 a bad request; 126 the command could not
-start; 127 it was not found; stopped by a signal, jst bg ends by that signal.
+start; 127 it was not found; 1 when registration or cleanup fails and the command itself
+succeeded. Stopped by a signal, jst bg ends by that signal.
 
 example: jst bg --for 20 --name server -- npm run dev
 
@@ -237,8 +238,8 @@ usage:
   jst gh ci-status [PR|URL]
   jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
   jst gh pr-find [--head BRANCH] [--search TEXT] [--repo URL] [--wait S] [--state open|closed|merged|all]
-  jst gh pr-status
-  jst gh pr-land [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
+  jst gh pr-status [--pr PR|URL]
+  jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
                 [--no-wait] [--no-merge] [--dry-run] [--timeout S] [--interval S] [--lines N]
 
   ci-wait [PR|URL]   wait until a pull request's checks settle (default: this branch's)
@@ -259,10 +260,12 @@ usage:
     --wait S         seconds to wait for it to appear (default 0)
     --state STATE    open (default), closed, merged or all
   pr-status          where this branch and its pull request stand
+    --pr PR|URL      select an open pull request from this branch
   pr-land            push, open the pull request, wait for its checks, squash-merge the head that
                      was checked, delete the remote branch; the plan is printed first. It waits
                      for the checks the base's rules require (every check when they require
                      none); another check that fails stops it, one still pending does not
+    --pr PR|URL      select an existing open pull request from this branch
     --title T        the new pull request's title
     --body-file F    its description, from a file
     --card ID        the card the change is for (repeatable), or none with --reason
@@ -355,6 +358,19 @@ exit: 0 installed; 1 a step failed half-way (the message says what is left); 2 r
 was changed.
 
 example: jst install --checkout ~/repositories/jackstay
+
+==> jst inventory --help
+jst inventory: local Git worktrees and observed runner sessions as JSON
+
+usage: jst inventory [--since DURATION]
+
+Print the local repository, its linked worktrees, and recent session observations as JSON.
+  --since DURATION  look back at most this long (default 24h, maximum 720h)
+
+Runner and guard coverage are reported from recorded evidence. Missing evidence is unknown.
+exit: 0 report written; 1 journal incomplete; 2 bad request or repository unavailable.
+
+example: jst inventory --since 48h
 
 ==> jst lint --help
 jst lint: these commands (each answers --help)
@@ -524,7 +540,7 @@ jst procs: what jst bg supervises: this session's, or --all
 usage: jst procs [--all] [--json]
 
 What jst bg supervises now: id, name, age, deadline, session, folder, command. Orphans past their
-deadline are stopped and gone entries are removed on the way.
+deadline are stopped and gone entries are removed on the way. Incomplete cleanups stay listed.
   --all    every session's, not only this session's
   --json   as JSON
 
@@ -543,16 +559,51 @@ usage: jst procs stop [--all] ID|NAME...
 Stops each one (TERM, 5 seconds, then KILL): by ID whoever started it; by NAME this session's only.
   --all   with a NAME: every session's of that name
 
-exit: 0 stopped; 1 a name or id not stopped; 2 a bad request.
+exit: 0 stopped; 1 a name or id not stopped or cleanup unconfirmed; 2 a bad request.
 
 example: jst procs stop server
 
+==> jst profile --help
+jst profile: these commands (each answers --help)
+
+  jst profile export  export an offline adoption profile bundle
+  jst profile verify  verify a portable adoption profile bundle
+
+exit: 0 this list; 2 `jst profile` alone, or with a word that is no command under it (nothing
+is run); each command's --help names its own.
+
+==> jst profile export --help
+jst profile export: export an offline adoption profile bundle
+
+usage: jst profile export PROFILE
+
+Write a portable version-1 bundle with the profile and its workflow templates to stdout.
+Print the SHA-256 of the exact bundle bytes to stderr.
+
+exit: 0 exported. 1 read, validation or write error. 2 bad arguments.
+
+example: jst profile export profile.json > policy.bundle.json
+
+==> jst profile verify --help
+jst profile verify: verify a portable adoption profile bundle
+
+usage: jst profile verify --sha256 DIGEST BUNDLE
+
+Check the bundle's exact bytes against a SHA-256 obtained independently of the bundle.
+Read the bundled profile and templates to check this jackstay can use them offline.
+
+exit: 0 verified. 1 digest, profile or template error. 2 bad arguments.
+
+example: jst profile verify --sha256 "$expected" policy.bundle.json
+
 ==> jst receipts --help
-jst receipts: the receipts: key, stats, list
+jst receipts: the receipts: key, stats, list, export, verify
 
 usage: jst receipts key -- COMMAND [ARG ...]   the key and what went into it; nothing is run
        jst receipts stats [--project NAME] [--json]   runs, reuses and seconds saved, from the log
        jst receipts list [--project NAME]
+       jst receipts export KEY
+       jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE
 
 See each command's --help.
 
@@ -562,9 +613,21 @@ names its own.
 example: jst receipts stats --json
 
 commands under it (each answers --help):
-  jst receipts key    the key of a command here and what went into it; nothing is run
-  jst receipts list   the stored receipts
-  jst receipts stats  runs, reuses and seconds saved, from the run log
+  jst receipts export  write a portable record of a stored test pass
+  jst receipts key     the key of a command here and what went into it; nothing is run
+  jst receipts list    the stored receipts
+  jst receipts stats   runs, reuses and seconds saved, from the run log
+  jst receipts verify  verify a portable test record against expected digests and revision
+
+==> jst receipts export --help
+jst receipts export: write a portable record of a stored test pass
+
+usage: jst receipts export KEY
+
+Write a versioned record for a stored counted pass to stdout. The SHA-256 of those exact bytes
+is printed to stderr. The record includes the checkout HEAD and the measured input manifest.
+
+exit: 0 exported; 1 no usable export or a read/write failure; 2 bad request.
 
 ==> jst receipts key --help
 jst receipts key: the key of a command here and what went into it; nothing is run
@@ -605,6 +668,16 @@ exit: 0 the counts (an empty log included); 1 the counts could not be written as
 request.
 
 example: jst receipts stats --project widgets
+
+==> jst receipts verify --help
+jst receipts verify: verify a portable test record against expected digests and revision
+
+usage: jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE
+
+Verify the record against the expected file digest, checkout HEAD and receipt key. Obtain these
+expected values independently of FILE. No receipt store or Git repository is needed.
+
+exit: 0 verified; 1 unverified or unreadable evidence; 2 bad request.
 
 ==> jst release --help
 jst release: these commands (each answers --help)
@@ -709,13 +782,14 @@ state cannot be used.
 example: jst release yank 1.3.1 --reason 'it loses the settings file'
 
 ==> jst review --help
-jst review: [REV | BASE..REV]: a cold review by Codex, in rounds (docs/design/review.md)
+jst review: [REV | BASE..REV]: a cold review in rounds (docs/design/review.md)
 
 usage: jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] [--focus TEXT]
                  [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
 
-A cold review by Codex of one commit (default HEAD, against its first parent) or of BASE..REV, in
-rounds (docs/design/review.md). A revision named like a subcommand is given after --.
+A cold review of one commit (default HEAD, against its first parent) or of BASE..REV, in
+rounds (docs/design/review.md). Choose codex or claude-code explicitly or set review.use
+in jackstay.json. A revision named like a subcommand is given after --.
   --task NAME         the task the rounds belong to (default: the branch)
   --reviewer NAMES    reviewers, comma-separated (default: review.use)
   --brief FILE        a brief file added to the prompt
@@ -729,9 +803,9 @@ rounds (docs/design/review.md). A revision named like a subcommand is given afte
 
 exit: 0 the round does not block; 1 it blocks; 2 usage or configuration; 3 a place is due for
 redesign; 4 the round limit is reached, the owner decides; 5 a reviewer gave no usable answer;
-6 the environment refuses (a sandbox, no login, Codex not installed).
+6 the environment refuses (a sandbox, no login, reviewer unavailable).
 
-example: jst review origin/main..HEAD --task parser-fix
+example: jst review origin/main..HEAD --task parser-fix --reviewer codex
 
 commands under it (each answers --help):
   jst review check  [--task NAME] BASE..REV: is this change reviewed and clear?
@@ -954,6 +1028,20 @@ failed or was called off; 2 the request is wrong.
 
 example: jst tidy --fix --branch fix-parser
 
+==> jst timeline --help
+jst timeline: local PR, test, review and background stages as JSON
+
+usage: jst timeline [--since DURATION] [--until RFC3339] [--limit N]
+
+Print local delivery stages for this Git repository as versioned JSON.
+  --since DURATION  window before --until (default 24h, maximum 720h from now)
+  --until RFC3339   exclusive end of the window (default now)
+  --limit N         keep at most N of the newest rows (default 100, maximum 1000)
+
+exit: 0 report written; 1 incomplete journal or ancestry scan; 2 bad request or repository unavailable.
+
+example: jst timeline --since 4h --limit 50
+
 ==> jst trash --help
 jst trash: move files and folders into jackstay's trash, undoably; list, restore, prune
 
@@ -1029,15 +1117,16 @@ Exactly one condition:
   --line REGEX       until a line of the --in file matches (the line is printed)
   --quiet SECONDS    until the --in file has not grown for that long
 Common options:
-  --in PATH          the file --line, --quiet and --fail read
+  --in PATH          the regular file --line, --quiet and --fail read (it can start out missing)
   --fail REGEX       end with 1 as soon as a line of the --in file matches
   --while-pid PID    end with 1 when that process (the writer) ends first
   --new              count only lines written after jst wait started
   --timeout SECONDS  the deadline (default 540)
   --tail N           how many of the file's last lines to print on the way out (default 20)
 
-exit: 0 it happened; 1 it cannot happen any more, or a --fail line was seen; 2 the request is
-wrong; 3 the deadline came first.
+Pattern matching ends with exit 1 if a line is longer than 1 MiB.
+exit: 0 it happened; 1 it cannot happen any more, or the log ended the wait in failure;
+2 the request is wrong; 3 the deadline came first.
 
 example: jst wait --line 'listening on' --in server.log --fail 'error' --timeout 60
 

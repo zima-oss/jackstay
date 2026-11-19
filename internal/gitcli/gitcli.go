@@ -27,6 +27,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/supervise"
 	"github.com/zima-oss/jackstay/internal/telemetry"
+	"github.com/zima-oss/jackstay/internal/telemetry/mask"
 )
 
 // stopGrace is how long git's group has between SIGTERM at the deadline and SIGKILL, and how long
@@ -47,7 +48,12 @@ type ExitError struct {
 }
 
 func (exitErr *ExitError) Error() string {
-	return fmt.Sprintf("git %s: exit %d: %s", strings.Join(exitErr.Args, " "), exitErr.Code, strings.TrimSpace(exitErr.Stderr))
+	return fmt.Sprintf("git %s: exit %d: %s", mask.Text(strings.Join(exitErr.Args, " ")), exitErr.Code, exitErr.Diagnostic())
+}
+
+// Diagnostic is stderr fit to show to a user. Stderr remains available for classifying Git's reply.
+func (exitErr *ExitError) Diagnostic() string {
+	return mask.Text(strings.TrimSpace(exitErr.Stderr))
 }
 
 // Git runs git in Dir. Env is the environment git gets, as KEY=VALUE; nil means this process's
@@ -89,7 +95,7 @@ func (git Git) RunInput(ctx context.Context, input []byte, args ...string) ([]by
 	}
 	err := runInGroup(ctx, command)
 	if ctx.Err() != nil {
-		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), ErrTimeout)
+		return nil, fmt.Errorf("git %s: %w", mask.Text(strings.Join(args, " ")), ErrTimeout)
 	}
 	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
 		// ErrWaitDelay: git ended and something it left held its output open; what git wrote is read.
@@ -97,10 +103,10 @@ func (git Git) RunInput(ctx context.Context, input []byte, args ...string) ([]by
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
-		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+		return nil, fmt.Errorf("git %s: %w", mask.Text(strings.Join(args, " ")), err)
 	}
 	if strings.Contains(stderr.String(), "not a git repository") {
-		return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), ErrNotRepository)
+		return nil, fmt.Errorf("git %s: %w", mask.Text(strings.Join(args, " ")), ErrNotRepository)
 	}
 	return nil, &ExitError{Args: args, Code: exitErr.ExitCode(), Stderr: stderr.String()}
 }

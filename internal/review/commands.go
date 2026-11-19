@@ -21,7 +21,7 @@ import (
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "review", Summary: "[REV | BASE..REV]: a cold review by Codex, in rounds (docs/design/review.md)", Usage: reviewHelp, Run: runReview},
+		cli.Command{Name: "review", Summary: "[REV | BASE..REV]: a cold review in rounds (docs/design/review.md)", Usage: reviewHelp, Run: runReview},
 		cli.Command{Name: "review last", Summary: "[--task NAME] [--json]: the newest round's report, or the newest attempt's failure", Usage: lastHelp, Run: runLast},
 		cli.Command{Name: "review check", Summary: "[--task NAME] BASE..REV: is this change reviewed and clear?", Usage: checkHelp, Run: runCheck},
 		cli.Command{Name: "review list", Summary: "[--task NAME] [--rebuild] [--json]: the reviews kept", Usage: listHelp, Run: runList},
@@ -242,6 +242,20 @@ func CheckReasons(settings Settings, store Store, task, base, commit string) ([]
 	}
 	if record.Base != base {
 		reasons = append(reasons, fmt.Sprintf("its chain reviews from %s, not from %s", short(record.Base), short(base)))
+	}
+	if record.Policy == "" {
+		reasons = append(reasons, "the newest round has no recorded review policy; run a full review with --fresh")
+	} else if record.Policy != settings.policyID() {
+		reasons = append(reasons, "the review policy changed since the newest round; run a full review with --fresh")
+	}
+	completed := completedReviewers(record.Runs)
+	if len(completed) == 0 {
+		reasons = append(reasons, "the newest round has no completed reviewer")
+	}
+	for _, name := range settings.Use {
+		if !completed[name] {
+			reasons = append(reasons, fmt.Sprintf("required reviewer %q did not complete the newest round", name))
+		}
 	}
 	for _, finding := range Open(record.Outcome.Ledger) {
 		if settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence) {

@@ -126,6 +126,18 @@ func TestAnEntryWhoseSupervisorAndGroupAreGoneIsCleaned(t *testing.T) {
 	}
 }
 
+func TestAnUnreadableProcessTableDoesNotRemoveTheEntry(t *testing.T) {
+	h := newLookHarness(t, "")
+	entry := h.listed(t, 620, 621, "", "", time.Minute)
+	h.world.readFails = true
+	if listed := h.listJSON(t); len(listed) != 1 || listed[0]["state"] != stateUnknown {
+		t.Fatalf("unverified entry was omitted: %v", listed)
+	}
+	if !h.place.listed(entry.ID) {
+		t.Fatal("unverified entry was removed")
+	}
+}
+
 func TestAReusedProcessIdIsNotTheSupervisor(t *testing.T) {
 	h := newLookHarness(t, "")
 	entry := h.supervised(t, 630, 631, "", "", time.Minute)
@@ -293,6 +305,31 @@ func TestStopAsksALivingSupervisorThroughItsFile(t *testing.T) {
 	}
 	if h.stdout.String() != "jst procs: 1800000000-700 (server) stopped\n" || len(h.world.signalsSent()) != 0 {
 		t.Fatalf("%q %v", h.stdout.String(), h.world.signalsSent())
+	}
+}
+
+func TestStopReportsIncompleteCleanupAndKeepsItsEntry(t *testing.T) {
+	h := newLookHarness(t, "")
+	entry := h.supervised(t, 700, 701, "server", "", 0)
+	h.clock.onSleep = func() {
+		if h.place.stopAsked(entry.ID) {
+			entry.Status = stateCleanupIncomplete
+			if !h.place.write(entry) {
+				t.Fatal("could not record incomplete cleanup")
+			}
+		}
+	}
+	if code := h.look.stop([]string{entry.ID}, false); code != 1 ||
+		!strings.Contains(h.stderr.String(), "cleanup incomplete") || h.stdout.Len() != 0 {
+		t.Fatalf("exit %d: stdout %q, stderr %q", code, h.stdout.String(), h.stderr.String())
+	}
+	h.world.remove(entry.Supervisor)
+	h.world.remove(entry.Group)
+	if listed := h.listJSON(t); len(listed) != 1 || listed[0]["state"] != stateCleanupIncomplete {
+		t.Fatalf("the incomplete cleanup is missing from the list: %v", listed)
+	}
+	if h.place.stopAsked(entry.ID) {
+		t.Fatal("completed stop request is still pending")
 	}
 }
 

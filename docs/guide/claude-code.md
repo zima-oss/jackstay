@@ -1,8 +1,8 @@
 # Claude Code
 
-jackstay is built beside [Claude Code](https://code.claude.com/docs): its guard is a Claude Code
-`PreToolUse` hook, and its tools are taught to the agent through an `AGENTS.md` block. Both are
-optional.
+jackstay can connect to [Claude Code](https://code.claude.com/docs) through a `PreToolUse` guard
+hook, an `AGENTS.md` tools block and an optional code reviewer. Each connection is selected by
+the project's configuration or the review command.
 
 ## What works without Claude Code
 
@@ -14,7 +14,17 @@ check -- 'COMMAND'` judges a command without a hook. What needs Claude Code:
 | The guard refusing commands before they run | not applied; use `jst guard check`, or the [Codex hook](codex.md#the-guard-as-a-codex-hook) |
 | `jst bg` stopping a command when its session ends | the deadline alone (and the nearest parent process that looks like a session's) |
 | `jst owner`, `jst baseline`'s transcript counts, `jst stats sessions --claude` | nothing to read |
-| `jst doctor`'s sandbox check | not needed: it reads Claude Code's settings only |
+| `jst doctor`'s sandbox check | relevant when the sandbox is enabled |
+| Claude Code review rounds | choose Codex for the round, or read saved review reports |
+
+Select Claude Code for one review round:
+
+```sh
+jst review origin/main..HEAD --reviewer claude-code --task my-change
+```
+
+The [review guide](review.md#enabling-claude-code) covers CLI version requirements,
+credentials, restricted execution and the recorded verdict.
 
 ## The guard hook
 
@@ -84,7 +94,7 @@ on and `~/.jackstay` is not writable. Some commands must still run outside the s
 
 | Command | Inside the sandbox |
 |---|---|
-| `jst review` | refused, exit 6: Codex must be able to write its login (`~/.codex`) |
+| `jst review` with Codex | refused, exit 6: Codex must be able to write its login (`~/.codex`) |
 | `jst tidy --fix` | keeps every worktree: the sandbox hides other processes, so it cannot prove a worktree unused |
 | `jst procs stop`, a stop of something the sandbox did not start | refused by the system; jackstay names what to run outside |
 | `jst lock`, `jst test` with the lock | exit 2 when `~/.jackstay` is not writable |

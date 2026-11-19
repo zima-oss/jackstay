@@ -153,21 +153,24 @@ func Install(options Options) int {
 	target := ""
 	if already {
 		target = state.Live.Path
-		if identity != "" {
-			replaced, err := Resign(ctx, options.codesign(), identity, target, binary, versionText)
-			if err != nil {
-				code := refuse("the live binary could not be signed again with %q (the identity in %s): %v", identity, setting, err)
-				fmt.Fprintf(options.Stderr, "jst install: to fix it, %s\n", SigningFix(identity, setting))
-				return code
+		replaced, err := refreshLive(ctx, options.codesign(), identity, target, binary, versionText)
+		if err != nil {
+			if identity == "" {
+				return refuse("the live binary could not be refreshed: %v", err)
 			}
-			switch replaced {
-			case SignedAgain:
-				fmt.Fprintf(options.Stdout, "jst install: the live %s was signed again with %q, identifier %s\n",
-					filepath.Join(target, layout.Program), identity, SigningIdentifier)
-			case ReplacedAsSigned:
-				fmt.Fprintf(options.Stdout, "jst install: the live %s was replaced by the binary being installed, which keeps its own signature\n",
-					filepath.Join(target, layout.Program))
-			}
+			code := refuse("the live binary could not be signed again with %q (the identity in %s): %v", identity, setting, err)
+			fmt.Fprintf(options.Stderr, "jst install: to fix it, %s\n", SigningFix(identity, setting))
+			return code
+		}
+		switch replaced {
+		case Repaired:
+			fmt.Fprintf(options.Stdout, "jst install: repaired the live %s\n", filepath.Join(target, layout.Program))
+		case SignedAgain:
+			fmt.Fprintf(options.Stdout, "jst install: the live %s was signed again with %q, identifier %s\n",
+				filepath.Join(target, layout.Program), identity, SigningIdentifier)
+		case ReplacedAsSigned:
+			fmt.Fprintf(options.Stdout, "jst install: the live %s was replaced by the binary being installed, which keeps its own signature\n",
+				filepath.Join(target, layout.Program))
 		}
 	} else {
 		target, err = layout.MakeFolder(options.Prefix, versionText, source, options.now(), layout.CopyBinary(binary))
@@ -294,13 +297,28 @@ func FindCheckout(start string) string {
 	}
 }
 
-// Build builds ./cmd/jst of checkout into out (implementation.md section 7.2) and returns out.
+// Build builds ./cmd/jst from the selected commit. A checkout with changes remains a trial build.
 func Build(ctx context.Context, checkout, out string) (string, error) {
-	commit, err := Commit(ctx, checkout)
+	return buildFromCheckout(ctx, checkout, out, BuildAs)
+}
+
+func buildFromCheckout(ctx context.Context, checkout, out string, build func(context.Context, string, string, string) (string, error)) (string, error) {
+	commit, label, err := checkoutRevision(ctx, checkout)
 	if err != nil {
 		return "", err
 	}
-	return BuildAs(ctx, checkout, out, commit)
+	if strings.HasSuffix(label, "+changes") {
+		return build(ctx, checkout, out, label)
+	}
+	tree, err := os.MkdirTemp("", "jackstay-install-source.")
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = os.RemoveAll(tree) }()
+	if err := extractCommit(ctx, checkout, commit, tree); err != nil {
+		return "", fmt.Errorf("cannot stage the build tree for %s: %w", label, err)
+	}
+	return build(ctx, tree, out, label)
 }
 
 // BuildAs builds ./cmd/jst of a tree (a checkout, or a tag's files) into out, naming commit.
@@ -329,21 +347,30 @@ var BuildInputs = []string{"cmd", "internal", "go.mod", "go.sum", ":(exclude)*_t
 
 // Commit is the checkout's short commit, with "+changes" when a build input has uncommitted changes.
 func Commit(ctx context.Context, checkout string) (string, error) {
+	_, label, err := checkoutRevision(ctx, checkout)
+	return label, err
+}
+
+func checkoutRevision(ctx context.Context, checkout string) (commit, label string, err error) {
 	git := gitcli.Git{Dir: checkout}
 	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	head, err := git.Line(bounded, "rev-parse", "--short=7", "HEAD")
+	commit, err = git.Line(bounded, "rev-parse", "--verify", "HEAD^{commit}")
 	if err != nil {
-		return "", fmt.Errorf("%s: the commit cannot be read: %w", checkout, err)
+		return "", "", fmt.Errorf("%s: the commit cannot be read: %w", checkout, err)
+	}
+	label, err = git.Line(bounded, "rev-parse", "--short=7", commit)
+	if err != nil {
+		return "", "", fmt.Errorf("%s: the commit cannot be shortened: %w", checkout, err)
 	}
 	changed, err := git.Run(bounded, append([]string{"status", "--porcelain", "--"}, BuildInputs...)...)
 	if err != nil {
-		return "", fmt.Errorf("%s: its changes cannot be read: %w", checkout, err)
+		return "", "", fmt.Errorf("%s: its changes cannot be read: %w", checkout, err)
 	}
 	if strings.TrimSpace(string(changed)) != "" {
-		head += "+changes"
+		label += "+changes"
 	}
-	return head, nil
+	return commit, label, nil
 }
 
 // BuildChanged says whether what goes into the binary differs between the commit installed and the

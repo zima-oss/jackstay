@@ -3,8 +3,9 @@ package review
 const reviewHelp = `usage: jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] [--focus TEXT]
                  [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
 
-A cold review by Codex of one commit (default HEAD, against its first parent) or of BASE..REV, in
-rounds (docs/design/review.md). A revision named like a subcommand is given after --.
+A cold review of one commit (default HEAD, against its first parent) or of BASE..REV, in
+rounds (docs/design/review.md). Choose codex or claude-code explicitly or set review.use
+in jackstay.json. A revision named like a subcommand is given after --.
   --task NAME         the task the rounds belong to (default: the branch)
   --reviewer NAMES    reviewers, comma-separated (default: review.use)
   --brief FILE        a brief file added to the prompt
@@ -18,9 +19,9 @@ rounds (docs/design/review.md). A revision named like a subcommand is given afte
 
 exit: 0 the round does not block; 1 it blocks; 2 usage or configuration; 3 a place is due for
 redesign; 4 the round limit is reached, the owner decides; 5 a reviewer gave no usable answer;
-6 the environment refuses (a sandbox, no login, Codex not installed).
+6 the environment refuses (a sandbox, no login, reviewer unavailable).
 
-example: jst review origin/main..HEAD --task parser-fix
+example: jst review origin/main..HEAD --task parser-fix --reviewer codex
 `
 
 const lastHelp = `usage: jst review last [--task NAME] [--json]

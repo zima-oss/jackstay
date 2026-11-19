@@ -73,12 +73,13 @@ var recordedStream = []string{
 func round(t *testing.T, command string, store string) review.Round {
 	t.Helper()
 	settings := review.Defaults()
-	settings.Reviewers["codex"] = review.ReviewerSettings{Command: command, Effort: "high", TimeoutMinutes: 1}
+	settings.Use = []string{"codex"}
+	settings.Reviewers["codex"] = review.ReviewerSettings{Name: "codex", Command: command, Effort: "high", TimeoutMinutes: 1}
 	dir := t.TempDir()
 	return review.Round{Settings: settings, Repo: newFakeRepo(), Store: review.Store{Root: store},
 		Machine: review.Machine{RunReviewer: codex.Run,
-			Probe:            func(context.Context, string) (string, error) { return "codex-cli 0.0.0", nil },
-			CheckEnvironment: func([]string) string { return "" }, RecordLogin: func(string) {},
+			Probe:            func(context.Context, string, string) (string, error) { return "codex-cli 0.0.0", nil },
+			CheckEnvironment: func([]review.ReviewerSettings) string { return "" }, RecordLogin: func(string) {},
 			SlotsDir: filepath.Join(dir, "slots"), StartLockPath: filepath.Join(dir, "start.lock"),
 			Now: time.Now, TreeAlive: func(string) bool { return true }, SlotPoll: 10 * time.Millisecond},
 		Out: &bytes.Buffer{}, Errors: &bytes.Buffer{}}

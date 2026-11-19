@@ -32,25 +32,23 @@ func (repository Repository) String() string { return repository.Owner + "/" + r
 
 // OtherHostError is a remote URL that does not name github.com (another host, or a local path).
 type OtherHostError struct {
-	URL  string
 	Host string
 }
 
 func (other *OtherHostError) Error() string {
 	if other.Host == "" {
-		return fmt.Sprintf("the remote's URL %q names no host (a local path?): jackstay talks to github.com only; set github.repository in jackstay.json", other.URL)
+		return "the remote URL names no host (a local path?): jackstay talks to github.com only; set github.repository in jackstay.json"
 	}
-	return fmt.Sprintf("the remote's URL %q is on %s: jackstay talks to github.com only", other.URL, other.Host)
+	return fmt.Sprintf("the remote is on %q: jackstay talks to github.com only", other.Host)
 }
 
 // BadURLError is a github.com URL, or a `github.repository`, that does not name one repository.
 type BadURLError struct {
-	URL    string
 	Reason string
 }
 
 func (bad *BadURLError) Error() string {
-	return fmt.Sprintf("%q does not name a GitHub repository: %s", bad.URL, bad.Reason)
+	return "the remote URL or github.repository does not name a GitHub repository: " + bad.Reason
 }
 
 // ParseURL is the repository a remote URL names: `https://github.com/o/r(.git)`,
@@ -64,29 +62,29 @@ func ParseURL(raw string) (Repository, error) {
 	// git's scp form: `[user@]host:path`, with no slash before the colon.
 	before, path, found := strings.Cut(raw, ":")
 	if !found || strings.Contains(before, "/") {
-		return Repository{}, &OtherHostError{URL: raw}
+		return Repository{}, &OtherHostError{}
 	}
 	host := before
 	if at := strings.LastIndex(before, "@"); at >= 0 {
 		host = before[at+1:]
 	}
 	if !strings.EqualFold(host, githubHost) {
-		return Repository{}, &OtherHostError{URL: raw, Host: host}
+		return Repository{}, &OtherHostError{Host: host}
 	}
-	return parsePath(raw, strings.TrimPrefix(path, "/"), "")
+	return parsePath(strings.TrimPrefix(path, "/"), "")
 }
 
 func parseWithScheme(raw string) (Repository, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		if strings.Contains(strings.ToLower(raw), githubHost) {
-			return Repository{}, &BadURLError{URL: raw, Reason: err.Error()}
+			return Repository{}, &BadURLError{Reason: "invalid URL syntax"}
 		}
-		return Repository{}, &OtherHostError{URL: raw}
+		return Repository{}, &OtherHostError{}
 	}
 	host := parsed.Hostname()
 	if !strings.EqualFold(host, githubHost) {
-		return Repository{}, &OtherHostError{URL: raw, Host: host}
+		return Repository{}, &OtherHostError{Host: host}
 	}
 	scheme := strings.ToLower(parsed.Scheme)
 	port := parsed.Port()
@@ -98,28 +96,28 @@ func parseWithScheme(raw string) (Repository, error) {
 		}
 	case scheme == "ssh" && (port == "" || port == "22"):
 	default:
-		return Repository{}, &BadURLError{URL: raw, Reason: "github.com is reached over https or ssh on their own ports"}
+		return Repository{}, &BadURLError{Reason: "github.com is reached over https or ssh on their own ports"}
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery {
-		return Repository{}, &BadURLError{URL: raw, Reason: "a query or a fragment"}
+		return Repository{}, &BadURLError{Reason: "a query or a fragment"}
 	}
-	return parsePath(raw, strings.TrimPrefix(parsed.Path, "/"), user)
+	return parsePath(strings.TrimPrefix(parsed.Path, "/"), user)
 }
 
 // parsePath reads `owner/name[.git][/]`.
-func parsePath(raw, path, user string) (Repository, error) {
+func parsePath(path, user string) (Repository, error) {
 	path = strings.TrimSuffix(path, "/")
 	path = strings.TrimSuffix(path, ".git")
 	owner, name, found := strings.Cut(path, "/")
 	switch {
 	case !found:
-		return Repository{}, &BadURLError{URL: raw, Reason: "the path is not owner/name"}
+		return Repository{}, &BadURLError{Reason: "the path is not owner/name"}
 	case strings.Contains(name, "/"):
-		return Repository{}, &BadURLError{URL: raw, Reason: "the path has more than owner/name"}
+		return Repository{}, &BadURLError{Reason: "the path has more than owner/name"}
 	}
 	repository, err := checked(owner, name)
 	if err != nil {
-		return Repository{}, &BadURLError{URL: raw, Reason: err.Error()}
+		return Repository{}, &BadURLError{Reason: err.Error()}
 	}
 	repository.User = user
 	return repository, nil
@@ -129,21 +127,21 @@ func parsePath(raw, path, user string) (Repository, error) {
 func ParseRepository(text string) (Repository, error) {
 	owner, name, found := strings.Cut(text, "/")
 	if !found || strings.Contains(name, "/") {
-		return Repository{}, &BadURLError{URL: text, Reason: "github.repository is written owner/name"}
+		return Repository{}, &BadURLError{Reason: "github.repository is written owner/name"}
 	}
 	repository, err := checked(owner, name)
 	if err != nil {
-		return Repository{}, &BadURLError{URL: text, Reason: err.Error()}
+		return Repository{}, &BadURLError{Reason: err.Error()}
 	}
 	return repository, nil
 }
 
 func checked(owner, name string) (Repository, error) {
 	if !ownerText.MatchString(owner) {
-		return Repository{}, fmt.Errorf("%q is not a GitHub owner (letters, digits and hyphens, at most 39)", owner)
+		return Repository{}, fmt.Errorf("invalid GitHub owner (use letters, digits and hyphens, at most 39 characters)")
 	}
 	if !nameText.MatchString(name) || name == "." || name == ".." {
-		return Repository{}, fmt.Errorf("%q is not a repository name", name)
+		return Repository{}, fmt.Errorf("invalid GitHub repository name")
 	}
 	return Repository{Owner: owner, Name: name}, nil
 }

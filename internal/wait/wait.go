@@ -130,6 +130,9 @@ func parse(args []string, stderr io.Writer) (request, error) {
 		return request{}, refuse("say what to wait for: exactly one of --pid, --file, --gone, --line, --quiet")
 	}
 	asked.mode = modes[0]
+	if asked.mode == modeFile && asked.file == "" || asked.mode == modeGone && asked.gone == "" {
+		return request{}, refuse("--%s needs a path", asked.mode)
+	}
 	if (asked.mode == modeLine || asked.mode == modeQuiet) && asked.within == "" {
 		return request{}, refuse("--%s needs --in PATH", asked.mode)
 	}
@@ -184,6 +187,12 @@ func command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		// The flag package has said what was wrong.
 		return 2
 	}
+	if asked.within != "" {
+		if info, err := os.Stat(asked.within); err == nil && !info.Mode().IsRegular() {
+			fmt.Fprintf(stderr, "jst wait: --in %s is not a regular file\n", asked.within)
+			return 2
+		}
+	}
 	return run(asked, realWorld{}, stdout)
 }
 
@@ -192,7 +201,7 @@ func command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 type world interface {
 	Now() time.Time
 	Sleep(pause time.Duration)
-	Running(pid int) bool
+	Process(pid int) processState
 	Ready()
 }
 
@@ -201,21 +210,20 @@ type realWorld struct{}
 func (realWorld) Now() time.Time            { return time.Now() }
 func (realWorld) Sleep(pause time.Duration) { time.Sleep(pause) }
 
-// Running says whether the process exists and has not ended: a process of another account
-// runs (EPERM); one that has ended but is not yet reaped (a zombie) does not.
-func (realWorld) Running(pid int) bool {
-	err := unix.Kill(pid, 0)
-	if errors.Is(err, unix.ESRCH) {
-		return false
-	}
-	if err != nil && !errors.Is(err, unix.EPERM) {
-		return false
-	}
+type processState struct {
+	running bool
+	start   int64 // zero when the kernel will not give the process's identity
+}
+
+// Process reads liveness and identity together when the kernel provides a row. A process of
+// another account is live when signal 0 can prove only its existence; a zombie has ended.
+func (realWorld) Process(pid int) processState {
 	row, found, err := procs.Row(pid)
-	if err != nil {
-		return true // its state cannot be told: it was there a moment ago
+	if err == nil {
+		return processState{running: found && !row.Zombie, start: row.StartMicros}
 	}
-	return found && !row.Zombie
+	status := unix.Kill(pid, 0)
+	return processState{running: status == nil || errors.Is(status, unix.EPERM)}
 }
 
 // Ready creates the ready file, when a test asked for one.

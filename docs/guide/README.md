@@ -1,52 +1,52 @@
 # The jackstay guide
 
-How to install jackstay, bring a project to it, and use each group of its commands. Every page says
-what the commands are for, their key flags, a worked example and what can go wrong. For every flag
-and exit status, `jst <command> --help` is the reference; for why a command behaves as it does, each
-page links the design.
+Use this guide in the order work happens in a repository. Install `jst`, bring one project under
+its commands, then choose the tools its team needs. Each page has runnable examples and failure
+recovery. `jst help` and `jst COMMAND --help` give the exact flags and exit codes installed on
+your machine.
 
-## Start here
+## Set up a project
 
-1. [Getting started](getting-started.md): install, adopt a project, the first `jst test`, the
-   guard at work.
-2. [Install](install.md): the one-line install script, the release archive or a source build;
-   updating and removing jackstay.
-3. [Adopting a project](adopt.md): `jst adopt`, `jackstay.json`, profiles.
+1. [Getting started](getting-started.md) takes a new repository through adoption, a test run and
+   a guard check.
+2. [Install](install.md) covers the release script, archive and source install, updates and removal.
+3. [Adopting a project](adopt.md) explains the generated files, profiles and safe upgrades.
 
-## The commands, by what you are doing
+## Protect the work
 
-| Page | Commands |
-|---|---|
-| [Tests](tests.md) | `jst test`, `jst test list/plan/last`, receipts (`jst receipts`), `jst lock`, `jst check`, `jst patterns`, `jst baseline` |
-| [The guard, discard and trash](guard.md) | `jst guard`, `jst discard`, `jst trash`; the guard's rules and their levels |
-| [Branches and GitHub](branches-and-github.md) | `jst start`, `jst sync`, `jst tidy`, `jst gh` |
-| [Background processes and waiting](background.md) | `jst bg`, `jst procs`, `jst wait` |
-| [Numbers, records and cards](records.md) | `jst id`, `jst new`, `jst view`, `jst cards`, the `Card:` line, `jst lint range`, `jst lint tree` |
-| [Changelogs and releases](releases.md) | `jst changes`, `jst release`, `jst lint pr` |
-| [Reviews](review.md) | `jst review` and its `check`, `last`, `list`, `show`, `prune` |
-| [What jackstay did](observability.md) | `jst log`, `jst stats`, `jst doctor`, `jst owner` |
+- [The guard, discard and trash](guard.md) covers the commands that are intercepted and where
+  discarded edits go.
+- [Background processes and waiting](background.md) covers deadlines, process cleanup and
+  waiting for files or output.
+- [Branches and GitHub](branches-and-github.md) covers linked worktrees, CI checks and cleanup.
 
-## Integrations (both optional)
+## Verify and deliver
 
-- [Claude Code](claude-code.md): the guard as a `PreToolUse` hook, the sandbox, warnings that reach
-  the agent, the AGENTS block.
-- [Codex](codex.md): the reviewer `jst review` runs, and the guard as a Codex hook.
+- [Tests](tests.md) covers scopes, evidence, receipts and gates.
+- [Reviews](review.md) covers optional Codex and Claude Code reviewers and the recorded verdict.
+- [Numbers, records and cards](records.md) covers shared IDs and project records.
+- [Changelogs and releases](releases.md) covers collection, preparation and publication steps.
+- [What jackstay did](observability.md) covers the local timeline, inventory, journal and diagnostics.
 
-## Words used on these pages
+## Agent integrations
 
-- **Project**: a git repository with a `jackstay.json` at its root. Its name is the file's `project`
-  key, else the main checkout's folder name.
-- **jackstay home**: `~/.jackstay`, where jackstay keeps its state (receipts, run records, the
-  trash, the journal, counters). `JACKSTAY_HOME` (an absolute path) replaces it.
-- **Session**: one agent conversation (a Claude Code session, say). Many sessions may work on one
-  machine, in one project, at once.
-- **Owner**: the person running the sessions. Some commands stop and leave a decision to them.
+- [Claude Code](claude-code.md) covers the project guard hook, sandbox and reviewer setup.
+- [Codex](codex.md) covers the optional reviewer and guard hook.
 
-## The design
+## Terms used here
 
-How each command works inside, and why, is in the repository, not on these pages. The
-[current specification](../design/implementation.md) describes the binary as a whole; its
-section 0 lists the feature specs: [the guard](../design/guard.md),
-[discard and the clean-copy gate](../design/discard-and-clean-gate.md), [testing](../design/testing.md),
-[review](../design/review.md), [releases](../design/release.md), [adoption](../design/adopt.md) and
-[the journal](../design/observability.md).
+A **project** is a Git repository whose root has a `jackstay.json`. **jackstay home** is the
+local state folder, normally `~/.jackstay`. Set `JACKSTAY_HOME` to an absolute path to move it.
+A **session** is one agent conversation. The **owner** is the person who directs the work and
+settles decisions that a tool cannot infer.
+
+## Design and decisions
+
+The [implementation specification](../design/implementation.md) links the contracts for each
+command. [Decision records](../decisions/README.md) explain the choices behind them. Start with
+[the test contract](../design/testing.md), [adoption](../design/adopt.md),
+[review](../design/review.md) or [observability](../design/observability.md) when you need to
+change how the framework behaves.
+
+[Backlog assessment](../roadmap/backlog.md) evaluates proposed product work against the current
+implementation. [Ecosystem research](../roadmap/ecosystem.md) records wider needs and sources.

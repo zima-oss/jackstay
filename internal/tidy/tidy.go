@@ -220,9 +220,9 @@ func actionLine(done action) string {
 	case didFailBranch:
 		return "could not delete branch " + done.Target + ": " + done.Detail
 	case didPrune:
-		return "pruned the records of " + done.Target + ": " + done.Detail
+		return "pruned the worktree record for " + done.Target + ": " + done.Detail
 	case didFailPrune:
-		return "could not prune all of the records of " + done.Target + ": " + done.Detail
+		return "could not prune the worktree record for " + done.Target + ": " + done.Detail
 	default:
 		return done.Detail + ": " + done.Target
 	}

@@ -308,16 +308,13 @@ func onDisk(folder, pattern string, taken interface{ MatchString(string) bool })
 // ref. A ref whose tree git cannot read refuses: a number there could be handed out again.
 func inRefs(ctx context.Context, git gitcli.Git, pattern string, taken interface{ MatchString(string) bool }) ([]string, error) {
 	sub := series.Folder(pattern)
-	out, err := ask(ctx, git, nil, "for-each-ref", "--format=%(objectname) %(refname)", "refs/heads", "refs/remotes")
+	out, err := ask(ctx, git, nil, "for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes")
 	if err != nil {
 		return nil, err
 	}
 	unique := map[string]bool{}
-	for _, line := range strings.Split(string(out), "\n") {
-		object, ref, ok := strings.Cut(line, " ")
-		if ok && !strings.HasSuffix(ref, "/HEAD") {
-			unique[object] = true
-		}
+	for _, object := range strings.Fields(string(out)) {
+		unique[object] = true
 	}
 	commits := make([]string, 0, len(unique))
 	for commit := range unique {
@@ -519,6 +516,9 @@ func command(args []string, stdout io.Writer) error {
 		top, _, err := Highest(ctx, proj, entry)
 		if err != nil {
 			return err
+		}
+		if top >= series.MaxNumber {
+			return project.Fail("ids.%s: the next number would be above %d, which jackstay does not count", rest[0], series.MaxNumber)
 		}
 		fmt.Fprintln(stdout, series.Format(rest[0], entry.Width, top+1))
 		return nil

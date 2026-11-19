@@ -4,7 +4,8 @@
 // `~/.jackstay/.all/procs/<id>.json`, and stopped on request through `<id>.stop`.
 //
 // Exit codes of `jst bg`: the command's own (128+N for a signal); 2 a bad request; 126 the command
-// could not start; 127 it was not found; asked to stop by a signal, jst bg ends by that signal.
+// could not start; 127 it was not found; 1 when registration or cleanup fails after a successful
+// command. Asked to stop by a signal, jst bg ends by that signal.
 // `jst procs`: 0; 1 a name or id not stopped (`stop`); 2 a bad request.
 package background
 
@@ -29,6 +30,8 @@ import (
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/supervise"
+	"github.com/zima-oss/jackstay/internal/telemetry"
+	"github.com/zima-oss/jackstay/internal/telemetry/mask"
 )
 
 // The supervision's times (docs/design/implementation.md section 5.1).
@@ -48,6 +51,7 @@ const (
 
 // Statuses of jst bg's own.
 const (
+	statusIncomplete  = 1
 	statusUsage       = 2
 	statusCannotStart = 126
 	statusNotFound    = 127
@@ -260,9 +264,7 @@ func (run *backgroundRun) run() int {
 			reason = "signal"
 		}
 	}
-	status := outcome.Status()
-	note("end", map[string]any{"id": id, "status": status, "reason": reason})
-	run.place.remove(id)
+	status := watcher.finish(outcome, reason)
 	say.close(run.host.clock.After(tellBound))
 	if outcome.StoppedBy != 0 {
 		signals.Close()
@@ -311,8 +313,10 @@ func (run *backgroundRun) begin(id string, group int, control stopper, started t
 			found.watched = watched
 		}
 	}
+	_, settings, _ := config.Load(run.here, []string{telemetry.SectionName})
+	_, commandMode := telemetry.SectionOf(settings.Section(telemetry.SectionName))
 	entry := Entry{ID: id, Name: run.asked.name, Supervisor: run.host.pid, Group: group, Started: epoch(started),
-		Keep: run.asked.keep, Cwd: run.here, Command: run.asked.argv, Status: "running"}
+		Keep: run.asked.keep, Cwd: run.here, Command: mask.Argv(run.asked.argv, commandMode), Status: "running", commandMasked: true}
 	if leader, present, _ := run.host.row(group); present {
 		entry.LeaderStart = &leader.Start
 	}
@@ -342,6 +346,10 @@ func (run *backgroundRun) begin(id string, group int, control stopper, started t
 		"keep": entry.Keep, "session": entry.Session, "watched": entry.Watched, "cwd": entry.Cwd,
 		"command": entry.Command[:min(len(entry.Command), 20)]})
 	say.tell(run.startWords(entry, found, watched, listed))
+	if run.asked.keep && !listed {
+		found.reason = "registration-failed"
+		control.Stop()
+	}
 	return found
 }
 
@@ -349,6 +357,8 @@ func (run *backgroundRun) begin(id string, group int, control stopper, started t
 func (run *backgroundRun) startWords(entry Entry, found *watcher, watched *watchedProcess, listed bool) string {
 	said := []string{fmt.Sprintf("jst bg: %s%s started, group %d", entry.ID, inBrackets(entry.nameOf()), entry.Group)}
 	switch {
+	case run.asked.keep && !listed:
+		return strings.Join(append(said, "cannot register --keep in "+run.place.folder+"; stopping the unregistered command"), "; ")
 	case run.asked.keep:
 		handle := entry.nameOf()
 		if handle == "" {
@@ -373,7 +383,7 @@ func (run *backgroundRun) startWords(entry Entry, found *watcher, watched *watch
 		}
 	}
 	if !listed {
-		said = append(said, "NOT listed: "+run.place.folder+" cannot be written; the deadline and the session check still hold")
+		said = append(said, "NOT listed: "+run.place.folder+" cannot be written; the configured supervision still applies")
 	}
 	return strings.Join(said, "; ")
 }
@@ -420,6 +430,30 @@ type watcher struct {
 	mutex sync.Mutex
 	// reason is why the watcher stopped the group ("" while it has not).
 	reason string
+}
+
+// finish removes only entries whose cleanup was confirmed. A failed cleanup remains visible
+// even if the group leader is gone: the supervisor may have tracked descendants in other sessions.
+func (watching *watcher) finish(outcome supervise.Outcome, reason string) int {
+	id := watching.entry.ID
+	complete := !outcome.Unconfirmed && len(outcome.Survivors) == 0 && len(outcome.Foreign) == 0
+	status := outcome.Status()
+	if complete {
+		watching.place.remove(id)
+	} else {
+		watching.entry.Status, watching.entry.Held = stateCleanupIncomplete, nil
+		if watching.place.write(watching.entry) {
+			watching.say.tell(fmt.Sprintf("jst bg: %s: cleanup incomplete; it stays listed", id))
+		} else {
+			watching.say.tell(fmt.Sprintf("jst bg: %s: cleanup incomplete; its entry could not be written", id))
+		}
+		_ = watching.place.removeStop(id)
+	}
+	if status == 0 && (!complete || reason == "registration-failed") {
+		status = statusIncomplete
+	}
+	note("end", map[string]any{"id": id, "status": status, "reason": reason, "cleanup_confirmed": complete})
+	return status
 }
 
 // watch runs the two loops until the command has ended or the group was stopped: the stop file
@@ -516,9 +550,9 @@ func (watching *watcher) timedCheck() bool {
 	}
 	unlooked := ""
 	if !looked {
-		unlooked = " (lsof gave no answer: stopped all the same)"
+		unlooked = " (lsof gave no answer)"
 	}
-	if !watching.stop(why, fmt.Sprintf("jst bg: %s: %s%s; the group was stopped (TERM, then KILL)", id, why, unlooked),
+	if !watching.stop(why, fmt.Sprintf("jst bg: %s: %s%s; stopping the group (TERM, then KILL)", id, why, unlooked),
 		map[string]any{"id": id, "reason": why, "looked": looked}) {
 		// Not made: asked again at the next slice, the deadline's check with it.
 		watching.deadlineChecked, watching.nextCheck = false, now

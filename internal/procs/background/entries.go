@@ -14,6 +14,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/procs"
+	"github.com/zima-oss/jackstay/internal/telemetry/mask"
 )
 
 // An Entry is `<jackstay home>/.all/procs/<id>.json`: one group a `jst bg` supervises
@@ -35,6 +36,14 @@ type Entry struct {
 	Command         []string `json:"command"`
 	Status          string   `json:"status"`
 	Held            []string `json:"held,omitempty"`
+
+	commandMasked bool
+}
+
+// savedEntry carries the storage marker without adding it to the procs JSON output.
+type savedEntry struct {
+	Entry
+	CommandMasked bool `json:"command_masked,omitempty"`
 }
 
 // Watched is the process whose end stops the group: the session's own (pid and start).
@@ -84,7 +93,7 @@ func (place store) stopPath(id string) string { return filepath.Join(place.folde
 // write puts the entry in place whole (a temporary file in the same folder, synced, renamed);
 // false when it cannot be written.
 func (place store) write(entry Entry) bool {
-	data, err := marshal(entry)
+	data, err := marshal(savedEntry{Entry: entry, CommandMasked: entry.commandMasked})
 	if err != nil {
 		return false
 	}
@@ -143,6 +152,23 @@ func (place store) askStop(id string) error {
 	return os.WriteFile(place.stopPath(id), nil, 0o600)
 }
 
+// read loads one entry written whole by write.
+func (place store) read(id string) (Entry, bool) {
+	data, err := os.ReadFile(place.entryPath(id))
+	if err != nil {
+		return Entry{}, false
+	}
+	var saved savedEntry
+	if json.Unmarshal(data, &saved) != nil || saved.ID != id || saved.Group <= 1 {
+		return Entry{}, false
+	}
+	if !saved.CommandMasked {
+		saved.Command = mask.Argv(saved.Command, mask.Masked)
+	}
+	saved.commandMasked = true
+	return saved.Entry, true
+}
+
 // entries are the readable entries, by file name.
 func (place store) entries() []Entry {
 	names, err := os.ReadDir(place.folder)
@@ -155,15 +181,9 @@ func (place store) entries() []Entry {
 		if !isEntry || !identifiers.MatchString(stem) {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(place.folder, each.Name()))
-		if err != nil {
-			continue
+		if entry, ok := place.read(stem); ok {
+			found = append(found, entry)
 		}
-		var entry Entry
-		if json.Unmarshal(data, &entry) != nil || entry.ID != stem || entry.Group <= 1 {
-			continue
-		}
-		found = append(found, entry)
 	}
 	sort.Slice(found, func(left, right int) bool { return found[left].ID < found[right].ID })
 	return found

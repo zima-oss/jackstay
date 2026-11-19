@@ -30,8 +30,8 @@ func pathWithout(programs ...string) string {
 
 // TestTheCoreNeedsNeitherClaudeCodeNorCodex runs the built jst in a fresh repository with no
 // .claude folder and no claude or codex on PATH: running a recorded test, adopting the project and
-// checking it all work, and a review says plainly that Codex is missing (W-059: both are optional
-// integrations).
+// checking it all work. A review needs an explicit selection or project policy and only checks
+// for the selected provider (W-059: both are optional integrations).
 func TestTheCoreNeedsNeitherClaudeCodeNorCodex(t *testing.T) {
 	base := t.TempDir()
 	binary := filepath.Join(base, "jst")
@@ -102,13 +102,15 @@ func TestTheCoreNeedsNeitherClaudeCodeNorCodex(t *testing.T) {
 	}
 	run(0, "check")
 	run(0, "test", "--", "sh", "-c", "echo again")
-	// A review needs Codex; without it jst says so with its documented exit (6: the environment
-	// refuses).
-	out := run(6, "review", "HEAD")
-	if !strings.Contains(out, "Codex") || !strings.Contains(out, "not installed") {
-		t.Fatalf("the refusal does not say Codex is not installed:\n%s", out)
+	if out := run(2, "review", "HEAD"); !strings.Contains(out, "choose a reviewer") {
+		t.Fatalf("the refusal does not ask for a reviewer selection:\n%s", out)
 	}
-	t.Log(out)
+	for _, each := range []struct{ name, program string }{{"codex", "Codex"}, {"claude-code", "Claude Code"}} {
+		out := run(6, "review", "HEAD", "--reviewer", each.name)
+		if !strings.Contains(out, each.program+" is not installed") {
+			t.Fatalf("the refusal does not identify the selected reviewer %s:\n%s", each.name, out)
+		}
+	}
 }
 
 // lookIn finds a program on the given PATH.

@@ -365,6 +365,114 @@ func TestPushLeasedSeesARefusal(t *testing.T) {
 	}
 }
 
+func TestPushLeasedDoesNotRetryPolicyRefusals(t *testing.T) {
+	w := newWorld(t)
+	repo := NewRepo(w.runner)
+	before := w.git(w.runner, "rev-parse", "origin/main")
+	commit, err := repo.commitOn(before, map[string][]byte{"z.txt": []byte("z")}, nil, "x\n", Identity{Name: "t", Email: "t@t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.remote, "hooks", "pre-receive"), []byte("#!/bin/sh\necho policy-declined >&2\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	refused, err := repo.pushLeased("origin", "main", commit, before)
+	if err == nil || refused || !strings.Contains(err.Error(), "policy-declined") {
+		t.Fatalf("refused %v, want a policy error; got %v", refused, err)
+	}
+}
+
+func TestReleasePreviewLeavesTheCheckoutRepositoryUntouched(t *testing.T) {
+	w := newWorld(t)
+	w.git(w.runner, "remote", "rename", "origin", "upstream")
+	w.git(w.runner, "remote", "set-url", "upstream", "../origin.git")
+	w.write("unrelated.txt", "new remote commit")
+	w.land("advance the remote before previewing")
+	gitState := func() [2]string {
+		return [2]string{
+			w.git(w.runner, "for-each-ref", "--format=%(refname) %(objectname)"),
+			w.git(w.runner, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"),
+		}
+	}
+	w.git(w.runner, "config", "remote.upstream.tagOpt", "--no-tags")
+	before := gitState()
+	preview, out := w.flow()
+	preview.DryRun, preview.Remote = true, "upstream"
+	if code, err := preview.PullRequestFlow("main"); err != nil || code != 0 || !strings.Contains(out.String(), "would push") {
+		t.Fatalf("pr preview: %d %v\n%s", code, err, out)
+	}
+	if len(w.hub.pulls) != 0 || gitState() != before {
+		t.Fatalf("pr preview changed the checkout refs/objects or GitHub")
+	}
+	if _, err := os.Stat(filepath.Join(w.runner, ".git", "FETCH_HEAD")); !os.IsNotExist(err) {
+		t.Fatalf("pr preview changed FETCH_HEAD: %v", err)
+	}
+
+	real, _ := w.flow()
+	real.Remote = "upstream"
+	if code, err := real.PullRequestFlow("main"); err != nil || code != 0 {
+		t.Fatalf("prepare the request: %d %v", code, err)
+	}
+	w.mergeRequest()
+	base := w.git(w.work, "rev-parse", "HEAD")
+	before = gitState()
+	out.Reset()
+	if code, err := preview.Publish("main"); err != nil || code != 0 || !strings.Contains(out.String(), "would push the release commit") {
+		t.Fatalf("publish preview: %d %v\n%s", code, err, out)
+	}
+	if len(w.hub.releases) != 0 || gitState() != before || w.git(w.remote, "rev-parse", "refs/heads/main") != base {
+		t.Fatalf("publish preview changed refs/objects or GitHub")
+	}
+}
+
+func TestReleaseRefusesWhenTheFetchedBaseNamesAnotherBranch(t *testing.T) {
+	w := newWorld(t)
+	w.write("jackstay.json", strings.Replace(projectJSON, `"release": {`, `"release": {"base": "another",`, 1))
+	w.land("configure a different base")
+	flow, _ := w.flow()
+	for _, command := range []func(string) (int, error){flow.Publish, flow.PullRequestFlow} {
+		code, err := command("main")
+		if code != 2 || err == nil || !strings.Contains(err.Error(), "release base is another") || len(w.hub.pulls) != 0 {
+			t.Fatalf("wrong release base: %d %v; pulls %v", code, err, w.hub.pulls)
+		}
+	}
+}
+
+func TestReleaseCommandSelectsTheConfiguredRemote(t *testing.T) {
+	w := newWorld(t)
+	w.git(w.runner, "remote", "add", "upstream", w.remote)
+	settings := strings.Replace(projectJSON, `"project": "p",`, `"project": "p", "github": {"account": "octocat", "remote": "upstream"},`, 1)
+	if err := os.WriteFile(filepath.Join(w.runner, "jackstay.json"), []byte(settings), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(w.runner)
+	t.Setenv("GITHUB_ACTIONS", "")
+	t.Setenv("JACKSTAY_GITHUB_ACCOUNT", "")
+	flow, _, err := flowFromEnvironment(context.Background(), &bytes.Buffer{}, &bytes.Buffer{}, true)
+	if err != nil || flow.Remote != "upstream" {
+		t.Fatalf("remote %q: %v", flow.Remote, err)
+	}
+}
+
+func TestReleaseRemoteMustIdentifyItsWorkflowRepository(t *testing.T) {
+	w := newWorld(t)
+	flow, _ := w.flow()
+	flow.Remote = "upstream"
+	w.git(w.runner, "remote", "add", "upstream", "https://github.com/O/P.git")
+	w.git(w.runner, "remote", "set-url", "--push", "upstream", "git@github.com:o/p.git")
+	if err := flow.verifyRemoteRepository(); err != nil {
+		t.Fatalf("matching fetch and push: %v", err)
+	}
+	w.git(w.runner, "remote", "set-url", "--add", "--push", "upstream", "git@github.com:someone/p.git")
+	if err := flow.verifyRemoteRepository(); err == nil || !strings.Contains(err.Error(), "push destination") {
+		t.Fatalf("different push destination: %v", err)
+	}
+	w.git(w.runner, "remote", "set-url", "upstream", "https://github.com/someone/p.git")
+	if err := flow.verifyRemoteRepository(); err == nil || !strings.Contains(err.Error(), "fetch destination") {
+		t.Fatalf("different fetch destination: %v", err)
+	}
+}
+
 func TestSparkleKeepsTheMigration(t *testing.T) {
 	entry, _ := changes.Parse("a.md", []byte("---\n{\"type\": \"breaking\", \"audience\": \"consumer\"}\n---\n# Rows <new>\n\n## Migration\n\nUse the builder.\n"))
 	out, err := RenderNotes([]changes.Entry{entry}, "1.0.0", "sparkle-html")

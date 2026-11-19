@@ -30,6 +30,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -496,10 +497,56 @@ func stopAtEnd(ctx context.Context, control *Control) func() {
 	}
 }
 
+// executable finds a program in the same directory and PATH its process will use.
+// Like exec.LookPath, it refuses an implicit relative executable from PATH.
+func executable(program, dir string, env []string) (string, error) {
+	if program == "" || program == "." || program == ".." || strings.ContainsRune(program, 0) || filepath.IsAbs(program) {
+		return exec.LookPath(program)
+	}
+	if strings.ContainsRune(program, '/') {
+		if dir == "" {
+			return exec.LookPath(program)
+		}
+		absolute, err := filepath.Abs(dir)
+		if err != nil {
+			return "", err
+		}
+		// Keep the program's path components for the OS to resolve, including links and "..".
+		return exec.LookPath(strings.TrimRight(absolute, "/") + "/" + program)
+	}
+	pathValue := os.Getenv("PATH")
+	if env != nil {
+		pathValue = ""
+		for _, entry := range env {
+			if value, found := strings.CutPrefix(entry, "PATH="); found {
+				pathValue = value
+				break
+			}
+		}
+	}
+	for _, folder := range filepath.SplitList(pathValue) {
+		candidate := filepath.Join(folder, program)
+		if filepath.IsAbs(candidate) {
+			if path, err := exec.LookPath(candidate); err == nil {
+				return path, nil
+			}
+			continue
+		}
+		absolute, err := filepath.Abs(filepath.Join(dir, candidate))
+		if err != nil {
+			return "", err
+		}
+		if _, err := exec.LookPath(absolute); err == nil {
+			return candidate, &exec.Error{Name: program, Err: exec.ErrDot}
+		}
+	}
+	return "", &exec.Error{Name: program, Err: exec.ErrNotFound}
+}
+
 // start starts the command; at a terminal the start that is refused the terminal is made again
 // without it (the command never ran).
 func start(spec Spec) (*os.Process, *terminal, []*lineReader, *inputFeed, error) {
-	path, err := exec.LookPath(spec.Argv[0])
+	path, err := executable(spec.Argv[0], spec.Dir, spec.Env)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}

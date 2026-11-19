@@ -25,6 +25,9 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(problems)
 	}
 	codex := s.Reviewers["codex"]
+	if len(s.Use) != 0 || s.Reviewers["claude-code"].Command != "claude" {
+		t.Fatalf("reviewer built-ins and opt-in defaults: %+v", s)
+	}
 	if codex.Effort != "medium" || codex.TimeoutMinutes != 20 || codex.Command != "codex" || len(codex.Isolation) != len(DefaultIsolation) {
 		t.Fatalf("codex defaults: %+v", codex)
 	}
@@ -39,7 +42,7 @@ func TestDefaults(t *testing.T) {
 
 func TestSettingsRefused(t *testing.T) {
 	cases := map[string]string{
-		`"use": []`:                   "names no reviewer",
+		`"use": ["unknown"]`:          "unknown reviewer",
 		`"use": ["codex", "codex"]`:   "twice",
 		`"reviewers": {"claude": {}}`: "knows how to run only",
 		`"reviewers": {"codex": {"isolation": ["--dangerously-bypass-approvals-and-sandbox"]}}`: "undo read-only",
@@ -62,6 +65,15 @@ func TestSettingsRefused(t *testing.T) {
 		if !strings.Contains(strings.Join(problems, "\n"), want) {
 			t.Errorf("%s: want %q in %v", body, want, problems)
 		}
+	}
+}
+
+func TestReviewerConfigurationOnlyOverridesNamedProviders(t *testing.T) {
+	settings, problems := settingsFrom(t, `{"jackstay_schema":2,"review":{
+		"reviewers":{"claude-code":{"model":"example"}},"use":[]}}`)
+	if len(problems) != 0 || len(settings.Use) != 0 ||
+		settings.Reviewers["codex"].Command != "codex" || settings.Reviewers["claude-code"].Model != "example" {
+		t.Fatalf("optional reviewers: %+v, problems %v", settings, problems)
 	}
 }
 
@@ -112,5 +124,20 @@ func TestBlocks(t *testing.T) {
 	s.Triage = false
 	if !s.Blocks("blocker", "unusual", "mild") {
 		t.Fatal("triage off")
+	}
+}
+
+func TestClaudeCodeIsAnOptInReviewerWithFixedIsolation(t *testing.T) {
+	settings, problems := settingsFrom(t, `{"jackstay_schema":2,"review":{
+		"reviewers":{"codex":{},"claude-code":{"effort":"max"}},"use":["claude-code"]}}`)
+	claude := settings.Reviewers["claude-code"]
+	if len(problems) > 0 || claude.Command != "claude" || claude.Effort != "max" || claude.TimeoutMinutes != 20 {
+		t.Fatalf("Claude settings %+v, problems %v", claude, problems)
+	}
+	_, problems = settingsFrom(t, `{"jackstay_schema":2,"review":{
+		"reviewers":{"claude-code":{"isolation":["--dangerously-skip-permissions"],"effort":"minimal"}},
+		"use":["claude-code"]}}`)
+	if words := strings.Join(problems, "\n"); !strings.Contains(words, "isolation") || !strings.Contains(words, "effort") {
+		t.Fatalf("unsafe or invalid Claude CLI settings accepted: %v", problems)
 	}
 }

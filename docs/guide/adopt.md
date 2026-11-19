@@ -36,8 +36,9 @@ places and nothing else:
 - Exit: 0 adopted (nothing to change, or everything written); 1 conflicts left; 2 usage, or
   `jackstay.json` or the profile cannot be read; 3 (`--plan`) changes pending, no conflict.
 
-A second `--apply` writes nothing. `jst doctor` run inside a project reports when it has drifted
-(after you install a newer jackstay, say).
+A second `--apply` leaves project files unchanged. If an apply stops partway through, rerun it
+with the same options. jackstay checks the previous attempt against the files now on disk and
+applies the remaining changes. `jst doctor` reports drift after a newer jackstay is installed.
 
 ### Example: a fresh repository
 

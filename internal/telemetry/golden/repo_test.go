@@ -35,6 +35,9 @@ func (repo *fakeRepo) Subject(context.Context, string) (string, error) { return 
 func (repo *fakeRepo) DiffStat(_ context.Context, from, to string) (string, error) {
 	return from + ".." + to, nil
 }
+func (repo *fakeRepo) Diff(_ context.Context, from, to string) ([]byte, error) {
+	return []byte(from + ".." + to), nil
+}
 func (repo *fakeRepo) Show(_ context.Context, _, path string) ([]byte, error) {
 	if path == "AGENTS.md" {
 		return []byte("rules"), nil

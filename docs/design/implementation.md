@@ -62,6 +62,7 @@ base name makes it `jst guard`, the Claude Code hook the projects' settings name
 | `internal/cleancopy` | a clean copy of a commit, made and removed: `jst test --commit` ([discard-and-clean-gate.md](discard-and-clean-gate.md) section 3) |
 | `internal/cli` | the command table, `jst version`, `jst help`, `--help` (section 2) |
 | `internal/config` | `jackstay.json`: found, read strictly, checked against one table of keys and types (section 3) |
+| `internal/delivery` | Versioned local checkpoints shared by changelog collection and adoption |
 | `internal/discard` | `jst discard PATH…`: back to HEAD, what is dropped kept in the trash ([discard-and-clean-gate.md](discard-and-clean-gate.md)) |
 | `internal/docs` | the check of jackstay's own documents (a test only; the gate's `docs` part) |
 | `internal/doctor` | `jst doctor` (section 7.7) |
@@ -94,7 +95,7 @@ base name makes it `jst guard`, the Claude Code hook the projects' settings name
 | `internal/records` | `jst new` and `jst view` (section 4) |
 | `internal/release` | `jst release …` ([release.md](release.md)) |
 | `internal/remote` | which remote a project's work goes to, its default branch as fetched, its GitHub repository |
-| `internal/review` | `jst review …`: cold reviews by Codex in rounds ([review.md](review.md)) |
+| `internal/review` | `jst review …`: cold reviews in rounds with optional Codex and Claude Code providers ([review.md](review.md)) |
 | `internal/series` | a numbered series: which file names hold its numbers, how an ID is written, front matter |
 | `internal/stats` | `jst stats`: named reports over the journal ([observability.md](observability.md)) |
 | `internal/strictjson` | the one strict reader of jackstay's own JSON formats (`encoding/json/v2`) |
@@ -683,10 +684,10 @@ the release pull request are [release.md](release.md) sections 1 to 7. In a proj
 | A record file cannot be read | `jst view` prints the other rows, then names the file on standard error and exits 1. A table that silently lacks a row would be worse than the conflict it replaced. |
 | Two branches add a file with one number | Not a merge conflict. `jst lint tree` is red on the second pull request. |
 | `collect` finds no entry | Exit 1. |
-| `changes.into` or `changes.dir` has uncommitted changes, or the changelog changes while the section is made | Exit 1, nothing collected. |
+| `changes.into` or `changes.dir` has uncommitted changes, an entry is untracked (including ignored files), or the changelog changes while the section is made | Exit 1, nothing collected. |
 | An invalid entry | Exit 1, nothing collected, each named. |
 | An entry changes while being collected | It is kept and named; exit 1. |
-| `collect` is stopped halfway | The changelog is written to a temporary file and renamed into place, then the entries are removed. A rerun that finds the heading and entries whose whole text is in that section removes them and ends 0: it finishes the first run. Entries not there make it refuse (exit 1), as for any existing heading. |
+| `collect` is stopped halfway | Before replacing the changelog, jackstay records the current HEAD, the new changelog blob, and the path, mode and blob of each collected entry in the worktree’s Git directory. The same record identifies each retry and retains the latest outcome. A rerun at the same HEAD and changelog removes only unchanged tracked entries named by the unfinished record. An existing heading without a matching unfinished record leaves entries in place (exit 1). |
 | Two `collect` runs in one checkout | A lock in the repository's git folder makes them take turns. |
 | A release forgets `collect` | The entries stay and go into the next section; `jst changes view` before a tag shows them. |
 
@@ -863,7 +864,8 @@ could not start; 127 it was not found; asked to stop by a signal, `jst bg` ends 
 
 | What goes wrong | What happens |
 |---|---|
-| The state folder cannot be written | The command still runs under its deadline and session check; `jst bg` says it is not listed. |
+| The state folder cannot be written | A command with a deadline runs under its usual supervision. For `--keep`, jackstay requests immediate shutdown, since `jst procs stop` would have no record. |
+| Cleanup leaves processes or cannot be confirmed | The entry stays as `cleanup-incomplete`. A command that otherwise succeeded returns 1, and `jst procs stop` reports that cleanup was not confirmed. |
 | No session note is found | Watched by its nearest possible session process; listed with `session unknown`. |
 | No session process can be told, or no process table | Supervised by the deadline only, and said. |
 | `jst bg` is killed outright | Its entry stays; `jst procs` shows `orphaned`, and stops it once past its deadline when its leader is proven. |
@@ -1009,8 +1011,13 @@ agent sessions). Exactly one condition: a process has
 ended; a file exists (and holds something); a file or folder is gone; a line of the `--in` file
 matches (the line is printed); the `--in` file has not grown for `S` seconds. The deadline is
 540 s by default, under a tool call's 10 minutes; `nan`, `inf` and a negative number are refused.
-On the way out it prints the matching line and the file's last lines (`--tail`, default 20), so
-that nobody reads the file again.
+On the way out it prints the matching line and the last lines from the final 64 KiB of the file
+(`--tail`, default 20). The `--in` path may start out missing. An existing path must point to a
+regular file. If it disappears or changes to another kind while waiting, the wait treats it as
+unavailable, and an unavailable path cannot count as quiet.
+
+Pattern matching reads a snapshot of the log in 64 KiB windows and checks the deadline between
+them. A line longer than 1 MiB ends pattern matching with exit 1 and names the file and the limit.
 
 - `--fail RE` (needs `--in`) ends at once with 1 on a line such as `error:`, and wins over a
   wanted line read in the same piece of output; it counts even before its line end. With `--pid`
@@ -1020,8 +1027,10 @@ that nobody reads the file again.
 - `--new` counts only lines written after `jst wait` started.
 - A file cut short, replaced by another (a new inode), or written over in place without growing is
   read again from its start.
-- A process that has ended but is not yet reaped (a zombie) counts as ended, read from the process
-  table, which the sandbox allows; a process of another account counts as running.
+- A process that has ended but is not yet reaped (a zombie) counts as ended. The first known
+  start time identifies the PID, so a replacement process with the same PID does not keep the
+  wait alive. When the kernel withholds a process row, the wait can check only whether the PID
+  exists.
 
 Exit 0 it happened; 1 it cannot happen any more, or a `--fail` line was seen; 2 the request is
 wrong; 3 the deadline came first.
@@ -1312,9 +1321,12 @@ jst install [--prefix DIR] [--checkout DIR | --binary FILE]
 - From a checkout: `--checkout DIR`, else the nearest folder at or above the working folder whose
   `go.mod` names `github.com/zima-oss/jackstay`. It is built into a temporary folder with
   `go build -trimpath -ldflags '-s -w -X github.com/zima-oss/jackstay/internal/version.Commit=<commit>'
-  ./cmd/jst` and `CGO_ENABLED=0`, under a 10-minute deadline. `<commit>` is `git rev-parse
-  --short=7 HEAD`, with `+changes` when `git status --porcelain` lists anything among the build
-  inputs (`cmd`, `internal`, `go.mod`, `go.sum`, tests excluded). `SOURCE` is the checkout.
+  ./cmd/jst` and `CGO_ENABLED=0`, under a 10-minute deadline. Install resolves the full commit
+  first. With clean build inputs, it extracts that commit's Git archive into a private source
+  folder and builds there. Edits and commits made during the build cannot change those sources.
+  The binary records the abbreviated SHA. If `git status --porcelain` lists changes to build inputs
+  (`cmd`, `internal`, `go.mod`, `go.sum`, tests excluded), the trial build instead uses the working
+  checkout and appends `+changes` to the SHA. `SOURCE` is the checkout.
 - From a file (`--binary FILE`; `SOURCE` is `binary FILE`) or, with neither flag and no checkout
   around, the running binary itself (`os.Executable`, links resolved, so a downloaded release's
   `./jst install` installs itself; `SOURCE` is `release`).
@@ -1350,9 +1362,11 @@ is finished by running install again.
 
 1. Read the signing setting (section 7.4), get the binary, read its version.
 2. Take the install lock; `layout.Read`; the refusals above.
-3. When `lib/jackstay` already names a folder of the same `VERSION` text, no folder is made.
-   Otherwise the new folder is made whole (`MakeFolder`), signed when an identity is configured
-   (section 7.4) and proved (section 7.3); a failure removes it and changes nothing else.
+3. When `lib/jackstay` already names a folder of the same `VERSION` text, probe the live
+   launchers. If the proof fails, prepare and prove a replacement beside the current executable
+   before renaming it into place. Apply the same-version signature rules in section 7.4. For a
+   different version, make the new folder whole (`MakeFolder`), sign it when an identity is
+   configured, and prove it before activation. A preparation failure leaves the live files intact.
 4. **Activate** (`layout.Activation.Activate`, skipped when the version is already live and every
    launcher is `fixed`): `lib/jackstay` is replaced by the new folder in one rename, then each
    launcher that is not `fixed` is replaced, one rename each, by its fixed link. On a fresh prefix
@@ -1409,20 +1423,18 @@ identifier, is signed.
 `jackstay` and `jst-guard` are links to `jst` in the folder, so the proof of section 7.3, which runs
 `jst`, `jackstay` and the guard, runs the signed binary through each link.
 
-**The version already live.** An install of the version already live makes no folder. With an
-identity configured, it reads the live binary's signature (`codesign --display`, then `codesign
---verify --strict`); when it does not keep its signature (above: installed before the setting,
-unsigned or ad-hoc, or with an earlier identifier, `dev.jackstay.jst` until W-075 made it `jst`, or
-a signature that does not verify), it replaces the live binary the same safe
-way, under the prefix's lock: the binary being installed (which names the live version and commit)
-is copied into `<folder>/resign.partial/` with two links to it, the copy is signed, verified and
-read back (steps 1–3) unless it keeps its own signature (a release's binary installed over an
-ad-hoc build of the same version, which then needs no usable identity and keeps its notarisation),
-proved through its links as a new folder is (section 7.3), and only then
-renamed over `<folder>/jst` (one rename in one folder, so every launcher runs either the old binary
-or the new one). Any step failing refuses the install (exit 2) and leaves the live binary as it was;
-`resign.partial` is removed when the signing ends and before the next one starts. A live binary
-that keeps its signature (the identity's, or a release's) is left alone.
+**The version already live.** Install runs the launcher and guard probes in section 7.3, then
+keeps a working binary when its required signature checks pass. With an identity configured,
+an unsigned, ad-hoc, earlier-identifier or invalid signature calls for a replacement. On macOS,
+a working ad-hoc binary can also be replaced by an incoming binary with a verified certificate
+signature even when no identity is configured.
+
+For a repair or signature upgrade, install copies the incoming executable to
+`<folder>/resign.partial/` under the prefix lock, creates the two launcher links and applies any
+required signing there. An incoming certificate signature carried through an upgrade is verified
+again on the copy. The staged launchers must pass the probes before install renames the staged
+executable over `<folder>/jst`. If preparation fails, the executable stays in place and install
+returns 2.
 
 **The identity setting is a file of this machine's jackstay home**, `~/.jackstay/.all/codesign-identity`
 (under `JACKSTAY_HOME` when that is set): one line, the identity's name
@@ -1592,7 +1604,10 @@ exits 2. What needs no GitHub keeps working without it: `jst lint pr --body-file
 **The account is the API's, not git's.** The guarantee covers jackstay's GitHub API calls only.
 `pr-land`'s push and the remote branch delete go through git, whose credentials are set apart (the
 remote URL's user, a credential helper — `gh`'s helper answers with the *active* account — or an
-SSH key) and are not verified by jackstay. jackstay never rewrites a remote or git's settings.
+SSH key) and are not verified by jackstay. Before a push or deletion, `pr-land` checks that every
+effective push URL of the selected remote (including `pushurl` and URL rewrites) names the GitHub
+repository of the pull request. The deletion also requires GitHub to confirm the merged head's
+repository, branch and SHA. jackstay never rewrites a remote or git's settings.
 
 **The repository**: `github.repository`, else the URL of the remote (8.2), in https, userinfo
 (`https://user@github.com/…`) and scp forms, read as configured (`remote.<name>.url`), not as
@@ -1645,8 +1660,8 @@ from GitHub's own default branch, never from what the checkout fetched.
     jst gh ci-status [PR|URL]
     jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
     jst gh pr-find [--head BRANCH] [--search TEXT] [--repo URL] [--wait S] [--state open|closed|merged|all]
-    jst gh pr-status
-    jst gh pr-land [--title T] [--body-file F] [--card ID]... [--reason TEXT]
+    jst gh pr-status [--pr PR|URL]
+    jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT]
                    [--no-push] [--no-create] [--no-wait] [--no-merge] [--dry-run]
                    [--timeout S] [--interval S] [--lines N]
 
@@ -1654,14 +1669,19 @@ Sessions that wait on GitHub by hand write many loop shapes around `gh pr checks
 wrong; these commands replace them ([W-006](../decisions/W-006-tidy-and-github-tools.md)).
 
 - `ci-wait` waits until every check on the pull request's **current** head settles (default: this
-  branch's pull request); a red check prints its failing step's log (`--lines` per check). A head
+  branch's pull request); a red check prints its failing step's log if time remains (`--lines`
+  per check). One deadline covers lookup, requests, retries and optional error detail.
+  `--timeout 0` allows one look with a ten-second request budget. A head
   that moves while waiting is exit 4 (checks for the old head say nothing about the new one), or
   with `--any-head` is followed. `ci-status` is the same, once.
 - `run-wait` waits for one workflow run to complete, on a branch or a commit (a SHA prefix of 7 or
   more); the run may take `--appear` seconds (default 120) to be scheduled.
 - `pr-find` finds one pull request by its head branch or by search text, waiting up to `--wait`
   for it to appear; none found is exit 1, never "null".
-- `pr-status` says where this branch and its pull request stand.
+- `pr-status` says where this branch and its pull request stand, using the selected pull request's
+  own base. When a head branch has several open pull requests, require a number or URL. `ci-wait`
+  and `ci-status` take it positionally, and `pr-status` and `pr-land` take `--pr PR|URL`.
+  `--pr` selects an open pull request from this checkout's branch and repository.
 - `pr-land` pushes, opens the pull request, waits for its checks, squash-merges the head that was
   checked and deletes the remote branch. Each step can be skipped (`--no-…`), the order cannot.
   The plan is printed first; `--dry-run` stops there.
@@ -1674,7 +1694,8 @@ the pull request, the description (`--body-file`, else the commits' bodies, with
 `--card`/`--reason` asks for) is judged by `jst lint pr`'s rules before the push, and again before
 the merge: the description as GitHub holds it then, and the tree's rules on the merge of the head
 seen green with the pull request's own base as just fetched (made in memory); the description
-judged is the squash commit's body (section 4.1). Before the merge it waits up to 60 s while GitHub
+judged is the squash commit's body (section 4.1). A head branch in
+`cards.exempt_branches` may open without a Card line, and its merge still runs the tree rules. Before the merge it waits up to 60 s while GitHub
 says `mergeable: UNKNOWN` (still unknown: exit 3; not mergeable: exit 1); a pull request that is
 behind its base is updated on GitHub and its new head waited for. It refuses to merge when the
 local branch has commits the pull request lacks: they would not land.
@@ -1682,13 +1703,17 @@ local branch has commits the pull request lacks: they would not land.
 It waits for the checks the base branch's rules require: the `required_status_checks` rules of the
 rulesets that apply to it and its classic protection's required contexts (REST
 `rules/branches/BRANCH`, paged, and `branches/BRANCH`). A check required from an app (a ruleset's
-`integration_id`, a protection's `app_id`) is only that app's check run of the name. A required
+`integration_id`, a protection's `app_id`) is only that app's check run of the name. Required
 checks are judged as GitHub judges them, by commit: when the pull request's test merge commit has
 any result, they are judged on it; else on the head (GitHub's "conflicts between head commit and
 test merge commit"). One absent from the commit judged is waited for. The base whose rules were
 read is bound to the pull request: every look of the wait, the branch update, the description's
-judgement and a last read just before the merge refuse a base that changed, with exit 4; whether
-the branch is behind comes from the same answer as the base it is checked against.
+judgement and a last read just before the merge refuse a retargeted base with exit 4. The green
+verdict records the repository and pull request, head and reported base SHA, and the test merge
+candidate considered for required checks. Jackstay re-reads the pull request after querying that
+candidate and checks the verdict again before an update or merge. A branch update followed by a
+wait replaces the verdict with one for the updated head. GitHub enforces branch protection when
+applying the merge.
 Of the other checks only a failure stops the merge; one pending, never started or cancelled is
 reported and not waited for (a job no runner picks up does not hold a merge GitHub would accept).
 Rules that require none, or that cannot be read, leave every check waited for, as `ci-wait` does;
@@ -1699,7 +1724,9 @@ head, so GitHub refuses the merge if the head moved. Afterwards GitHub is asked 
 request merged: one a merge queue or auto-merge only holds is exit 3, its branch kept. Then it
 deletes only the remote branch, with a lease on that head (`git push
 --force-with-lease=refs/heads/B:<head> <remote> :refs/heads/B`): a push made after the merge is not
-deleted; a failure is said, and the merge stands.
+deleted. If another open pull request in the repository still uses the branch, jackstay leaves it
+on the remote.
+A deletion failure is reported and the merge stands.
 
 **It never changes the checkout it runs in**
 ([W-019](../decisions/W-019-repeated-findings-mean-redesign.md)): no switch, no pull, no local
@@ -1754,7 +1781,9 @@ branch or held by a branch or tag) and:
 without fetching, and the branch is deleted only at the tip that was judged (git refuses
 otherwise): another session may commit, write an ignored file or start working there between the
 report and `--fix`. An item called off that way makes `--fix` end 1. Records of the asked-about
-worktrees whose folder is gone are pruned. Remote branches are not touched.
+worktrees whose folder is still gone are pruned individually. A sweep leaves missing worktree
+records in place and exits 1, since the worktree might have moved. A scoped fix also exits 1 if
+any named record cannot be verified or pruned. Remote branches are not touched.
 
 | Failure | What happens |
 |---|---|

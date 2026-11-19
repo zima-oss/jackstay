@@ -58,6 +58,25 @@ integration:
 terminal:
     go test -count=1 -race -tags 'integration terminal' -run 'Terminal' ./...
 
+# A focused local macOS check. W-083 keeps the required CI gate on Linux.
+darwin-smoke:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [[ "$(uname -s)" != Darwin ]]; then
+      echo "darwin-smoke: this check needs macOS" >&2
+      exit 2
+    fi
+    mkdir -p .build
+    test_home=$(mktemp -d "$PWD/.build/darwin-smoke.XXXXXX")
+    trap 'rm -r "$test_home"' EXIT
+    export HOME="$test_home" JACKSTAY_HOME="$test_home/.jackstay"
+    git config --file "$test_home/.gitconfig" init.defaultBranch main
+    git config --file "$test_home/.gitconfig" user.name "Jackstay smoke"
+    git config --file "$test_home/.gitconfig" user.email "smoke@example.invalid"
+    go test -count=1 -race -tags integration \
+      -run 'Test(HookRefusesWithTheDocumentedAnswer|RealTheDeadlineStopsTheGroup|RealAHeldWriterIsNotStoppedUntilAsked|InstallStoppedAfterEachStep|ToolchainKeyUsesTheCommandsDirectoryAndEnvironment|TheScopeRunsOnACleanCopyOfTheCommitAndTheCopyGoes)$' \
+      ./internal/guard ./internal/install ./internal/procs/background ./internal/receipts ./internal/testing
+
 # jackstay's own documents: relative links lead somewhere, every decision and every module's
 # licence is listed, everything is in English; and the site builds from them with no warning and no
 # link that leads nowhere (site/layouts/_markup/render-link.html as the pages are made, then

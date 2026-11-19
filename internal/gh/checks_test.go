@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,6 +31,64 @@ func onChecks(hub *fakeGitHub, sha string, rows ...[]githubapi.Check) {
 		answers = append(answers, answer(each))
 	}
 	hub.OnChecks(sha, answers...)
+}
+
+type checkDeadlineHub struct {
+	*fakeGitHub
+	deadlines []time.Time
+}
+
+func (hub *checkDeadlineHub) noteDeadline(ctx context.Context) {
+	deadline, _ := ctx.Deadline()
+	hub.deadlines = append(hub.deadlines, deadline)
+}
+
+func (hub *checkDeadlineHub) PullRequest(ctx context.Context, number int) (githubapi.PullRequest, error) {
+	hub.noteDeadline(ctx)
+	return hub.fakeGitHub.PullRequest(ctx, number)
+}
+
+func (hub *checkDeadlineHub) Checks(ctx context.Context, head string) ([]githubapi.Check, error) {
+	hub.noteDeadline(ctx)
+	return hub.fakeGitHub.Checks(ctx, head)
+}
+
+func (hub *checkDeadlineHub) Jobs(ctx context.Context, number int64) ([]githubapi.Job, error) {
+	hub.noteDeadline(ctx)
+	return hub.fakeGitHub.Jobs(ctx, number)
+}
+
+func TestCIWaitSharesOneDeadlineForLookupChecksAndFailureDetail(t *testing.T) {
+	hub := &checkDeadlineHub{fakeGitHub: newGitHub()}
+	onPull(hub.fakeGitHub, pull(7, "feat", shaA))
+	onChecks(hub.fakeGitHub, shaA, []githubapi.Check{failed("lint", 1)})
+	var output strings.Builder
+	parent := context.Background()
+	work := session{ctx: parent, deps: Deps{Stdout: &output, Clock: newClock()}, github: hub}
+	code, err := work.ciWait(7, waitOptions{timeout: time.Minute, lines: 5})
+	if code != exitNotFine || err != nil || work.ctx != parent {
+		t.Fatalf("exit %d: %v; original context restored %v", code, err, work.ctx == parent)
+	}
+	if len(hub.deadlines) != 4 || hub.deadlines[0].IsZero() {
+		t.Fatalf("request deadlines %v", hub.deadlines)
+	}
+	for _, deadline := range hub.deadlines[1:] {
+		if !deadline.Equal(hub.deadlines[0]) {
+			t.Fatalf("requests use different deadlines: %v", hub.deadlines)
+		}
+	}
+}
+
+func TestCIWaitReportsDeadlineExpiryAsPending(t *testing.T) {
+	parent, cancel := context.WithDeadline(context.Background(), time.Unix(0, 0))
+	defer cancel()
+	work := session{ctx: parent, deps: Deps{Clock: newClock()}}
+	_, err := work.withCIWaitBudget(time.Second, func(_, _ time.Time) (int, error) {
+		return 0, fmt.Errorf("lookup: %w", work.ctx.Err())
+	})
+	if codeOf(err) != exitPending {
+		t.Fatalf("deadline gave %v", err)
+	}
 }
 
 func TestNoChecksRegisteredIsWaitingNotAPass(t *testing.T) {
@@ -83,6 +142,17 @@ func stampedLog(start time.Time, lines ...string) string {
 		fmt.Fprintf(&out, "%s %s\n", start.Add(time.Duration(index)*300*time.Millisecond).Format("2006-01-02T15:04:05.0000000Z"), line)
 	}
 	return out.String()
+}
+
+func TestCIWaitReportsARedCheckWhileAnotherIsPending(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA))
+	onChecks(bench.hub, shaA, []githubapi.Check{failed("lint", 0), pending("test")})
+	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "1", "--interval", "0.1")
+	contains(t, stdout, "RED:")
+	if slept := bench.clock.slept(); slept != 0 {
+		t.Fatalf("waited %v after observing a failed check", slept)
+	}
 }
 
 func TestRedIsExit1WithTheFailedStepsLog(t *testing.T) {

@@ -1,12 +1,15 @@
 package cleancopy
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/pinned"
+	"github.com/zima-oss/jackstay/internal/testrepo"
 )
 
 func TestASweepRemovesOnlyCopiesWhoseOwnerIsGone(t *testing.T) {
@@ -29,5 +32,28 @@ func TestASweepRemovesOnlyCopiesWhoseOwnerIsGone(t *testing.T) {
 	removed = Sweep(copies, time.Now().Add(2*time.Hour), func(string) bool { return true })
 	if len(removed) != 1 || filepath.Base(removed[0]) != "orphan" {
 		t.Fatalf("an old folder with no owner: removed %v", removed)
+	}
+}
+
+func TestCopyKeepsTheSourceObjectFormat(t *testing.T) {
+	t.Setenv("GIT_DEFAULT_HASH", "sha256")
+	repo := testrepo.New(t, map[string]string{"file": "the committed contents"})
+	head := repo.Git("rev-parse", "HEAD")
+	t.Setenv("GIT_DEFAULT_HASH", "sha1")
+	made, inside, err := Make(Request{
+		Here: repo.Root, Commit: "HEAD", Project: "demo", Now: time.Now(),
+		Git: func(ctx context.Context, dir string, args ...string) ([]byte, error) {
+			return gitcli.Git{Dir: dir}.Run(ctx, args...)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer made.Remove()
+	if got := repo.GitIn(inside, "rev-parse", "--show-object-format"); got != "sha256" {
+		t.Fatalf("the copy uses %s object IDs", got)
+	}
+	if got := repo.GitIn(inside, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("the copy checked out %s, want %s", got, head)
 	}
 }

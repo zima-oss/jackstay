@@ -244,6 +244,15 @@ func TestLoad(t *testing.T) {
 }
 
 // A12: a report split by the version that wrote the spans.
+func TestGroupingRejectsUnknownReportsEvenWithNoSpans(t *testing.T) {
+	for _, group := range []string{"day", "project", "version"} {
+		_, err := stats.By("no-such-report", group, stats.Input{})
+		if err == nil || !strings.Contains(err.Error(), "no-such-report") {
+			t.Fatalf("grouping %s did not report the unknown name: %v", group, err)
+		}
+	}
+}
+
 func TestByVersion(t *testing.T) {
 	now := time.Now()
 	guardSpan := func(version, outcome string) journal.Span {

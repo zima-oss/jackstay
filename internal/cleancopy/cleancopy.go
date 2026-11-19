@@ -41,8 +41,8 @@ type Request struct {
 	Here string
 	// Commit names the commit to copy (a commit, a tag, a branch).
 	Commit string
-	// Project is the project's name: the copies live in its folder of jackstay's home, and the
-	// copy is marked with it (config.CopyMarker).
+	// Project names the state folder and marks the copy (config.CopyMarker).
+	// When empty, the selected commit supplies the name.
 	Project string
 	Now     time.Time
 	Git     Git
@@ -88,9 +88,6 @@ func Make(request Request) (*Copy, string, error) {
 	if request.Commit == "" || strings.HasPrefix(request.Commit, "-") {
 		return nil, "", fmt.Errorf("a clean copy takes a commit: '%s'", request.Commit)
 	}
-	if request.Project == "" {
-		return nil, "", errors.New("a clean copy needs the project's name")
-	}
 	top, err := git(request.Here, "rev-parse", "--show-toplevel")
 	if err != nil || top == "" {
 		return nil, "", fmt.Errorf("a clean copy needs a git checkout: %s is not in one", request.Here)
@@ -98,6 +95,10 @@ func Make(request Request) (*Copy, string, error) {
 	commit, err := git(top, "rev-parse", "--verify", "--quiet", "--end-of-options", request.Commit+"^{commit}")
 	if err != nil || commit == "" {
 		return nil, "", fmt.Errorf("%s is not a commit here", request.Commit)
+	}
+	format, err := git(top, "rev-parse", "--show-object-format")
+	if err != nil || format == "" {
+		return nil, "", fmt.Errorf("git's object format cannot be found: %s", errorText(err))
 	}
 	objects, err := git(top, "rev-parse", "--path-format=absolute", "--git-path", "objects")
 	if err != nil || !filepath.IsAbs(objects) {
@@ -108,10 +109,14 @@ func Make(request Request) (*Copy, string, error) {
 		realHere = request.Here
 	}
 	relative, err := filepath.Rel(top, realHere)
-	if err != nil || strings.HasPrefix(relative, "..") {
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		relative = "."
 	}
-	copies, err := homedir.ProjectPath(request.Project, "clean-copies")
+	project := request.Project
+	if project == "" {
+		project = projectOnCommit(git, top, commit, relative)
+	}
+	copies, err := homedir.ProjectPath(project, "clean-copies")
 	if err != nil {
 		return nil, "", fmt.Errorf("jackstay's home: %w", err)
 	}
@@ -132,7 +137,7 @@ func Make(request Request) (*Copy, string, error) {
 	if err := os.WriteFile(filepath.Join(made.Folder, "owner"), []byte(pinned.OwnWords(OwnerPrefix)+"\n"), 0o600); err != nil {
 		return fail("its owner file", err)
 	}
-	if _, err := git(made.Folder, "init", "--quiet", made.Tree); err != nil {
+	if _, err := git(made.Folder, "init", "--quiet", "--object-format="+format, made.Tree); err != nil {
 		return fail("git init", err)
 	}
 	gitFolder := filepath.Join(made.Tree, ".git")
@@ -156,10 +161,25 @@ func Make(request Request) (*Copy, string, error) {
 			}
 		}
 	}
-	if err := os.WriteFile(filepath.Join(gitFolder, config.CopyMarker), []byte(request.Project+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(gitFolder, config.CopyMarker), []byte(project+"\n"), 0o600); err != nil {
 		return fail("the project marker", err)
 	}
 	return made, filepath.Join(made.Tree, relative), nil
+}
+
+// projectOnCommit looks up only the project identity in the requested tree. The caller
+// validates the actual configuration in the copy before running anything.
+func projectOnCommit(git func(string, ...string) (string, error), top, commit, relative string) string {
+	for folder := relative; ; folder = filepath.Dir(folder) {
+		name := filepath.ToSlash(filepath.Join(folder, config.Name))
+		if data, err := git(top, "cat-file", "blob", commit+":"+name); err == nil {
+			loaded, _ := config.Parse([]byte(data))
+			return config.ProjectName(filepath.Join(top, folder), loaded, top)
+		}
+		if folder == "." {
+			return config.ProjectName(top, nil, top)
+		}
+	}
 }
 
 func errorText(err error) string {

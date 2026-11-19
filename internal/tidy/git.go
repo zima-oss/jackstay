@@ -46,7 +46,7 @@ func gitSaid(err error, limit int) string {
 	var exitErr *gitcli.ExitError
 	said := err.Error()
 	if errors.As(err, &exitErr) {
-		said = strings.TrimSpace(exitErr.Stderr)
+		said = exitErr.Diagnostic()
 	}
 	if len(said) > limit {
 		said = said[:limit] + " …"

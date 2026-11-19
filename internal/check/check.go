@@ -65,30 +65,16 @@ func run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "jst check: %v\n", err)
 		return 2
 	}
+	if problems := ConfigProblems(loaded); len(problems) > 0 {
+		for _, problem := range problems {
+			fmt.Fprintf(stderr, "jst check: %s\n", problem)
+		}
+		return 2
+	}
 	if loaded.Section("changes") != nil {
-		// The release features' validator (docs/design/release.md section 1): entries and, through
-		// the hook internal/release installs, the release rules.
+		// The release rules installed by internal/release also validate the tree's entries.
 		if code := releaseRules(start, stderr); code != 0 {
 			return code
-		}
-	}
-	if loaded.Section("review") != nil {
-		// `jst review`'s validator (docs/design/review.md section 1): the rules that need no tree.
-		if _, problems := review.SettingsOf(loaded); len(problems) > 0 {
-			for _, problem := range problems {
-				fmt.Fprintf(stderr, "jst check: %s\n", problem)
-			}
-			return 2
-		}
-	}
-	if section := loaded.Section("test"); section != nil {
-		// The test section's meaning (docs/design/testing.md section 1): placeholders, judges,
-		// steps that name nothing or name themselves; jst test refuses what this names.
-		if problems := scopes.Problems(section); len(problems) > 0 {
-			for _, problem := range problems {
-				fmt.Fprintf(stderr, "jst check: %s\n", problem)
-			}
-			return 2
 		}
 	}
 	fmt.Fprintf(stdout, "jst check: %s is usable by jackstay %s.\n", path, version.Version)

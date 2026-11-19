@@ -26,7 +26,7 @@ const attempts = 3
 type Flow struct {
 	Repo       Repo
 	GitHub     GitHub
-	Remote     string   // "origin"
+	Remote     string   // the selected Git remote
 	Repository string   // owner/name, for links
 	Author     string   // the writing App's login, `<slug>[bot]`
 	Identity   Identity // who its commits and tags are by
@@ -63,13 +63,18 @@ func (flow Flow) context() context.Context {
 // Publish is `jst release publish`: finish what was released, release what a landed request asks,
 // then mark yanked releases (docs/design/release.md, section 8).
 func (flow Flow) Publish(base string) (int, error) {
+	cleanup, err := flow.inPreview()
+	if err != nil {
+		return 2, err
+	}
+	defer cleanup()
 	result := &outcome{out: flow.Out}
 	for attempt := 1; attempt <= attempts; attempt++ {
 		tip, err := flow.Repo.fetchBase(flow.Remote, base)
 		if err != nil {
 			return 2, err
 		}
-		state, err := flow.Repo.StateAt(tip)
+		state, err := flow.stateAtBase(base, tip)
 		if err != nil {
 			return 2, err
 		}
@@ -100,7 +105,7 @@ func (flow Flow) Publish(base string) (int, error) {
 			return 2, fmt.Errorf("reading the base after the release: %w", err)
 		}
 		if tip != state.Commit {
-			fresh, err := flow.Repo.StateAt(tip)
+			fresh, err := flow.stateAtBase(base, tip)
 			if err != nil {
 				return 2, fmt.Errorf("reading the base after the release: %w", err)
 			}
@@ -115,7 +120,7 @@ func (flow Flow) Publish(base string) (int, error) {
 	// Reconciled against the base as it is now, read once more; without that reading, nothing is
 	// changed on GitHub (a yank or a release that landed meanwhile must not be missed).
 	if tip, err := flow.Repo.fetchBase(flow.Remote, base); err == nil {
-		if fresh, err := flow.Repo.StateAt(tip); err == nil {
+		if fresh, err := flow.stateAtBase(base, tip); err == nil {
 			if err := flow.reconcile(fresh, result); err != nil {
 				return 2, err
 			}
@@ -124,6 +129,18 @@ func (flow Flow) Publish(base string) (int, error) {
 	}
 	result.problem("the base could not be read again: yanks were not reconciled")
 	return result.code, nil
+}
+
+// stateAtBase ensures a fetched branch and its own release settings identify the same base.
+func (flow Flow) stateAtBase(base, tip string) (State, error) {
+	state, err := flow.Repo.StateAt(tip)
+	if err != nil {
+		return State{}, err
+	}
+	if state.Settings.Base != base {
+		return State{}, fmt.Errorf("the fetched branch is %s, but its release base is %s; run with a checkout configured for that base", base, state.Settings.Base)
+	}
+	return state, nil
 }
 
 // finish tags and publishes every proven release that lacks its tag or its GitHub release, and
@@ -356,6 +373,11 @@ func (flow Flow) reconcile(state State, result *outcome) error {
 
 // PullRequestFlow is `jst release pr` (docs/design/release.md, section 6).
 func (flow Flow) PullRequestFlow(base string) (int, error) {
+	cleanup, err := flow.inPreview()
+	if err != nil {
+		return 2, err
+	}
+	defer cleanup()
 	flow.protectedBase = base
 	result := &outcome{out: flow.Out}
 	for attempt := 1; attempt <= attempts; attempt++ {
@@ -377,7 +399,7 @@ func (flow Flow) pullRequestOnce(base string, result *outcome) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	state, err := flow.Repo.StateAt(tip)
+	state, err := flow.stateAtBase(base, tip)
 	if err != nil {
 		return false, err
 	}
@@ -555,7 +577,15 @@ func flowFromEnvironment(ctx context.Context, stdout, stderr io.Writer, dryRun b
 	}
 	env := githubapi.OSEnvironment()
 	inActions := githubapi.InActions(env)
-	flow := Flow{Repo: repo, Remote: "origin", Author: os.Getenv("JACKSTAY_RELEASE_AUTHOR"), Out: stdout, DryRun: dryRun || !inActions}
+	_, githubConfig, err := config.Load(loaded.Root, []string{"github"})
+	if err != nil {
+		return Flow{}, Settings{}, &Problem{Code: 2, Message: err.Error()}
+	}
+	remoteName, err := remote.Name(ctx, repo.Git, remote.ConfiguredRemote(githubConfig.Section("github")))
+	if err != nil {
+		return Flow{}, Settings{}, &Problem{Code: 2, Message: err.Error()}
+	}
+	flow := Flow{Repo: repo, Remote: remoteName, Author: os.Getenv("JACKSTAY_RELEASE_AUTHOR"), Out: stdout, DryRun: dryRun || !inActions}
 	if flow.Author != "" {
 		flow.Identity = Identity{Name: flow.Author, Email: os.Getenv("JACKSTAY_RELEASE_EMAIL")}
 		if flow.Identity.Email == "" {
@@ -587,7 +617,34 @@ func flowFromEnvironment(ctx context.Context, stdout, stderr io.Writer, dryRun b
 		return Flow{}, Settings{}, err
 	}
 	flow.GitHub = client
+	if !flow.DryRun {
+		if err := flow.verifyRemoteRepository(); err != nil {
+			return Flow{}, Settings{}, err
+		}
+	}
 	return flow, settings, nil
+}
+
+// verifyRemoteRepository binds the configured Git remote to the authenticated workflow repo
+// before writes. Check the effective transport URLs, including explicit push URLs and rewrites.
+func (flow Flow) verifyRemoteRepository() error {
+	for _, direction := range []string{"fetch", "push"} {
+		args := []string{"remote", "get-url", "--all"}
+		if direction == "push" {
+			args = append(args, "--push")
+		}
+		addresses, err := flow.Repo.run(append(args, "--", flow.Remote)...)
+		if err != nil {
+			return fmt.Errorf("cannot verify the %s destinations of release remote %q", direction, flow.Remote)
+		}
+		for _, address := range strings.Split(strings.TrimSuffix(string(addresses), "\n"), "\n") {
+			repository, err := remote.ParseURL(address)
+			if err != nil || !strings.EqualFold(repository.String(), flow.Repository) {
+				return fmt.Errorf("the %s destination of release remote %q does not identify %s", direction, flow.Remote, flow.Repository)
+			}
+		}
+	}
+	return nil
 }
 
 // localFlow is a dry run outside GitHub Actions: GH_TOKEN and GITHUB_REPOSITORY are ignored (they
@@ -603,7 +660,12 @@ func localFlow(ctx context.Context, flow Flow, settings Settings, root string, e
 	}
 	section, _ := loaded.GitHub()
 	flow.Repository = ""
-	if found, err := remote.RepositoryOf(ctx, gitcli.Git{Dir: root}, loaded.Section("github")); err == nil {
+	configuredRemote := flow.Remote
+	if configuredRemote == "" {
+		configuredRemote = section.Remote
+	}
+	source := map[string]any{"remote": configuredRemote, "repository": section.Repository}
+	if found, err := remote.RepositoryOf(ctx, gitcli.Git{Dir: root}, source); err == nil {
 		flow.Repository = found.String()
 	}
 	account := githubapi.EffectiveAccount(env, section.Account)

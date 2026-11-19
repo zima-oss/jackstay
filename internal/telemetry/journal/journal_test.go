@@ -31,6 +31,22 @@ func readAll(t *testing.T, folder string, from, to, today time.Time) ([]Span, Re
 	return spans, result
 }
 
+func TestBoundedReadSkipsOneOversizeLineAndKeepsTheNext(t *testing.T) {
+	folder := t.TempDir()
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local)
+	valid := line("aa", now.Add(-time.Minute), now)
+	oversized := append([]byte(strings.Repeat(" ", 16384)), valid...)
+	data := append(oversized, valid...)
+	if err := os.WriteFile(filepath.Join(folder, FileName("2026-11-17")), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	result := ReadBounded([]string{folder}, now.Add(-time.Hour), now.Add(time.Hour), now, len(valid), func(Span) { count++ })
+	if count != 1 || result.Unreadable != 1 || len(result.Problems) != 0 {
+		t.Fatalf("%d spans, %+v", count, result)
+	}
+}
+
 func TestReadDecodesAndSkipsTornLines(t *testing.T) {
 	folder := t.TempDir()
 	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local)
@@ -127,6 +143,24 @@ func TestUpkeepCompressesAndDeletes(t *testing.T) {
 	buffer := make([]byte, 20)
 	if _, err := unpacked.Read(buffer); err != nil || !strings.HasPrefix(string(buffer), `{"resourceSpans"`) {
 		t.Fatalf("content %q %v", buffer, err)
+	}
+}
+
+func TestAppendSeparatesAnInterruptedWriteFromTheNewSpan(t *testing.T) {
+	folder := t.TempDir()
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local)
+	day := now.Format(time.DateOnly)
+	place := filepath.Join(folder, FileName(day))
+	old := append(line("aa", now.Add(-time.Minute), now), []byte("{\"resourceSpans\":[{torn")...)
+	if err := os.WriteFile(place, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if created, err := AppendLine(folder, day, line("bb", now, now)); created || err != nil {
+		t.Fatalf("created %v, error %v", created, err)
+	}
+	spans, result := readAll(t, folder, now.Add(-time.Hour), now.Add(time.Hour), now)
+	if result.Unreadable != 1 || len(spans) != 2 || spans[0].TraceID != "aa" || spans[1].TraceID != "bb" {
+		t.Fatalf("recovered spans: %+v, result %+v", spans, result)
 	}
 }
 

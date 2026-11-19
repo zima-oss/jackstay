@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/cards"
 	"github.com/zima-oss/jackstay/internal/changes"
+	"github.com/zima-oss/jackstay/internal/check"
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
@@ -168,6 +170,9 @@ func runTree(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	judgedConfig, err := space.configOf(files)
 	if err != nil {
 		return fail(stderr, err)
+	}
+	if problems := check.ConfigProblems(judgedConfig); len(problems) > 0 {
+		return fail(stderr, &problem{code: 2, message: "the judged tree's jackstay.json: " + strings.Join(problems, "; ")})
 	}
 	found, err := TreeRules(judgedConfig, files, history)
 	if err != nil {
@@ -428,7 +433,7 @@ func (space workspace) judgePullRequest(facts inputs, revision string) ([]Findin
 	}
 	repo := release.NewRepo(space.root)
 	if adopting {
-		problems, err := repo.SettingsProblemsAt(facts.head, nil)
+		problems, err := settingsProblemsAt(repo, facts.head, nil)
 		if err != nil {
 			return nil, nil, &problem{code: 2, message: err.Error()}
 		}
@@ -463,7 +468,7 @@ func CardLines(section map[string]any, files Files, body string) ([]Finding, err
 	}
 	var names []string
 	for _, filePath := range paths {
-		if strings.HasPrefix(filePath, rules.Dir+"/") && !strings.Contains(strings.TrimPrefix(filePath, rules.Dir+"/"), "/") {
+		if path.Dir(filePath) == rules.Dir {
 			names = append(names, filePath)
 		}
 	}

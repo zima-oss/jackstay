@@ -56,9 +56,14 @@ Exit status:
 | 3 | changes pending, no conflict | — |
 
 `--apply` is all or nothing in what it decides: with one unsettled conflict it writes no file.
-Its writes are each atomic (a temporary file and a rename); a stop between two leaves a project
-the next `--apply` finishes, because every write is computed from the files' state, never from a
-record of a previous run.
+Before the first write jackstay compares the project inputs with the contents read during planning.
+It checks each target again just before writing. A mismatch stops the apply and names the file.
+Writes are individually atomic. The local delivery record under
+`<jackstay home>/.all/delivery/<worktree digest>/adopt.json` holds only paths and fingerprints,
+with the phase and outcome of the latest attempt. After a stop, rerun the same `--apply` options.
+A new plan resumes the previous operation when all inputs and remaining outputs still match
+and the recorded completed effects are visible. If the state has changed, adoption plans a new
+operation and applies its usual conflict checks.
 
 ## 3. What `jst adopt` owns
 
@@ -306,6 +311,19 @@ jackstay's core never names a runner, an organisation, a runner group or an App:
 profile's data. The example profile with every capability is in
 [docs/profiles/example/](../profiles/example/profile.json); an organisation keeps its own profile outside jackstay.
 
+### Portable bundles
+
+`jst profile export PROFILE` writes bundle format 1 with a canonical JSON profile, the exact
+template bytes it references and a SHA-256 of that payload. It prints the digest of the exact
+bundle file separately. `jst profile verify --sha256 DIGEST BUNDLE` compares that digest against
+the expected value from the recipient and checks the bundle with the same validator as
+`jst adopt --profile`.
+
+Adoption reads the templates inside the bundle. The existing `adopt.profile` path identifies the
+bundle, and the existing `adopt.pin` value controls the workflow binary version. Move between
+retained versions by verifying a new bundle and previewing that path on the settings-only
+stage, followed by the managed files stage. See [the profile guide](../profiles/README.md#distribute-a-profile-offline).
+
 ## 7. Workflow templates
 
 ### 7.1 Embedded in jackstay
@@ -343,7 +361,7 @@ A template's text holds `@@name@@` where a value goes. jackstay defines:
 | name | value |
 |---|---|
 | `jackstay_version` | `adopt.pin` from the prospective `jackstay.json`; when it has none, `v` + this jackstay's version, which the same `--apply` writes to `adopt.pin` |
-| `release_base` | `release.base` from `jackstay.json`, else `main` |
+| `release_base` | `release.base` from `jackstay.json`, else `cards.branch`, else `main` |
 | `jackstay_repository` | where jackstay's releases are downloaded from (`zima-oss/jackstay`; jackstay's own home, one constant in `internal/adopt/templates`) |
 
 A profile adds its own through `values`.
@@ -380,6 +398,8 @@ The text, for a project with every section (`internal/adopt/block`, golden-teste
   Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
   a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
   removes). No scope fits: `jst test -- COMMAND`.
+- **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
+  using the expected digest, revision and key from a trusted source.
 - **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
 - **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or
   `nohup`; `jst procs` lists them, `jst procs stop NAME` stops yours.
@@ -395,8 +415,9 @@ The text, for a project with every section (`internal/adopt/block`, golden-teste
 - **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
   `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
   `jackstay.json` (`github.account`).
-- **Review a change**: `jst review BASE..REV --task NAME` — a cold review by Codex, in rounds;
-  `jst review check BASE..REV --task NAME` says whether it is clear.
+- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.
+  Pick `codex` or `claude-code`, or use the project's `review.use`.
+  `jst review check BASE..REV --task NAME` checks the saved round.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/main..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a
@@ -406,7 +427,10 @@ The text, for a project with every section (`internal/adopt/block`, golden-teste
   `jst release prepare` shows the next one.
 - **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a
   surprising failure, before asking.
+- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
+- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
+- **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay).
 ```
@@ -425,7 +449,9 @@ Item IDs, what each needs, and what changes with the section:
 | `changes` | `changes` | |
 | `release` | `release` | |
 | `log` | the commands `log` and `stats` in the table | |
-| `owner` | always | |
+| `evidence` | `receipts` | |
+| `inventory`, `timeline`, `owner` | always | |
+| `profiles` | `adopt` | |
 
 Then the profile's `agents.rules`, under `### This project's organisation`, one bullet each.
 
