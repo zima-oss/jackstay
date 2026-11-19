@@ -1086,7 +1086,7 @@ commands under it (each answers --help):
   jst review check  [--task NAME] BASE..REV: is this change reviewed and clear?
   jst review last   [--task NAME] [--json]: the newest round's report, or the newest attempt's failure
   jst review list   [--task NAME] [--rebuild] [--json]: the reviews kept
-  jst review pool   add|list|next|retry: queue local reviews across sessions
+  jst review pool   queue, inspect and maintain local reviews across sessions
   jst review prune  remove tasks past review.keep_days, now
   jst review show   TASK ROUND [--json]: one round's report
 
@@ -1131,19 +1131,25 @@ exit: 0 the list; 2 the request or configuration, or the index cannot be read or
 example: jst review list --task parser-fix
 
 ==> jst review pool --help
-jst review pool: add|list|next|retry: queue local reviews across sessions
+jst review pool: queue, inspect and maintain local reviews across sessions
 
 usage: jst review pool add --repo ABSOLUTE_PATH --base REF --head REF --task NAME --reviewer NAMES
        jst review pool list [--json]
+       jst review pool inspect [--json]
+       jst review pool prune [--apply] [--json]
+       jst review pool migrate [--apply] [--json]
        jst review pool next
        jst review pool retry JOB_ID
 
 A local, persistent, opt-in queue shared by agent sessions. add pins both Git revisions now;
 NAMES is codex, claude-code, or both separated by a comma. next runs one queued review in
 the foreground from its saved repository. It starts no background daemon. retry requeues a
-failed attempt without changing its commits. list reads local state only.
+failed attempt without changing its commits. list reads local jobs; inspect reports queue
+health and notification handoffs without repository or session details. prune previews
+expired terminal history; migrate previews a queue schema upgrade. Both require --apply
+to write. prune retains active work and terminal outcomes awaiting chat delivery.
 
-exit: 0 accepted, listed, retried, or no pending job; 1, 3, 4 a completed review verdict;
+exit: 0 request or maintenance succeeded, or no pending job; 1, 3, 4 a completed review verdict;
 2 invalid request or queue state; 5, 6 review failed; 2 when another worker holds the pool.
 
 example: jst review pool add --repo /path/to/repo --base main --head HEAD --task parser --reviewer codex

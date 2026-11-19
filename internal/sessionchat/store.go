@@ -53,10 +53,11 @@ type snapshot struct {
 
 // Store holds a repository's private chat state under jackstay home.
 type Store struct {
-	path      string
-	namespace string
-	policy    config.ChatPolicy
-	now       func() time.Time
+	path            string
+	namespace       string
+	commonDirectory string
+	policy          config.ChatPolicy
+	now             func() time.Time
 }
 
 // StoreFor locates the shared state for the Git common directory.
@@ -67,7 +68,7 @@ func StoreFor(commonDirectory string, policy config.ChatPolicy) (Store, error) {
 	}
 	digest := sha256.Sum256([]byte(resolved))
 	path, err := homedir.SharedPath("session-chat", hex.EncodeToString(digest[:]), "state.json")
-	return Store{path: path, namespace: hex.EncodeToString(digest[:]), policy: policy, now: time.Now}, err
+	return Store{path: path, namespace: hex.EncodeToString(digest[:]), commonDirectory: resolved, policy: policy, now: time.Now}, err
 }
 func randomID() (string, error) {
 	data := make([]byte, 24)
@@ -183,6 +184,15 @@ func (store Store) Touch(id string) error {
 
 // Send durably accepts a direct message or returns the prior result for the same key.
 func (store Store) Send(from, recipientID, kind, body, key, replyTo string) (Message, bool, error) {
+	return store.send(from, recipientID, kind, body, key, replyTo, false)
+}
+
+// notifyReview uses a reserved sender that no client session can register.
+func (store Store) notifyReview(recipientID, body, key string) (Message, bool, error) {
+	return store.send("review-pool", recipientID, "message", body, key, "", true)
+}
+
+func (store Store) send(from, recipientID, kind, body, key, replyTo string, system bool) (Message, bool, error) {
 	if recipientID == "" || recipientID == from {
 		return Message{}, false, errors.New("recipient must be another session")
 	}
@@ -221,7 +231,7 @@ func (store Store) Send(from, recipientID, kind, body, key, replyTo string) (Mes
 				sender = true
 			}
 		}
-		if !sender || !recipient {
+		if (!sender && !system) || !recipient {
 			return false, errors.New("unknown session")
 		}
 		pending, recipientPending := 0, 0
@@ -388,7 +398,7 @@ func (store Store) update(change func(*snapshot) (bool, error)) error {
 	kept := state.Messages[:0]
 	for _, message := range state.Messages {
 		when, err := time.Parse(time.RFC3339Nano, message.Created)
-		if err == nil && when.After(cutoff) {
+		if err == nil && (when.After(cutoff) || message.From == "review-pool" && !message.Acknowledged) {
 			kept = append(kept, message)
 		}
 	}

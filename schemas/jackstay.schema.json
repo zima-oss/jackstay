@@ -775,6 +775,48 @@
         "max_concurrent": {
           "type": "integer"
         },
+        "pool": {
+          "additionalProperties": false,
+          "properties": {
+            "accepting": {
+              "default": true,
+              "description": "Accept new review jobs from this repository. Existing jobs remain available for processing and retry.",
+              "type": "boolean"
+            },
+            "history_days": {
+              "default": 30,
+              "description": "Days to retain terminal review jobs. The value is saved with each new job.",
+              "maximum": 3650,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_attempts": {
+              "default": 5,
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "max_pending": {
+              "default": 32,
+              "maximum": 256,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "retry_cap_seconds": {
+              "default": 900,
+              "maximum": 86400,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "retry_initial_seconds": {
+              "default": 30,
+              "maximum": 3600,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "type": "object"
+        },
         "queue_minutes": {
           "type": "integer"
         },

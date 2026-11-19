@@ -62,6 +62,10 @@ func schemaNode(wanted *schemaType) map[string]any {
 
 func setSchemaHints(root map[string]any) {
 	properties := root["properties"].(map[string]any)
+	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
+	pool["accepting"].(map[string]any)["default"] = true
+	pool["accepting"].(map[string]any)["description"] = "Accept new review jobs from this repository. Existing jobs remain available for processing and retry."
+	pool["history_days"].(map[string]any)["description"] = "Days to retain terminal review jobs. The value is saved with each new job."
 	properties["adopt"].(map[string]any)["properties"].(map[string]any)["profile_sha256"].(map[string]any)["pattern"] = "^[0-9a-fA-F]{64}$"
 	properties["jackstay_schema"].(map[string]any)["enum"] = []int{1, Schema}
 	queue := properties["queue"].(map[string]any)

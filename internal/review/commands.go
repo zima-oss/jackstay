@@ -113,6 +113,7 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if reviewers != "" {
 		options.Reviewers = strings.Split(reviewers, ",")
 	}
+	options.PoolAttempt = os.Getenv("JACKSTAY_REVIEW_POOL_ATTEMPT")
 	found, ok := openProject(stderr, "review")
 	if !ok {
 		return ExitUsage

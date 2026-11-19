@@ -55,13 +55,18 @@ const (
 	AttrCodexTurnIndex  = "jackstay.codex.turn.index"
 	AttrCodexTurnFailed = "jackstay.codex.turn.failed"
 
-	AttrReviewTask        = "jackstay.review.task"
-	AttrReviewRound       = "jackstay.review.round"
-	AttrReviewAttempt     = "jackstay.review.attempt"
-	AttrReviewStore       = "jackstay.review.store"
-	AttrReviewOutcome     = "jackstay.review.outcome"
-	AttrReviewDisposition = "jackstay.review.disposition"
-	AttrReviewReviewer    = "jackstay.review.reviewer"
+	AttrReviewTask         = "jackstay.review.task"
+	AttrReviewRound        = "jackstay.review.round"
+	AttrReviewAttempt      = "jackstay.review.attempt"
+	AttrReviewStore        = "jackstay.review.store"
+	AttrReviewOutcome      = "jackstay.review.outcome"
+	AttrReviewDisposition  = "jackstay.review.disposition"
+	AttrReviewReviewer     = "jackstay.review.reviewer"
+	AttrReviewPoolJob      = "jackstay.review.pool.job_id"
+	AttrReviewPoolAction   = "jackstay.review.pool.action"
+	AttrReviewPoolState    = "jackstay.review.pool.state"
+	AttrReviewPoolAttempts = "jackstay.review.pool.attempts"
+	AttrReviewPoolExit     = "jackstay.review.pool.exit"
 	// AttrReviewFindings prefixes a count of open findings by severity (`jackstay.review.findings.blocker`).
 	AttrReviewFindings = "jackstay.review.findings."
 
@@ -114,18 +119,19 @@ const (
 
 // Event names (section 2).
 const (
-	EventGuardDecision    = "jackstay.guard.decision"
-	EventTestVerdict      = "jackstay.test.verdict"
-	EventReviewVerdict    = "jackstay.review.verdict"
-	EventCodexTurn        = "jackstay.codex.turn"
-	EventBgStarted        = "jackstay.bg.started"
-	EventBgEnded          = "jackstay.bg.ended"
-	EventBgStopped        = "jackstay.bg.stopped"
-	EventBgRequestOutside = "jackstay.bg.requested_outside"
-	EventBgHeld           = "jackstay.bg.held"
-	EventBgCleaned        = "jackstay.bg.cleaned"
-	EventLockAcquired     = "jackstay.lock.acquired"
-	EventException        = "exception"
+	EventGuardDecision        = "jackstay.guard.decision"
+	EventTestVerdict          = "jackstay.test.verdict"
+	EventReviewVerdict        = "jackstay.review.verdict"
+	EventReviewPoolTransition = "jackstay.review.pool.transition"
+	EventCodexTurn            = "jackstay.codex.turn"
+	EventBgStarted            = "jackstay.bg.started"
+	EventBgEnded              = "jackstay.bg.ended"
+	EventBgStopped            = "jackstay.bg.stopped"
+	EventBgRequestOutside     = "jackstay.bg.requested_outside"
+	EventBgHeld               = "jackstay.bg.held"
+	EventBgCleaned            = "jackstay.bg.cleaned"
+	EventLockAcquired         = "jackstay.lock.acquired"
+	EventException            = "exception"
 )
 
 var kinds = map[string]Kind{
@@ -139,6 +145,8 @@ var kinds = map[string]Kind{
 	AttrCodexThread: Identity, AttrCodexTurnIndex: Plain, AttrCodexTurnFailed: Plain,
 	AttrReviewTask: Identity, AttrReviewRound: Identity, AttrReviewAttempt: Identity, AttrReviewStore: Plain,
 	AttrReviewOutcome: Plain, AttrReviewDisposition: Plain, AttrReviewReviewer: Plain,
+	AttrReviewPoolJob: Identity, AttrReviewPoolAction: Plain, AttrReviewPoolState: Plain,
+	AttrReviewPoolAttempts: Plain, AttrReviewPoolExit: Plain,
 	AttrTestScope: Plain, AttrTestKey: Identity, AttrTestHead: Identity, AttrTestRunID: Identity,
 	AttrTestOutput: Plain, AttrTestOutcome: Plain, AttrTestCount: Plain, AttrTestStep: Plain,
 	AttrGitHubOperation: Plain, AttrGitHubRepository: Identity, AttrGitHubPull: Identity,

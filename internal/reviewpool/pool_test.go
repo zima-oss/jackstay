@@ -2,17 +2,58 @@ package reviewpool
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/review"
 	"github.com/zima-oss/jackstay/internal/testrepo"
 )
+
+func TestTerminalEventForLateMCPSubscriberOnly(t *testing.T) {
+	pool, request, _ := fixture(t)
+	job, created, err := pool.Enqueue(context.Background(), request)
+	if err != nil || !created {
+		t.Fatalf("CLI enqueue: %+v %v %v", job, created, err)
+	}
+	_, found, err := pool.RunNext(context.Background(), func(context.Context, Job) (int, error) { return review.ExitClear, nil })
+	if err != nil || !found {
+		t.Fatalf("run: %v %v", found, err)
+	}
+	saved, err := pool.load()
+	if err != nil || len(saved.Events) != 0 {
+		t.Fatalf("unsubscribed CLI job created outbox events: %+v %v", saved.Events, err)
+	}
+	sessionID := strings.Repeat("a", 64)
+	if _, _, err := pool.EnqueueForSession(context.Background(), request, sessionID, filepath.Join(job.CommonDir, "other")); err == nil {
+		t.Fatal("MCP submission crossed the configured project repository boundary")
+	}
+	duplicate, created, err := pool.EnqueueForSession(context.Background(), request, sessionID, job.CommonDir)
+	if err != nil || created || duplicate.ID != job.ID {
+		t.Fatalf("late subscription: %+v %v %v", duplicate, created, err)
+	}
+	if _, err := pool.StatusForSession(context.Background(), job.ID, strings.Repeat("b", 64), job.CommonDir); err == nil {
+		t.Fatal("different session read subscribed job")
+	}
+	events, err := pool.Undelivered(context.Background(), sessionID, job.CommonDir)
+	if err != nil || len(events) != 1 || events[0].Status != "complete" {
+		t.Fatalf("late terminal event: %+v %v", events, err)
+	}
+	if err := pool.MarkDelivered(context.Background(), events[0], sessionID); err != nil {
+		t.Fatal(err)
+	}
+	events, err = pool.Undelivered(context.Background(), sessionID, job.CommonDir)
+	if err != nil || len(events) != 0 {
+		t.Fatalf("delivered event repeated: %+v %v", events, err)
+	}
+}
 
 func fixture(t *testing.T) (Pool, Request, string) {
 	t.Helper()
@@ -20,6 +61,177 @@ func fixture(t *testing.T) (Pool, Request, string) {
 	base := repo.Git("rev-parse", "HEAD")
 	repo.Commit("second", map[string]string{"a.txt": "b\n"})
 	return Pool{Root: filepath.Join(repo.Home, "pool")}, Request{Repository: repo.Root, Base: "HEAD^", Head: "HEAD", Task: "pool-task", Reviewers: []string{"codex", "claude-code"}}, base
+}
+
+func TestRecoveredCompletedRoundIsNotRunAgain(t *testing.T) {
+	pool, request, _ := fixture(t)
+	job, _, err := pool.Enqueue(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "00112233445566778899aabbccddeeff"
+	if err := pool.edit(context.Background(), func(saved *state) error {
+		saved.Jobs[0].Status = "running"
+		saved.Jobs[0].Attempts = 1
+		saved.Jobs[0].AttemptID = token
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := review.Store{Root: job.StoreRoot}
+	folder := filepath.Join(store.TaskPath(job.Task), "round-1")
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	exit := review.ExitBlocks
+	record := review.RoundRecord{Task: job.Task, PoolAttempt: token, Round: 1, Base: job.Base,
+		Commit: job.Head, PoolExit: &exit,
+		Runs: []review.ReviewerRun{{Reviewer: "claude-code"}, {Reviewer: "codex"}}}
+	content, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(folder, review.RecordName), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, broken := range []review.RoundRecord{
+		func() review.RoundRecord { changed := record; changed.Task = "other"; return changed }(),
+		func() review.RoundRecord { changed := record; changed.PoolExit = nil; return changed }(),
+	} {
+		content, err := json.Marshal(broken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(folder, review.RecordName), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		claimed := job
+		claimed.AttemptID = token
+		if _, _, err := recordedRound(context.Background(), claimed); err == nil {
+			t.Fatal("accepted incomplete or mismatched evidence")
+		}
+	}
+	_, found, err := pool.RunNext(context.Background(), func(context.Context, Job) (int, error) {
+		t.Fatal("unresolved round was replayed")
+		return 0, nil
+	})
+	if err != nil || found {
+		t.Fatalf("unresolved evidence: found=%v, err=%v", found, err)
+	}
+	unresolved, err := pool.List(context.Background())
+	if err != nil || unresolved[0].Status != "running" || unresolved[0].AttemptID != token || unresolved[0].FailureClass != "unresolved" {
+		t.Fatalf("lost correlation after unreadable record: %+v, %v", unresolved, err)
+	}
+	if err := os.WriteFile(filepath.Join(folder, review.RecordName), content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, found, err = pool.RunNext(context.Background(), func(context.Context, Job) (int, error) {
+		t.Fatal("completed round was repeated")
+		return 0, nil
+	})
+	if err != nil || found {
+		t.Fatalf("next after recovery: found=%v, err=%v", found, err)
+	}
+	listed, err := pool.List(context.Background())
+	if err != nil || listed[0].Status != "complete" || listed[0].Exit != review.ExitBlocks || listed[0].Attempts != 1 {
+		t.Fatalf("reconciled record: %+v, %v", listed, err)
+	}
+}
+
+func TestRetryBackoffIsDurableAndBounded(t *testing.T) {
+	pool, request, _ := fixture(t)
+	request.Reviewers = []string{"codex"}
+	job, _, err := pool.Enqueue(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, _, err := pool.RunNext(context.Background(), func(context.Context, Job) (int, error) { return review.ExitReviewer, nil })
+	if err != nil || failed.FailureClass != "retryable" {
+		t.Fatalf("classification: %+v, %v", failed, err)
+	}
+	if err := pool.Retry(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := pool.List(context.Background())
+	if err != nil || listed[0].NotBefore.Before(time.Now().Add(25*time.Second)) {
+		t.Fatalf("retry deadline: %+v, %v", listed, err)
+	}
+	_, found, err := pool.RunNext(context.Background(), func(context.Context, Job) (int, error) { t.Fatal("ran before backoff"); return 0, nil })
+	if err != nil || found {
+		t.Fatalf("delayed job: found=%v, err=%v", found, err)
+	}
+	if err := pool.edit(context.Background(), func(saved *state) error {
+		saved.Jobs[0].NotBefore = time.Now().Add(-time.Second)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	finished, found, err := pool.RunNext(context.Background(), func(context.Context, Job) (int, error) { return review.ExitClear, nil })
+	if err != nil || !found || finished.Status != "complete" || finished.Attempts != 2 {
+		t.Fatalf("retry: %+v, %v", finished, err)
+	}
+}
+
+func TestQueueAndAttemptLimits(t *testing.T) {
+	pool, request, _ := fixture(t)
+	job, _, err := pool.Enqueue(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.edit(context.Background(), func(saved *state) error {
+		saved.Jobs[0].MaxAttempts = 1
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, _, err := pool.RunNext(context.Background(), func(context.Context, Job) (int, error) { return review.ExitUsage, nil })
+	if err != nil || result.FailureClass != "operator" {
+		t.Fatalf("operator failure: %+v, %v", result, err)
+	}
+	if err := pool.Retry(context.Background(), job.ID); err == nil {
+		t.Fatal("attempt limit was ignored")
+	}
+	request.Task = "another"
+	if err := pool.edit(context.Background(), func(saved *state) error {
+		for index := 0; index < maximumQueued; index++ {
+			copyJob := job
+			copyJob.ID = string(rune(index + 1000))
+			copyJob.Status = "pending"
+			saved.Jobs = append(saved.Jobs, copyJob)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := pool.Enqueue(context.Background(), request); err == nil {
+		t.Fatal("full queue accepted another job")
+	}
+}
+
+func TestRetryCannotBypassPendingLimit(t *testing.T) {
+	pool, request, _ := fixture(t)
+	job, _, err := pool.Enqueue(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := pool.RunNext(context.Background(), func(context.Context, Job) (int, error) {
+		return review.ExitUsage, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.edit(context.Background(), func(saved *state) error {
+		saved.Jobs[0].MaxPending = 1
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request.Task = "other"
+	if _, _, err := pool.Enqueue(context.Background(), request); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.Retry(context.Background(), job.ID); err == nil {
+		t.Fatal("retry bypassed pending limit")
+	}
 }
 
 func TestEnqueuePinsRevisionsAndDeduplicatesReviewerOrder(t *testing.T) {

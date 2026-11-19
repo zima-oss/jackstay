@@ -172,21 +172,23 @@ type ReviewerRun struct {
 
 // RoundRecord is `round.json` (section 5).
 type RoundRecord struct {
-	Task      string            `json:"task"`
-	Round     int               `json:"round"`
-	Attempt   int               `json:"attempt"`
-	Chain     int               `json:"chain"`
-	Base      string            `json:"base"`
-	Commit    string            `json:"commit"`
-	Follows   int               `json:"follows"` // the round before it in the chain, 0 for a chain's first
-	Focus     string            `json:"focus"`
-	Policy    string            `json:"policy,omitempty"`
-	PastLimit bool              `json:"past_limit"`
-	OverLimit bool              `json:"over_limit"`
-	Made      string            `json:"made"`
-	Runs      []ReviewerRun     `json:"runs"`
-	Outcome   Outcome           `json:"outcome"`
-	Summaries map[string]string `json:"summaries"`
+	Task        string            `json:"task"`
+	PoolAttempt string            `json:"pool_attempt,omitempty"`
+	PoolExit    *int              `json:"pool_exit,omitempty"`
+	Round       int               `json:"round"`
+	Attempt     int               `json:"attempt"`
+	Chain       int               `json:"chain"`
+	Base        string            `json:"base"`
+	Commit      string            `json:"commit"`
+	Follows     int               `json:"follows"` // the round before it in the chain, 0 for a chain's first
+	Focus       string            `json:"focus"`
+	Policy      string            `json:"policy,omitempty"`
+	PastLimit   bool              `json:"past_limit"`
+	OverLimit   bool              `json:"over_limit"`
+	Made        string            `json:"made"`
+	Runs        []ReviewerRun     `json:"runs"`
+	Outcome     Outcome           `json:"outcome"`
+	Summaries   map[string]string `json:"summaries"`
 }
 
 // AttemptName is an attempt's own record, written first, so a failed attempt keeps what it was for.
@@ -194,10 +196,11 @@ const AttemptName = "attempt.json"
 
 // AttemptRecord is `attempt.json`.
 type AttemptRecord struct {
-	Task    string `json:"task"`
-	Attempt int    `json:"attempt"`
-	Commit  string `json:"commit"`
-	Base    string `json:"base"`
+	Task        string `json:"task"`
+	PoolAttempt string `json:"pool_attempt,omitempty"`
+	Attempt     int    `json:"attempt"`
+	Commit      string `json:"commit"`
+	Base        string `json:"base"`
 }
 
 // Entry is a round or an attempt in a task's folder.

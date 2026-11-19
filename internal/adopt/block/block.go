@@ -78,7 +78,8 @@ var items = []item{
 			"  Pick `codex` or `claude-code`, or use the project's `review.use`.\n" +
 			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
 	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
-		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.")},
+		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
+			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(

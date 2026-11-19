@@ -151,6 +151,80 @@ rounds and a required reviewer set for `jst review check`.
 
 `jst check` validates the section. Paths are read from the reviewed commit's tree.
 
+## Share a review queue
+
+Use the optional local pool when several repositories submit review work.
+
+```sh
+jst review pool add --repo "$PWD" --base main --head HEAD --task parse-change --reviewer codex
+jst review pool list --json
+jst review pool inspect --json
+jst review pool next
+jst review pool retry JOB_ID
+jst review pool prune
+jst review pool migrate
+```
+
+The pool pins both commits when a job is added. One foreground worker runs an eligible
+job at a time across the machine. If the worker loses its state update after the review
+saved a completed round, the next worker can recover its exact verdict from that round.
+
+Set admission, limits, retry delays, and history retention under `review.pool` in
+`jackstay.json`. `jst check` validates the values, and the published [editor schema](adopt.md)
+offers completion for them.
+
+| Setting | Default | Meaning |
+| --- | ---: | --- |
+| `max_pending` | 32 | Jobs pending or running for this repository. The machine-wide cap is 256. |
+| `max_attempts` | 5 | Launches allowed for one pinned job, including recovery after interruption. |
+| `retry_initial_seconds` | 30 | Initial delay when explicitly retrying a retryable failure. |
+| `retry_cap_seconds` | 900 | Upper bound for exponential retry delay. |
+| `accepting` | `true` | Whether this repository accepts new job identities. Existing jobs can still be queried, retried, and processed. |
+| `history_days` | 30 | Days to retain a terminal job after its last update, from 1 to 3650. The value is saved when the job is added. |
+
+JSON status exposes when delayed work becomes eligible. Configuration errors and other
+operator failures need attention before retry. See the [reviewer pool specification](../roadmap/reviewer-pool.md)
+for the recovery guarantees and current limits.
+
+### Inspect and clean up the pool
+
+`jst review pool inspect` shows aggregate queue counts and eligibility without exposing repository
+paths, task names, or job identifiers. Add `--json` for machine-readable output. `list --json`
+still exposes individual local jobs for an operator who needs them.
+
+`jst review pool prune` previews expired `complete` and `failed` jobs. Add `--json` for a
+machine-readable preview, then run `jst review pool prune --apply` to remove the eligible jobs
+and their pool subscriptions and events. Pending and running jobs remain. A terminal job remains
+while any subscriber's result has yet to reach chat. Once chat has durably accepted the result,
+the recipient can read and acknowledge it through `chat.inbox` and `chat.ack` even if the pool
+job has been pruned. The review round reports have their own retention setting,
+`review.keep_days`. Submitting the same request after pruning starts a new job
+generation, and an older acknowledgment does not hide its result.
+
+`jst review pool migrate` previews the state-file upgrade. Use
+`jst review pool migrate --apply` to perform it explicitly. Version 1 can be read without a
+write; the first queue mutation also upgrades it atomically to version 2. Migrated jobs receive
+the default 30-day history period. An unknown version or damaged state is refused. Back up
+the local pool state file before applying a migration or making the first mutation when you
+may need to run an older jackstay. Older binaries cannot read version 2. Use the backup to
+restore version 1 for a downgrade, after stopping pool writers and preserving any newer jobs
+you need. No worker or cleanup timer runs automatically.
+
+### Submit and track a review from an agent
+
+Enable `chat.enabled` and connect the repository's `jst chat serve` MCP server. Use
+`review.submit` with `base`, `head`, `task`, and an explicit `reviewers` list containing
+`codex`, `claude-code`, or both. Keep the returned `job.id` and pass it as `job_id` to
+`review.status` to see the pinned commits, state, attempts, and exit code. Submitting the
+same pinned request again returns the same job. The operator still runs `jst review pool next`
+to process eligible work.
+
+The requesting session receives a chat message when an attempt settles. Read the result
+with `review.status`, then acknowledge the message with `chat.ack` and its `message_id`.
+Use `chat.inbox` to recover unacknowledged messages. The Codex bridge can deliver to an
+active turn. Claude Code can receive pending messages at its next configured prompt or tool
+boundary. Keep the same chat session token when reconnecting.
+
 ## What can go wrong
 
 - **Exit 6 running Codex in the Claude Code sandbox**: run the command outside that sandbox.

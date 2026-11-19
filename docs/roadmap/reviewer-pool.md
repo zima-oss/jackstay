@@ -1,6 +1,6 @@
 # Shared reviewer pool
 
-Status: approved for local implementation. The first slice is an explicit, local,
+Status: local queue, session integration, and operator maintenance implemented. The pool is an explicit, local,
 persistent queue in front of the existing `jst review`. It requires no account,
 background service, hosted API, or selected default reviewer.
 
@@ -80,30 +80,84 @@ The worker's review command runs with its working directory set to the stored
 repository root and receives the pinned `BASE..HEAD`, task, and reviewer set as
 separate argv words. It is not run in the enqueuing session's current directory.
 
-On restart, a `running` record with no worker lock is taken before later
-`pending` records. The attempt counter increments; the underlying `jst review`
-may have already written a round before the worker died. This is **at least
-once** execution. The review store's own task locking and round state remain
-authoritative; the pool must not claim exactly once reviewer invocation. A
-later milestone will reconcile a persisted review attempt/round before retrying
-so completed work is not repeated unnecessarily.
+On restart, a `running` record with no worker lock is checked against the
+review store. A new attempt carries a random correlation token in the pool state,
+`attempt.json`, and `round.json`. A matching completed round with the exact
+task, base and head commits, reviewer set, and terminal exit completes the job
+without rerunning it. If the store cannot be read or evidence conflicts, the
+running job remains `unresolved` with its token; later `next` calls recheck it
+while other jobs may proceed. If no completed round exists, the interrupted job runs
+again before later pending work. Older state without a token uses that latter
+path. The pool cannot claim exactly once reviewer invocation: an interrupted
+attempt may have launched reviewers without committing a round.
 
 ## Fairness, limits, and backoff
 
-The first slice is FIFO among pending jobs, with interrupted running work
+The pool is FIFO among eligible pending jobs, with interrupted running work
 recovered first. A single worker lock prevents concurrent `next` invocations
 from choosing the same or different jobs. The existing `review.max_concurrent`,
 `review.queue_minutes`, reviewer timeout, and total review budget still govern
 the actual reviewer invocation. No pool job starts when its explicit `next`
 worker is absent.
 
-The later worker slice should add configurable global/per-reviewer concurrency,
-per-repository fairness, bounded queue length, per-producer quotas, and bounded
-exponential backoff with jitter for retryable failures. Authentication refusal,
-bad configuration, and policy changes require operator action and must not spin.
-Time budgets and backoff must use a monotonic runtime clock while running and
-persist wall-clock deadlines for restart. Expired work must be visible rather
-than silently dropped.
+The machine-wide queue caps pending or running jobs at 256, including jobs
+returned to pending by `retry`. `review.pool` in each
+repository can lower its own `max_pending` (default 32), set `max_attempts`
+(default 5), `retry_initial_seconds` (default 30), and `retry_cap_seconds`
+(default 900). These values are saved with each job at enqueue, so later config
+edits do not silently alter its retry schedule. An explicit `retry` after a
+reviewer failure (exit 5) records a durable exponential delay; `next` skips a
+job until its deadline. Configuration and environment refusals require an
+operator retry and receive no automatic delay. No retries launch themselves.
+Further work may add per-repository fairness, per-reviewer concurrency,
+cancellation, and producer quotas. A single explicit worker
+remains the global concurrency limit; deadline timestamps survive restart.
+
+## Operator policy and history lifecycle
+
+`review.pool.accepting` defaults to `true`. Setting it to `false` stops new job
+identities for that repository while preserving idempotent submissions of an
+existing job and allowing `list`, `inspect`, `next`, `retry`, and status reads.
+The value is checked at submission. This is an admission control for a local
+queue, not an agent host permission boundary.
+
+`review.pool.history_days` defaults to 30 and accepts 1 through 3650. It is
+saved with each new job, including jobs that later fail. Existing version 1
+jobs receive the default on migration. An operator changes retention for future
+requests by editing `jackstay.json`; old jobs keep their saved value. A terminal
+job becomes eligible for pruning when its most recent update is older than that
+period. An active job remains regardless of its age.
+
+After pruning, an identical request may be submitted again. It keeps the same
+deterministic job ID but starts a new generation of work and notifications.
+An acknowledgment from the old generation cannot suppress the new result.
+
+`jst review pool prune [--apply] [--json]` previews eligible complete and failed
+jobs by default. `--apply` removes those jobs and their subscriptions and
+terminal event rows in one locked state update. A job with any terminal event
+not yet materialized in a subscriber's chat remains until a later prune. The
+chat store retains an accepted but unacknowledged message until the recipient
+calls `chat.ack`. Pruning the pool does not remove that message or a separate
+`jst review` round report. No automatic pruning or background worker is added.
+
+`jst review pool inspect [--json]` reads aggregate state without writing it.
+It shows state counts, eligible and delayed work, unresolved recovery, oldest
+pending age, outcome counts, and notification delivery backlog. The output has
+no repository path, task name, or job identifier. `list --json` retains the
+individual records for explicit local inspection. Pool transition events attach
+to an active caller trace and carry an opaque job ID, action, state, attempt
+count, and exit code. Operator CLI commands keep their journal disabled.
+
+The queue file moves from version 1 to version 2. Readers accept version 1
+without modifying it. An explicit `jst review pool migrate [--apply] [--json]`
+previews or applies the upgrade; a first queue mutation upgrades it in the
+same atomic replacement as that mutation. Legacy jobs use the 30-day retention
+default. The migration preserves pinned revisions, attempts, and events.
+Unknown versions, invalid records, and corrupt or oversized files fail closed.
+Operators who may downgrade back up the version 1 state file before applying
+the migration or making a queue mutation. Version 1 binaries cannot read the
+version 2 file; restoring the backup requires stopping writers first and
+accounting for jobs added after the backup.
 
 ## Privacy and trust
 
@@ -150,13 +204,27 @@ should produce structured internal telemetry without sensitive arguments.
    session-chat MCP server. Delivery of a status message to an active turn uses
    the engine-specific integration and acknowledgement contract; the pool itself
    does not claim to interrupt an agent turn. End-to-end pilots use two local
-   sessions and both reviewer providers.
-4. **Operations and policy**: configurable operator controls in `jackstay.json`
-   and its editor schema, observability views, retention/prune, and a migration
-   path for the versioned state. No hosted or Enterprise-only dependency.
+   sessions and both reviewer providers. The MCP tools are `review.submit` and
+   `review.status`. Terminal events are persisted with the job and appear in
+   session chat until the recipient acknowledges them with `chat.ack`.
+4. **Operations and policy**: configurable admission and history retention in
+   `jackstay.json` and its editor schema, read-only aggregate inspection,
+   previewed manual prune, and an atomic version 1 to 2 migration. No hosted or
+   Enterprise-only dependency.
 
 The first slice is accepted when two independent local sessions can enqueue
 the same pinned request once, `next` executes it from the specified repository
 with the selected reviewer, a second `next` cannot overlap it, interruption
 leaves a recoverable state, and every result can be inspected through both
 pool status and the existing `jst review` commands.
+
+To rerun the third-slice pilots locally, build `jst` with `just build` and run both
+scripts with `"$PWD/.build/jst"` as their argument:
+
+- [Codex pilot](../../tests/review-pool-codex-pilot.py) exercises the installed Codex
+  app-server and active-turn delivery.
+- [Claude Code pilot](../../tests/review-pool-claude-pilot.py) exercises the installed
+  Claude Code CLI and delivery at a tool boundary.
+
+Both pilots use synthetic repositories, reviewer executables, and loopback model
+endpoints. They need no provider account.
