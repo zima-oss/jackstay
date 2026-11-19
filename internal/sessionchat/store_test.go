@@ -117,6 +117,78 @@ func TestDifferentRepositoriesKeepSeparateNamespaces(t *testing.T) {
 		t.Fatal("stable capability correlates separate repositories")
 	}
 }
+
+func TestReplacementGitDirectoryGetsFreshNamespaceWithoutChangingOldState(t *testing.T) {
+	first, _ := chatFixture(t)
+	oldSession, err := first.Register("original", strings.Repeat("t", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldData, err := os.ReadFile(first.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldDirectory := first.commonDirectory + "-old"
+	if err := os.Rename(first.commonDirectory, oldDirectory); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(first.commonDirectory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := StoreFor(first.commonDirectory, first.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.path == first.path {
+		t.Fatal("replacement repository reused the old chat namespace")
+	}
+	if sessions, err := replacement.Sessions(); err != nil || len(sessions) != 0 {
+		t.Fatalf("replacement discovered old sessions: %+v, %v", sessions, err)
+	}
+	newSession, err := replacement.Register("replacement", strings.Repeat("t", 32))
+	if err != nil || newSession.ID == oldSession.ID {
+		t.Fatalf("replacement identity: %+v, %v", newSession, err)
+	}
+	kept, err := os.ReadFile(first.path)
+	if err != nil || !bytes.Equal(kept, oldData) {
+		t.Fatalf("legacy state was changed: %v", err)
+	}
+}
+
+func TestExistingEmptyChatStateIsNotReinitialized(t *testing.T) {
+	store, _ := chatFixture(t)
+	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Register("recipient", ""); err == nil {
+		t.Fatal("existing empty state was accepted")
+	}
+	data, err := os.ReadFile(store.path)
+	if err != nil || len(data) != 0 {
+		t.Fatalf("existing state was overwritten: %v, %q", err, data)
+	}
+}
+
+func TestExistingOversizeChatStateIsNotReinitialized(t *testing.T) {
+	store, _ := chatFixture(t)
+	if err := os.MkdirAll(filepath.Dir(store.path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data := bytes.Repeat([]byte("x"), 12<<20+1)
+	if err := os.WriteFile(store.path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Register("recipient", ""); err == nil || !strings.Contains(err.Error(), "exceeds limit") {
+		t.Fatalf("oversize state was accepted: %v", err)
+	}
+	info, err := os.Stat(store.path)
+	if err != nil || info.Size() != int64(len(data)) {
+		t.Fatalf("oversize state was overwritten: %v, %+v", err, info)
+	}
+}
 func TestConcurrentSendAndCapacity(t *testing.T) {
 	first, second := chatFixture(t)
 	first.policy.MaxPending = 10

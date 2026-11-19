@@ -250,13 +250,17 @@ func (server *Server) call(raw json.RawMessage) any {
 		}
 		var messages []Message
 		messages, err = server.store.Inbox(server.session.ID, arguments.Limit)
-		if err == nil && len(messages) == 0 {
+		if err == nil && notificationErr != nil && len(messages) == 0 {
 			err = notificationErr
 		}
 		for index := range messages {
 			messages[index].CodexAccepted = nil
 		}
-		result = map[string]any{"messages": messages}
+		inbox := map[string]any{"messages": messages}
+		if notificationErr != nil && len(messages) > 0 {
+			inbox["notification_error"] = notificationErr.Error()
+		}
+		result = inbox
 	case "chat.reply":
 		var message Message
 		var duplicate bool

@@ -223,7 +223,8 @@ for the change files. Git-local administrative `info/attributes` can still overr
 ### 3.2 The prompt
 
 The initial prompt includes pinned IDs, source paths, review instructions, open finding references and the
-verdict form. Configured briefs and cited files are read on demand. The default template is embedded
+verdict form. Configured briefs and cited files are read on demand. The configured brief and template
+contents belong to the chain policy. Editing either file requires a fresh full round. The default template is embedded
 in the binary. A project's `template` replaces it and receives the same fields (`Brief`,
 `Commit`, `Subject`, `Base`, `DiffStat`, `Tree`, `Cite`, `Round`, `Previous`, `OpenFindings`,
 `Triage`, `Severities`, `Blocking`, `Focus`). `Brief` holds path references, `DiffStat` names the
@@ -458,13 +459,13 @@ the middle of a chain.
 
 A review takes minutes. A session runs it as it runs other long commands ([implementation.md](implementation.md) section 5.1):
 
-    jst bg --for 45 --name review-<task> -- jst review [REV] …
+    jst bg --for 37 --name review-<task> -- jst review [REV] …
 
 with the Bash tool's background flag; the session is told when the call ends and reads
 `jst review last`. `jst review` is a plain foreground command with **one budget** for the whole call:
 `queue_minutes` (one shared window for source admission, reviewer slots and the start lock) plus the longest
 `timeout_minutes` plus 2 (the tree, the probe, the report, stopping a group). It prints the budget
-on its first line, and the documented `--for` is that budget rounded up (45 with the defaults:
+on its first line, and the documented `--for` is that budget rounded up (37 with the defaults:
 15 + 20 + 2). `jst bg`'s deadline is only the backstop. `jst review` does not call `jst bg` itself and
 needs nothing of its code.
 

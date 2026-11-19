@@ -254,5 +254,8 @@ func (bridge CodexBridge) Deliver(ctx context.Context) (int, error) {
 		}
 		delivered++
 	}
+	if notificationErr != nil {
+		return delivered, reviewNotificationSyncError{notificationErr}
+	}
 	return delivered, nil
 }

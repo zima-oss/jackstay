@@ -483,8 +483,31 @@ func (pool Pool) RunNext(ctx context.Context, run func(context.Context, Job) (in
 	if runErr == nil {
 		exit, runErr = run(ctx, job)
 	}
-	if ctx.Err() != nil && runErr == nil {
-		runErr = ctx.Err()
+	if ctx.Err() != nil {
+		// The caller may stop after review committed its round but before the
+		// worker updated the queue. Keep the attempt token until that durable
+		// result has been checked with a live context.
+		committedExit, committed, evidenceErr := recordedRound(context.Background(), job)
+		if committed {
+			exit, runErr = committedExit, nil
+		} else {
+			if evidenceErr != nil {
+				if err := pool.edit(context.Background(), func(saved *state) error {
+					for index := range saved.Jobs {
+						entry := &saved.Jobs[index]
+						if entry.ID == job.ID && entry.Status == "running" && entry.AttemptID == job.AttemptID {
+							entry.FailureClass = "unresolved"
+							entry.UpdatedAt = time.Now().UTC()
+							return nil
+						}
+					}
+					return errors.New("running job changed during review")
+				}); err != nil {
+					evidenceErr = errors.Join(evidenceErr, err)
+				}
+			}
+			return job, true, errors.Join(runErr, ctx.Err(), evidenceErr)
+		}
 	}
 	finished := job
 	err = pool.edit(context.Background(), func(saved *state) error {

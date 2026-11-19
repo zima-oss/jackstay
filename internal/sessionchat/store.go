@@ -1,16 +1,19 @@
 package sessionchat
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -66,7 +69,18 @@ func StoreFor(commonDirectory string, policy config.ChatPolicy) (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	digest := sha256.Sum256([]byte(resolved))
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return Store{}, err
+	}
+	identity, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() {
+		return Store{}, errors.New("cannot identify Git common directory")
+	}
+	// Bind the namespace to this directory incarnation. An older path-only
+	// namespace remains on disk for explicit recovery, never adopted by a
+	// different repository created at the same path.
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d:%d", resolved, identity.Dev, identity.Ino)))
 	path, err := homedir.SharedPath("session-chat", hex.EncodeToString(digest[:]), "state.json")
 	return Store{path: path, namespace: hex.EncodeToString(digest[:]), commonDirectory: resolved, policy: policy, now: time.Now}, err
 }
@@ -381,14 +395,32 @@ func (store Store) update(change func(*snapshot) (bool, error)) error {
 	}
 	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
 	var state snapshot
-	data, err := os.ReadFile(store.path)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	file, err := os.OpenFile(store.path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if errors.Is(err, os.ErrNotExist) {
+		file = nil
+	} else if err != nil {
 		return err
 	}
-	if len(data) > 12<<20 {
-		return errors.New("chat state exceeds limit")
-	}
-	if len(data) > 0 {
+	if file != nil {
+		info, statErr := file.Stat()
+		if statErr != nil || !info.Mode().IsRegular() {
+			_ = file.Close()
+			return errors.New("chat state is not a regular file")
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, 12<<20+1))
+		closeErr := file.Close()
+		if readErr != nil {
+			return readErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+		if len(data) > 12<<20 {
+			return errors.New("chat state exceeds limit")
+		}
+		if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+			return errors.New("chat state: expected an object")
+		}
 		if err = json.Unmarshal(data, &state); err != nil {
 			return fmt.Errorf("chat state: %w", err)
 		}
@@ -398,7 +430,7 @@ func (store Store) update(change func(*snapshot) (bool, error)) error {
 	kept := state.Messages[:0]
 	for _, message := range state.Messages {
 		when, err := time.Parse(time.RFC3339Nano, message.Created)
-		if err == nil && (when.After(cutoff) || message.From == "review-pool" && !message.Acknowledged) {
+		if err == nil && retainedMessage(message, when, cutoff) {
 			kept = append(kept, message)
 		}
 	}
@@ -459,4 +491,8 @@ func (store Store) update(change func(*snapshot) (bool, error)) error {
 	}
 	defer func() { _ = directory.Close() }()
 	return directory.Sync()
+}
+
+func retainedMessage(message Message, created, cutoff time.Time) bool {
+	return created.After(cutoff) || message.From == "review-pool" && !message.Acknowledged
 }

@@ -2,6 +2,8 @@ package review
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -231,6 +233,7 @@ func (round Round) Run(ctx context.Context, options Options) Result {
 // plan is where a round stands in its task and chain.
 type plan struct {
 	task, commit, base, previous string
+	contentPolicy, templateText  string
 	number, attempt, chain       int
 	follows                      int
 	ledger                       []LedgerFinding
@@ -263,6 +266,29 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, set
 			newest.Round, round.Settings.RoundLimit)}
 		return plan{}, &result
 	}
+	var briefText, templateText []byte
+	for _, file := range []struct {
+		name, path string
+		content    *[]byte
+	}{
+		{"brief", settings.Brief, &briefText},
+		{"template", settings.Template, &templateText},
+	} {
+		if file.path == "" {
+			continue
+		}
+		content, err := round.Repo.Show(ctx, commit, file.path)
+		if err != nil {
+			result := usage("`review.%s` %s is not in commit %s", file.name, file.path, short(commit))
+			return plan{}, &result
+		}
+		*file.content = content
+	}
+	if settings.Brief != "" || settings.Template != "" {
+		data, _ := json.Marshal(struct{ Brief, Template string }{string(briefText), string(templateText)})
+		planned.contentPolicy = fmt.Sprintf("v1:%x", sha256.Sum256(data))
+	}
+	planned.templateText = string(templateText)
 	if newest == nil || options.Fresh {
 		if newest != nil {
 			planned.chain = newest.Chain + 1
@@ -280,7 +306,7 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, set
 		result := usage("this chain reviews from %s; --fresh starts a full review from a new base", short(newest.Base))
 		return plan{}, &result
 	}
-	if newest.Policy != settings.policyID() || !sameReviewers(newest.Runs, settings.Use) {
+	if newest.Policy != settings.policyID() || newest.ContentPolicy != planned.contentPolicy || !sameReviewers(newest.Runs, settings.Use) {
 		result := usage("the review policy or reviewers changed since round %d; name BASE..REV and use --fresh for a full review", newest.Round)
 		return plan{}, &result
 	}
@@ -307,15 +333,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	if refusal != nil {
 		return *refusal
 	}
-	templateText := ""
-	if settings.Template != "" {
-		text, err := round.Repo.Show(ctx, planned.commit, settings.Template)
-		if err != nil {
-			return usage("`review.template` %s is not in commit %s", settings.Template, short(planned.commit))
-		}
-		templateText = string(text)
-	}
-	prompt, err := BuildPrompt(templateText, data)
+	prompt, err := BuildPrompt(planned.templateText, data)
 	if err != nil {
 		return usage("%v", err)
 	}
@@ -338,7 +356,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		}
 		sourceSlot.Release()
 	}()
-	if err := round.Repo.BuildSource(ctx, tree, sourceview.Revisions{Base: planned.base, Head: planned.commit, Previous: planned.previous}); err != nil {
+	if err := round.Repo.BuildSource(queueContext, tree, sourceview.Revisions{Base: planned.base, Head: planned.commit, Previous: planned.previous}); err != nil {
 		return round.sourceFailure(planned, folder, fmt.Sprintf("preparing the pinned source view: %v", err))
 	}
 	if options.BriefFile != "" {
@@ -370,7 +388,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	tree = ""
 
 	record := RoundRecord{Task: planned.task, PoolAttempt: options.PoolAttempt, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
-		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus, Policy: settings.policyID(),
+		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus, Policy: settings.policyID(), ContentPolicy: planned.contentPolicy,
 		PastLimit: options.PastLimit, Made: round.Machine.Now().Format(time.RFC3339), Runs: runs,
 		Summaries: map[string]string{}}
 	allDone := true

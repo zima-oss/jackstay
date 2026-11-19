@@ -147,8 +147,9 @@ rounds and a required reviewer set for `jst review check`.
 }
 ```
 
-- `brief`: what a reviewer of this project must know (its threat model, what to ignore), put at the
-  top of every prompt.
+- `brief`: the project context a reviewer needs, such as its threat model. The prompt points to the
+  brief in the pinned source view for the reviewer to read. Changes to a configured brief or
+  template require a fresh review round.
 - `cite`: files and folders the reviewer is told to measure the change against.
 - `blocking`: which severities fail a round. With `triage` on (the default), each finding is rated
   by likelihood and consequence, and a rare one is deferred instead of blocking.

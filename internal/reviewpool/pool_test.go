@@ -138,6 +138,72 @@ func TestRecoveredCompletedRoundIsNotRunAgain(t *testing.T) {
 	}
 }
 
+func TestCanceledWorkerUsesDurableCompletedRound(t *testing.T) {
+	pool, request, _ := fixture(t)
+	job, _, err := pool.Enqueue(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	finished, found, err := pool.RunNext(ctx, func(_ context.Context, running Job) (int, error) {
+		exit := review.ExitBlocks
+		record := review.RoundRecord{Task: running.Task, PoolAttempt: running.AttemptID, Round: 1,
+			Base: running.Base, Commit: running.Head, PoolExit: &exit,
+			Runs: []review.ReviewerRun{{Reviewer: "claude-code"}, {Reviewer: "codex"}}}
+		folder := filepath.Join(review.Store{Root: running.StoreRoot}.TaskPath(running.Task), "round-1")
+		if err := os.MkdirAll(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		content, err := json.Marshal(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(folder, review.RecordName), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cancel()
+		return review.ExitReviewer, context.Canceled
+	})
+	if err != nil || !found || finished.ID != job.ID || finished.Status != "complete" || finished.Exit != review.ExitBlocks {
+		t.Fatalf("completed review lost after cancellation: %+v, found=%v, err=%v", finished, found, err)
+	}
+	_, found, err = pool.RunNext(context.Background(), func(context.Context, Job) (int, error) {
+		t.Fatal("completed round was replayed")
+		return 0, nil
+	})
+	if err != nil || found {
+		t.Fatalf("completed review remained runnable: found=%v, err=%v", found, err)
+	}
+}
+
+func TestCanceledWorkerWithoutRoundRetainsAttemptForRecovery(t *testing.T) {
+	pool, request, _ := fixture(t)
+	request.Reviewers = []string{"codex"}
+	_, _, err := pool.Enqueue(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	interrupted, found, err := pool.RunNext(ctx, func(context.Context, Job) (int, error) {
+		cancel()
+		return review.ExitReviewer, context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) || !found || interrupted.Status != "running" || interrupted.AttemptID == "" {
+		t.Fatalf("interrupted attempt was not recoverable: %+v, found=%v, err=%v", interrupted, found, err)
+	}
+	finished, found, err := pool.RunNext(context.Background(), func(_ context.Context, running Job) (int, error) {
+		if running.ID != interrupted.ID || running.Attempts != 2 {
+			t.Fatalf("interrupted attempt not retried: %+v", running)
+		}
+		return review.ExitClear, nil
+	})
+	if err != nil || !found || finished.Status != "complete" {
+		t.Fatalf("retry result: %+v, found=%v, err=%v", finished, found, err)
+	}
+}
+
 func TestRetryBackoffIsDurableAndBounded(t *testing.T) {
 	pool, request, _ := fixture(t)
 	request.Reviewers = []string{"codex"}

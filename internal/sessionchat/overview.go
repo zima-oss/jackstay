@@ -1,6 +1,7 @@
 package sessionchat
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,9 @@ func (store Store) ReadOverview() (Overview, error) {
 	if len(data) > 12<<20 {
 		return Overview{}, errors.New("chat state exceeds limit")
 	}
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return Overview{}, errors.New("chat state: expected an object")
+	}
 	var state snapshot
 	if err := json.Unmarshal(data, &state); err != nil {
 		return Overview{}, fmt.Errorf("chat state: %w", err)
@@ -47,7 +51,7 @@ func (store Store) ReadOverview() (Overview, error) {
 	pendingRecipients := map[string]bool{}
 	for _, message := range state.Messages {
 		created, err := time.Parse(time.RFC3339Nano, message.Created)
-		if err == nil && created.After(cutoff) && !message.Acknowledged {
+		if err == nil && retainedMessage(message, created, cutoff) && !message.Acknowledged {
 			overview.Pending++
 			pendingRecipients[message.To] = true
 		}

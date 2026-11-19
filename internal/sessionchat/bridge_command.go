@@ -117,6 +117,7 @@ func runCodexBridge(args []string, _ io.Reader, _ io.Writer, diagnostics io.Writ
 func runBridge(ctx context.Context, bridge CodexBridge, interval, ackTimeout time.Duration, diagnostics io.Writer) {
 	delay := interval
 	disconnected := false
+	notificationUnavailable := false
 	lastWarning := ""
 	nextWarningCheck := time.Time{}
 	for ctx.Err() == nil {
@@ -129,14 +130,24 @@ func runBridge(ctx context.Context, bridge CodexBridge, interval, ackTimeout tim
 		if ctx.Err() != nil {
 			return
 		}
+		var notificationFailure reviewNotificationSyncError
 		switch {
+		case errors.As(err, &notificationFailure):
+			if !notificationUnavailable {
+				fmt.Fprintf(diagnostics, "chat: %v; pending review events will be retried\n", err)
+			}
+			notificationUnavailable = true
+			disconnected = false
+			delay = interval
 		case err != nil:
+			notificationUnavailable = false
 			if !disconnected {
 				fmt.Fprintln(diagnostics, "chat: Codex delivery unavailable; pending messages will be retried")
 			}
 			disconnected = true
 			delay = min(2*delay, 30*time.Second)
 		default:
+			notificationUnavailable = false
 			disconnected = false
 			delay = interval
 		}
