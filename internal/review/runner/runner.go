@@ -13,21 +13,23 @@ const (
 	OutcomeRefused  = "refused"
 )
 
-// Request is one review provider invocation. Tree is the pinned checkout and Folder holds artifacts.
+// Request is one review provider invocation. Tree is the pinned source view and Folder holds artifacts.
 // Answered releases the start lock once the provider has started safely or finished.
 type Request struct {
-	Reviewer   string
-	Command    string
-	Model      string
-	Effort     string
-	Timeout    time.Duration
-	Isolation  []string
-	Tree       string
-	Folder     string
-	Prompt     []byte
-	SchemaPath string
-	Answered   func()
-	Environ    []string
+	Reviewer       string
+	Command        string
+	Model          string
+	Effort         string
+	Timeout        time.Duration
+	Isolation      []string
+	Tree           string
+	PinnedSource   bool
+	RepositoryRoot string // excludes the live checkout from provider runtime path grants
+	Folder         string
+	Prompt         []byte
+	SchemaPath     string
+	Answered       func()
+	Environ        []string
 }
 
 // Result describes a run and the provider-independent verdict file it wrote.

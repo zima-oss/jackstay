@@ -10,6 +10,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/pinned"
+	"github.com/zima-oss/jackstay/internal/review/sourceview"
 	"github.com/zima-oss/jackstay/internal/supervise"
 )
 
@@ -21,11 +22,9 @@ type Repository interface {
 	ValidBranchName(ctx context.Context, name string) bool
 	Dirty(ctx context.Context) (bool, error)
 	Subject(ctx context.Context, commit string) (string, error)
-	DiffStat(ctx context.Context, from, to string) (string, error)
-	Diff(ctx context.Context, from, to string) ([]byte, error)
 	Show(ctx context.Context, commit, path string) ([]byte, error)
 	Exists(ctx context.Context, commit, path string) bool
-	AddTree(ctx context.Context, path, commit, reason string) error
+	BuildSource(ctx context.Context, path string, revisions sourceview.Revisions) error
 	RemoveTree(ctx context.Context, path string) error
 	LockedTrees(ctx context.Context) (map[string]string, error)
 }
@@ -44,7 +43,7 @@ func RepositoryAt(root string) Repository { return gitRepository{root: root} }
 var aloneArgs = []string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false"}
 
 func (repo gitRepository) run(ctx context.Context, args ...string) ([]byte, error) {
-	env := append(gitcli.WithoutRepository(os.Environ()), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
+	env := append(gitcli.WithoutRepository(os.Environ()), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1", "LC_ALL=C")
 	captured, err := supervise.Capture(ctx, append(append([]string{"git"}, aloneArgs...), args...), repo.root, env, nil)
 	switch {
 	case ctx.Err() != nil:
@@ -133,13 +132,8 @@ func (repo gitRepository) Subject(ctx context.Context, commit string) (string, e
 	return repo.line(ctx, "log", "-1", "--format=%s", commit)
 }
 
-func (repo gitRepository) DiffStat(ctx context.Context, from, to string) (string, error) {
-	out, err := repo.run(ctx, "diff", "--stat=120", from, to)
-	return strings.TrimRight(string(out), "\n"), err
-}
-
-func (repo gitRepository) Diff(ctx context.Context, from, to string) ([]byte, error) {
-	return repo.run(ctx, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--full-index", from, to, "--")
+func (repo gitRepository) BuildSource(ctx context.Context, path string, revisions sourceview.Revisions) error {
+	return sourceview.Build(ctx, repo.root, path, revisions)
 }
 
 func (repo gitRepository) Show(ctx context.Context, commit, path string) ([]byte, error) {
@@ -150,11 +144,6 @@ func (repo gitRepository) Exists(ctx context.Context, commit, path string) bool 
 	path = strings.TrimSuffix(path, "/")
 	kind, err := repo.line(ctx, "cat-file", "-t", commit+":"+path)
 	return err == nil && (kind == "blob" || kind == "tree")
-}
-
-func (repo gitRepository) AddTree(ctx context.Context, path, commit, reason string) error {
-	_, err := repo.run(ctx, "worktree", "add", "--detach", "--lock", "--reason", reason, path, commit)
-	return err
 }
 
 func (repo gitRepository) RemoveTree(ctx context.Context, path string) error {
@@ -187,11 +176,8 @@ func (repo gitRepository) LockedTrees(ctx context.Context) (map[string]string, e
 	return locked, nil
 }
 
-// reasonPrefix begins the lock reason of every tree jst review makes.
+// reasonPrefix begins the lock reason of legacy jst review worktrees.
 const reasonPrefix = "jst review "
-
-// ownReason is the lock reason naming this process: its id and its start.
-func ownReason() string { return pinned.OwnWords(reasonPrefix) }
 
 // reasonAlive says whether a lock reason of jst review names a process still running (the same
 // id and start). A reason that cannot be read, or a process list that cannot be read, counts as

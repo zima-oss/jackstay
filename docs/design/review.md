@@ -21,7 +21,7 @@ on reviews run by hand):
 | stdin left open with the prompt as an argument: Codex waits on stdin for minutes | the prompt is always written to Codex's stdin and stdin is then closed (section 3.4) |
 | Claude's sandbox: Codex cannot write `~/.codex` or reach its auth host | jackstay refuses to start Codex where it cannot write Codex's login (section 2) |
 | a prompt written to the sandbox's `$TMPDIR`, missing for the unsandboxed rerun | prompts live under `~/.jackstay/`, never `$TMPDIR` (section 5) |
-| the tree changed while Codex read it | Codex reads a detached worktree at a fixed commit (section 3.1) |
+| the tree changed while Codex read it | Reviewers read snapshots at fixed Git object IDs (section 3.1) |
 | no or ambiguous verdict line; a malformed event | the answer is JSON against a schema Codex is given; every failure to read it is a named outcome (section 3.5) |
 | a batch launch through `xargs` too long | several reviewers are one call; the prompt never goes through argv (section 6) |
 
@@ -94,11 +94,13 @@ on the command line is the exception (a file outside the tree, copied into the r
 `--full-auto`, `--approve-for-me`, `--add-dir`, `-C`/`--cd`, `-o`/`--output-last-message`,
 `--output-schema`, `--json`, `-m`/`--model`, `-p`/`--profile`, `--worktree`, `-i`/`--image`, `-`,
 any word that is not an option (a prompt), and `-c` values whose key is `sandbox_mode`,
-`sandbox_permissions`, `approval_policy`, `model` or `model_reasoning_effort`. The argv jackstay runs is
+`sandbox_permissions`, `approval_policy`, `model`, `model_reasoning_effort`, `default_permissions`,
+`permissions`, keys below `permissions.*`, `features.network_proxy` or `project_doc_max_bytes`.
+The argv jackstay runs is
 always (section 3.4):
 
-    <command> -a never exec --sandbox read-only --json -C <tree> -o <answer> --output-schema <schema>
-              [-m <model>] [-c model_reasoning_effort="<effort>"] <isolation…> -
+    <command> -a never exec --json -C <view> -o <answer> --output-schema <schema>
+              [-m <model>] [-c model_reasoning_effort="<effort>"] <isolation…> <pinned permissions> -
 
 Projects configure it in their `jackstay.json` `review` section. The section's
 types go into `config.Table`; its meaning (the refused words, ranges, known names in `use`, `blocking`
@@ -114,7 +116,7 @@ overrides are `low`, `medium`, `high`, `xhigh`, `max` and `ultracode`. Set
 are fixed. Configuration with a nonempty Claude Code `isolation` array is refused.
 
 Jackstay verifies `claude --version` locally and requires 2.1.248 or newer before the run. It
-starts the CLI in the detached worktree with `--print --restricted --safe-mode
+starts the CLI in the pinned source view with `--print --restricted --safe-mode
 --no-session-persistence`. The built-in tool allowlist is `Read,Glob,Grep`, the permission mode is
 `dontAsk`, and MCPs are disabled by a strict empty configuration and a tool denial. The child
 receives the environment variables needed for local CLI use and its chosen authentication. The
@@ -122,10 +124,8 @@ CLI consumes the prompt through stdin and uses existing CLI credentials. Managed
 managed hooks still apply on machines where administrators configure them.
 [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
 
-Since Claude Code cannot run Git in the review session, jackstay generates the patch from the
-pinned commits and includes it in the prompt as source data. Incremental rounds receive both the
-full-chain and incremental patches. An incomplete patch or a prompt larger than 128 KiB fails the
-review before launch. The working copy can contain unrelated edits without changing this input.
+Both reviewers use the same on-demand source layout (section 3.1). A large range adds files and
+patch bytes to the local view. The initial prompt size depends on instructions and open findings.
 
 Claude Code gets the same verdict JSON Schema via `--json-schema` and returns a JSON envelope via
 `--output-format json`. Jackstay accepts `structured_output` only in a successful result,
@@ -187,7 +187,7 @@ for later; this spec does not need it.
 
 `jst review [REV]` reviews one commit (default `HEAD`; its base is its first parent), or a range
 `BASE..REV` (the commits after `BASE` up to `REV`). `REV` and `BASE` are each resolved once to a
-full commit id (`git rev-parse --verify <name>^{commit}`); the prompt, the diff stat, the delta and
+full commit id (`git rev-parse --verify <name>^{commit}`); the prompt, the source view and
 the stored record use only those ids, so a branch moved by another session during the run changes
 nothing. **A chain has one base** (section 4): its first round fixes it, and a later round of the
 chain takes no other — `BASE` may be left out there (the chain's base is used) and, if given, must
@@ -196,60 +196,57 @@ resolve to the chain's base, else the round refuses (exit 2, `this chain reviews
 Uncommitted changes in the session's checkout are never reviewed; jackstay says so on standard error when
 the checkout has any (`git status --porcelain`), and goes on.
 
-The reviewer reads a **detached worktree at that commit**, made by `git worktree add --detach
---lock <tree> <commit>` (lock reason `jst review <pid> <start time>`), at
-`<store>/.trees/<task>-r<N>-<reviewer>-<random>`, and removed after the run: `git worktree unlock
-<tree>`, then `git worktree remove --force <tree>` (a locked tree needs the unlock, or `--force`
-twice; jackstay unlocks only a tree whose lock reason is its own). Nothing the session does to its own
-checkout reaches it, and Codex, read-only, cannot change it either. A tree left by a jackstay that died
-(its lock reason names a process no longer alive with that start time) is removed by the next
-`jst review` of the project before it starts. Every `git` call goes through `internal/gitcli` (a
-deadline, a stated environment, typed errors). `--lock` keeps `git worktree prune` and `jst tidy`
-from removing a tree in use; `jst tidy` must leave locked worktrees under a review store alone
-(section 8).
+Jackstay creates one temporary source view for each attempt by reading the pinned Git objects. The
+view omits repository metadata and uses raw blob contents. Symbolic links contain the target as
+plain text, and gitlinks contain the recorded submodule object ID. The checkout, local hooks and
+checkout filters supply no files to the view. The provider can read these paths:
+
+| Path | Contents |
+|---|---|
+| `head/` and `base/` | files at the reviewed revision and the chain's base |
+| `previous/` | files at the previous revision in an incremental round |
+| `changes/base.paths` | JSON Lines with the status and applicable old and new paths, including renames and deletions |
+| `changes/base.patch` | the patch from the base to the reviewed revision |
+| `changes/previous.paths` and `changes/previous.patch` | the changed paths and patch from the previous revision |
+| `review-brief.md` | the optional copy of the operator's `--brief` |
+| `open-findings.json` | the complete open findings, when a prior round has any |
+
+The attempt removes the view after the reviewers stop and before publishing a round. Review
+retention also removes abandoned attempt folders. Legacy locked review worktrees are still
+recognized by cleanup so upgrades can remove abandoned worktrees safely.
 
 ### 3.2 The prompt
 
-The prompt fixes the answer's language: English, whatever the reviewed repository's own rules say
-(a reviewer that reads a project's rules may otherwise answer in the language they ask for
-people to be spoken to in). Built from, in order: the project's `brief` (from the tree) and `--brief FILE` (copied into the
-round's folder); what to review — the commit, its subject, the range and `git diff --stat` of it,
-the tree's path; the files to read as the measure (`cite`); the rules jackstay states itself — read only,
-change nothing, rate each finding (W-048, when `triage` is on), use the exact `place` of a prior
-finding when a finding is about the same place (section 4); for a delta round, what changed since
-the round it follows and that round's findings; the verdict form (3.5). The default template is
-embedded in the binary (`//go:embed`) and written out with `text/template`; a project's `template`
-replaces it and receives the same fields (`Brief`, `Commit`, `Subject`, `Base`, `DiffStat`, `Tree`,
-`Cite`, `Round`, `Previous`, `OpenFindings`, `Triage`, `Severities`, `Blocking`, `Focus`). jackstay
-appends the verdict form after any template, so no template can drop it.
+The initial prompt includes pinned IDs, source paths, review instructions, open finding references and the
+verdict form. Configured briefs and cited files are read on demand. The default template is embedded
+in the binary. A project's `template` replaces it and receives the same fields (`Brief`,
+`Commit`, `Subject`, `Base`, `DiffStat`, `Tree`, `Cite`, `Round`, `Previous`, `OpenFindings`,
+`Triage`, `Severities`, `Blocking`, `Focus`). `Brief` holds path references, `DiffStat` names the
+changed-path index, and `Tree` is the relative `head` path. `OpenFindings` retains finding
+metadata. The original titles and details are available in `open-findings.json`. Jackstay appends source navigation and
+the verdict form to every template.
 
-**Delta rounds.** Round N > 1 of a task follows round N−1 unless `--fresh` starts a new chain
-(section 4). It tells the reviewer: the previous round's commit and this one's; the `git diff
---stat` between them and the instruction to read `git diff <previous> <commit>` in the tree (git
-works in the detached worktree; the diff is not pasted, so a long diff never bloats the prompt);
-and **every open finding of the chain's ledger** (section 4), whole — its ledger id, `place`,
-severity, ratings, title and detail as first reported, and the round and commit it was found at —
-asking for each whether it is now `fixed` or still `open` (the `prior` list of
-3.5) — there is no third answer. Its scope is always the same: the delta since the previous round
-and every open finding, with the whole change `BASE..REV` readable for context. `--focus TEXT`
-adds a paragraph saying where to look hardest (after a redesign: the redesigned place); it never
-narrows the scope, so no finding and no part of the delta can fall out of a round by the focus.
-There is no narrower "confirming" round: a round after a redesign reviews the whole delta since the
-round before, and every open finding.
-
-The prompt is written to the attempt's folder (section 5) before Codex starts, so what was asked
-is kept with the answer.
+**Delta rounds.** Round N > 1 follows round N−1 unless `--fresh` starts a new chain. Reviewers use
+`changes/previous.paths` and `changes/previous.patch` for the delta and keep the whole range
+available for context. They reassess every open finding using the ledger ID and exact `place`
+from the prompt. `--focus TEXT` tells reviewers where to look hardest while preserving that scope.
+The attempt's `prompt.md` records the initial prompt. The provider learns source contents when the
+reviewer requests them through its file tools.
 
 ### 3.3 Several reviewers
 
-`--reviewer codex` (default: `use`). Each reviewer of a round gets the same prompt, its own tree
-and its own folder, and runs concurrently with the others within the machine's cap (section 6). The
+`--reviewer codex` (default: `use`). Each reviewer of a round gets the same prompt, the shared source view
+and its own result folder, and runs concurrently with the others within the machine's cap (section 6). The
 round's report merges their findings by `place`.
 
 ### 3.4 The run
 
-- **argv**: as in section 1. `--sandbox read-only` and `-a never` are always there; Codex never
-  edits, never asks.
+- **argv**: as in section 1. The scoped permission profile enables read-only shell navigation
+  in the view, grants minimal runtime reads, disables shell network access and sets `-a never`. The shell can use standard commands such as
+  `grep` and `cat`, and the CLI installation directory is readable when it is separate from the
+  checkout and review state. Repository instructions are read from the pinned view on demand.
+  Codex CLI 0.169.0 or newer is required.
+  [Inside the Codex sandbox](https://openai.com/index/inside-the-codex-sandbox/)
 - **stdin**: the prompt is written to Codex's standard input from memory, which is then closed;
   the argv's last word is `-`. No run ever has an open terminal or an inherited stdin.
 - **environment**: built, not inherited — `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`,
@@ -411,7 +408,8 @@ finding; `--focus` only says where to look hardest.
       attempt.json  report.md  round.json  prompt.md
       codex/  answer.json  events.jsonl  stderr.txt  schema.json  run.json
     attempt-2/ …                          an attempt that did not become a round
-  .trees/                                 pinned worktrees while they run (3.1)
+      source/                            temporary pinned view while a review runs
+  .trees/                                 legacy locked worktrees, if any
 ```
 
 `attempt.json` is written first, so a failed attempt keeps what it was for (task, attempt, commit,
@@ -535,12 +533,12 @@ is checked as `REV^..REV`.
 Reused, not duplicated: `internal/config` (the `review` keys added to `config.Table`; `Load` with
 `need: ["review"]`), `internal/project` (`Open`, the root, the name, `Repo` for `brief`/`cite`
 paths, kept inside the repository), `internal/strictjson` (the answer), `internal/gitcli` (rev-parse,
-status, worktree add/remove/prune, diff --stat, log), `internal/homedir` (`ProjectPath`, `SharedPath`,
+status, legacy worktree cleanup, log), `internal/homedir` (`ProjectPath`, `SharedPath`,
 `AppendLine`, `MarkerName`), `internal/cli`.
 
 **Interfaces where used** (W-037): `internal/review` declares `Reviewer` (`Review(ctx, Request)
-Result`, a result always, never only an error) and a small git interface (resolve, status, add and
-remove a pinned tree, diff and diff stat). `internal/review/runner` holds the shared subprocess
+Result`, a result always, never only an error) and a small git interface (resolve, status,
+build the source view and remove legacy worktrees). `internal/review/runner` holds the shared subprocess
 request and result types. The dispatcher selects `internal/review/codex` or
 `internal/review/claude` by reviewer name. Tests use
 hand-written fakes of both (a fake reviewer returning a scripted answer, a timeout, an unparsable

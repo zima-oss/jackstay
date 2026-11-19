@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -54,6 +56,9 @@ func GroupSpec(argv []string) supervise.Spec {
 // startHold is the longest a run keeps the start lock waiting for its first answer.
 const startHold = 120 * time.Second
 
+// Named permission profiles have only been verified for the pinned reviewer with this CLI or newer.
+const minimumPinnedVersion = "0.169.0"
+
 // keptVariables are the only variables Codex gets from jackstay's environment.
 var keptVariables = []string{"PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME"}
 
@@ -65,8 +70,11 @@ type Result = runner.Result
 
 // Argv is the command line of a run (section 1): jackstay's own words, then the isolation flags.
 func Argv(request Request, answerPath string) []string {
-	argv := []string{request.Command, "-a", "never", "exec", "--sandbox", "read-only", "--json",
+	argv := []string{request.Command, "-a", "never", "exec", "--json",
 		"-C", request.Tree, "-o", answerPath, "--output-schema", request.SchemaPath}
+	if !request.PinnedSource {
+		argv = append(argv, "--sandbox", "read-only")
+	}
 	if request.Model != "" {
 		argv = append(argv, "-m", request.Model)
 	}
@@ -74,7 +82,103 @@ func Argv(request Request, answerPath string) []string {
 		argv = append(argv, "-c", fmt.Sprintf("model_reasoning_effort=%q", request.Effort))
 	}
 	argv = append(argv, request.Isolation...)
+	if request.PinnedSource {
+		// Permission profiles and --sandbox do not compose. Keep shell navigation in the
+		// projected tree while denying reads elsewhere and every filesystem write.
+		if !slices.Contains(argv, "--skip-git-repo-check") {
+			argv = append(argv, "--skip-git-repo-check")
+		}
+		runtimeDirectory := pinnedRuntimeDirectory(request)
+		sourceDirectory, _ := canonicalPath(request.Tree)
+		toolPath := "/usr/bin:/bin"
+		if runtimeDirectory != "" {
+			toolPath += ":" + runtimeDirectory
+		}
+		argv = append(argv, "--strict-config", "-c", `default_permissions="jackstay_review"`,
+			"-c", pinnedFilesystem(sourceDirectory, runtimeDirectory),
+			"-c", "permissions.jackstay_review.network.enabled=false",
+			"-c", "project_doc_max_bytes=0",
+			"-c", "shell_environment_policy.inherit=none",
+			"-c", "shell_environment_policy.set.PATH="+strconv.Quote(toolPath))
+	}
 	return append(argv, "-")
+}
+
+func pinnedFilesystem(sourceDirectory, runtimeDirectory string) string {
+	filesystem := `permissions.jackstay_review.filesystem={":root"="deny",":minimal"="read",":slash_tmp"="deny",":tmpdir"="deny"`
+	if sourceDirectory != "" {
+		filesystem += "," + strconv.Quote(sourceDirectory) + `="read"`
+	}
+	// Codex starts its shell through the CLI binary. The minimal runtime roots do
+	// not necessarily include its installation directory (for example Homebrew).
+	if runtimeDirectory != "" {
+		filesystem += "," + strconv.Quote(runtimeDirectory) + `="read"`
+	}
+	return filesystem + "}"
+}
+
+func pinnedRuntimeDirectory(request Request) string {
+	if request.RepositoryRoot == "" || request.Tree == "" || request.Folder == "" {
+		return ""
+	}
+	path, err := exec.LookPath(request.Command)
+	if err != nil {
+		return ""
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return ""
+	}
+	directory, err := canonicalPath(filepath.Dir(absolute))
+	if err != nil {
+		return ""
+	}
+	for _, restricted := range []string{request.RepositoryRoot, request.Tree, request.Folder} {
+		root, err := canonicalPath(restricted)
+		if err != nil || pathsOverlap(directory, root) || pathsOverlap(filepath.Dir(resolved), root) {
+			return ""
+		}
+	}
+	return directory
+}
+
+func canonicalPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(absolute)
+		if err == nil {
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		parent := filepath.Dir(absolute)
+		if parent == absolute {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(absolute))
+		absolute = parent
+	}
+}
+
+func pathsOverlap(first, second string) bool {
+	return within(first, second) || within(second, first)
+}
+
+func within(path, parent string) bool {
+	relative, err := filepath.Rel(parent, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // Environment is the environment Codex runs with: the kept variables only.
@@ -152,7 +256,31 @@ func Probe(ctx context.Context, command string) (string, error) {
 		return "", fmt.Errorf("codex did not answer `--version` (%s): %w", path, err)
 	}
 	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-	return strings.TrimSpace(lines[len(lines)-1]), nil
+	version := strings.TrimSpace(lines[len(lines)-1])
+	if !supportsPinnedSource(version) {
+		return "", fmt.Errorf("pinned reviews require Codex %s or newer with permission profiles (found %q)", minimumPinnedVersion, version)
+	}
+	return version, nil
+}
+
+func supportsPinnedSource(version string) bool {
+	parts := strings.Fields(version)
+	if len(parts) != 2 || parts[0] != "codex-cli" {
+		return false
+	}
+	numbers := strings.Split(parts[1], ".")
+	if len(numbers) != 3 {
+		return false
+	}
+	var parsed [3]int
+	for index, part := range numbers {
+		number, err := strconv.Atoi(part)
+		if err != nil || number < 0 {
+			return false
+		}
+		parsed[index] = number
+	}
+	return parsed[0] > 0 || parsed[1] > 169 || parsed[1] == 169 && parsed[2] >= 0
 }
 
 // Run runs one review. It always returns a result; a failure is an outcome, not an error.

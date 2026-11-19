@@ -12,7 +12,7 @@ reports them. The AGENTS block written by `jst adopt` mentions review when the p
 
 ## Codex as the reviewer: `jst review`
 
-Install Codex and log in once, in your own terminal:
+Install Codex CLI 0.169.0 or newer for scoped review permissions and log in once:
 
 ```sh
 codex login
@@ -25,11 +25,12 @@ Choose Codex for a round:
 jst review origin/main..HEAD --task parser --reviewer codex
 ```
 
-`jst review` starts Codex read only in a detached worktree at the reviewed commit, so Codex
-cannot change your checkout. It is isolated from your own Codex setup by default (no user config,
-rules, MCP servers or apps); `review.reviewers.codex.isolation` replaces that list. An answer that
-does not fit the review's schema is `unparsable` (exit 5), never guessed at. How Codex is started,
-exactly, is in [the review design](../design/review.md#1-the-review-section-of-jackstayjson).
+`jst review` starts Codex in a read-only view of the pinned revisions. Codex can use local shell
+navigation and search in that view. The review uses a dedicated filesystem permission profile.
+By default it also disables user config, rules, MCP servers and apps. The optional
+`review.reviewers.codex.isolation` list customizes launch options within the required permissions.
+An answer that fails schema validation is `unparsable` (exit 5).
+See [the review design](../design/review.md#1-the-review-section-of-jackstayjson).
 
 Set the model and effort per project, or per call:
 

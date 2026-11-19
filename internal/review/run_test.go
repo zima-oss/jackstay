@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,22 +14,21 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/review/codex"
+	"github.com/zima-oss/jackstay/internal/review/sourceview"
 )
 
 // fakeRepo answers a round's questions from maps; trees are plain folders.
 type fakeRepo struct {
-	mutex   sync.Mutex
 	commits map[string]string // name -> id
 	parents map[string]string
 	files   map[string]bool // "commit:path"
 	branch  string
-	trees   map[string]bool
 }
 
 func newFakeRepo() *fakeRepo {
 	return &fakeRepo{commits: map[string]string{"HEAD": "c1", "c1": "c1", "c2": "c2", "c3": "c3", "main": "c0", "c0": "c0", "other": "cX"},
 		parents: map[string]string{"c1": "c0", "c2": "c1", "c3": "c2"}, files: map[string]bool{"c1:AGENTS.md": true, "c2:AGENTS.md": true, "c3:AGENTS.md": true},
-		branch: "feature/x", trees: map[string]bool{}}
+		branch: "feature/x"}
 }
 
 func (repo *fakeRepo) Resolve(_ context.Context, name string) (string, error) {
@@ -48,13 +46,6 @@ func (repo *fakeRepo) ValidBranchName(_ context.Context, name string) bool {
 }
 func (repo *fakeRepo) Dirty(context.Context) (bool, error)             { return false, nil }
 func (repo *fakeRepo) Subject(context.Context, string) (string, error) { return "subject", nil }
-func (repo *fakeRepo) Diff(_ context.Context, from, to string) ([]byte, error) {
-	return fmt.Appendf(nil, "fake diff from %s to %s", from, to), nil
-}
-
-func (repo *fakeRepo) DiffStat(_ context.Context, from, to string) (string, error) {
-	return from + ".." + to, nil
-}
 func (repo *fakeRepo) Show(_ context.Context, commit, path string) ([]byte, error) {
 	if repo.files[commit+":"+path] {
 		return []byte("text of " + path), nil
@@ -64,18 +55,10 @@ func (repo *fakeRepo) Show(_ context.Context, commit, path string) ([]byte, erro
 func (repo *fakeRepo) Exists(_ context.Context, commit, path string) bool {
 	return repo.files[commit+":"+path]
 }
-func (repo *fakeRepo) AddTree(_ context.Context, path, _, _ string) error {
-	repo.mutex.Lock()
-	defer repo.mutex.Unlock()
-	repo.trees[path] = true
+func (repo *fakeRepo) BuildSource(_ context.Context, path string, _ sourceview.Revisions) error {
 	return os.MkdirAll(path, 0o700)
 }
-func (repo *fakeRepo) RemoveTree(_ context.Context, path string) error {
-	repo.mutex.Lock()
-	defer repo.mutex.Unlock()
-	delete(repo.trees, path)
-	return os.RemoveAll(path)
-}
+func (repo *fakeRepo) RemoveTree(_ context.Context, path string) error        { return os.RemoveAll(path) }
 func (repo *fakeRepo) LockedTrees(context.Context) (map[string]string, error) { return nil, nil }
 
 // scripted is a fake reviewer: each call takes the next answer (or outcome) of the script.
@@ -181,17 +164,26 @@ func TestRoundsOfATask(t *testing.T) {
 	if !strings.Contains(h.round.Out.(*bytes.Buffer).String(), "jst bg --for 37") {
 		t.Fatalf("budget line: %s", h.round.Out)
 	}
-	if len(h.repo.trees) != 0 {
-		t.Fatal("a pinned tree was left")
+	if _, err := os.Stat(filepath.Join(first.Folder, "source")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("temporary source view was left: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(first.Folder, "report.md")); err != nil {
 		t.Fatal(err)
+	}
+	review := h.round.Machine.RunReviewer
+	h.round.Machine.RunReviewer = func(ctx context.Context, request codex.Request) codex.Result {
+		data, err := os.ReadFile(filepath.Join(request.Tree, "open-findings.json"))
+		var findings []LedgerFinding
+		if err != nil || json.Unmarshal(data, &findings) != nil || len(findings) != 1 || findings[0].ID != "r1-codex-F1" || findings[0].Detail == "" {
+			t.Errorf("the incremental reviewer could not read the full prior finding: %s, %v", data, err)
+		}
+		return review(ctx, request)
 	}
 	second := h.round.Run(ctx, Options{Revision: "c2"})
 	if second.Status != ExitClear || second.Record.Follows != 1 || second.Record.Base != "c0" {
 		t.Fatalf("round 2: %+v", second)
 	}
-	if prompt := h.reviewer.prompts[1]; !strings.Contains(prompt, "git diff c1 c2") || !strings.Contains(prompt, "r1-codex-F1") {
+	if prompt := h.reviewer.prompts[1]; !strings.Contains(prompt, "changes/previous.patch") || !strings.Contains(prompt, "r1-codex-F1") {
 		t.Fatalf("delta prompt: %s", prompt)
 	}
 	reasons, _ := CheckReasons(h.round.Settings, h.round.Store, "feature/x", "c0", "c2")
@@ -423,5 +415,30 @@ func TestInaccessibleReviewLocksAreReportedAsIOFailures(t *testing.T) {
 				t.Fatalf("%+v", result)
 			}
 		})
+	}
+}
+
+func TestPromptReferencesBriefWithoutEmbeddingItsContents(t *testing.T) {
+	h := newHarness(t, Answer{Verdict: "approve", Summary: "clear"})
+	brief := filepath.Join(t.TempDir(), "brief.txt")
+	if err := os.WriteFile(brief, []byte("explicit brief fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.round.Settings.Brief = "AGENTS.md"
+	review := h.round.Machine.RunReviewer
+	h.round.Machine.RunReviewer = func(ctx context.Context, request codex.Request) codex.Result {
+		body, err := os.ReadFile(filepath.Join(request.Tree, "review-brief.md"))
+		if err != nil || string(body) != "explicit brief fixture" || !request.PinnedSource {
+			t.Errorf("the explicit brief was not available in the pinned source view: %v", err)
+		}
+		prompt := string(request.Prompt)
+		if !strings.Contains(prompt, "head/AGENTS.md") || !strings.Contains(prompt, "review-brief.md") ||
+			strings.Contains(prompt, "explicit brief fixture") || strings.Contains(prompt, "text of AGENTS.md") {
+			t.Errorf("the initial prompt did not use brief references: %s", prompt)
+		}
+		return review(ctx, request)
+	}
+	if result := h.round.Run(context.Background(), Options{BriefFile: brief}); result.Status != ExitClear {
+		t.Fatalf("review failed: %+v", result)
 	}
 }

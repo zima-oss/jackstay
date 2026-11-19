@@ -133,7 +133,7 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if asJSON {
 		summary = stderr
 	}
-	result := Round{Settings: found.settings, Repo: RepositoryAt(found.project.Root), Store: found.store,
+	result := Round{RepositoryRoot: found.project.Root, Settings: found.settings, Repo: RepositoryAt(found.project.Root), Store: found.store,
 		Machine: machine, Out: summary, Errors: stderr}.Run(ctx, options)
 	if asJSON {
 		writeResultJSON(stdout, result)

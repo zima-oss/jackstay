@@ -81,13 +81,13 @@ var efforts = []string{"minimal", "low", "medium", "high", "xhigh"}
 
 // ownedWords are argv words jackstay sets itself and refuses in `isolation`.
 var ownedWords = []string{
-	"exec", "-a", "--ask-for-approval", "-s", "--sandbox", "--dangerously-bypass-approvals-and-sandbox",
+	"exec", "-a", "--ask-for-approval", "-s", "--sandbox", "--permissions", "--dangerously-bypass-approvals-and-sandbox",
 	"--full-auto", "--approve-for-me", "--add-dir", "-C", "--cd", "-o", "--output-last-message",
 	"--output-schema", "--json", "-m", "--model", "-p", "--profile", "--worktree", "-i", "--image", "-",
 }
 
 // ownedKeys are `-c` keys jackstay sets itself or that would undo read-only.
-var ownedKeys = []string{"sandbox_mode", "sandbox_permissions", "approval_policy", "model", "model_reasoning_effort"}
+var ownedKeys = []string{"sandbox_mode", "sandbox_permissions", "approval_policy", "model", "model_reasoning_effort", "default_permissions", "permissions", "features.network_proxy", "project_doc_max_bytes"}
 
 func defaultReviewer(name string) ReviewerSettings {
 	if name == claude.Name {
@@ -326,7 +326,7 @@ func isolationProblems(name string, words []string) []string {
 			index++
 			key, _, _ := strings.Cut(words[index], "=")
 			key = strings.TrimSpace(key)
-			if slices.Contains(ownedKeys, key) || strings.HasPrefix(key, "sandbox") {
+			if slices.Contains(ownedKeys, key) || strings.HasPrefix(key, "sandbox") || strings.HasPrefix(key, "permissions.") {
 				found = append(found, fmt.Sprintf("`review.reviewers.%s.isolation` sets `%s`, which jackstay sets itself or which would undo read-only", name, key))
 			}
 		case strings.HasPrefix(word, "--config="), strings.HasPrefix(word, "-c") && len(word) > 2:
