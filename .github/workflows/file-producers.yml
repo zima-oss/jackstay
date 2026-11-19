@@ -4,6 +4,20 @@ on:
   pull_request:
     paths:
       - .github/workflows/file-producers.yml
+      - cmd/jst/**
+      - internal/config/**
+      - internal/judge/**
+      - internal/testing/**
+      - internal/receipts/**
+      - internal/testreport/**
+      - tests/producers/**
+      - go.mod
+      - go.sum
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/file-producers.yml
+      - cmd/jst/**
       - internal/config/**
       - internal/judge/**
       - internal/testing/**

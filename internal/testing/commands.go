@@ -82,12 +82,14 @@ func PlanCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 
 func (base *tester) plan(args []string) int {
 	name, rest, chosen, err := parse(args)
-	selectChanged := err == nil && name == "changed" && base.hasSelection()
+	selectChanged := false
 	selectedRange := false
-	if selectChanged && len(rest) > 0 {
-		if len(rest) != 1 || chosen.base != "" || chosen.commit != "" {
+	var rangeArgument string
+	if err == nil && name == "changed" && len(rest) == 1 && strings.Contains(rest[0], "..") {
+		if chosen.base != "" || chosen.commit != "" {
 			err = refused("`jst test plan changed BASE..REV` takes one range, without --base or --commit")
 		} else {
+			rangeArgument = rest[0]
 			chosen.base, chosen.commit, err = selectionRange(rest[0])
 			rest = nil
 			selectedRange = err == nil
@@ -96,7 +98,7 @@ func (base *tester) plan(args []string) int {
 	if err == nil && name == "" {
 		err = refused("usage: jst test plan <scope> [ARGS…]")
 	}
-	if err == nil && selectedRange {
+	if err == nil && chosen.commit != "" {
 		made, inside, copyError := base.makeCopy(chosen)
 		if copyError != nil {
 			err = copyError
@@ -108,6 +110,12 @@ func (base *tester) plan(args []string) int {
 	var proj *project
 	if err == nil {
 		proj, err = base.open(chosen)
+	}
+	if err == nil && name == "changed" {
+		selectChanged = has(proj.section, "selection")
+		if selectedRange && !selectChanged {
+			rest = []string{rangeArgument}
+		}
 	}
 	if err == nil && (name == "auto" || selectChanged) {
 		if len(rest) > 0 || chosen.commit != "" && !selectedRange {
