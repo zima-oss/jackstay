@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,7 +32,13 @@ import (
 const Name = "jackstay.json"
 
 // EditorSchemaURL is the schema association written in newly adopted projects.
-const EditorSchemaURL = "https://raw.githubusercontent.com/zima-oss/jackstay/main/schemas/jackstay.schema.json"
+func EditorSchemaURL() string {
+	return (&url.URL{
+		Scheme: "https",
+		Host:   "raw.githubusercontent.com",
+		Path:   "/zima-oss/jackstay/main/schemas/jackstay.schema.json",
+	}).String()
+}
 
 // Schema is the newest jackstay.json this jackstay reads.
 const Schema = 2

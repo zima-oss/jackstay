@@ -12,7 +12,7 @@ import (
 func JSONSchema() ([]byte, error) {
 	root := schemaNode(Table)
 	root["$schema"] = "https://json-schema.org/draft/2020-12/schema"
-	root["$id"] = EditorSchemaURL
+	root["$id"] = EditorSchemaURL()
 	root["title"] = "jackstay.json"
 	root["description"] = "Project configuration for jackstay. Run jst check for semantic and cross-field validation."
 	root["required"] = []string{"jackstay_schema"}
