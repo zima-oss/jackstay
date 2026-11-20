@@ -16,7 +16,7 @@ gets in, and what a change has to keep true.
 
 ## Building and testing
 
-You need Go (the version in `go.mod`'s `toolchain` line), [just](https://github.com/casey/just),
+You need Go (the version in `go.mod`'s `toolchain` line), [`just`](https://github.com/casey/just),
 git, [ShellCheck](https://www.shellcheck.net) (for `install.sh`) and `curl` (its tests); `lsof` on
 Linux. Hugo, for the documentation site, is run by the justfile at its pinned version, with nothing
 to install.
@@ -49,6 +49,11 @@ git), and the whole gate at the end.
   `AGENTS.md` matches.
 - **Dependencies** are few. A new module needs a reason in the pull request and a row in
   [docs/licences.md](docs/licences.md) (Apache-2.0, MIT or BSD only; the gate checks the row).
+
+## Writing documentation
+
+Pages, help texts and the AGENTS block follow [docs/STYLE.md](docs/STYLE.md): outcome first, plain
+English, one meaning in one place, and command examples that run. `just docs` checks what it can.
 
 ## Pull requests
 

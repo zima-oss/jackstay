@@ -10,7 +10,7 @@ and `prune` commands read stored rounds without starting a reviewer.
 
 ## `jst review`
 
-```sh
+```text
 jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] [--focus TEXT]
            [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
 ```
@@ -105,7 +105,7 @@ managed hooks, still apply. [Claude Code CLI reference](https://code.claude.com/
 
 ## Reading the results
 
-```sh
+```text
 jst review last [--task NAME] [--json]          # the newest round's report, or the newest attempt's failure
 jst review show TASK ROUND [--json]             # one round's report
 jst review list [--task NAME] [--rebuild] [--json]
@@ -165,7 +165,7 @@ rounds and the required reviewer set for `jst review check`.
 
 Use the optional local pool when several repositories submit review work.
 
-```sh
+```text
 jst review pool add --repo "$PWD" --base main --head HEAD --task parse-change --reviewer codex
 jst review pool list --json
 jst review pool inspect --json
