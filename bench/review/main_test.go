@@ -30,14 +30,14 @@ func TestTheMatcherProposesByMechanismInPlaceAndTitle(t *testing.T) {
 	measurement := bench{defects: defects}
 	run := Run{Range: "cache"}
 	for finding, want := range map[Finding]string{
-		{Place: "cache.go: Get", Title: "Get reads the map without the mutex"}:                                    "B1",
-		{Place: "cache.go: Cache.Get", Title: "The expiry comparison is inverted"}:                                "B2",
-		{Place: "stock.go: Release", Title: "Release can drive Reserved negative"}:                                "B3",
-		{Place: "README.md", Title: "Wording"}:                                                                     "",
-		{Place: "order.go: ParseLine", Title: "index out of range"}:                                                "",
+		{Place: "cache.go: Get", Title: "Get reads the map without the mutex"}:                                      "B1",
+		{Place: "cache.go: Cache.Get", Title: "The expiry comparison is inverted"}:                                  "B2",
+		{Place: "stock.go: Release", Title: "Release can drive Reserved negative"}:                                  "B3",
+		{Place: "README.md", Title: "Wording"}:                                                                      "",
+		{Place: "order.go: ParseLine", Title: "index out of range"}:                                                 "",
 		{Place: "cache.go: NewCache / Put", Title: "Inserting into a zero-value Cache panics", Detail: "nil clock"}: "E13",
-		{Place: "cache.go: Get", Title: "Expired cache entries accumulate without bound"}:                         "E12",
-		{Place: "cache.go: Get", Title: "Another problem", Detail: "the comparison is inverted"}:                  "",
+		{Place: "cache.go: Get", Title: "Expired cache entries accumulate without bound"}:                           "E12",
+		{Place: "cache.go: Get", Title: "Another problem", Detail: "the comparison is inverted"}:                    "",
 	} {
 		if got := measurement.propose(run, finding); got != want {
 			t.Errorf("%q proposed %q, want %q (another range's defect, a detail-only word, clock for lock earn nothing)", finding.Title, got, want)
