@@ -12,21 +12,23 @@ import (
 )
 
 // A crashed or partly failed attempt keeps the answers its reviewers gave. The next run of the
-// task re-runs only the reviewers whose answer is missing (W-090): a saved answer is reused when
+// task re-runs only the reviewers whose answer is missing (docs/decisions/W-090-review-of-0-6-0.md): a saved answer is reused when
 // the attempt that holds it is bound to exactly what this attempt asks — the same round, commits,
-// prompt, verdict schema and review policy — and the reviewer's settings are the same.
+// prompt, verdict schema, review policy and reviewers' settings.
 
-// bindingOf names what an attempt asks of its reviewers. Two attempts with one binding put the
-// same question to them.
-func bindingOf(planned plan, settings Settings, prompt, schema, brief []byte) string {
+// bindingOf names what an attempt asks of its reviewers and who answers: two attempts with one
+// binding put the same question to the same reviewers, each with the same command, model, effort
+// and isolation, so an answer saved without its run.json still cannot be credited to another model.
+func bindingOf(planned plan, settings Settings, names []string, prompt, schema, brief []byte) string {
 	digest := func(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }
 	data, _ := json.Marshal(struct {
 		Round                        int
 		Task, Commit, Base, Previous string
 		Policy, ContentPolicy        string
 		Prompt, Schema, Brief        string
+		Reviewers                    []ReviewerSettings
 	}{planned.number, planned.task, planned.commit, planned.base, planned.previous, settings.policyID(),
-		planned.contentPolicy, digest(prompt), digest(schema), digest(brief)})
+		planned.contentPolicy, digest(prompt), digest(schema), digest(brief), reviewersOf(settings, names)})
 	return "v1:" + digest(data)
 }
 
@@ -111,4 +113,12 @@ func (saved reused) adopt(folder string) (ReviewerRun, error) {
 		return run, err
 	}
 	return run, writeJSON(filepath.Join(folder, "run.json"), run)
+}
+
+func reviewersOf(settings Settings, names []string) []ReviewerSettings {
+	reviewers := make([]ReviewerSettings, 0, len(names))
+	for _, name := range names {
+		reviewers = append(reviewers, settings.Reviewers[name])
+	}
+	return reviewers
 }

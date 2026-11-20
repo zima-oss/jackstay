@@ -352,10 +352,10 @@ attempt, with its evidence, and the next run takes k+1 and still N. Rounds are n
 the order of those renames. With several reviewers and some failing, the attempt is not a round
 and exit is 5; the successful answers stay in its folder, readable.
 
-**Only the missing answers are paid for again** (W-090). `attempt.json` records the attempt's
+**Only the missing answers are paid for again** ([W-090](../decisions/W-090-review-of-0-6-0.md)). `attempt.json` records the attempt's
 **binding**: a digest of the round number, the task, the commits (base, head, previous), the review
-policy and content policy, and the digests of the prompt, the verdict schema and the `--brief`
-file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
+policy and content policy, each selected reviewer's settings (command, model, effort, isolation),
+and the digests of the prompt, the verdict schema and the `--brief` file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
 starting reviewers, a run looks through the task's earlier attempts (never rounds), newest first,
 for one with its own binding; a reviewer's `answer.json` there is reused when it reads and checks as a
 fresh answer would (section 3.5), is not `incomplete`, and was given with the same model and
