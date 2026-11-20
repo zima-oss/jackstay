@@ -177,6 +177,11 @@ type planner struct {
 	plain    config.Config
 	// existed says the project had a jackstay.json before this plan.
 	existed bool
+	// profileLand is the profile's `land` defaults for a project without a section (nil: none).
+	profileLand *jsondoc.Object
+	// landComing says the upgrade's second step is due: the workflows are those of a project with
+	// a `land` section, which the third step writes.
+	landComing bool
 }
 
 // newPlanner is the planner of the project at root: the one place base is set, so every path
@@ -414,15 +419,55 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 			setAdopt(document, "profile_sha256", strings.ToLower(planner.plan.ProfileSHA256))
 		}
 	}
+	// A profile's `land` defaults never make the first policy by themselves: landSection decides
+	// it from the project's own file, and the profile fills only its other keys.
+	if original.Object("land") == nil {
+		planner.profileLand = document.Object("land")
+		document = withoutKey(document, "land")
+	}
 	planner.document = document
 	if err := planner.settle(original, chosen); err != nil {
 		return err
 	}
-	added, err := planner.landSection(original, chosen)
-	if err != nil || !added {
+	changed, err := planner.landSection(original, chosen)
+	if err != nil || !changed {
 		return err
 	}
 	return planner.settle(original, chosen)
+}
+
+// withoutKey is the object without one key, the others in their order.
+func withoutKey(object *jsondoc.Object, key string) *jsondoc.Object {
+	kept := jsondoc.NewObject()
+	for _, name := range object.Keys() {
+		if name != key {
+			value, _ := object.Get(name)
+			kept.Set(name, value)
+		}
+	}
+	return kept
+}
+
+// templatePlain is the file the wanted workflows are chosen by: with a `land` section while the
+// upgrade's second step writes the workflows the coming policy needs.
+func (planner *planner) templatePlain() map[string]any {
+	if !planner.landComing {
+		return planner.plain
+	}
+	return withLand(planner.plain)
+}
+
+// withLand is a copy of plain with a `land` section when it has none.
+func withLand(plain map[string]any) map[string]any {
+	if _, present := plain["land"]; present {
+		return plain
+	}
+	copied := make(map[string]any, len(plain)+1)
+	for key, value := range plain {
+		copied[key] = value
+	}
+	copied["land"] = map[string]any{}
+	return copied
 }
 
 // settle writes the pin a workflow needs and moves the schema the prospective file's keys need,
@@ -486,7 +531,7 @@ func (planner *planner) workflowValues(chosen *profile.Profile, pin string) map[
 }
 
 func (planner *planner) usesVersion(chosen *profile.Profile) bool {
-	for _, template := range wantedTemplates(chosen, planner.plain) {
+	for _, template := range wantedTemplates(chosen, planner.templatePlain()) {
 		if slices.Contains(templates.Placeholders(template.Text), "jackstay_version") {
 			return true
 		}
@@ -1077,7 +1122,7 @@ func (planner *planner) workflows(chosen *profile.Profile) error {
 		return err
 	}
 	wanted := map[string]bool{}
-	for _, template := range wantedTemplates(chosen, planner.plain) {
+	for _, template := range wantedTemplates(chosen, planner.templatePlain()) {
 		wanted[template.Name] = true
 		body, err := templates.Render(template.Text, values)
 		if err != nil {

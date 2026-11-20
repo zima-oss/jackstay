@@ -37,19 +37,21 @@ var upgradeSteps = []string{
 // schema 3: an existing section gets the keys it lacks, its autonomy kept; a file that is or
 // becomes schema 3 gets the section whole. A schema-2 file of a project upgrading from 0.5.x gets
 // it only as the third of three pull requests: after the pin and after the workflows that download
-// it. added says the section was added.
-func (planner *planner) landSection(original *jsondoc.Object, chosen *profile.Profile) (added bool, err error) {
+// it, which the second step writes as the coming policy needs them. The section is decided from
+// the project's own file: a profile's defaults fill a new section's other keys, never autonomy.
+// changed says the pin and the schema must be settled again.
+func (planner *planner) landSection(original *jsondoc.Object, chosen *profile.Profile) (changed bool, err error) {
 	if install.Compare(planner.options.Version, config.Schema3Release) < 0 {
 		return false, nil
 	}
 	document := planner.document
-	if section := document.Object("land"); section != nil {
-		current, _ := getString(section, "autonomy")
+	if existing := original.Object("land"); existing != nil {
+		current, _ := getString(existing, "autonomy")
 		if given := planner.options.Autonomy; given != "" && given != current {
 			return false, &UsageError{fmt.Sprintf("--autonomy %s: jackstay.json's land.autonomy is %q, and jst adopt never changes it; "+
 				"change it there yourself, in a pull request a person merges", given, current)}
 		}
-		fillLand(section)
+		fillLand(document.Object("land"))
 		return false, nil
 	}
 	if planner.existed {
@@ -60,7 +62,8 @@ func (planner *planner) landSection(original *jsondoc.Object, chosen *profile.Pr
 		}
 		if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) && planner.workflowsPending(chosen) {
 			planner.upgradeNotes(2)
-			return false, nil
+			planner.landComing = true
+			return true, nil
 		}
 		if schema, _ := original.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
 			planner.upgradeNotes(3)
@@ -79,6 +82,14 @@ func (planner *planner) landSection(original *jsondoc.Object, chosen *profile.Pr
 	section := jsondoc.NewObject()
 	section.Set("host", "github")
 	section.Set("autonomy", autonomy)
+	if planner.profileLand != nil {
+		for _, key := range planner.profileLand.Keys() {
+			if key != "autonomy" {
+				value, _ := planner.profileLand.Get(key)
+				section.Set(key, value)
+			}
+		}
+	}
 	fillLand(section)
 	document.Set("land", section)
 	return true, nil
@@ -105,6 +116,7 @@ func fillLand(section *jsondoc.Object) {
 // file asks: the second step of the upgrade has not landed.
 func (planner *planner) workflowsPending(chosen *profile.Profile) bool {
 	probe := probeOf(planner)
+	probe.landComing = true
 	if err := probe.workflows(chosen); err != nil {
 		return true
 	}

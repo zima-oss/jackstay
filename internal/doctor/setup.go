@@ -258,10 +258,18 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if planOnly || (!yes && (!terminalInput(stdin) || !terminalOutput(stdout))) {
 		return 0
 	}
+	return applySetup(plan, yes, chat, selected, stdin, stdout, stderr)
+}
+
+// applySetup asks and applies a plan: the questions at a terminal; with --yes only the selected
+// repairs, unattended, asking nothing.
+func applySetup(plan SetupPlan, yes, chat bool, selected map[string]bool, stdin io.Reader, stdout, stderr io.Writer) int {
 	reader := bufio.NewReader(stdin)
-	if err := askMachineAutonomy(plan, reader, stdout, adopt.SaveMachineAutonomy); err != nil {
-		fmt.Fprintf(stderr, "jst setup: autonomy: %v\n", err)
-		return 1
+	if !yes {
+		if err := askMachineAutonomy(plan, reader, stdout, adopt.SaveMachineAutonomy); err != nil {
+			fmt.Fprintf(stderr, "jst setup: autonomy: %v\n", err)
+			return 1
+		}
 	}
 	if chat {
 		promptChatEngineSetup(plan, reader, stdout)

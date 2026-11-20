@@ -300,5 +300,37 @@ func TestAnUnusedOldPinMovesWithPin(t *testing.T) {
 	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"pin": "v0.6.0"`) || strings.Contains(text, `"land"`) {
 		t.Fatalf("step 1:\n%s", text)
 	}
+	// Step 2 writes the card-line workflow the coming policy needs, though the project has neither
+	// cards nor changes, and leaves jackstay.json at schema 2: step 3 is not due before it lands.
+	made := plan(t, landOptions(root, ""))
+	if got := changeIDs(made.Changes); !slices.Contains(got, "workflow:card-line") || slices.Contains(got, "jackstay.json") || made.AsksAutonomy() {
+		t.Fatalf("step 2 plans %v (notes %v)", got, made.Notes)
+	}
+	apply(t, landOptions(root, ""))
+	if !strings.Contains(read(t, root, ".github/workflows/card-line.yml"), "v0.6.0") || !strings.Contains(read(t, root, "jackstay.json"), `"jackstay_schema": 2`) {
+		t.Fatal("step 2 did not write the card-line workflow alone")
+	}
 	landsLast(t, landOptions(root, ""))
+}
+
+// A profile's land defaults fill a new section's other keys and never decide who merges: without a
+// terminal the first policy still needs --autonomy, and --autonomy prepare is not a change.
+func TestAProfilesLandDefaultsNeverChooseAutonomy(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	profilePath := exampleProfile(t, root, `{"land": {"autonomy": "merge-when-green", "human_paths": ["docs/decisions/**"]}}`, nil)
+	options := landOptions(root, "")
+	options.Profile = profilePath
+	if made := plan(t, options); !made.AsksAutonomy() {
+		t.Fatal("the profile's autonomy was taken for the project's answer")
+	}
+	code, _, stderr := runIn(t, false, "", "--apply", "--profile", profilePath, root)
+	if code != 2 || !strings.Contains(stderr, "--autonomy") {
+		t.Fatalf("a non-interactive apply with the profile's autonomy: exit %d: %s", code, stderr)
+	}
+	options.Autonomy = config.AutonomyPrepare
+	applyTwice(t, options)
+	land, _, err := config.LandOf([]byte(read(t, root, "jackstay.json")))
+	if err != nil || land.Autonomy != config.AutonomyPrepare || !slices.Equal(land.HumanPaths, []string{"docs/decisions/**"}) {
+		t.Fatalf("the section: %+v, %v", land, err)
+	}
 }

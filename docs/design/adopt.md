@@ -81,10 +81,12 @@ project's: `jst adopt` reads it to find conflicts and never changes it.
 - **The `land` section** (docs/design/land.md section 5), by a jackstay of 0.6.0 or later, in full:
   `host`, `autonomy`, `method`, `checks`, `human_paths`. An existing section gets the keys it lacks;
   its `autonomy` is never changed (an `--autonomy` that differs is refused). A file that is or
-  becomes schema 3 gets the section with the answer to adopt's question. A schema-2 file pinned to
+  becomes schema 3 gets the section with the answer to adopt's question; a profile's `land`
+  defaults fill its other keys and never `autonomy`. A schema-2 file pinned to
   0.5.x gets it as the last of three pull requests a person merges, and the plan's notes name each
   step and the one due: the pin (`--apply --pin --settings-only`, the file stays schema 2), the
-  workflows that download the new pin, then schema 3 with the section. Each plan holds only what is
+  workflows that download the new pin (those a project with a `land` section has, `card-line`
+  included), then schema 3 with the section. Each plan holds only what is
   due, so schema 3 is never planned before the workflows run a jackstay that reads it.
 - **The profile's defaults** (section 6, `jackstay_json.defaults`) added where the project has no value:
   a missing section is added whole; inside an existing object only missing keys are added,

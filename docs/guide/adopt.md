@@ -127,7 +127,8 @@ of `jst adopt --plan` name them and the one due:
 
 1. the pin: `jst adopt --apply --pin --settings-only`; `jackstay.json` stays schema 2, which 0.6.0
    reads;
-2. the workflows that download 0.6.0: `jst adopt --apply` on the merged base;
+2. the workflows that download 0.6.0, with `card-line.yml`, which runs `jst lint pr` for the
+   coming `land` section: `jst adopt --apply` on the merged base;
 3. schema 3 with the `land` section: `jst adopt --apply` on the merged base, which asks who merges
    (`--settings-only` keeps it to `jackstay.json`; the AGENTS block follows in the next apply).
 

@@ -25,6 +25,9 @@ type LandProject struct {
 	Connect func(ctx context.Context) (hosting.Host, string, error)
 }
 
+// lintCheck is the check of the adopted card-line workflow's job, which runs `jst lint pr`.
+const lintCheck = "card-line"
+
 // landTimeout bounds the land checks' questions to the host.
 const landTimeout = 30 * time.Second
 
@@ -131,6 +134,16 @@ func checkLandRules(report *Report, facts map[string]any, land config.Land, base
 			names = append(names, required.String())
 		}
 		facts["required_checks"] = names
+	}
+	// Section 3.3: rule D0 holds only where the base requires the job that runs `jst lint pr`.
+	if rules.ChecksRead {
+		if !slices.ContainsFunc(rules.Required, func(required hosting.RequiredCheck) bool { return required.Name == lintCheck }) {
+			report.problem("land-lint-not-required", fmt.Sprintf("the rules of %s do not require the `%s` check, which runs `jst lint pr`: "+
+				"a change of jackstay.json can land with other files, past rule D0", base, lintCheck),
+				"require the `"+lintCheck+"` check in the branch's rules on the host (`jst adopt --apply` writes its workflow)")
+		}
+	} else {
+		report.note("land-lint-not-required", "whether the rules of %s require the `%s` check, which runs `jst lint pr`, cannot be read", base, lintCheck)
 	}
 	switch {
 	case !rules.MethodsRead:

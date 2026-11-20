@@ -45,10 +45,12 @@ func landReport(t *testing.T, text string, rules hosting.Rules, connectErr error
 }
 
 func TestLandChecks(t *testing.T) {
-	read := hosting.Rules{ChecksRead: true, Required: []hosting.RequiredCheck{{Name: "build"}}, QueueRead: true,
+	read := hosting.Rules{ChecksRead: true, Required: []hosting.RequiredCheck{{Name: "build"}, {Name: "card-line"}}, QueueRead: true,
 		MethodsRead: true, Methods: []hosting.Method{hosting.Squash, hosting.Merge}}
 	unread := hosting.Rules{Unread: "GitHub refused to show the rules of main"}
 	none := hosting.Rules{ChecksRead: true, MethodsRead: true, Methods: []hosting.Method{hosting.Squash}}
+	noLint := read
+	noLint.Required = []hosting.RequiredCheck{{Name: "build"}}
 	queued := read
 	queued.Queue = true
 	land := func(extra string) string {
@@ -63,10 +65,11 @@ func TestLandChecks(t *testing.T) {
 		{"healthy", land(""), read, nil, "", ""},
 		{"invalid section", `{"jackstay_schema":3,"land":{"autonomy":"always"}}`, read, nil, "land-invalid", ""},
 		{"no account", land(""), read, errors.New("no token"), "land-account", ""},
-		{"rules unread, no checks", land(""), unread, nil, "land-rules-unread", "land-method"},
-		{"rules unread, checks listed", land(`,"checks":["build"]`), unread, nil, "", "land-method,land-rules-unread"},
-		{"rules require none, no checks", land(""), none, nil, "land-no-required-checks", ""},
-		{"rules require none, checks listed", land(`,"checks":["build"]`), none, nil, "", "land-no-required-checks"},
+		{"rules unread, no checks", land(""), unread, nil, "land-rules-unread", "land-lint-not-required,land-method"},
+		{"rules unread, checks listed", land(`,"checks":["build"]`), unread, nil, "", "land-lint-not-required,land-method,land-rules-unread"},
+		{"rules require none, no checks", land(""), none, nil, "land-lint-not-required,land-no-required-checks", ""},
+		{"rules require none, checks listed", land(`,"checks":["build"]`), none, nil, "land-lint-not-required", "land-no-required-checks"},
+		{"lint not required", land(""), noLint, nil, "land-lint-not-required", ""},
 		{"method not allowed", land(`,"method":"rebase"`), read, nil, "land-method", ""},
 		{"queue required", land(""), queued, nil, "", "land-queue"},
 		{"guard off", `{"jackstay_schema":3,"guard":{"rules":{"gh-pr-merge":{"level":"off"}}},"land":{"autonomy":"prepare"}}`, read, nil, "land-guard", ""},
@@ -86,7 +89,7 @@ func TestLandChecks(t *testing.T) {
 		}
 	}
 	facts := landReport(t, land(""), read, nil).Facts["land"].(map[string]any)
-	if required, _ := facts["required_checks"].([]string); strings.Join(required, ",") != "build" || facts["base"] != "main" {
+	if required, _ := facts["required_checks"].([]string); strings.Join(required, ",") != "build,card-line" || facts["base"] != "main" {
 		t.Fatalf("facts %v", facts)
 	}
 }

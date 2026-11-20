@@ -374,3 +374,20 @@ func TestSetupAsksWhoMergesOncePerMachine(t *testing.T) {
 		}
 	}
 }
+
+// An unattended first run (--yes --select path, stdin closed) applies the selected repair and
+// asks no question, nor keeps an answer nobody gave.
+func TestAnUnattendedSetupAsksNothing(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	plan := SetupPlan{Items: []SetupItem{{ID: "path", Status: "done"}, autonomyItem(adopt.MachineAutonomy())}}
+	var stdout, stderr bytes.Buffer
+	if code := applySetup(plan, true, false, map[string]bool{"path": true}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Who merges") {
+		t.Fatalf("asked unattended:\n%s", stdout.String())
+	}
+	if saved, err := adopt.MachineAutonomy(); saved != "" || err != nil {
+		t.Fatalf("kept %q, %v", saved, err)
+	}
+}
