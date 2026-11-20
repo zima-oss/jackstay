@@ -421,13 +421,17 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		}
 	}
 	if newer := config.Schema3Keys(planner.plain); len(newer) > 0 {
-		// A pinned project is read by the pinned jackstay too (its workflows download it); an
-		// unpinned one only by the jackstay at hand, which reads them.
-		pin, _ := getString(document.Object("adopt"), "pin")
-		if pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0 {
-			return &UsageError{fmt.Sprintf("`%s` need jackstay %s or later, and this project is pinned to %s, which would refuse %s: "+
-				"leave them out, or move the pin (`jst adopt --apply --pin` with a newer jackstay)",
-				strings.Join(newer, "`, `"), config.Schema3Release, pin, config.Name)}
+		// A pinned project is read by the pinned jackstay too (its workflows download it), and while
+		// the pin moves, by the one pinned before (the settings land before the workflows, W-085);
+		// an unpinned one only by the jackstay at hand, which reads them.
+		before, _ := getString(original.Object("adopt"), "pin")
+		after, _ := getString(document.Object("adopt"), "pin")
+		for _, pin := range []string{before, after} {
+			if pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0 {
+				return &UsageError{fmt.Sprintf("`%s` need jackstay %s or later, and this project is pinned to %s, which would refuse %s: "+
+					"leave them out until the pin is %s or later (`jst adopt --apply --pin` with a newer jackstay, landed first)",
+					strings.Join(newer, "`, `"), config.Schema3Release, pin, config.Name, config.Schema3Release)}
+			}
 		}
 		if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
 			document.Set("jackstay_schema", json.Number(fmt.Sprint(config.Schema)))

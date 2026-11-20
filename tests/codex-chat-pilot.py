@@ -220,8 +220,8 @@ def run(binary, root, stack):
     checkout.mkdir()
     subprocess.run(["git", "init", "-q", str(checkout)], check=True)
     (checkout / "jackstay.json").write_text(json.dumps({
-        "jackstay_schema": 2, "project": "chat-pilot",
-        "chat": {"enabled": True, "codex_bridge": {"enabled": True, "poll_interval_ms": 100, "ack_timeout_seconds": 5}},
+        "jackstay_schema": 3, "project": "chat-pilot",
+        "chat": {"enabled": True, "codex_bridge": {"enabled": True}},
     }))
     jackstay_home = root / "jackstay"
     namespace = hashlib.sha256(str((checkout / ".git").resolve()).encode()).hexdigest()
