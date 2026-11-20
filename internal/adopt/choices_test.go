@@ -13,6 +13,7 @@ import (
 func TestAdoptAsksOnlyWhatTheProjectDoesNotSettle(t *testing.T) {
 	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "review": {"use": ["claude-code"]}}`})
 	options := optionsFor(root)
+	options.Version = "0.6.0"
 	var asked []string
 	options.Defaults = choices.Defaults{"chat": "on"}
 	options.Ask = func(question choices.Question, offered string) (string, error) {
@@ -101,7 +102,7 @@ func TestChatIsNotAskedWhenThisApplyWritesAnOlderPin(t *testing.T) {
 		return question.Recommended(), nil
 	}
 	made := plan(t, options)
-	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "pinned to v0.5.0") {
+	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "this jackstay is v0.5.0") {
 		t.Fatalf("chat %+v", chat)
 	}
 }
@@ -109,6 +110,7 @@ func TestChatIsNotAskedWhenThisApplyWritesAnOlderPin(t *testing.T) {
 func TestAdoptWritesAnAnswerGivenAndSaysWhatAppliesWithoutOne(t *testing.T) {
 	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`})
 	options := optionsFor(root)
+	options.Version = "0.6.0"
 	options.Answers = map[string]string{"reviewer": "codex,claude-code"}
 	made := apply(t, options)
 	settings, err := os.ReadFile(filepath.Join(root, "jackstay.json"))
@@ -134,5 +136,23 @@ func TestAnAnswerOutsideTheOptionsIsAUsageError(t *testing.T) {
 	}
 	if code := Run([]string{"--answer", "autonomy=prepare"}, nil, &stdout, &stderr); code != 2 {
 		t.Fatalf("a question with no key yet was accepted: exit %d", code)
+	}
+}
+
+// An answer that adds a section a pinned workflow waits for is in place before the pin is chosen.
+func TestAnAnswerThatEnablesAWorkflowGetsItsPin(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`})
+	exampleProfile(t, root, `{}`, map[string]string{"review-check": "name: review\njobs: {}\n# @@jackstay_version@@\n"})
+	profileText := read(t, root, "profiles/profile.json")
+	profileText = strings.Replace(profileText, `"review-check": {"file": "review-check.yml"}`, `"review-check": {"file": "review-check.yml", "when": ["review"]}`, 1)
+	if err := os.WriteFile(filepath.Join(root, "profiles", "profile.json"), []byte(profileText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := optionsFor(root)
+	options.Profile = "profiles/profile.json"
+	options.Answers = map[string]string{"reviewer": "claude-code"}
+	apply(t, options)
+	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"pin": "v0.5.0"`) {
+		t.Fatalf("no pin for the workflow the answer enabled:\n%s", text)
 	}
 }
