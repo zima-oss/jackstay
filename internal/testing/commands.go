@@ -49,8 +49,8 @@ func (base *tester) list(args []string) int {
 	fmt.Fprintf(base.stdout, "%s: scopes (`jst test <scope>`; when each is required is the project's rule, below)\n", proj.name)
 	for _, name := range order {
 		entry := objectOf(scopes[name])
-		what, limit := "steps: "+joinComma(textsOf(entry["steps"])), ""
-		if !has(entry, "steps") {
+		what, limit := "deps: "+joinComma(depsOf(entry)), ""
+		if !isComposite(entry) {
 			chosen := resolve(proj.section, name, kindScope, entry)
 			what = shellWords(chosen.run)
 			limit = "  [no timeout: runs unbounded]"
@@ -131,18 +131,16 @@ func (base *tester) plan(args []string) int {
 			}
 		}
 	}
-	var paths []leafPath
+	order := []string{name}
 	if err == nil {
 		scopes := objectOf(proj.section["scopes"])
 		entry := objectOf(scopes[name])
 		switch {
 		case entry == nil:
 			err = refused("`" + name + "` is not a scope of " + proj.name + "; its scopes: " + joinComma(sortedKeys(scopes)))
-		case has(entry, "steps"):
-			paths, err = leafPaths(proj.section, name, nil)
+		case len(depsOf(entry)) > 0:
+			order = newGraph(proj.section, proj.operatingSystem).walk(order)
 			rest = nil
-		default:
-			paths = []leafPath{{name: name, kind: kindScope, entry: entry}}
 		}
 	}
 	if err != nil {
@@ -150,14 +148,24 @@ func (base *tester) plan(args []string) int {
 		return statusRefused
 	}
 	out := base.stdout
-	for _, path := range paths {
-		leafOf := resolve(proj.section, path.name, path.kind, path.entry)
-		found, err := proj.wordsOf(leafOf, rest)
-		if err != nil {
-			fmt.Fprintf(out, "%s: cannot run as asked: %v\n", path.name, err)
+	nodes := newGraph(proj.section, proj.operatingSystem)
+	for _, name := range order {
+		kind, entry := find(proj.section, name)
+		switch {
+		case !nodes.eligible(name):
+			fmt.Fprintf(out, "%s: skipped (it cannot run on %s)\n", name, proj.operatingSystem)
+			continue
+		case isComposite(entry):
+			fmt.Fprintf(out, "%s: passes when its deps that run here pass (%s)\n", name, joinComma(depsOf(entry)))
 			continue
 		}
-		fmt.Fprintf(out, "%s: %s\n", path.name, shellWords(found.argv))
+		leafOf := resolve(proj.section, name, kind, entry)
+		found, err := proj.wordsOf(leafOf, rest)
+		if err != nil {
+			fmt.Fprintf(out, "%s: cannot run as asked: %v\n", name, err)
+			continue
+		}
+		fmt.Fprintf(out, "%s: %s\n", name, shellWords(found.argv))
 		timeout := "none"
 		if leafOf.timeout > 0 {
 			timeout = formatSeconds(leafOf.timeout)

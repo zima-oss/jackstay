@@ -76,7 +76,7 @@ func TestStepsRunInOrderAndStopAtTheFirstFailure(t *testing.T) {
 	w := newGateWorld(t)
 	w.flag("middle-fails", true)
 	w.expectStatus(w.jst("gate"), 1)
-	w.expectLast("gate gate failed at middle")
+	w.expectLast("gate failed at middle")
 	w.expectCounters("cheap middle full", 1, 1, 0)
 	var steps []receipts.Record
 	for _, record := range w.records("run") {
@@ -95,7 +95,7 @@ func TestStepsRunInOrderAndStopAtTheFirstFailure(t *testing.T) {
 	for _, raw := range gate["steps"].([]any) {
 		outcomes = append(outcomes, raw.(map[string]any)["outcome"].(string))
 	}
-	if strings.Join(outcomes, ",") != "exited-0,failed" || gate.Text("gate_run_id") != steps[0].Text("gate_run_id") {
+	if strings.Join(outcomes, ",") != "exited-0,failed,not-run,not-run" || gate.Text("gate_run_id") != steps[0].Text("gate_run_id") {
 		t.Fatalf("the gate's line: %v", gate)
 	}
 	if start := w.lastRecord("gate-start"); start.Text("gate_run_id") != gate.Text("gate_run_id") {
@@ -208,7 +208,9 @@ func TestCompositeStepsExpandIntoLeaves(t *testing.T) {
 	w.expectStatus(w.jst("x-nested"), 0)
 	var names []string
 	for _, raw := range w.lastRecord("gate")["steps"].([]any) {
-		names = append(names, raw.(map[string]any)["step"].(string))
+		if raw.(map[string]any)["composite"] == nil {
+			names = append(names, raw.(map[string]any)["step"].(string))
+		}
 	}
 	if strings.Join(names, ",") != "cheap,middle,last" {
 		t.Fatalf("steps: %v", names)
@@ -238,15 +240,28 @@ func TestACommandsOwnRefsAreInTheKey(t *testing.T) {
 	w.expectCounters("last", 4)
 }
 
-func TestANestedListsRequiresIsChecked(t *testing.T) {
+// A schema-2 list's own `requires` run once, before any node of a run whose graph holds the list,
+// and gate the whole run; a run whose graph lacks the list does not run them.
+func TestANestedSchema2ListsRequiresGateTheWholeRun(t *testing.T) {
 	w := newGateWorld(t)
-	inner := map[string]any{"steps": argv("middle", "last"), "requires": []any{map[string]any{"run": argv("sh", "-c", "exit 4"), "why": "needs a screen"}}}
-	w.configure(with(gateSection(), "scopes", "x-inner", inner), nil)
+	inner := map[string]any{"steps": argv("middle", "last"), "requires": []any{map[string]any{"run": counted("check", "exit 4"), "why": "needs a screen"}}}
+	section := with(gateSection(), "scopes", "x-inner", inner)
+	section = with(section, "scopes", "x-other", map[string]any{"steps": argv("x-inner", "cheap")})
+	w.configure(section, map[string]any{"jackstay_schema": 2})
 	w.commit()
 	w.expectStatus(w.jst("x-nested"), 2)
 	w.expectSaid("x-inner: needs a screen")
-	w.expectCounters("cheap middle last", 1, 0, 0)
-	w.expectStatus(w.jst("x-inner"), 2)
+	w.expectLast("outcome=not-started (x-nested failed at x-inner")
+	w.expectCounters("cheap middle last check", 0, 0, 0, 1)
+	// Reached directly in one list and through a nested one, the list is checked once.
+	w.expectStatus(w.jst("x-other"), 2)
+	w.expectCounters("cheap check", 0, 2)
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectCounters("cheap check", 1, 2)
+	// In schema 3 a composite carries no `requires`.
+	w.configure(section, nil)
+	w.expectStatus(w.jst("gate"), 2)
+	w.expectSaid("`test.scopes.x-inner.requires`: a scope with no `run`")
 }
 
 func TestAChangeHiddenByInfoExcludeIsNotResumed(t *testing.T) {
@@ -305,7 +320,6 @@ func TestRequiresAreCheckedBeforeAStepIsResumed(t *testing.T) {
 	w := newGateWorld(t)
 	screen := []any{map[string]any{"run": argv("sh", "-c", `test ! -f "$SIDE/no-screen"`), "why": "needs a screen"}}
 	section := with(gateSection(), "steps", "cheap", map[string]any{"run": counted("cheap", "true"), "requires": screen})
-	section = with(section, "scopes", "x-inner", map[string]any{"steps": argv("middle", "last"), "requires": screen})
 	w.configure(section, nil)
 	w.commit()
 	w.expectStatus(w.jst("x-nested"), 0)
@@ -315,8 +329,9 @@ func TestRequiresAreCheckedBeforeAStepIsResumed(t *testing.T) {
 	if strings.Contains(w.lastLine(), "resumed") {
 		t.Fatalf("a step was resumed: %s", w.lastLine())
 	}
+	// --keep-going runs what does not depend on the failure: x-inner's steps are resumed.
 	w.expectStatus(w.jst("x-nested", "--resume", "--keep-going"), 2)
-	w.expectLast("cheap=not-started", "middle=not-started", "last=not-started")
+	w.expectLast("cheap=not-started", "middle=resumed", "last=resumed", "x-nested=not-run")
 }
 
 func TestAMovedBaseIsANewKey(t *testing.T) {
@@ -406,7 +421,7 @@ func TestATimedOutStepRunsAgainAndBarsNothing(t *testing.T) {
 	}
 	w.flag("hang", true)
 	w.expectStatus(w.jst("gate"), 124)
-	w.expectLast("outcome=timed-out (gate gate failed at middle, exit 124")
+	w.expectLast("outcome=timed-out (gate failed at middle, exit 124")
 	w.flag("hang", false)
 	w.expectStatus(w.jst("gate", "--resume"), 0)
 	w.expectCounters("middle", 1) // the override answered for the hung run; this one really ran
@@ -465,5 +480,5 @@ func TestStepsThatCannotStartEndTheGate(t *testing.T) {
 	w.configure(section, nil)
 	w.expectStatus(w.jst("x-base"), 2)
 	w.expectSaid("needs a base")
-	w.expectLast("outcome=not-started (gate x-base failed at based")
+	w.expectLast("outcome=not-started (x-base failed at based")
 }

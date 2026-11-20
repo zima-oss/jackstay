@@ -191,18 +191,7 @@ func Problems(section map[string]any) []string {
 			found = append(found, definitionProblems(section, table.kind, name, objectOf(table.entries[name]))...)
 		}
 	}
-	for _, name := range append(sortedKeys(scopes), sortedKeys(steps)...) {
-		entry := objectOf(scopes[name])
-		if entry == nil {
-			entry = objectOf(steps[name])
-		}
-		if has(entry, "steps") {
-			if _, err := leafPaths(section, name, nil); err != nil {
-				found = append(found, err.Error())
-			}
-		}
-	}
-	return found
+	return append(found, graphProblems(section)...)
 }
 
 func items(value any) []any {
@@ -229,13 +218,16 @@ var listOnlyKeys = []string{"judge", "evidence", "veto", "env", "base", "slow", 
 
 func definitionProblems(section map[string]any, kind, name string, entry map[string]any) []string {
 	here := fmt.Sprintf("test.%s.%s", kind, name)
-	if has(entry, "run") == has(entry, "steps") {
-		return []string{fmt.Sprintf("`%s` must have exactly one of `run` and `steps`", here)}
+	if has(entry, "run") && has(entry, "steps") {
+		return []string{fmt.Sprintf("`%s` must have exactly one of `run` and `steps` (a scope with `run` names what runs first in `deps`)", here)}
 	}
-	found := requiresProblems(here, entry)
-	if has(entry, "steps") {
-		if len(textsOf(entry["steps"])) == 0 {
+	found := append(requiresProblems(here, entry), systemsProblems(here, entry)...)
+	if isComposite(entry) {
+		switch {
+		case has(entry, "steps") && len(textsOf(entry["steps"])) == 0:
 			found = append(found, fmt.Sprintf("`%s.steps` names no step", here))
+		case len(depsOf(entry)) == 0:
+			found = append(found, fmt.Sprintf("`%s` has no `run` and names no `deps`: it must run a command or depend on scopes", here))
 		}
 		for _, key := range listOnlyKeys {
 			if has(entry, key) {
@@ -330,6 +322,29 @@ func definitionProblems(section map[string]any, kind, name string, entry map[str
 	return found
 }
 
+// systemsProblems are what is wrong with the systems a scope's `ci` and `systems` name.
+func systemsProblems(here string, entry map[string]any) []string {
+	var found []string
+	for _, key := range []string{"ci", "systems"} {
+		if !has(entry, key) {
+			continue
+		}
+		values := textsOf(entry[key])
+		if len(values) == 0 {
+			found = append(found, fmt.Sprintf("`%s.%s` names no system (%s)", here, key, joinComma(operatingSystems)))
+		}
+		for index, value := range values {
+			switch {
+			case !slices.Contains(operatingSystems, value):
+				found = append(found, fmt.Sprintf("`%s.%s`: '%s' is not a system (%s)", here, key, value, joinComma(operatingSystems)))
+			case slices.Contains(values[:index], value):
+				found = append(found, fmt.Sprintf("`%s.%s` repeats '%s'", here, key, value))
+			}
+		}
+	}
+	return found
+}
+
 func requiresProblems(here string, entry map[string]any) []string {
 	var found []string
 	for index, raw := range items(entry["requires"]) {
@@ -363,46 +378,6 @@ func find(section map[string]any, name string) (string, map[string]any) {
 		return kindScope, entry
 	}
 	return "", nil
-}
-
-// leafPath is one leaf step of a list (one with `run`) and the lists it was reached through.
-type leafPath struct {
-	name  string
-	kind  string
-	entry map[string]any
-	trail []string
-}
-
-// leafPaths are the leaf steps of a scope or step, in order, expanded recursively. An error on a
-// cycle, an unknown name, or a leaf that needs names on the command line (a gate cannot give them).
-func leafPaths(section map[string]any, name string, trail []string) ([]leafPath, error) {
-	kind, entry := find(section, name)
-	path := strings.Join(append(slices.Clone(trail), name), " → ")
-	if entry == nil {
-		return nil, fmt.Errorf("`test`: %s names '%s', which is neither a step nor a scope", path, name)
-	}
-	if slices.Contains(trail, name) {
-		return nil, fmt.Errorf("`test`: the steps go round in a circle: %s", path)
-	}
-	if !has(entry, "steps") {
-		if len(trail) > 0 {
-			for _, token := range placeholdersOf(textsOf(entry["run"])) {
-				if token == "tests" || token == "test_args" {
-					return nil, fmt.Errorf("`test`: %s: a step whose words hold {%s} cannot be in a list of steps (nothing gives it names)", path, token)
-				}
-			}
-		}
-		return []leafPath{{name: name, kind: kind, entry: entry, trail: slices.Clone(trail)}}, nil
-	}
-	var found []leafPath
-	for _, each := range textsOf(entry["steps"]) {
-		more, err := leafPaths(section, each, append(slices.Clone(trail), name))
-		if err != nil {
-			return nil, err
-		}
-		found = append(found, more...)
-	}
-	return found, nil
 }
 
 // check is a `requires` check.

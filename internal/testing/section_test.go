@@ -112,7 +112,7 @@ func TestBadSections(t *testing.T) {
 		{scope("full", map[string]any{"run": []any{}}), "names no command"},
 		{scope("gate", map[string]any{"steps": []any{}}), "names no step"},
 		{map[string]any{"scopes": map[string]any{"gate": map[string]any{"steps": argv("full"), "requires": []any{map[string]any{"run": argv("y")}}},
-			"full": map[string]any{"run": argv("x")}}}, "why` is missing"},
+			"full": map[string]any{"run": argv("x")}}}, "a scope with no `run` runs nothing"},
 		{map[string]any{"scopes": map[string]any{"gate": map[string]any{"steps": argv("full"), "timeout": 5},
 			"full": map[string]any{"run": argv("x")}}}, "each step has its own"},
 		{map[string]any{"judge": "pytest", "scopes": map[string]any{}}, "`test.judge` must be one of"},
@@ -140,18 +140,10 @@ func TestAGateNeedsTheToolchainWrittenOut(t *testing.T) {
 	}
 }
 
-func TestLeafPathsAndResolve(t *testing.T) {
+func TestTheWalkAndResolve(t *testing.T) {
 	section := goodSection()
-	paths, err := leafPaths(section, "gate", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var names []string
-	for _, path := range paths {
-		names = append(names, path.name+"/"+path.kind)
-	}
-	if strings.Join(names, ",") != "format/step,docs/step,build/step,full/scope" {
-		t.Fatalf("leaves: %v", names)
+	if order := newGraph(section, "darwin").walk([]string{"gate"}); strings.Join(order, ",") != "format,docs,build,full,gate" {
+		t.Fatalf("order: %v", order)
 	}
 	full := resolve(section, "full", kindScope, objectOf(objectOf(section["scopes"])["full"]))
 	if full.timeout != 2400 || full.lockWait != 2400 || !full.lock || !full.durations || full.judge != "swift-test" ||

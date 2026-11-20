@@ -108,7 +108,7 @@ func TestAnUndeclaredScopeIsRefusedWithTheDeclaredOnes(t *testing.T) {
 	w.expectSaid("unknown option --frobnicate")
 	w.expectStatus(w.jst("full", "--wait", "soon"), 2)
 	w.expectStatus(w.jst("full", "--resume"), 2)
-	w.expectSaid("--resume and --keep-going are for a scope that lists steps")
+	w.expectSaid("--resume and --keep-going are for a scope with deps")
 }
 
 func TestFocusedNeedsNamesAndOthersTakeNone(t *testing.T) {

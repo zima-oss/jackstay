@@ -2,6 +2,7 @@ package install
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,5 +76,35 @@ func TestUsage(t *testing.T) {
 	var stderr bytes.Buffer
 	if code := RunUninstall([]string{"--prefix"}, nil, &stderr, &stderr); code != 2 {
 		t.Errorf("uninstall --prefix with no folder: exit %d", code)
+	}
+}
+
+func TestACheckoutIsInstalledOnlyAfterItsUncoveredTestsPassed(t *testing.T) {
+	asked := ""
+	refusing := Options{Prefix: AccountPrefix(), Uncovered: func(checkout, commit string) error {
+		asked = checkout + " " + commit
+		return errors.New("no passed `jst test uncovered`")
+	}}
+	if err := refusing.uncoveredPassed("/work/jackstay", "abc1234"); err == nil || asked != "/work/jackstay abc1234" {
+		t.Fatalf("refused %v after asking %q", err, asked)
+	}
+	accepting := Options{Prefix: AccountPrefix(), Uncovered: func(string, string) error { return nil }}
+	if err := accepting.uncoveredPassed("/work/jackstay", "abc1234"); err != nil {
+		t.Fatal(err)
+	}
+	for _, each := range []struct {
+		prefix, source, commit string
+	}{
+		{AccountPrefix(), "release", "abc1234"},
+		{AccountPrefix(), "binary /tmp/jst", "abc1234"},
+		{AccountPrefix(), "/work/jackstay", "abc1234+changes"},
+		{filepath.Join(t.TempDir(), "trial"), "/work/jackstay", "abc1234"},
+	} {
+		asked = ""
+		trial := refusing
+		trial.Prefix = each.prefix
+		if err := trial.uncoveredPassed(each.source, each.commit); err != nil || asked != "" {
+			t.Errorf("%+v: %v (asked %q)", each, err, asked)
+		}
 	}
 }

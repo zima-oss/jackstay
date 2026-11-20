@@ -143,7 +143,7 @@ func TestIntegrationAGateFailsFastAndItsBarRefusesResume(t *testing.T) {
 	w.repo.Git("branch", "base-ref")
 	w.flag("middle-fails", true)
 	w.expectStatus(w.jst("gate"), 1)
-	w.expectLast("gate gate failed at middle")
+	w.expectLast("gate failed at middle")
 	w.expectCounters("cheap middle full", 1, 1, 0)
 	w.flag("middle-fails", false)
 	w.expectStatus(w.jst("gate", "--resume"), 2)

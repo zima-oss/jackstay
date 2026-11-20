@@ -27,7 +27,8 @@ func TestPinnedGateChecksTrackedInputsAtEachBoundary(t *testing.T) {
 			preparation := map[string]any{"run": argv("sh", "-c", each.preparation), "judge": "exit"}
 			gate := map[string]any{"steps": argv("prepare", "verify")}
 			if each.prerequisite {
-				gate["requires"] = []any{map[string]any{"run": preparation["run"], "why": "the fixture input must be ready"}}
+				// In schema 3 a check belongs to the step that needs it, not to the list.
+				preparation["requires"] = []any{map[string]any{"run": preparation["run"], "why": "the fixture input must be ready"}}
 				preparation["run"] = argv("sh", "-c", "true")
 			}
 			section := map[string]any{"scopes": map[string]any{"gate": gate}, "steps": map[string]any{

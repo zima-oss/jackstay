@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/layout"
 	"github.com/zima-oss/jackstay/internal/prove"
 	"github.com/zima-oss/jackstay/internal/supervise"
+	scopes "github.com/zima-oss/jackstay/internal/testing"
 )
 
 func init() {
@@ -51,6 +53,9 @@ type Options struct {
 	AfterStep func(step string) error
 	// Codesign runs codesign (supervise.Capture under a deadline unless a test gives its own).
 	Codesign Runner
+	// Uncovered is nil when `jst test uncovered` passed for the commit of the checkout
+	// (scopes.UncoveredPassed on this machine's system unless a test gives its own).
+	Uncovered func(checkout, commit string) error
 }
 
 // Run is `jst install`.
@@ -129,6 +134,9 @@ func Install(options Options) int {
 		if samePath(options.Prefix, AccountPrefix()) {
 			return refuse("the checkout has uncommitted changes (%s): an installed version names one commit (W-020); commit first, or give another --prefix to try it", versionText)
 		}
+	}
+	if err := options.uncoveredPassed(source, commit); err != nil {
+		return refuse("%v; a checkout's commit is installed only after the tests CI does not run on this system passed on it", err)
 	}
 	if err := os.MkdirAll(layout.Lib(options.Prefix), 0o755); err != nil { // #nosec G301 -- read by every shell of the account
 		return refuse("%v", err)
@@ -221,6 +229,20 @@ func Install(options Options) int {
 		}
 	}
 	return options.finish(state, versionText, target, already)
+}
+
+// uncoveredPassed is nil unless a checkout's commit goes to the account's prefix without a passed
+// `jst test uncovered` for it (docs/design/land.md section 7). A binary, a trial build with changes
+// and another prefix need none.
+func (options Options) uncoveredPassed(source, commit string) error {
+	if !strings.HasPrefix(source, "/") || commit == "unknown" || strings.HasSuffix(commit, "+changes") ||
+		!samePath(options.Prefix, AccountPrefix()) {
+		return nil
+	}
+	if options.Uncovered != nil {
+		return options.Uncovered(source, commit)
+	}
+	return scopes.UncoveredPassed(source, commit, runtime.GOOS)
 }
 
 // recoverableLive recognizes only the active folder that jackstay created for

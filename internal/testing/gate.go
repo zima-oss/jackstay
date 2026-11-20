@@ -384,10 +384,47 @@ func (proj *project) prune(folder string, age time.Duration) {
 	}
 }
 
-// step is one step's line in the gate's record.
+// step is one node's line in the run's record.
 type step map[string]any
 
-// gateState is a gate's run so far.
+// Outcomes only a graph has (docs/design/land.md section 7.2 and 7.4).
+const (
+	outcomeSkipped          = "skipped"
+	outcomeNotRun           = "not-run"
+	outcomeNeedsOtherSystem = "needs-other-system"
+	outcomeLeftToCI         = "left-to-ci"
+
+	statusSkipped          = 79
+	statusNeedsOtherSystem = 80
+)
+
+// failureOrder is the order in which a node's outcome that is not a pass becomes the run's
+// (section 7.2): the first the run has wins, with or without --keep-going.
+var failureOrder = []string{receipts.OutcomeFailed, receipts.OutcomePassedOnRetry, outcomeTimedOut, receipts.OutcomeStopped,
+	receipts.OutcomeStoppedWaiting, receipts.OutcomeUnjudged, receipts.OutcomeNothingRun, receipts.OutcomeGaveUp, outcomeRefused,
+	receipts.OutcomeNotStarted}
+
+// passing says whether a node that ended so lets the nodes that depend on it run.
+func passing(outcome string) bool {
+	switch outcome {
+	case receipts.OutcomePassed, receipts.OutcomeExited0, outcomeSkipped, outcomeResumed:
+		return true
+	}
+	return false
+}
+
+// partition is where `jst test changed` and `jst test uncovered` put each node with `run`
+// (section 7.4): run here, left to CI, or needing another system.
+type partition struct {
+	command   string
+	here      []string
+	ci        []string
+	elsewhere []string
+	// where are the systems each node elsewhere can run on.
+	where map[string][]string
+}
+
+// gateState is a run so far.
 type gateState struct {
 	steps    []step
 	outcome  string
@@ -395,124 +432,184 @@ type gateState struct {
 	failedAt string
 }
 
-// fail keeps the first step that was not a pass.
+// fail keeps the first outcome that was not a pass.
 func (state *gateState) fail(outcome string, status int, stepName string) {
 	if state.outcome == "" {
 		state.outcome, state.status, state.failedAt = outcome, status, stepName
 	}
 }
 
-// gate runs a scope that lists steps: leaf by leaf, in order, fail-fast; marks and bars for resume.
-func (proj *project) gate(name string) int {
-	paths, err := leafPaths(proj.section, name, nil)
-	if err != nil {
-		proj.notStarted(err.Error())
-		return statusRefused
-	}
-	resume := proj.options.resume
+// gate runs the graph from the scopes asked for (section 7.2): each node once, after its deps, one
+// at a time; the first failure ends the run unless --keep-going. label names the run in its line.
+func (proj *project) gate(label string, asked []string, split *partition) int {
+	nodes := newGraph(proj.section, proj.operatingSystem)
+	order := nodes.walk(asked)
 	gateID := receipts.RunID(proj.clock.Now(), proj.pid)
 	began := proj.clock.Now()
-	names := make([]string, 0, len(paths))
-	for _, path := range paths {
-		names = append(names, path.name)
-	}
 	plural := "s"
-	if len(paths) == 1 {
+	if len(order) == 1 {
 		plural = ""
 	}
 	resuming := ""
-	if resume {
+	if proj.options.resume {
 		resuming = " (resuming passed steps)"
 	}
-	proj.say("gate %s: %d step%s: %s%s", name, len(paths), plural, joinComma(names), resuming)
-	startFields := map[string]any{"gate_run_id": gateID, "scope": name, "started_epoch": epochText(began), "steps": names,
-		"resume": resume}
-	// A gate stopped or killed while a step runs ends with that step (its own line says `stopped`);
-	// this line, with no `gate` line of the same id, says the gate did not end.
-	if !proj.log("gate-start", []string{name}, "", startFields) {
-		proj.notLogged("the start of this gate")
+	proj.say("%s: %d node%s: %s%s", label, len(order), plural, joinComma(order), resuming)
+	startFields := map[string]any{"gate_run_id": gateID, "scope": label, "started_epoch": epochText(began), "steps": nonNil(order),
+		"resume": proj.options.resume}
+	// A run stopped or killed while a node runs ends with that node (its own line says `stopped`);
+	// this line, with no `gate` line of the same id, says the run did not end.
+	if !proj.log("gate-start", []string{label}, "", startFields) {
+		proj.notLogged("the start of this run")
 	}
 	state := &gateState{}
 	if problem := proj.pinnedProblem(); problem != "" {
 		proj.say("%s", problem)
 		state.fail(receipts.OutcomeUnjudged, receipts.StatusUnjudged, "checkout validation")
-		return proj.gateLine(name, gateID, began, state)
+		return proj.gateLine(label, gateID, began, state, split)
 	}
-	checked := map[string]string{}
-	for _, path := range paths {
-		ended, stop := proj.gateStep(path, gateID, resume, checked, state)
-		if ended != nil {
-			return *ended
+	// A schema-2 list's own `requires` run once, before any node, and gate the whole run.
+	for _, name := range order {
+		if _, entry := find(proj.section, name); !isComposite(entry) || !nodes.eligible(name) {
+			continue
 		}
-		if stop {
-			break
+		why, signalled := proj.compositeRequires(name)
+		if signalled != nil {
+			return *signalled
+		}
+		if why != "" {
+			proj.say("not started (%s)", why)
+			state.fail(receipts.OutcomeNotStarted, statusRefused, name)
+			return proj.gateLine(label, gateID, began, state, split)
 		}
 	}
-	if problem := proj.pinnedProblem(); problem != "" {
+	outcomes := map[string]string{}
+	ended := false
+	for _, name := range order {
+		kind, entry := find(proj.section, name)
+		var line step
+		switch {
+		case ended:
+			line = step{"step": name, "outcome": outcomeNotRun, "seconds": 0}
+		case !nodes.eligible(name):
+			line = step{"step": name, "outcome": outcomeSkipped, "seconds": 0}
+		case slices.ContainsFunc(depsOf(entry), func(dep string) bool { return !passing(outcomes[dep]) }):
+			line = step{"step": name, "outcome": outcomeNotRun, "seconds": 0}
+		case isComposite(entry):
+			line = step{"step": name, "outcome": receipts.OutcomePassed, "seconds": 0, "composite": true}
+		default:
+			var signalled *int
+			if line, signalled = proj.gateStep(name, kind, entry, gateID); signalled != nil {
+				return *signalled
+			}
+		}
+		outcome := textOf(line["outcome"])
+		outcomes[name] = outcome
+		state.steps = append(state.steps, line)
+		if !passing(outcome) && outcome != outcomeNotRun && !proj.options.keepGoing {
+			ended = true
+		}
+	}
+	state.settle(asked, outcomes)
+	if split != nil && !slices.Contains(failureOrder, state.outcome) {
+		switch {
+		case split.command == "changed" && len(split.elsewhere) > 0:
+			state.outcome, state.status = outcomeNeedsOtherSystem, statusNeedsOtherSystem
+		case len(split.here) == 0:
+			state.outcome, state.status = outcomeLeftToCI, 0
+		case state.outcome == receipts.OutcomeExited0:
+			// The split's here passes as a composite does: every node passed or ended exited-0.
+			state.outcome = receipts.OutcomePassed
+		}
+	}
+	if problem := proj.pinnedProblem(); problem != "" && !slices.Contains(failureOrder, state.outcome) {
 		proj.say("%s", problem)
-		state.fail(receipts.OutcomeUnjudged, receipts.StatusUnjudged, "checkout validation")
+		state.outcome, state.status, state.failedAt = receipts.OutcomeUnjudged, receipts.StatusUnjudged, "checkout validation"
 	}
-	if state.outcome == "" {
-		state.outcome = outcomeResumed
-		for _, each := range state.steps {
-			if each["outcome"] != outcomeResumed {
-				state.outcome = receipts.OutcomePassed
+	return proj.gateLine(label, gateID, began, state, split)
+}
+
+// settle is the run's outcome from its nodes' (section 7.2): the first failure in failureOrder;
+// else `skipped` when a scope asked for is not eligible here; `resumed` when every node with `run`
+// was resumed; `exited-0` when a scope asked for ended so; else `passed`.
+func (state *gateState) settle(asked []string, outcomes map[string]string) {
+	if state.outcome != "" {
+		return
+	}
+	for _, wanted := range failureOrder {
+		for _, line := range state.steps {
+			if line["outcome"] != wanted {
+				continue
+			}
+			status, _ := line["status"].(int)
+			if status == 0 {
+				status = 1
+			}
+			state.fail(wanted, status, textOf(line["step"]))
+			return
+		}
+	}
+	resumed := 0
+	ran := 0
+	for _, line := range state.steps {
+		if line["composite"] == nil && line["outcome"] != outcomeSkipped {
+			ran++
+			if line["outcome"] == outcomeResumed {
+				resumed++
 			}
 		}
 	}
-	return proj.gateLine(name, gateID, began, state)
+	switch {
+	case slices.ContainsFunc(asked, func(name string) bool { return outcomes[name] == outcomeSkipped }):
+		state.outcome, state.status = outcomeSkipped, statusSkipped
+	case ran > 0 && resumed == ran:
+		state.outcome = outcomeResumed
+	case slices.ContainsFunc(asked, func(name string) bool { return outcomes[name] == receipts.OutcomeExited0 }):
+		state.outcome = receipts.OutcomeExited0
+	default:
+		state.outcome = receipts.OutcomePassed
+	}
 }
 
-// gateStep runs or resumes one leaf of a gate. ended is set when the gate ends at once (jackstay was
-// asked to stop); stop when the gate goes no further.
-func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked map[string]string, state *gateState) (*int, bool) {
-	keepGoing := proj.options.keepGoing
-	chosen := resolve(proj.section, path.name, path.kind, path.entry)
+func nonNil(names []string) []string {
+	if names == nil {
+		return []string{}
+	}
+	return names
+}
+
+// gateStep runs or resumes one node with `run`: its `requires`, its mark or bar under --resume,
+// then the command. signalled is set when jackstay was asked to stop: the status it ends with.
+func (proj *project) gateStep(name, kind string, entry map[string]any, gateID string) (step, *int) {
+	resume := proj.options.resume
+	chosen := resolve(proj.section, name, kind, entry)
 	adapterVersion := judge.AdapterVersion(judge.Kind(chosen.judge))
 	found, err := proj.wordsOf(chosen, nil)
 	if err != nil {
-		state.steps = append(state.steps, step{"step": path.name, "outcome": receipts.OutcomeNotStarted, "seconds": 0})
-		state.fail(receipts.OutcomeNotStarted, statusRefused, path.name)
 		proj.say("%v", err)
-		return nil, !keepGoing
+		return step{"step": name, "outcome": receipts.OutcomeNotStarted, "seconds": 0, "status": statusRefused}, nil
 	}
-	// Every `requires` that applies, before the step may be resumed: a mark says the step passed,
-	// not that what it needs is there now. The lists' first.
+	// Every `requires`, before the step may be resumed: a mark says the step passed, not that what
+	// it needs is there now.
 	whyNot := ""
-	for _, composite := range path.trail {
-		if _, seen := checked[composite]; !seen {
-			why, signalled := proj.compositeRequires(composite)
-			if signalled != nil {
-				return signalled, true
-			}
-			checked[composite] = why
-		}
-		if whyNot == "" {
-			whyNot = checked[composite]
-		}
-	}
 	cwd := filepath.Clean(filepath.Join(proj.root, chosen.cwd))
-	if whyNot == "" {
-		for _, each := range chosen.requires {
-			result := proj.runCheck(each, cwd, withEnv(commandEnv(proj.environ), chosen.env))
-			if result.asked != 0 {
-				status := proj.ended(result.stoppedResult(), nil).status
-				return &status, true
-			}
-			if !result.passed() {
-				whyNot = path.name + ": " + checkWhy(each, result)
-				break
-			}
+	for _, each := range chosen.requires {
+		result := proj.runCheck(each, cwd, withEnv(commandEnv(proj.environ), chosen.env))
+		if result.asked != 0 {
+			status := proj.ended(result.stoppedResult(), nil).status
+			return nil, &status
+		}
+		if !result.passed() {
+			whyNot = name + ": " + checkWhy(each, result)
+			break
 		}
 	}
 	if problem := proj.pinnedProblem(); problem != "" {
 		whyNot = problem
 	}
 	if whyNot != "" {
-		proj.say("step %s: not started (%s)", path.name, whyNot)
-		state.steps = append(state.steps, step{"step": path.name, "outcome": receipts.OutcomeNotStarted, "seconds": 0, "why": whyNot})
-		state.fail(receipts.OutcomeNotStarted, statusRefused, path.name)
-		return nil, !keepGoing
+		proj.say("step %s: not started (%s)", name, whyNot)
+		return step{"step": name, "outcome": receipts.OutcomeNotStarted, "seconds": 0, "why": whyNot, "status": statusRefused}, nil
 	}
 	relative, relErr := filepath.Rel(proj.root, cwd)
 	if relErr != nil {
@@ -527,29 +624,26 @@ func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked
 		key, whyNoKey = proj.stepKey(chosen, found.argv, found.base, relative)
 		head, stamps = proj.head(), proj.checkoutStamps()
 		if key == "" {
-			proj.say("step %s: no mark can be kept (%s)", path.name, whyNoKey)
+			proj.say("step %s: no mark can be kept (%s)", name, whyNoKey)
 		}
 	case resume && dirty != "":
-		proj.say("step %s: runs (%s: only a clean checkout is resumed)", path.name, dirty)
+		proj.say("step %s: runs (%s: only a clean checkout is resumed)", name, dirty)
 	}
 	switch {
 	case resume && key != "":
 		if found := proj.barOf(key); found != nil {
 			proj.say("step %s: nothing has changed since this step failed (%s); change the tree or run the gate without --resume",
-				path.name, found.when())
-			state.steps = append(state.steps, step{"step": path.name, "outcome": outcomeRefused, "seconds": 0})
-			state.outcome, state.status, state.failedAt = outcomeRefused, statusRefused, path.name
-			return nil, true
+				name, found.when())
+			return step{"step": name, "outcome": outcomeRefused, "seconds": 0, "status": statusRefused}, nil
 		}
-		if found, _ := proj.readMark(key, path.name, head, adapterVersion); found != nil {
-			proj.say("step %s: resumed (it %s at %s on this same tree; run %s)", path.name, found.Outcome, found.At, found.RunID)
-			state.steps = append(state.steps, step{"step": path.name, "outcome": outcomeResumed, "seconds": 0, "mark_of": found.RunID})
-			return nil, false
+		if found, _ := proj.readMark(key, name, head, adapterVersion); found != nil {
+			proj.say("step %s: resumed (it %s at %s on this same tree; run %s)", name, found.Outcome, found.At, found.RunID)
+			return step{"step": name, "outcome": outcomeResumed, "seconds": 0, "mark_of": found.RunID}, nil
 		}
 	case resume && !chosen.resume:
-		proj.say("step %s: runs (\"resume\": false)", path.name)
+		proj.say("step %s: runs (\"resume\": false)", name)
 	}
-	proj.say("step %s: %s", path.name, shellWords(found.argv))
+	proj.say("step %s: %s", name, shellWords(found.argv))
 	if key != "" {
 		// The step runs again: its old pass no longer speaks for this tree, also if this run is
 		// stopped before it can say anything. A pass writes a new mark.
@@ -557,28 +651,19 @@ func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked
 	}
 	ended := proj.runLeaf(chosen, nil, gateID, true)
 	if ended.signalled {
-		return &ended.status, true
+		return nil, &ended.status
 	}
-	state.steps = append(state.steps, step{"step": path.name, "outcome": ended.outcome, "seconds": ended.seconds,
-		"run_id": nullableText(ended.runID), "status": ended.status})
 	passed := ended.outcome == receipts.OutcomePassed || ended.outcome == receipts.OutcomeExited0
 	switch {
 	case key != "" && passed:
-		proj.markAfter(path.name, key, head, stamps, chosen, found, relative, ended)
+		proj.markAfter(name, key, head, stamps, chosen, found, relative, ended)
 	case key != "" && ended.outcome == receipts.OutcomeFailed:
-		proj.writeBar(key, path.name, ended)
+		proj.writeBar(key, name, ended)
 	case key != "":
 		proj.removeMark(key)
 	}
-	if !passed {
-		status := ended.status
-		if status == 0 {
-			status = 1
-		}
-		state.fail(ended.outcome, status, path.name)
-		return nil, !keepGoing
-	}
-	return nil, false
+	return step{"step": name, "outcome": ended.outcome, "seconds": ended.seconds, "run_id": nullableText(ended.runID),
+		"status": ended.status}, nil
 }
 
 // stoppedResult is the result of a check during which jackstay was asked to stop.
@@ -648,52 +733,107 @@ func (proj *project) compositeRequires(composite string) (string, *int) {
 	return "", nil
 }
 
-// gateLine writes the gate's line (each step's outcome, seconds and run id) and says its outcome.
-func (proj *project) gateLine(name, gateID string, began time.Time, state *gateState) int {
+// gateLine writes the run's line (each node's outcome, seconds and run id) and says its outcome.
+func (proj *project) gateLine(label, gateID string, began time.Time, state *gateState, split *partition) int {
 	endedAt := proj.clock.Now()
 	seconds := secondsBetween(began, endedAt)
+	failure := slices.Contains(failureOrder, state.outcome)
 	why := ""
-	if state.failedAt != "" {
+	if failure && state.failedAt != "" {
 		why = "failed at " + state.failedAt
 	}
 	steps := state.steps
 	if steps == nil {
 		steps = []step{}
 	}
-	fields := map[string]any{"gate_run_id": gateID, "scope": name, "outcome": state.outcome, "status": state.status,
-		"seconds": seconds, "steps": steps, "started_epoch": epochText(began), "ended_epoch": epochText(endedAt)}
+	fields := map[string]any{"gate_run_id": gateID, "scope": label, "outcome": state.outcome, "status": state.status,
+		"seconds": seconds, "steps": steps, "started_epoch": epochText(began), "ended_epoch": epochText(endedAt),
+		"system": proj.operatingSystem}
 	if why != "" {
 		fields["why"] = why
 	}
-	pinnedPass := proj.pin != nil && state.outcome == receipts.OutcomePassed
+	if split != nil {
+		fields["here"], fields["ci"], fields["elsewhere"] = nonNil(split.here), nonNil(split.ci), nonNil(split.elsewhere)
+	}
+	pinnedPass := proj.pin != nil && (state.outcome == receipts.OutcomePassed || state.outcome == outcomeLeftToCI)
 	if pinnedPass {
 		fields["pinned_candidate"] = proj.pin.commit
 	}
-	if !proj.log(receipts.EventGate, []string{name}, "", fields) {
-		proj.notLogged("this gate")
+	if !proj.log(receipts.EventGate, []string{label}, "", fields) {
+		proj.notLogged("this run")
 		if pinnedPass {
 			state.outcome, state.status = receipts.OutcomeUnjudged, receipts.StatusUnjudged
-			why = "could not record the pinned gate"
+			why = "could not record the pinned run"
 		}
 	} else if pinnedPass {
 		proj.pin.runID = gateID
 	}
-	each := make([]string, 0, len(steps))
+	// A composite that passed says nothing of its own; every other node is named.
+	each := []string{}
+	ran := map[string]bool{}
 	for _, entry := range steps {
+		ran[textOf(entry["step"])] = true
+		if entry["composite"] != nil && entry["outcome"] == receipts.OutcomePassed {
+			continue
+		}
 		text := fmt.Sprintf("%v=%v", entry["step"], entry["outcome"])
 		if spent, ok := entry["seconds"].(float64); ok && spent != 0 {
 			text += " " + formatSeconds(spent) + " s"
 		}
 		each = append(each, text)
 	}
+	detail := label
+	if why != "" {
+		detail += fmt.Sprintf(" %s, exit %d", why, state.status)
+	}
+	detail += ", " + formatSeconds(seconds) + " s"
+	if split == nil {
+		detail += ": " + joinComma(each)
+	} else {
+		var leftToCI []string
+		for _, name := range split.ci {
+			if !ran[name] {
+				leftToCI = append(leftToCI, name)
+			}
+		}
+		detail += "; here: " + orNone(joinComma(each)) + "; ci: " + orNone(joinComma(leftToCI)) + "; elsewhere: " + orNone(split.elsewhereText())
+	}
 	switch state.outcome {
 	case outcomeResumed:
 		proj.say("outcome=resumed (every step was resumed: nothing ran, and this is not counted as a pass; %s)", joinComma(each))
-	case receipts.OutcomePassed:
-		proj.say("outcome=passed (gate %s, %s s: %s)", name, formatSeconds(seconds), joinComma(each))
+	case outcomeNeedsOtherSystem:
+		proj.say("outcome=%s (%s; %s)", state.outcome, split.elsewhereText(), detail)
 	default:
-		proj.say("outcome=%s (gate %s %s, exit %d, %s s: %s)", state.outcome, name, why, state.status, formatSeconds(seconds),
-			joinComma(each))
+		proj.say("outcome=%s (%s)", state.outcome, detail)
 	}
 	return state.status
+}
+
+func orNone(text string) string {
+	if text == "" {
+		return "none"
+	}
+	return text
+}
+
+// elsewhereText is the nodes elsewhere by the system they run on: "darwin: x-ios".
+func (split *partition) elsewhereText() string {
+	var parts []string
+	for _, system := range append(slices.Clone(operatingSystems), "") {
+		var names []string
+		for _, name := range split.elsewhere {
+			systems := split.where[name]
+			if system == "" && len(systems) == 0 || system != "" && slices.Contains(systems, system) {
+				names = append(names, name)
+			}
+		}
+		if len(names) == 0 {
+			continue
+		}
+		if system == "" {
+			system = "no system"
+		}
+		parts = append(parts, system+": "+joinComma(names))
+	}
+	return strings.Join(parts, "; ")
 }
