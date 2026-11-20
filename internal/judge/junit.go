@@ -30,6 +30,7 @@ type junitCounts struct {
 	failures int
 	errors   int
 	skipped  int
+	retried  int
 }
 
 type junitElement struct {
@@ -39,6 +40,12 @@ type junitElement struct {
 	declared map[string]int
 	status   string
 	timing   *JUnitCaseDuration
+	// flaky and rerun are a test case's Surefire rerun records: a failed attempt before a pass
+	// (flakyFailure, flakyError), or a failed rerun of a case that failed (rerunFailure, rerunError).
+	flaky bool
+	rerun bool
+	// reran is a suite holding rerun records: Surefire's totals then count only the last rerun.
+	reran bool
 }
 
 type junitParser struct {
@@ -125,6 +132,7 @@ func readJUnitReport(report io.Reader, cases map[string]struct{}, withTimings bo
 	if parser.total.failures+parser.total.errors > 0 {
 		facts.Failure = "the JUnit XML report contains failed or errored test cases"
 	}
+	facts.Retried = parser.total.retried
 	return facts, parser.timings, parser.timingsTruncated
 }
 
@@ -209,6 +217,17 @@ func (parser *junitParser) start(element xml.StartElement) error {
 		}
 		parent.status = name
 	}
+	if junitRerunRecord(name) {
+		parent := parser.stack[len(parser.stack)-1]
+		if strings.HasPrefix(name, "flaky") {
+			parent.flaky = true
+		} else {
+			parent.rerun = true
+		}
+		for _, ancestor := range parser.stack {
+			ancestor.reran = true
+		}
+	}
 	parser.stack = append(parser.stack, node)
 	return nil
 }
@@ -220,6 +239,14 @@ func (parser *junitParser) end(element xml.EndElement) error {
 	node := parser.stack[len(parser.stack)-1]
 	parser.stack = parser.stack[:len(parser.stack)-1]
 	if node.name == "testcase" {
+		switch {
+		case node.flaky && (node.rerun || node.status != ""):
+			return errors.New("the JUnit XML report gives one test case conflicting results")
+		case node.rerun && node.status != "failure" && node.status != "error":
+			return errors.New("the JUnit XML report reruns a test case that did not fail")
+		case node.flaky:
+			parser.total.retried++
+		}
 		parser.total.tests++
 		if node.timing != nil && node.status != "skipped" {
 			if len(parser.timings) < junitDurationLimit {
@@ -250,7 +277,9 @@ func (parser *junitParser) end(element xml.EndElement) error {
 			}
 		}
 	}
-	if node.declared != nil {
+	// Surefire writes a rerun suite's totals from its last rerun alone, so they cannot be checked
+	// against its cases; the cases themselves are still counted.
+	if node.declared != nil && !node.reran {
 		actual := map[string]int{
 			"tests": node.counts.tests, "failures": node.counts.failures,
 			"errors": node.counts.errors, "skipped": node.counts.skipped,
@@ -311,13 +340,21 @@ func junitChildAllowed(parent, child string) bool {
 		return child == "testsuite" || child == "testcase" || child == "properties" ||
 			child == "system-out" || child == "system-err"
 	case "testcase":
-		return child == "failure" || child == "error" || child == "skipped" ||
+		return child == "failure" || child == "error" || child == "skipped" || junitRerunRecord(child) ||
 			child == "properties" || child == "system-out" || child == "system-err"
+	case "flakyFailure", "flakyError", "rerunFailure", "rerunError":
+		return child == "stackTrace" || child == "system-out" || child == "system-err"
 	case "properties":
 		return child == "property"
 	default:
 		return false
 	}
+}
+
+// junitRerunRecord names Surefire's records of an attempt that failed and was run again
+// (`surefire.rerunFailingTestsCount`).
+func junitRerunRecord(name string) bool {
+	return name == "flakyFailure" || name == "flakyError" || name == "rerunFailure" || name == "rerunError"
 }
 
 func junitDeclaredCounts(attributes []xml.Attr) (map[string]int, error) {

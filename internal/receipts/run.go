@@ -639,6 +639,12 @@ func (run *session) judged(did *ran, held *flock.Held) int {
 			map[string]any{"status": StatusUnjudged, "command_status": 0, "why": why},
 			fmt.Sprintf("outcome=unjudged (exit %d: the output of a command that ended 0 could not be judged, %g s)", StatusUnjudged, took))
 	}
+	if verdict.Outcome == judge.PassedOnRetry {
+		run.say("every test passed, but %s. This is not a clean pass.", verdict.Why)
+		return run.notAPass(did, OutcomePassedOnRetry, StatusPassedOnRetry,
+			map[string]any{"status": StatusPassedOnRetry, "command_status": 0, "why": verdict.Why},
+			fmt.Sprintf("outcome=passed-on-retry (exit %d: %s, %g s)", StatusPassedOnRetry, verdict.Why, took))
+	}
 	if verdict.Outcome == judge.NothingRun {
 		if did.structured != nil {
 			run.say("the structured report shows no executed tests.")

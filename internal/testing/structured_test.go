@@ -180,3 +180,32 @@ func TestStructuredScopesRecordVerdictsAndUsePrivateReportPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestAScopePassedOnRetryIsNoPassAndFailsTheGate(t *testing.T) {
+	// The shape of Surefire's report for a test that failed once and passed on its rerun.
+	const flaky = `<testsuite name="s" tests="1" failures="0" errors="0" skipped="0">` +
+		`<testcase name="steady" classname="c"/>` +
+		`<testcase name="flaky" classname="c"><flakyFailure message="first attempt"><stackTrace>trace</stackTrace></flakyFailure></testcase>` +
+		`</testsuite>`
+	run := argv("sh", "-c", `printf '%s' "$2" > "$1"`, "runner", "{report}", flaky)
+	section := map[string]any{
+		"scopes": map[string]any{
+			"full": map[string]any{"judge": "junit", "report": "tests.xml", "run": run},
+			"gate": map[string]any{"steps": argv("producer")},
+		},
+		"steps": map[string]any{"producer": map[string]any{"judge": "junit", "report": "tests.xml", "run": run}},
+	}
+	world := newWorld(t, section, nil)
+	world.commit()
+	world.expectStatus(world.jst("full"), receipts.StatusPassedOnRetry)
+	world.expectLast("outcome=passed-on-retry", "1 test passed only on retry", "counted=2", "no receipt")
+	if got := world.lastRecord(receipts.EventRun).Text("outcome"); got != receipts.OutcomePassedOnRetry {
+		t.Fatalf("recorded outcome %q", got)
+	}
+	world.expectStatus(world.jst("full"), receipts.StatusPassedOnRetry)
+	world.expectLast("outcome=passed-on-retry")
+	world.expectStatus(world.jst("gate"), receipts.StatusPassedOnRetry)
+	world.expectLast("passed-on-retry")
+	world.expectStatus(world.jst("gate", "--resume"), receipts.StatusPassedOnRetry)
+	world.expectLast("passed-on-retry")
+}

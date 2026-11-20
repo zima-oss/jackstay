@@ -23,6 +23,7 @@ status alone: a test command may itself end with 2 or 77.
 | `gave-up` | the machine-wide lock was not had within `--wait` | 75 |
 | `nothing-run` | ended 0, but the output showed no test | 76 |
 | `unjudged` | ended 0, but the output could not be read to its end, or it left processes or files that cannot be attributed | 77 |
+| `passed-on-retry` | every test passed, but the report shows at least one that passed only after its runner retried it (a Surefire `flakyFailure`, a Jest assertion run more than once): **not a pass**, no receipt, and a gate step with it fails the gate | 78 |
 | `timed-out` | a scope's timeout ended the whole process tree | 124 |
 | `stopped` | `jst test` was asked to stop; it ends by that signal | — |
 

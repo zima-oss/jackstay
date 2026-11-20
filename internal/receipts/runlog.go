@@ -183,7 +183,7 @@ func EarlierPass(records []Record, project, key string, maxAge time.Duration, no
 			if count, ok := record.Number("evidence_count"); ok && count != 0 {
 				found = record
 			}
-		case OutcomeFailed, OutcomeNothingRun, OutcomeUnjudged:
+		case OutcomeFailed, OutcomeNothingRun, OutcomeUnjudged, OutcomePassedOnRetry:
 			found = nil
 		}
 	}

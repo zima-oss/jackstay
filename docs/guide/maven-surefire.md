@@ -80,13 +80,34 @@ matches no class, Surefire normally fails. With `-Dsurefire.failIfNoSpecifiedTes
 exits 0 but writes no XML, so jackstay marks the missing declared report `unjudged`. Do not use
 an empty selection as evidence of a completed test run.
 
-The pinned producer test also exercises a TestNG retry that fails once and then passes. Surefire
-3.5.4 writes both attempts under the same test case identity, with the first attempt skipped.
-jackstay returns `unjudged` for that report because it cannot verify which attempt determines the
-final case result. Keep retries out of a scope that requires a counted pass until its report
-format has an explicit, verified retry contract. Independently selected classes can be run as
-separate scopes, or as the two declared reports in the wrapper above. Each declared file must be
-produced by its intended selection.
+## Tests that pass on retry
+
+With `-Dsurefire.rerunFailingTestsCount=N`, Surefire runs a failed test again up to N times. The
+pinned producer test checks this with JUnit 5 (JUnit Jupiter 5.13.4) and these results:
+
+- A test that fails and then passes keeps one test case. Its failed attempts appear as
+  `flakyFailure` or `flakyError` records. jackstay counts the case and judges the run
+  `passed-on-retry` (exit 78).
+- A test that fails every rerun keeps its `failure` or `error`, followed by `rerunFailure` or
+  `rerunError` records. The run is `failed`.
+
+`passed-on-retry` is not a clean pass. jackstay stores no receipt for it, and a gate whose step
+ends `passed-on-retry` fails. The last `jst test:` line says how many tests passed only on retry.
+Read the report's flaky records, fix the test, and run the scope again.
+
+When a suite has rerun records, Surefire writes its `tests`, `failures`, `errors` and `skipped`
+totals from the last rerun only. jackstay therefore does not compare that suite's totals with its
+cases. It still counts every case and checks the results inside each one.
+
+TestNG's `retryAnalyzer` works differently. The pinned producer test also covers a TestNG retry that
+fails once and then passes. Surefire 3.5.4 writes both attempts under the same test case identity,
+with the first attempt skipped. jackstay returns `unjudged` because it cannot tell which attempt
+gives the final result. Do not use TestNG retries in a scope that requires a counted pass.
+
+## Separate scopes
+
+Independently selected classes can run as separate scopes or as the two declared reports in the
+wrapper above. Each declared file must come from its intended selection.
 
 Multi-module aggregation and other Surefire versions need their own producer proof and report
 inventory. Each module needs declared report paths and a completion rule before it can be treated
