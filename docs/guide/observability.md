@@ -76,7 +76,7 @@ or files cannot be read. Exit 2 reports an invalid request or unavailable Git me
 
 ## `jst log`
 
-```sh
+```text
 jst log [--since DUR|TIME] [--until TIME] [--project P | --all-projects] [--session ID]
         [--trace ID] [--tool-call ID] [--command NAME] [--outcome WORD|error] [--tree] [--json] [--limit N]
 ```
@@ -100,7 +100,7 @@ Exit: 0 an answer (an empty one included); 1 no journal could be read; 2 the req
 
 ## `jst stats`
 
-```sh
+```text
 jst stats [REPORT] [--since DUR|TIME] [--until TIME] [--project P | --all-projects]
           [--session ID] [--by version|project|day] [--json] [--claude]
 ```
@@ -128,7 +128,7 @@ jst stats guard --by version
 
 ## `jst doctor`
 
-```sh
+```text
 jst doctor [--json] [--prefix DIR]
 jst doctor --expect NAME
 jst doctor --forget NAME
@@ -165,12 +165,12 @@ shell call. A project quiet for more than three days is a note, not a problem.
 
 ## `jst owner`
 
-```sh
+```text
 jst owner [--session S|all] [--kind typed|queued|widget|declined] [--grep RE] [--since D] [--max-chars N]
 jst owner --stats [--session S]
 ```
 
-Reads what the person running a Claude Code session actually said, from its transcript: typed
+Reads what the person running a Claude Code session said, from its transcript: typed
 messages, messages queued while the agent worked, and answers to the agent's questions. It is for
 finding a ruling to quote, word for word. `--stats` says where the session's tool calls went.
 
