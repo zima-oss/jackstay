@@ -75,34 +75,38 @@ func WriteAtomic(path string, data []byte, mode os.FileMode, limit int) error {
 }
 
 // MakeFolder makes folder and its missing parents with mode, like os.MkdirAll, then fsyncs every
-// folder above it (SyncAncestry), so folder survives a crash with what is written in it. A folder
-// that is already there is synced too: it may have been made by another process, or by an earlier
-// call whose sync failed, and its being there does not say its entry is on disk.
+// folder above it, so folder survives a crash with what is written in it. The parent of a folder
+// this call made must sync, or the call fails. A folder that is already there is synced too, as far
+// up as it may be opened: another process, or an earlier call whose sync failed, may have made it,
+// and its being there does not say its entry is on disk.
 func MakeFolder(folder string, mode os.FileMode) error {
-	if err := os.MkdirAll(folder, mode); err != nil {
-		return err
-	}
-	return SyncAncestry(folder)
-}
-
-// SyncAncestry fsyncs each folder above folder, from its parent up to the root, so the entry of
-// each folder on the way is on disk. It stops at the first folder it may not open: one that no
-// jackstay process made.
-func SyncAncestry(folder string) error {
-	current, err := filepath.Abs(folder)
+	absolute, err := filepath.Abs(folder)
 	if err != nil {
 		return err
 	}
-	for parent := filepath.Dir(current); parent != current; current, parent = parent, filepath.Dir(parent) {
-		if err := SyncFolder(parent); err != nil {
-			if errors.Is(err, os.ErrPermission) {
-				return nil
+	made := map[string]bool{}
+	for current := absolute; filepath.Dir(current) != current; current = filepath.Dir(current) {
+		if _, err := os.Lstat(current); !errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		made[filepath.Dir(current)] = true
+	}
+	if err := os.MkdirAll(absolute, mode); err != nil {
+		return err
+	}
+	for current, parent := absolute, filepath.Dir(absolute); parent != current; current, parent = parent, filepath.Dir(parent) {
+		if err := syncFolder(parent); err != nil {
+			if errors.Is(err, os.ErrPermission) && !made[parent] {
+				return nil // no folder below this one was made here: synced as far as it may be opened
 			}
 			return err
 		}
 	}
 	return nil
 }
+
+// syncFolder is SyncFolder; a test makes it fail.
+var syncFolder = SyncFolder
 
 // SyncFolder fsyncs a folder, so a rename or a new name in it survives a crash.
 func SyncFolder(folder string) error {

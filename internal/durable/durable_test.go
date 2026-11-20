@@ -161,15 +161,28 @@ func TestUpdateUnderTakesTheNamedLockAndMakeFolderMakesTheChain(t *testing.T) {
 	}
 }
 
-func TestMakeFolderSyncsAFolderAnotherProcessMade(t *testing.T) {
-	folder := filepath.Join(t.TempDir(), "made", "elsewhere")
-	if err := os.MkdirAll(folder, 0o700); err != nil {
-		t.Fatal(err)
+func TestMakeFolderFailsWhenANewFoldersParentDoesNotSyncAndARetrySyncsIt(t *testing.T) {
+	root := t.TempDir()
+	folder := filepath.Join(root, "store", "inner")
+	failing := filepath.Join(root, "store")
+	var synced []string
+	syncFolder = func(path string) error {
+		synced = append(synced, path)
+		if path == failing {
+			return &os.PathError{Op: "open", Path: path, Err: os.ErrPermission}
+		}
+		return SyncFolder(path)
 	}
+	t.Cleanup(func() { syncFolder = SyncFolder })
+	if err := MakeFolder(folder, 0o700); err == nil {
+		t.Fatal("a new folder's parent did not sync, and MakeFolder said nothing")
+	}
+	syncFolder = func(path string) error { synced = append(synced, path); return SyncFolder(path) }
+	synced = nil
 	if err := MakeFolder(folder, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := SyncAncestry(folder); err != nil {
-		t.Fatal(err)
+	if len(synced) < 2 || synced[0] != failing || synced[1] != root {
+		t.Fatalf("the retry synced %v; want %s and %s first", synced, failing, root)
 	}
 }
