@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -187,21 +188,28 @@ func TestAppendGivesUpOnAHeldLock(t *testing.T) {
 func TestConcurrentAppendsLeaveWholeLines(t *testing.T) {
 	folder := t.TempDir()
 	payload := strings.Repeat("x", 9000)
+	// An append that cannot take the lock within LockWait writes nothing (ErrLocked); a loaded
+	// machine can make some do so, so the count expected leaves those out.
 	var group sync.WaitGroup
+	var dropped atomic.Int64
 	for worker := range 8 {
 		group.Add(1)
 		go func() {
 			defer group.Done()
 			for count := range 25 {
-				_, _ = AppendLine(folder, "2026-11-17", []byte(fmt.Sprintf("%d-%d %s\n", worker, count, payload)))
+				if _, err := AppendLine(folder, "2026-11-17", []byte(fmt.Sprintf("%d-%d %s\n", worker, count, payload))); err == ErrLocked {
+					dropped.Add(1)
+				} else if err != nil {
+					t.Error(err)
+				}
 			}
 		}()
 	}
 	group.Wait()
 	data, _ := os.ReadFile(filepath.Join(folder, FileName("2026-11-17")))
 	lines := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	if len(lines) != 200 {
-		t.Fatalf("%d lines", len(lines))
+	if want := 200 - int(dropped.Load()); len(lines) != want || want == 0 {
+		t.Fatalf("%d lines, %d expected (%d appends gave up on the lock)", len(lines), want, dropped.Load())
 	}
 	for _, text := range lines {
 		if !strings.HasSuffix(text, payload) {
