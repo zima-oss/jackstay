@@ -426,7 +426,8 @@ nothing is inferred: exit 0 only when all hold, else exit 1 with each reason tha
   repetition, round limit; not scheduling, storage or per-run overrides) and every reviewer of
   `review.use` finished (with `review.use` explicitly empty, any one completed reviewer);
 - after it, no open finding of the ledger blocks;
-- it is not redesign-due, and not past `round_limit` without `--past-limit` having been given.
+- it is not redesign-due, and not a round past `round_limit` that followed a limit round still
+  blocking by today's rule without `--past-limit` having been given.
 No other field promises anything; `blocks: false` on a record is not "reviewed". A single commit
 is checked as `REV^..REV`.
 
