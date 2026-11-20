@@ -1,18 +1,14 @@
 # Codex
 
-jackstay can use [Codex CLI](https://github.com/openai/codex) as a reviewer selected for
-`jst review`. Codex sessions can also load jackstay's guard hook.
+[Codex CLI](https://github.com/openai/codex) is jackstay's default reviewer for `jst review`, and
+Codex sessions can load jackstay's guard hook.
 
-## What works without Codex
-
-`jst` commands run without Codex. A review round can select Claude Code instead. Stored reviews
-remain available to `jst review check`, `last`, `list`, `show` and `prune`, and `jst stats reviews`
-reports them. The AGENTS block written by `jst adopt` mentions review when the project has a
-`review` section. Reviewer selection is described on the [reviews page](review.md).
+Without Codex, every `jst` command still runs: a review round can choose Claude Code instead, and
+stored reviews stay readable by `jst review check`, `last`, `list`, `show` and `prune`.
 
 ## Codex as the reviewer: `jst review`
 
-Install Codex CLI 0.169.0 or newer for scoped review permissions and log in once:
+Install Codex CLI 0.169.0 or newer (for scoped review permissions) and log in once:
 
 ```sh
 codex login
@@ -25,9 +21,9 @@ Choose Codex for a round:
 jst review origin/main..HEAD --task parser --reviewer codex
 ```
 
-`jst review` starts Codex in a read-only view of the pinned revisions. Codex can use local shell
-navigation and search in that view. The review uses a dedicated filesystem permission profile.
-By default it also disables user config, rules, MCP servers and apps. The optional
+`jst review` starts Codex in a read-only view of the pinned revisions, where it can use local shell
+navigation and search, under a filesystem permission profile of its own. By default it also turns
+off your own Codex config, rules, MCP servers and apps. The optional
 `review.reviewers.codex.isolation` list customizes launch options within the required permissions.
 An answer that fails schema validation is `unparsable` (exit 5).
 See [the review design](../design/review.md#1-the-review-section-of-jackstayjson).
@@ -50,7 +46,7 @@ jst review origin/main..HEAD --task parser --reviewer codex --effort high
 that it can write the file before it starts Codex, and refuses with exit 6 otherwise. After Codex
 reports a login failure, every `jst review` refuses until `codex login` has been run again.
 
-The [reviews page](review.md) covers rounds, verdicts and the `review` section.
+Rounds, verdicts and the `review` section: [Reviews](review.md).
 
 ## The guard as a Codex hook
 
@@ -68,11 +64,11 @@ Know its limits before you rely on it:
 - In a linked worktree Codex reads the hooks of the **main checkout's** `.codex/hooks.json`; the
   worktree's own file is ignored (the worktree still needs a `.codex/` folder).
 
-So check that it is heard from:
+So check that it is heard from: tell `jst doctor` to expect the project, run one shell command in
+a Codex session there, and ask again.
 
 ```sh
 jst doctor --expect my-service
-# … one shell command in a Codex session in that project …
 jst doctor
 ```
 

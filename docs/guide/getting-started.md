@@ -1,71 +1,49 @@
-# Getting started
+# Start in five minutes
 
-Install jackstay, add its project files, run a test with evidence and check the guard. The first
-three steps work in a terminal. The fourth checks the optional agent hook in a Claude Code
-session.
-
-## What an install leaves to you
-
-The install script installs `jst` and changes nothing else. These steps are yours, and this page
-walks through each:
-
-| Step | Where | Needed for |
-|---|---|---|
-| Put `~/.local/bin` on `PATH` | your shell's profile; the script prints the exact line when it is missing | running `jst` |
-| Let Claude Code's sandbox write `~/.jackstay` | `sandbox.filesystem.allowWrite` in `~/.claude/settings.json` | records of runs in sandboxed sessions ([Claude Code](claude-code.md#the-sandbox)) |
-| `jst adopt --apply`, then commit what it wrote | each project | the guard hook and the `AGENTS.md` block |
-| Accept Claude Code's trust dialog | the first session in each project | Claude Code loading the hook |
-| Optional: install Codex or Claude Code and authenticate | your terminal | Review rounds with the selected provider ([Reviews](review.md)) |
-| Optional: `gh auth login`, and `github.account` in `jackstay.json` | your terminal; the project | `jst gh` and GitHub in `jst tidy` ([Branches and GitHub](branches-and-github.md#the-account)) |
-
-`jst doctor` checks what it can of these, and names the fix of each problem it finds.
+By the end of this page one of your projects is adopted, its tests run through jackstay and are
+counted, and you have seen the guard refuse a command. Steps 1 to 3 work in any terminal; step 4
+needs a Claude Code session.
 
 ## 1. Install
 
-On macOS or Linux, x86-64 or arm64, in sh, bash or zsh (in fish or another shell, run `sh`
-first):
+On macOS or Linux, in sh, bash or zsh (in fish or another shell, run `sh` first):
 
 ```sh
 script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && sh -c "$script"
 ```
 
-It installs `jst` into `~/.local/bin`, without `sudo`, after checking the download against the
-release's checksums. When `~/.local/bin` is not on your `PATH`, it prints the line to add (for sh,
-bash or zsh; for another shell, the folder); add it, open a new terminal, then:
+It installs `jst` into `~/.local/bin` without `sudo`. If that folder is not on your `PATH`, the
+script prints the line to add; add it, open a new terminal, then check the machine:
 
 ```sh
 jst doctor
 ```
 
-If you use Claude Code with its sandbox on, allow `~/.jackstay` in `~/.claude/settings.json`, so
-runs inside sandboxed sessions are recorded (`jst doctor` reports `sandbox-blocks-state` until then):
-
-```json
-{"sandbox": {"filesystem": {"allowWrite": ["~/.jackstay"]}}}
-```
-
-To read the script first, or to install another way: [Install](install.md).
+Each problem it reports is followed by a `fix:` line. If you use Claude Code with its sandbox on,
+let the sandbox write `~/.jackstay` ([Claude Code](claude-code.md#the-sandbox)), or runs inside
+sessions are not recorded. To read the script first, or to install another way:
+[Install](install.md).
 
 ## 2. Adopt a project
 
-In the project's repository:
+In the project's repository, look at the plan, write it, and commit what it wrote:
 
 ```sh
 cd my-service
-jst adopt            # what jackstay would write here; nothing is written
-jst adopt --apply    # write it
+jst adopt
+jst adopt --apply
 git add jackstay.json AGENTS.md CLAUDE.md .claude/settings.json
 git commit -m "Adopt jackstay"
 ```
 
-This writes `jackstay.json`, a block in `AGENTS.md` that teaches agents the tools, and the guard
-hook in `.claude/settings.json`. More, and how to bring an organisation's rules with a profile:
+You now have a `jackstay.json`, a block in `AGENTS.md` that tells agents which `jst` commands to
+use, and the guard hook in `.claude/settings.json`. Profiles, conflicts and later updates:
 [Adopting a project](adopt.md).
 
 ## 3. Run your tests through jackstay
 
-Declare how your tests run, as a scope in `jackstay.json`. The `evidence` pattern finds the number
-of tests in the output; only a run whose tests were counted is a pass:
+Tell jackstay how your tests run: add a scope to `jackstay.json`. The `evidence` pattern finds the
+number of tests in the output, because only a run whose tests were counted is a pass:
 
 ```json
 "test": {
@@ -78,64 +56,53 @@ of tests in the output; only a run whose tests were counted is a pass:
 ```
 
 ```sh
-jst check            # is jackstay.json usable
+jst check
 jst test quick
 ```
 
-```
+```text
 12 passed in 0.84s
 jst test: the whole output: ~/.jackstay/my-service/outputs/18e9237caf5bb0c0-15904.log  (`jst test last` shows this again)
 jst test: outcome=passed (0 s, counted=12)
 ```
 
-Read the last `jst test:` line. `exited-0` means the command ended 0 but nothing counted its tests,
-which is not a pass. After a failure, `jst test last` shows what went wrong without running again.
-Add a `gate` scope for what a change must pass before it merges: [Tests](tests.md).
+Read the last `jst test:` line. `exited-0` means the command ended 0 but nothing counted its tests:
+that is not a pass. After a failure, `jst test last` shows what went wrong without running the
+tests again.
 
-Run `jst adopt --apply` again after adding a section: the `AGENTS.md` block then tells agents about
-it.
+Run `jst adopt --apply` again whenever you add a section to `jackstay.json`, so the `AGENTS.md`
+block tells agents about it. More scopes, the gate and receipts: [Tests](tests.md).
 
-## 4. See the guard at work
+## 4. See the guard refuse a command
 
 Open a Claude Code session in the project and accept its trust dialog: Claude Code loads a
-project's hooks only after it. Then ask the agent to run exactly this line in its shell:
+project's hooks only after that. Ask the agent to run exactly this line:
 
 ```sh
 false && rm -r jackstay-guard-probe
 ```
 
-The line can delete nothing: `false` fails, so the shell never reaches `rm`. The guard reads the
-whole line before it runs, and refuses it for the `rm -r`. With the hook working, the agent's shell
-tool answers with that refusal, in the session itself:
+The line can delete nothing, because `false` fails and the shell never reaches `rm`. The guard
+reads the whole line before it runs and refuses it for the `rm -r`. The agent's shell tool
+answers:
 
-```
+```text
 jst guard refused this command; nothing was run.
 - `rm -r jackstay-guard-probe`: a recursive rm outside temporary and regenerable folders cannot be undone: jackstay-guard-probe. Instead: move it to jackstay's trash, which can be undone: `jst trash <path>`; …
 ```
 
-Only the hook can stop the agent's own command, so that answer is the proof. Anything else (the
-line ran and ended with status 1, or a warning instead of a refusal) means the check failed: either
-the hook is not loaded ([Claude Code](claude-code.md#what-can-go-wrong) says what to look at), or
-the project's `jackstay.json` has set `rm-recursive` to `warn` or `off` ([The guard](guard.md#levels-and-your-own-rules)).
+Only the hook can stop the agent's own command, so that answer proves the hook works. If the line
+ran instead, or you got a warning, either the hook is not loaded
+([Claude Code](claude-code.md#what-can-go-wrong)) or the project has set `rm-recursive` to `warn`
+or `off` ([The guard](guard.md#levels-and-your-own-rules)).
 
-To ask the guard about a command yourself, without an agent, use `jst guard check -- 'COMMAND'`: it
-judges the command as the hook would, whether or not any session has loaded the hook. What the
-guard refuses, and how to change a rule's level: [The guard](guard.md). Claude Code's sandbox
-needs `~/.jackstay` writable: [Claude Code](claude-code.md#the-sandbox).
-
-Codex reviews by default:
-
-```sh
-jst review origin/main..HEAD --task my-change
-```
-
-Claude Code can review instead: choose it for a task with `--reviewer claude-code` (a task keeps
-its reviewers from round to round), or for the project in `review.use`.
-
-See [Reviews](review.md) for the result and the check that ties it to a revision.
+Without an agent, ask the guard yourself: `jst guard check -- 'rm -r build'` judges a command as
+the hook would.
 
 ## Next
 
-- [Tests](tests.md): scopes, the gate, receipts.
-- [Branches and GitHub](branches-and-github.md): worktrees per task, tidying what is finished.
+- [Tests](tests.md): more scopes, the gate, receipts.
+- [The guard, discard and trash](guard.md): what is refused and how to undo a discard.
+- [Reviews](review.md): a cold review by Codex or Claude Code.
+- [Branches and GitHub](branches-and-github.md): a worktree per task, tidying what is finished.
 - [Background processes](background.md): servers that stop at a deadline.
