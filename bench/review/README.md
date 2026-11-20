@@ -11,8 +11,10 @@ three commits, each a range), and has every arm review every range, run after ru
 | `claude-jst` | `jst review BASE..HEAD --reviewer claude-code --fresh --json` |
 | `claude-direct` | `claude -p` in the checkout, read tools and `git diff`/`show`/`log` only, the same short prompt |
 
-Both arms of a reviewer use the same model and effort (by default the ones in the user's own
-Codex and Claude Code configuration, `$CODEX_HOME` and `$CLAUDE_CONFIG_DIR` honoured; jackstay's
+Both arms of a reviewer use the same model and effort. The models default to the ones in the user's
+own Codex and Claude Code configuration (`$CODEX_HOME` and `$CLAUDE_CONFIG_DIR` honoured); Codex's
+effort defaults to medium; Claude's effort has no default and must be named (`-claude-effort`), and
+neither arm inherits `CLAUDE_EFFORT` or `CLAUDE_CODE_EFFORT_LEVEL`; jackstay's
 reviewers ignore that configuration, so without one model for both the arms could compare different
 models, and the harness refuses to start without it). Every answer uses jackstay's verdict schema,
 and a direct arm's answer counts only when its process succeeded and the wrapped arm's own reader and
@@ -48,8 +50,8 @@ view (`round.json` `prepare_seconds`); `wait` is getting a reviewer slot and the
 reports (`total_cost_usd`); Codex reports tokens only.
 
 ```sh
-just review-bench -runs 5                    # every arm, 5 runs; about an hour; paid
-just review-bench -runs 1 -arms claude-jst   # one arm, a quick look
+just review-bench -runs 5 -claude-effort medium                     # every arm, 5 runs; about an hour; paid
+just review-bench -runs 1 -arms claude-jst -claude-effort medium     # one arm, a quick look
 ```
 
 Results are written to `results/<time>.md` (the tables) and `.jsonl` (every run). Run it outside

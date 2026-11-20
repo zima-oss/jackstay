@@ -663,6 +663,15 @@ func (measurement *bench) directCodex(run *Run, checkout, base, head string) (re
 	return complete(data)
 }
 
+// directClaudeEnvironment is the caller's environment less what would set the direct Claude arm's
+// effort apart from -claude-effort: a calling session's CLAUDE_EFFORT, and CLAUDE_CODE_EFFORT_LEVEL,
+// which Claude Code puts above --effort. The wrapped arm drops both too (internal/review/access).
+func directClaudeEnvironment(environ []string) []string {
+	return slices.DeleteFunc(slices.Clone(environ), func(pair string) bool {
+		return strings.HasPrefix(pair, "CLAUDE_EFFORT=") || strings.HasPrefix(pair, "CLAUDE_CODE_EFFORT_LEVEL=")
+	})
+}
+
 // complete is a direct arm's answer held to the wrapped arm's rules: one object of the schema, not
 // an incomplete verdict.
 func complete(data []byte) (review.Answer, error) {
@@ -707,7 +716,7 @@ func (measurement *bench) directClaude(run *Run, checkout, base, head string) (r
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
 	started := time.Now()
-	environment := slices.DeleteFunc(os.Environ(), func(pair string) bool { return strings.HasPrefix(pair, "CLAUDE_EFFORT=") })
+	environment := directClaudeEnvironment(os.Environ())
 	captured, runErr := supervise.Capture(ctx, append([]string{"claude"}, args...), checkout, environment, []byte(directPrompt(base, head)))
 	if runErr == nil && captured.Status != 0 {
 		runErr = fmt.Errorf("exit status %d", captured.Status)

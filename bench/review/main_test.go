@@ -142,3 +142,10 @@ func inRepositoryRoot(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(previous) })
 }
+
+func TestTheDirectClaudeArmGetsNoEffortButTheOneAsked(t *testing.T) {
+	kept := directClaudeEnvironment([]string{"PATH=/bin", "CLAUDE_EFFORT=low", "CLAUDE_CODE_EFFORT_LEVEL=high", "ANTHROPIC_MODEL=x"})
+	if !slices.Equal(kept, []string{"PATH=/bin", "ANTHROPIC_MODEL=x"}) {
+		t.Fatalf("environment: %v", kept)
+	}
+}
