@@ -45,8 +45,8 @@ on the command line is the exception (a file outside the tree, copied into the r
       "effort": "medium",
       "timeout_minutes": 20,
       "isolation": ["--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
-                    "-c", "mcp_servers={}", "-c", "features.apps=false",
-                    "-c", "shell_environment_policy.inherit=none"]
+                    "-c", "mcp_servers={}", "-c", "features.apps=false"],
+      "mcp_servers": {}
     }
   },
   "use": ["codex"],
@@ -73,6 +73,7 @@ on the command line is the exception (a file outside the tree, copied into the r
 | `reviewers.codex.model` | passed as `-m`; empty means Codex's own default (with `--ignore-user-config` that is Codex's built-in one, not the user's `config.toml`) | empty |
 | `reviewers.codex.effort` | reasoning effort, passed as `-c model_reasoning_effort="…"`; one of `minimal`, `low`, `medium`, `high`, `xhigh`; empty passes nothing | `medium` |
 | `reviewers.codex.timeout_minutes` | the hard deadline of one run (section 3.4); 1–120 | 20 |
+| `reviewers.<name>.mcp_servers` | MCP servers given back to that reviewer, by name (letters, digits, `_`, `-`): `{"command": "…", "args": […]}`. The user's own servers stay closed (section 3.4); these are the project's explicit choice. Needs `"jackstay_schema": 3` | none |
 | `reviewers.codex.isolation` | the isolation flags, a list of argv words that **replaces** the default list whole. Words jackstay owns are refused here (below) | the set above |
 | `use` | the built-in reviewers a round runs when `--reviewer` is absent, and the reviewers required by `review check`; names must be unique | `["codex"]` |
 | `brief` | the project's standing brief: what a reviewer of this project must know (its threat model, what to ignore). Put at the top of every prompt | none |
@@ -117,9 +118,12 @@ are fixed. Configuration with a nonempty Claude Code `isolation` array is refuse
 
 Jackstay verifies `claude --version` locally and requires 2.1.248 or newer before the run. It
 starts the CLI in the pinned source view with `--print --restricted --safe-mode
---no-session-persistence`. The built-in tool allowlist is `Read,Glob,Grep`, the permission mode is
-`dontAsk`, and MCPs are disabled by a strict empty configuration and a tool denial. The child
-receives the environment variables needed for local CLI use and its chosen authentication. The
+--no-session-persistence --add-dir /`. The built-in tool allowlist is `Read,Glob,Grep,WebFetch,WebSearch`, the permission mode is
+`dontAsk`, and MCPs are disabled by a strict empty configuration and a tool denial; section 3.4
+gives the whole access profile it shares with Codex. Like Codex, it runs outside an agent's
+sandbox, and jackstay checks that first: when Claude Code's state file (`$CLAUDE_CONFIG_DIR/.claude.json`,
+else `~/.claude.json`) exists and cannot be opened for writing, the round stops with exit 6 before
+anything starts ("run `jst review` outside the sandbox"). The
 CLI consumes the prompt through stdin and uses existing CLI credentials. Managed policies and
 managed hooks still apply on machines where administrators configure them.
 [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
@@ -247,17 +251,47 @@ round's report merges their findings by `place`.
 
 ### 3.4 The run
 
-- **argv**: as in section 1. The scoped permission profile enables read-only shell navigation
-  in the view, grants minimal runtime reads, disables shell network access and sets `-a never`. The shell can use standard commands such as
-  `grep` and `cat`, and the CLI installation directory is readable when it is separate from the
-  checkout and review state. Repository instructions are read from the pinned view on demand.
-  Codex CLI 0.169.0 or newer is required.
+- **The reviewer's access profile** (W-090), the same for Codex and Claude Code (`internal/review/access`).
+  The reviewer's task is to read and report, so it is given everything it may need to read, and
+  denied only what it clearly does not need:
+  - **reads everywhere**, read-only. Codex: a permission profile `":root"="read"`. Claude Code:
+    `--add-dir /` with the tools `Read`, `Glob`, `Grep`, `WebFetch`, `WebSearch` only (no tool
+    that writes or runs a command).
+  - **writes only its own temporary folder**, `<attempt>/<reviewer>/tmp`, which is its `TMPDIR`
+    (Codex: the one `"write"` entry of the profile; Claude Code has no writing tool).
+  - **the network is open** (Codex: `network.enabled=true`; Claude Code: its web tools).
+  - **the environment** is the caller's whole one — the user's full `PATH`, locale, proxy
+    variables (with any credentials in their URL), CA bundles, provider settings — less: the calling
+    session's and jackstay's own variables (`CLAUDE*`, `JACKSTAY_*`, `OMC_*`, `GIT_*`,
+    `SSH_AUTH_SOCK`, `SANDBOX_*`), and every variable whose name looks like a credential
+    (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `CREDENTIAL`, `COOKIE`, `AUTH`…)
+    except the reviewer's own provider's login: `OPENAI_*`, `AZURE_OPENAI_*`, `CODEX_API_KEY` for
+    Codex; `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR` and the Bedrock or Vertex
+    credentials when that is its provider, for Claude Code. Codex's shell inherits it
+    (`shell_environment_policy.inherit="all"`, with Codex's own default exclusion of key-like
+    names kept).
+  - **secrets are not read**: `~/.ssh`, `~/.aws`, `~/.azure`, `~/.gnupg`, `~/.kube`,
+    `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.config/gh`, `~/.config/gcloud`,
+    `~/.config/hub`, `~/.git-credentials`, `~/.password-store`, and the keychain
+    (`~/Library/Keychains`) or keyring (`~/.local/share/keyrings`); and `.env` / `.env.*` files.
+    Codex: each path `"none"` in the profile, the `.env` files found under the source view and the
+    live checkout (8 folders deep, 512 files at most) listed one by one. Claude Code: `Read`, `Glob`
+    and `Grep` deny rules for each path and `Read(**/.env)`, `Read(**/.env.*)`, through `--settings`.
+  - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
+    `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
+    local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,
+    `disableAllHooks`. `review.reviewers.<name>.mcp_servers` gives chosen servers back, and their
+    tools only.
+  Checked against Codex 0.169.0 and Claude Code 2.1.328 on macOS (2026-11-20): both were denied
+  `~/.ssh` and an untracked `.env` of the checkout, listed `/usr/share`, and fetched
+  `https://example.com`; Codex's shell had the user's full `PATH` and no `GH_TOKEN` set in the
+  caller, and wrote nothing outside its folder.
+- **argv** (Codex): as in section 1, then the access profile as `-c` permission settings,
+  `-a never`, `--strict-config` and `project_doc_max_bytes=0` (repository instructions are read
+  from the pinned view on demand). Codex CLI 0.169.0 or newer is required.
   [Inside the Codex sandbox](https://openai.com/index/inside-the-codex-sandbox/)
 - **stdin**: the prompt is written to Codex's standard input from memory, which is then closed;
   the argv's last word is `-`. No run ever has an open terminal or an inherited stdin.
-- **environment**: built, not inherited — `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`,
-  `TMPDIR` and `CODEX_HOME` from jackstay's own, where set; nothing else (no `CLAUDE*`, `JACKSTAY_*`, `OMC_*`,
-  `GIT_*`, `OPENAI_*`, no session variables).
 - **working folder**: the tree (`-C` and the process's own).
 - **outputs**: `-o attempt-<k>/<reviewer>/answer.json` (the last message alone); standard output (the
   `--json` events) to `events.jsonl` and standard error to `stderr.txt`, both in that folder,
@@ -552,7 +586,7 @@ named place, ask the owner, or rerun).
 | 3 | done, and a place is due for redesign (W-019) |
 | 4 | done, the round limit is reached and still blocks — or a round past it refused — the owner decides |
 | 5 | a reviewer did not give a usable answer (timeout, failure, no answer, unparsable, inconsistent, no slot) |
-| 6 | the environment refuses: inside a sandbox, no `auth.json`, the login failed earlier and was not renewed, Codex not installed |
+| 6 | the environment refuses: inside a sandbox (Codex's `auth.json` or Claude Code's state file not writable), no `auth.json`, the login failed earlier and was not renewed, a reviewer not installed |
 
 **`jst test` and the gate.** `jst review` is not a test scope and the gate never runs it: a review
 costs money and minutes, needs the network and gives a different answer each time, against W-013

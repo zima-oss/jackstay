@@ -156,8 +156,19 @@ rounds and the required reviewer set for `jst review check`.
   by likelihood and consequence, and a rare one is deferred instead of blocking.
 - `repeat_rounds` (2): how many rounds running a place must draw a finding before it is called due
   for redesign.
-- `reviewers.codex.isolation`: the flags that keep Codex from your own Codex configuration, MCP
-  servers and environment; replace it only if you know why.
+- `reviewers.codex.isolation`: the flags that keep Codex from your own Codex configuration and MCP
+  servers; replace it only if you know why.
+- `reviewers.<name>.mcp_servers`: MCP servers you give back to a reviewer, for example a
+  documentation server: `{"docs": {"command": "docs-mcp", "args": ["--stdio"]}}`. Your own servers,
+  hooks and rules stay off.
+
+### What a reviewer can reach
+
+A reviewer reads everything, read-only, has the network, your full `PATH`, your proxy and CA
+settings, and its own provider's login. It cannot write outside its own temporary folder, read
+`~/.ssh`, `~/.aws`, `~/.config/gh` and the other credential folders, the keychain or any `.env`
+file, or see token-like environment variables other than its provider's. Codex and Claude Code get
+the same profile; the [design](../design/review.md#34-the-run) lists it whole.
 
 `jst check` validates the section. Paths are read from the reviewed commit's tree.
 

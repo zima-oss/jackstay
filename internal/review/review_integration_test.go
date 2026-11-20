@@ -230,11 +230,13 @@ case "$arguments" in
   *--restricted*--safe-mode*--no-session-persistence*--json-schema*--permission-mode*dontAsk*--tools*Read,Glob,Grep*--disallowedTools*mcp__*) ;;
   *) exit 21 ;;
 esac
-case "$arguments" in *dangerously*|*Bash*|*--add-dir*) exit 22 ;; esac
+case "$arguments" in *dangerously*|*Bash*|*Edit*|*Write*) exit 22 ;; esac
+case "$arguments" in *"--add-dir / --settings"*'Read(**/.env)'*) ;; *) exit 25 ;; esac
+case "$TMPDIR" in */claude-code/tmp) [ -d "$TMPDIR" ] ;; *) exit 26 ;; esac
 [ "$(cat head/reviewed.txt)" = pinned-after ]
 [ "$(cat base/reviewed.txt)" = before ]
 [ ! -e .git ] && [ ! -e head/.git ] && [ ! -e base/.git ]
-[ -z "${CLAUDECODE:-}" ] && [ -z "${UNRELATED_FIXTURE_MARKER:-}" ]
+[ -z "${CLAUDECODE:-}" ] && [ -z "${UNRELATED_FIXTURE_TOKEN:-}" ] && [ "${FORWARDED_FIXTURE_MARKER:-}" = kept ]
 prompt=$(cat)
 case "$prompt" in *'changes/base.patch'*) ;; *) exit 23 ;; esac
 case "$prompt" in *uncommitted*|*pinned-after*|*'diff --git'*) exit 24 ;; esac
@@ -248,7 +250,9 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured
 	t.Setenv("JACKSTAY_HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "absent"))
 	t.Setenv("CLAUDECODE", "nested")
-	t.Setenv("UNRELATED_FIXTURE_MARKER", "not-forwarded")
+	t.Setenv("UNRELATED_FIXTURE_TOKEN", "not-forwarded")
+	t.Setenv("FORWARDED_FIXTURE_MARKER", "kept")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 
 	settings := Defaults()
 	settings.Use = []string{"claude-code"}

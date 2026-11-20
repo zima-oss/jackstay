@@ -777,6 +777,26 @@
                 },
                 "type": "array"
               },
+              "mcp_servers": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "args": {
+                      "items": {
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "command": {
+                      "pattern": "\\S",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "type": "object"
+              },
               "model": {
                 "type": "string"
               },

@@ -67,6 +67,12 @@ func Schema3Keys(config Config) []string {
 			found = append(found, key)
 		}
 	}
+	reviewers := objectOf(objectOf(config["review"])["reviewers"])
+	for _, name := range sortedKeys(reviewers) {
+		if has(objectOf(reviewers[name]), "mcp_servers") {
+			found = append(found, "review.reviewers."+name+".mcp_servers")
+		}
+	}
 	if has(objectOf(config["adopt"]), "profile_sha256") {
 		found = append(found, "adopt.profile_sha256")
 	}
@@ -461,7 +467,7 @@ var Table = object(
 	// docs/design/review.md, section 1; the meaning is internal/review's validator.
 	"review", object(
 		"reviewers", mapOf(object("command", str(), "model", text(), "effort", text(), "timeout_minutes", integer(),
-			"isolation", texts())),
+			"isolation", texts(), "mcp_servers", mapOf(object("command", str(), "args", texts())))),
 		"use", texts(), "brief", text(), "template", text(), "cite", texts(), "severities", texts(), "blocking", texts(),
 		"triage", boolean(), "repeat_rounds", integer(), "repeat_severities", texts(), "round_limit", integer(),
 		"max_concurrent", integer(), "queue_minutes", integer(), "store", text(), "keep_days", integer(),

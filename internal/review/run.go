@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/flock"
+	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/review/claude"
 	"github.com/zima-oss/jackstay/internal/review/codex"
 	"github.com/zima-oss/jackstay/internal/review/runner"
@@ -108,7 +109,12 @@ func RealMachine(shared func(parts ...string) (string, error)) (Machine, error) 
 				}
 			}
 			if usesCodex {
-				return codex.CheckEnvironment(codex.Home(os.Environ()), marker)
+				if reason := codex.CheckEnvironment(codex.Home(os.Environ()), marker); reason != "" {
+					return reason
+				}
+			}
+			if slices.ContainsFunc(reviewers, func(reviewer ReviewerSettings) bool { return reviewer.Name == claude.Name }) {
+				return claude.CheckEnvironment(claude.ConfigFile(os.Environ(), homedir.AccountHome()))
 			}
 			return ""
 		},
@@ -595,7 +601,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 	defer func() { endAgent(agent, run, reviewerFolder) }()
 	result := round.Machine.RunReviewer(agentCtx, runner.Request{
 		Reviewer: name, Command: reviewer.Command, Model: reviewer.Model, Effort: reviewer.Effort,
-		Timeout: time.Duration(reviewer.TimeoutMinutes) * time.Minute, Isolation: reviewer.Isolation,
+		Timeout: time.Duration(reviewer.TimeoutMinutes) * time.Minute, Isolation: reviewer.Isolation, MCPServers: reviewer.MCPServers,
 		Tree: tree, PinnedSource: true, RepositoryRoot: round.RepositoryRoot, Folder: reviewerFolder, Prompt: prompt, SchemaPath: schemaPath, Answered: startLock.Release,
 	})
 	startLock.Release()
