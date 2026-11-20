@@ -29,8 +29,8 @@ const rangeUsage = "usage: jst lint range A..B"
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "cards", Summary: "what landed per card, read from history (--check, --stale, snapshot, compare)", Usage: cardsHelp, Run: runCards},
-		cli.Command{Name: "lint range", Summary: "A..B: every commit in the range has valid Card lines", Usage: rangeHelp, Run: runRange},
+		cli.Command{Name: "cards", Summary: "what landed per card, read from history", Usage: cardsHelp, Run: runCards},
+		cli.Command{Name: "lint range", Summary: "every commit in A..B has valid Card lines", Usage: rangeHelp, Run: runRange},
 	)
 }
 

@@ -32,10 +32,7 @@ import (
 )
 
 const usage = `usage: jst owner [--session S|all] [--kind typed|queued|widget|declined] [--grep RE] [--since D] [--max-chars N]
-       jst owner --stats [--session S]
-
---session is a substring of a session file's name, or "all"; without it, the newest session.
---grep is a case-insensitive regular expression (RE2). --since is an ISO timestamp prefix, e.g. 2026-09-11.`
+       jst owner --stats [--session S]`
 
 // Exit codes of the contract.
 const (
@@ -104,7 +101,7 @@ var (
 )
 
 func init() {
-	cli.Register(cli.Command{Name: "owner", Summary: "what the owner said in a Claude Code session (typed, queued, widget answers); --stats: where its tool calls went",
+	cli.Register(cli.Command{Name: "owner", Summary: "what the owner said in a Claude Code session, or where its tool calls went",
 		Usage: help, Run: run})
 }
 

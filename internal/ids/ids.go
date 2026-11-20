@@ -42,7 +42,7 @@ const usage = "usage: jst id next SERIES [--count N] [--json] | jst id list [SER
 const gitTimeout = 60 * time.Second
 
 func init() {
-	cli.Register(cli.Command{Name: "id", Summary: "next SERIES | list | peek SERIES: one counter of numbers per project on this machine", Usage: help, Run: run})
+	cli.Register(cli.Command{Name: "id", Summary: "hand out numbers from one counter per project on this machine", Usage: help, Run: run})
 }
 
 // Series is one entry of jackstay.json's `ids`.

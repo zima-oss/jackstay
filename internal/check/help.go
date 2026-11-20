@@ -3,9 +3,8 @@ package check
 // help is `jst check --help`.
 const help = `usage: jst check [DIR]
 
-Is the jackstay.json of DIR's project (default the working folder) usable? Every problem of every
-section is named; the test section also gets warnings. For a project's own gate. It takes no
-options.
+Names every problem of every section, and warnings for the test section. DIR defaults to the
+working folder.
 
 exit: 0 usable (perhaps with warnings); 2 a problem, or no jackstay.json.
 
