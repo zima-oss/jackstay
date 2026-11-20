@@ -33,11 +33,12 @@ real suites).
 
 ## 1. Scopes
 
-`jst test plan changed --base REF` resolves a scope from a committed range. The order and path rules
+`jst test plan changed --base REF` resolves a scope from a committed range and, in the working tree, its
+uncommitted and untracked paths. The order and path rules
 come from `test.selection`. Empty ranges and paths without rules select `gate`. Rename endpoints
 and deleted paths participate. With selection configured, `jst test changed` dispatches through
 the chosen scope's execution and receipt policy. An explicit `BASE..REV` runs on a clean copy of
-`REV`. See [path-based selection](../guide/tests.md#choose-a-scope-from-committed-paths).
+`REV`. See [path-based selection](../guide/tests.md#choose-a-scope-from-changed-paths).
 
     jst test <scope> [ARGS…] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock]
                      [--resume] [--keep-going] [--commit REV]
