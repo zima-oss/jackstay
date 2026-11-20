@@ -269,7 +269,7 @@ func CheckReasons(settings Settings, store Store, task, base, commit string) ([]
 		}
 	}
 	for _, finding := range Open(record.Outcome.Ledger) {
-		if settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence) {
+		if settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence, finding.OrdinaryPath) {
 			reasons = append(reasons, fmt.Sprintf("%s blocks: %s", finding.ID, finding.Title))
 		}
 	}
