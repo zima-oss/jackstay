@@ -88,7 +88,8 @@ Keys of a scope (all optional except `run` or `steps`):
 - `timeout` (seconds of the command's own run) and `lock_wait` (seconds waiting for the lock,
   counted apart; default: the scope's `timeout`); section 3.
 - `requires`: checks run first, each with its own `timeout` (default 60 s) and the tree stop of
-  section 3; one that fails or times out makes the outcome `not-started` with its `why`.
+  section 3; one that fails or times out makes the outcome `not-started` with its `why`. Only a
+  scope with `run` takes it ([land.md](land.md) section 7.1).
 - `env`: variables set for the run, recorded.
 - `lock`: whether the scope takes the machine-wide lock when `lock.enabled` is true (default true
   for `full`, `display`, `changed`, steps and `x-` scopes; false for `focused`, `quick`); a scope
