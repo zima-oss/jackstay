@@ -269,7 +269,7 @@ store.
 | key | value | default | meaning |
 |---|---|---|---|
 | `deps` | scope or step names | `[]` | what must pass first, in the order given |
-| `ci` | systems | `[]`: not in CI | the systems CI runs this scope on as a job of its own |
+| `ci` | systems | `[]`: not in CI | the systems whose CI job runs this scope (section 7.4) |
 | `systems` | systems | any | the systems the scope runs on at all |
 | `inputs` | repository-relative globs | every tracked file | the tracked files whose content enters the scope's hash |
 | `cache` | boolean | `true` | `false`: the scope always runs; nothing is read from or written to the cache for it |
@@ -422,7 +422,8 @@ it is still kept. No log is replayed. The lookup is made before the lock and aga
 `passed` or ended `exited-0` for an exit-judged node; the checkout was clean before and after it,
 with the same HEAD and hash; no tracked file or `receipts.extra_files` entry was rewritten while it
 ran, even to the same content (identity, size and times compared); and no failure note of the hash
-is newer than its start.
+is newer than its start. It is written the moment that node passes, so it survives a later failure
+of another node in the same run.
 
 **A failure is never cached.** A node that ends `failed` or `passed-on-retry` writes a failure note
 of its hash; while the note lives (`receipts.max_age_hours` and one more day), the hash gets no
@@ -439,21 +440,20 @@ would skip it and leave the scopes after it without its files.
 through others, is neither read from nor written to the cache: it runs every time. A scope that
 uses another's files needs no key of its own for this.
 
-**The store.** `<jackstay home>/<project>/cache/`: one entry per hash in the receipt's format,
-beside its failure notes. An entry is a few hundred bytes. It is pruned like receipts, by age, and
-at 10,000 entries per project (a constant) the oldest go first. In CI the same folder is kept in
-`actions/cache`, keyed by the scope hashes of the job's graph (`jst test plan` prints them): the
-workflow adopt writes restores it before the run, falling back to the default branch's latest entry
-for the system, and saves it after, so a rerun of a workflow, a pull request, or a merge commit with
-the same inputs skips what passed.
+**The store.** A folder: `test.cache.dir` (schema 3; an absolute path or one starting with `~`,
+so a clean copy made by `--commit` shares it), default `<jackstay home>/<project>/cache/`. It holds
+one entry per hash in the receipt's format, beside its failure notes; an entry is a few hundred
+bytes. It is pruned like receipts, by age, and at 10,000 entries per project (a constant) the
+oldest go first. The cache is a plain `jst test` mechanism: it knows the hash and the folder, and
+nothing of CI jobs, workflows, tags or concurrency; how CI keeps the folder is section 7.4.
 
 **Not in the hash**, written down as limits: files ignored by a committed `.gitignore` (unless in
 `receipts.extra_files`); anything outside the checkout (another package by path, a simulator, the
 keychain); the network; variables not declared in `env` or matched by `receipts.env`; the date and
 time; flakiness. A scope that depends on one of these declares it (`inputs`, `receipts.env`,
 `receipts.extra_files`) or sets `"cache": false`. A scope that reads the network or a database
-outside the repository (a vulnerability database, a package index) sets `"cache": false`. An entry is unsigned: any session of the account can write one, as it can
-a receipt ([W-017](../decisions/W-017-review-fixes-and-threat-model.md)).
+outside the repository (a vulnerability database, a package index) sets `"cache": false`. An entry
+is unsigned: any session of the account can write one, as it can a receipt ([W-017](../decisions/W-017-review-fixes-and-threat-model.md)).
 
 **No crossing between machines.** A local run reuses only passes counted on this machine; a CI
 run reuses only passes counted in CI. `jst test` makes no network call to read or write the cache:
@@ -522,35 +522,26 @@ Where each command is used:
   refuses; `jst release` does not read this record. For jackstay on a Mac that is the whole gate:
   CI covers Linux only ([W-083](../decisions/W-083-no-macos-job-in-ci.md)). Before a tag, a full
   gate on a Mac, including `jst test uncovered`, runs on the version-bump commit.
-- **In CI**: the covered scopes run in jobs whose names the base's rules require; `jst doctor`
-  reports such a job the rules do not require. How scopes map to jobs is open (below).
-- **A commit already checked**: the one rule against repeating CI work on a commit. A CI job of
-  the graph, whatever its shape, for a commit on which a check of the same name on the same system
-  already succeeded, as the host reports it for that commit, runs no test: it runs only the scopes
-  in its graph whose own `cache` is `false`, with their deps, and ends `passed` with the detail
-  `already checked: CHECK` naming that check (exit 0). It counts as `passed` under the last-line
-  rule: the host's check is the record of a counted pass for that exact commit. A release
-  workflow, a manual dispatch and a rerun all meet this rule; there is no rule of their own. The
-  input cache (section 7.3) stays a speed-up across commits.
+- **In CI**: one job per system, below.
 - **The AGENTS block** states the split, generated from the scopes: "CI runs x-go, x-check, x-sec,
   x-docs on Linux and is the gate. Before a pull request: `jst test changed`. Before an install or
   a tag: `jst test uncovered`."
 
-**Open: CI jobs and the graph.** How the scopes with `ci` become CI jobs is not decided. The
-options:
+**One CI job per system.** Each system on which some scope is covered gets one CI job,
+`jst test ci (SYSTEM)`, which runs `jst test ci`: the graph of every scope covered on that system,
+once, in graph order (section 7.2). `jst doctor` reports a system with covered scopes whose job the
+base's rules do not require. The workflow adopt writes is the minimum around that run: an
+`actions/cache` restore step before it and a save step after it, keyed by the system and the commit
+(`jst-cache-SYSTEM-SHA`) with `restore-keys: jst-cache-SYSTEM-`, both on the cache folder (section
+7.3: the default folder, or `test.cache.dir`). So a later commit restores the latest entries for
+the system, and the input hash decides what is skipped. Written limits:
 
-- **A. One graph job per system** (recommended). One job per system, named `jst test (SYSTEM)`,
-  runs the graph of every scope whose `ci` lists that system, so each node runs once on that system
-  by construction.
-- **B. One job per scope, shared nodes refused.** Each scope with `ci` runs as `jst test SCOPE
-  (SYSTEM)`, and `jst check` refuses two jobs of one system whose graphs share a node; the remedy is
-  one composite with `ci`.
-- **C. One job per scope, the cache deduplicates.** As B without the refusal: a shared node is
-  skipped by a job that finds the other job's entry in CI's store, which jobs running at once do
-  not guarantee.
-
-Everything else in this section holds under each option; only the job names doctor checks and the
-`jst check` rule of B depend on it.
+- Two jobs on one commit that run at once (a push and a pull request, say) may both run a scope:
+  neither sees the other's entries until it is saved.
+- An entry GitHub evicts (unused for 7 days, or over the repository's 10 GB) is gone, and its
+  scope runs again.
+- A release, a manual dispatch or a rerun runs the same job: it reuses what the cache holds and
+  runs the rest. Nothing couples one workflow to another's result.
 
 ### 7.5 What it does not do
 
@@ -591,11 +582,9 @@ commit in Linux CI. Each scope with `ci` tests a set no other one does:
 - `gate`: the local composite, with no `ci`. On a Mac it runs `x-go` too, which tests the
   `*_darwin.go` code no CI job reaches; that is what `jst test uncovered` runs there.
 
-jackstay's release workflow runs the Linux CI job on the tagged commit before publishing. By the
-rule of section 7.4 ("A commit already checked"), when GitHub reports that job's check succeeded on
-that commit (from its run on `main`), the job runs only `x-sec`, whose security checks belong to the
-time of the release, and ends `passed` naming the check; otherwise it runs the whole graph. A failure
-of either stops the release.
+Linux CI has one job, `jst test ci (linux)`, running `x-go`, `x-check`, `x-sec` (never cached) and
+`x-docs`. The release workflow runs the same job before publishing, with the same cache steps; a
+failure stops the release.
 
 ### 7.7 What goes away
 
@@ -644,8 +633,9 @@ of either stops the release.
   during the run or the checkout stops being clean; a failure note keeps a later pass of the hash
   from the cache; `timed-out`, `unjudged`, `stopped` write nothing; `--no-reuse` and
   `JACKSTAY_NO_REUSE` skip the read and still write; `"cache": false`, and a scope depending on
-  one directly or through another neither read nor written; age and count pruning; a workflow
-  restoring the default branch's entries; no network call by `jst test` for the cache, and a scope
+  one directly or through another neither read nor written; an entry written when its node passes
+  and kept after a later node fails; `test.cache.dir` used, a relative one refused, and a `--commit`
+  copy sharing it; age and count pruning; no network call by `jst test` for the cache, and a scope
   run by name locally running although CI passed its hash.
 - **Where tests run**: covered through `ci` and through a dependent, only where the scope is
   eligible (section 7.2); every node in exactly one of **here**, **ci** and **elsewhere**, for
@@ -655,18 +645,15 @@ of either stops the release.
   **elsewhere** are empty, and from `jst test uncovered` whenever **here** is empty, **elsewhere**
   listed and never holding it;
   `jst test uncovered` leaving out selector scopes, on a clean copy; `jst check` refusing a dep
-  that needs test arguments and warning about a depended-on scope with no `cache` key; the jobs of
-  the option chosen for CI;
-  a CI job on a commit whose same check already succeeded on that system running only the scopes
-  whose own `cache` is `false`, with their deps, and ending `passed` with `already checked: CHECK`;
-  the same job running the whole graph when that check is missing, failed, of another name or of
-  another system; the release workflow, a manual dispatch and a rerun meeting the rule alike;
-  S-eligibility: an unrestricted composite over a `darwin`-only composite is eligible on Linux
+  that needs test arguments and warning about a depended-on scope with no `cache` key; `jst test
+  ci` running every scope covered on this system once, in graph order; adopt's workflow with the two
+  `actions/cache` steps on the configured folder, keyed by system and commit; S-eligibility: an unrestricted composite over a `darwin`-only composite is eligible on Linux
   through its other deps and `ci: ["linux"]` on it is accepted, while `ci: ["linux"]` on the
   `darwin`-only composite is refused naming the `darwin`-only scope with `run` beneath it, and a
-  scope with `run` over that composite is not Linux-eligible; install accepting a `passed` or `left-to-ci` record of `jst test uncovered` for the commit,
-  project and system, and refusing without one; doctor reporting
-  a `jst test SCOPE (SYSTEM)` job the rules do not require.
+  scope with `run` over that composite is not Linux-eligible; install accepting a `passed` or
+  `left-to-ci` record of `jst test uncovered` for the commit, project and system, and refusing
+  without one; doctor reporting a system with covered scopes whose `jst test ci (SYSTEM)` job the
+  rules do not require.
 - **GitHub pilot**, by hand in a disposable repository with synthetic content: required checks,
   a private repository whose rules cannot be read, update-branch, the native merge queue, and the
   concurrency cancellation of #13.
