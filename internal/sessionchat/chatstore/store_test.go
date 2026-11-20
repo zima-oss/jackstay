@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/durable"
+	"github.com/zima-oss/jackstay/internal/sessionchat/deliverystate"
 )
 
 // clock is a test's time, moved by hand.
@@ -993,6 +994,9 @@ func TestARollbackKeepsItsEntryUntilItsRemovalsAreDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	deliveries := filepath.Dir(f.store.place.deliveries(id))
+	if err := os.Remove(f.store.place.usage()); err != nil {
+		t.Fatal(err)
+	}
 	f.store.syncFolder = func(folder string) error {
 		if folder == deliveries {
 			return errors.New("the disk refused")
@@ -1005,11 +1009,19 @@ func TestARollbackKeepsItsEntryUntilItsRemovalsAreDurable(t *testing.T) {
 	if !exists(filepath.Join(f.store.place.journal(), id)) {
 		t.Fatal("the entry stays until the removals are durable")
 	}
+	if exists(f.store.place.usage()) {
+		t.Fatal("no usage is saved over removals that are not durable")
+	}
 	f.store.syncFolder = durable.SyncFolder
 	if _, err := f.store.Sessions(f.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if exists(filepath.Join(f.store.place.journal(), id)) || exists(f.store.place.envelope(id)) {
 		t.Fatal("the next recovery finishes the rollback")
+	}
+	var rebuilt usage
+	if err := readRecord(f.store.place.usage(), usageBound, &rebuilt); err != nil || rebuilt.Messages != 0 ||
+		rebuilt.Bytes != 2*deliverystate.SessionCharge+deliverystate.ChannelCharge {
+		t.Fatalf("usage is rebuilt from what is left: %+v %v", rebuilt, err)
 	}
 }
