@@ -1,6 +1,7 @@
 # `jst land`: a thin landing behind a small hosting adapter; where tests run
 
-Status: for 0.6.0; sections 1 to 4 and 6 are built, 5 and 7 are not yet. It follows
+Status: for 0.6.0; sections 1 to 6 are built, 7 is not yet (so doctor does not yet report the
+CI-covered scopes of section 5). It follows
 [W-090](../decisions/W-090-landing.md) (one forge-neutral `jst land`, hosting adapters, two autonomy
 modes chosen explicitly) and [W-092](../decisions/W-092-thin-land-and-where-tests-run.md) (the
 landing stays thin; where tests run is the project's declared split between local and CI). It keeps
@@ -160,8 +161,9 @@ after it is typed, then merges (or queues). `--confirm` is refused without a ter
 Three things keep that true for an agent:
 - **`jst lint pr`, rule D0**, keeps a change to `jackstay.json` alone in its pull request, judged by
   the base's file (W-047). Adopt writes the workflow that runs `jst lint pr` for every project with
-  a `land` section, also one without `cards` or `changes`, and doctor checks the base's rules
-  require it.
+  a `land` section, also one without `cards` or `changes`. Doctor reports that workflow missing,
+  or base rules that require no `card-line` check; that D0 is enforced, a person confirms in the
+  host's branch rules (section 5).
 - **`jst land`** reads human paths from the base and the change (step 2), and autonomy from the
   base only. A change that introduces the first `land` section touches `jackstay.json`, so it is a
   person's, and it cannot authorise its own merge: the base it lands on has no policy yet.
@@ -205,11 +207,19 @@ first; the project's file decides.
 
 The upgrade from 0.5.x is three pull requests, planned by adopt and merged by a person: the pin
 (schema 2), the workflows that download 0.6.0, then schema 3 with the `land` section. 0.6.0 reads
-schema 2 without a `land` section.
+schema 2 without a `land` section. Whether the upgrade is due is read from the project's file, and
+a schema-3 key waits for the third step. The second step is done when adopt's plan writes no
+workflow, and, when the project keeps any workflow adopt does not manage, a person has confirmed
+with the exception `upgrade:workflows` that none still downloads an older jackstay, directly or
+through a script or an action; until then the plan, the apply and doctor name the blocker.
 
 `jst doctor` reports: the `land` section valid; the account connects; the rules readable, with the
-checks they require (none: a note); `method` allowed; a required queue; `gh pr merge` refused by
-the guard; and, from section 7, the CI-covered scopes the rules do not require.
+checks they require (none: a note); a missing lint workflow (`.github/workflows/card-line.yml` in
+the checkout; adopt writes it) and readable rules that require no check named `card-line`, both
+problems; whether D0 is enforced is the person's to confirm, in one standing note, since jackstay
+does not verify that a required check runs `jst lint pr` on the base and fails with it (and pull
+requests from forks skip the adopted job); `method` allowed; a required queue; `gh pr merge` refused by the guard; and, from section 7, the CI-covered scopes the rules do
+not require.
 
 ## 6. What is removed
 

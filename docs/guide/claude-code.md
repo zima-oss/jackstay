@@ -103,7 +103,7 @@ on and `~/.jackstay` is not writable. Some commands must still run outside the s
 
 Install Claude Code 2.1.248 or newer. Check your login with `claude auth status`, or provide
 `ANTHROPIC_API_KEY` through the environment. With a desktop login on macOS, run `jst review`
-or `jst review pool next` from a context that can access the system credential store. Check
+from a context that can access the system credential store. Check
 `claude auth status` in that same context if the adapter reports an authentication failure.
 [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
 

@@ -49,6 +49,11 @@ func loadLocalChat(ctx context.Context) (Store, config.ChatPolicy, error) {
 	if err != nil {
 		return Store{}, config.ChatPolicy{}, errors.New("cannot read working directory")
 	}
+	return loadChatAt(ctx, here)
+}
+
+// loadChatAt is the chat of the repository around folder, when its project enables it.
+func loadChatAt(ctx context.Context, here string) (Store, config.ChatPolicy, error) {
 	_, loaded, err := config.Load(here, []string{"chat"})
 	if err != nil {
 		return Store{}, config.ChatPolicy{}, err

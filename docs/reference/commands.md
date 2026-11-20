@@ -553,7 +553,6 @@ example: jst checks wait --timeout 1200
 | [`jst review check`](#jst-review-check) | is this change reviewed and clear? |
 | [`jst review last`](#jst-review-last) | the newest round's report, or the newest attempt's failure |
 | [`jst review list`](#jst-review-list) | the reviews kept |
-| [`jst review pool`](#jst-review-pool) | queue, inspect and maintain local reviews across sessions |
 | [`jst review prune`](#jst-review-prune) | remove tasks past review.keep_days, now |
 | [`jst review show`](#jst-review-show) | one round's report |
 
@@ -564,6 +563,8 @@ A cold review of a commit or a range, in rounds.
 ```text
 usage: jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] [--focus TEXT]
                  [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
+       jst review [REV | BASE..REV] --background [--task NAME] [--reviewer NAME,...] [--focus TEXT]
+                 [--fresh] [--past-limit]
 
 REV alone is reviewed against its first parent (default HEAD). An empty review.use needs
 --reviewer. Give a revision named like a subcommand after --.
@@ -577,10 +578,15 @@ REV alone is reviewed against its first parent (default HEAD). An empty review.u
   --timeout MIN       minutes per run, for this call
   --past-limit        a round past review.round_limit, after the owner's word
   --json              the result as one JSON object instead of the summary
+  --background        start the round under jst bg (pinned to the commits now) and return; the
+                      result comes to this session as a review.finished chat event when chat is
+                      on, else read it with jst review last. An equal review already running is
+                      joined; a different one of the same task is refused until it ends
 
 exit: 0 the round does not block; 1 it blocks; 2 usage or configuration; 3 a place is due for
 redesign; 4 the round limit is reached, the owner decides; 5 a reviewer gave no usable answer;
-6 the environment refuses (a sandbox, no login, reviewer unavailable).
+6 the environment refuses (a sandbox, no login, reviewer unavailable). With --background: 0 started
+or joined; 2 refused.
 
 example: jst review origin/main..HEAD --task parser-fix --reviewer codex
 ```
@@ -631,37 +637,6 @@ exit: 0 the list; 2 the request or configuration, or the index cannot be read or
 example: jst review list --task parser-fix
 ```
 
-### jst review pool
-
-Queue, inspect and maintain local reviews across sessions.
-
-```text
-usage: jst review pool add --repo ABSOLUTE_PATH --base REF --head REF --task NAME --reviewer NAMES
-       jst review pool list [--json]
-       jst review pool inspect [--json]
-       jst review pool prune [--apply] [--json]
-       jst review pool migrate [--apply] [--json]
-       jst review pool subscribers JOB_ID [--json]
-       jst review pool unsubscribe JOB_ID SESSION_ID --generation TOKEN [--apply] [--json]
-       jst review pool next
-       jst review pool retry JOB_ID
-
-A local, persistent, opt-in queue shared by agent sessions. add pins both Git revisions now;
-NAMES is codex, claude-code, or both separated by a comma. next runs one queued review in
-the foreground from its saved repository. It starts no background daemon. retry requeues a
-failed attempt without changing its commits. list reads local jobs; inspect reports queue
-health and notification handoffs without repository or session details. prune previews
-expired terminal history; migrate previews a queue schema upgrade. Both require --apply
-to write. prune retains active work and terminal outcomes awaiting chat delivery.
-subscribers shows recipient IDs and the job generation. unsubscribe previews closing
-one subscription, and requires --apply and that generation to make the change.
-
-exit: 0 request or maintenance succeeded, or no pending job; 1, 3, 4 a completed review verdict;
-2 invalid request or queue state; 5, 6 review failed; 2 when another worker holds the pool.
-
-example: jst review pool add --repo /path/to/repo --base main --head HEAD --task parser --reviewer codex
-```
-
 ### jst review prune
 
 Remove tasks past review.keep_days, now.
@@ -700,9 +675,7 @@ example: jst review show parser-fix 2
 | [`jst brief save`](#jst-brief-save) | save a task brief for this worktree |
 | [`jst brief show`](#jst-brief-show) | show this worktree's saved task brief |
 | [`jst guard`](#jst-guard) | the Claude Code hook that refuses destructive commands |
-| [`jst inventory`](#jst-inventory) | local Git worktrees and observed runner sessions as JSON |
-| [`jst timeline`](#jst-timeline) | local PR, test, review and background stages as JSON |
-| [`jst workspace board`](#jst-workspace-board) | read local status across named repositories |
+| [`jst status`](#jst-status) | this repository's sessions, events, chat, brief and jobs; or one row per repository |
 | [`jst owner`](#jst-owner) | what the owner said in a Claude Code session, or where its tool calls went |
 | [`jst log`](#jst-log) | what jackstay did: commands, a run's tree, a Claude session, a tool call |
 | [`jst stats`](#jst-stats) | reports over jackstay's journal |
@@ -830,55 +803,34 @@ standard error); 64 the words are wrong.
 example: jst guard check -- 'git push --force origin main'
 ```
 
-### jst inventory
+### jst status
 
-Local Git worktrees and observed runner sessions as JSON.
-
-```text
-usage: jst inventory [--since DURATION]
-
-Print the local repository, its linked worktrees, and recent session observations as JSON.
-  --since DURATION  look back at most this long (default 24h, maximum 720h)
-
-Runner and guard coverage are reported from recorded evidence. Missing evidence is unknown.
-exit: 0 report written; 1 journal incomplete; 2 bad request or repository unavailable.
-
-example: jst inventory --since 48h
-```
-
-### jst timeline
-
-Local PR, test, review and background stages as JSON.
+This repository's sessions, events, chat, brief and jobs; or one row per repository.
 
 ```text
-usage: jst timeline [--since DURATION] [--until RFC3339] [--limit N]
+usage: jst status [--json] [--since DURATION] [--limit N] [REPO...]
 
-Print local delivery stages for this Git repository as versioned JSON.
-  --since DURATION  window before --until (default 24h, maximum 720h from now)
-  --until RFC3339   exclusive end of the window (default now)
-  --limit N         keep at most N of the newest rows (default 100, maximum 1000)
+What is going on locally, read without writing anything and without contacting a remote service.
 
-exit: 0 report written; 1 incomplete journal or ancestry scan; 2 bad request or repository unavailable.
+With no REPO it covers this repository, in detail: its worktrees, the agent sessions and delivery
+events (pull requests, tests, reviews, background jobs) the journal recorded in the window, chat
+counts, the brief, background jobs, the last gate and stored receipt (and whether they are for
+HEAD) and active cards. When this project's jackstay.json lists repositories in status.repos, no
+REPO means those instead.
 
-example: jst timeline --since 4h --limit 50
-```
+With one REPO it is that repository in detail; with several, one row per repository (at most 32).
+No message, receipt, card or brief text is shown, and events carry no arguments or prompts.
 
-### jst workspace board
+  --json            one versioned JSON envelope (schema, kind "repository" or "board", the
+                    window, partial, and the repositories)
+  --since DURATION  the window for sessions and events, back from now (default 24h, maximum 720h)
+  --limit N         keep at most the N newest events (default 20, maximum 1000)
 
-Read local status across named repositories.
+exit: 0 every source read; 1 at least one source unknown or partial (the report still printed); 2 the
+request is wrong (an option, a path, more than 32 repositories, or an unusable status.repos).
 
-```text
-usage: jst workspace board [--json] [REPO...]
-
-Read a summary of each explicitly supplied Git checkout. Linked worktrees share chat
-state; gate and receipt summaries are for the named checkout. No remote service is contacted.
-No message bodies, receipt contents, or card bodies are printed.
-At most 32 repositories may be supplied in one call. With none named, the repositories are the
-current project's status.repos in jackstay.json (relative to its folder).
-
-exit: 0 every requested source read; 1 at least one source is unknown or partial; 2 invalid use.
-
-example: jst workspace board --json ~/src/app ~/src/service
+example: jst status --since 4h
+         jst status --json ~/src/app ~/src/service
 ```
 
 ### jst owner
@@ -1021,7 +973,7 @@ example: jst uninstall
 Plan and apply selected machine setup repairs.
 
 ```text
-usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]
+usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
 POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
@@ -1031,6 +983,11 @@ POSIX shell profile and allow jackstay's state folder in Claude Code's enabled s
   --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
+  --autonomy MODE keep merge-when-green or prepare as this machine's answer to who merges
+
+Once per machine, a terminal is also asked who merges a project's changes: the agent when the
+required checks pass, or a person. `jst adopt` offers that answer first when it writes a project's
+land section; the project's jackstay.json decides.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
@@ -1051,7 +1008,11 @@ Is jackstay alive on this machine: the layout, the guard, its calls, the sandbox
 usage: jst doctor [--json] [--prefix DIR] | jst doctor --expect NAME | jst doctor --forget NAME
 
 Checks the installed layout, the jst on PATH, the guard refusing, its logs of the last 7 days, the
-projects heard from and expected, Claude Code's sandbox settings and the lock.
+projects heard from and expected, Claude Code's sandbox settings and the lock; in a project, its
+adoption and, with a land section, its landing policy against the host's branch rules (the
+account, the required checks, the merge method). It reports a missing lint workflow and a base
+whose rules require no `card-line` check; whether rule D0 is enforced is the person's to confirm.
+Only the landing part asks the host.
   --json          the report as one JSON object
   --prefix DIR    the install prefix to inspect (default: this binary's own)
   --expect NAME   add project NAME to the projects whose guard is expected to be heard from
@@ -1068,7 +1029,7 @@ Bring jackstay.json, the AGENTS block, the guard hook and workflows to jackstay'
 
 ```text
 usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--autonomy MODE] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Works on the project around DIR (default: here) and changes nothing else; what it must not decide
@@ -1080,13 +1041,16 @@ is a conflict.
   --pin            with --apply: set adopt.pin, the jst release the workflows download, to this one
   --settings-only  plan or write jackstay.json alone; land it in its own pull request, then
                    --apply again on the merged base
+  --autonomy MODE  merge-when-green or prepare: who merges, for a new land section (at a
+                   terminal --apply asks; without one it needs this flag); an existing one is kept
   --profile PATH   an organisation's profile; --apply records it in jackstay.json
   --profile-sha256 DIGEST  the exact bundle bytes to accept; recorded by --apply
   --json           the plan as one JSON object
   --block          print the AGENTS block this project gets; writes nothing
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
-2 usage, or jackstay.json or the profile cannot be read; 3 (--plan) changes pending, no conflict.
+2 usage, or jackstay.json or the profile cannot be read, or --apply needs --autonomy; 3 (--plan)
+changes or an upgrade's blockers pending, no conflict.
 
 example: jst adopt --plan --json
 ```

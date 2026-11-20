@@ -32,9 +32,6 @@
   checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,
   `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
   (`gh pr merge` is refused), never run `--confirm`.
-- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
-  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
-  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/trunk..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a
@@ -44,9 +41,8 @@
   `jst release prepare` shows the next one.
 - **After a surprising failure**, read `jst log --session ID` (or `--trace ID`) and
   `jst stats REPORT` before asking.
-- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
-- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
-- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
+- **What is going on here**: `jst status` shows worktrees, agent sessions, recent events, chat,
+  the brief and background jobs; `jst status PATH…` gives one row per repository.
 - **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **Share an adoption profile** with `jst profile export`; verify its digest before adopting it.
 - **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools

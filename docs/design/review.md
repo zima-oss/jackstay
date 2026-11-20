@@ -259,7 +259,8 @@ a disagreement is recorded in the report.
 | `unparsable` | `answer.json` is not one JSON object of the schema (the strict reader's error kept) | 5 |
 | `inconsistent` | read, but a check above fails (which one kept) | 5 |
 
-A run that ends in anything but `done` is not retried, and takes no round number (section 4).
+A run that ends in anything but `done` is not retried, and takes no round number; the next run
+of the task reuses N and the answers the other reviewers gave (section 4).
 
 ## 4. Rounds, triage and W-019
 
@@ -279,6 +280,19 @@ old lock.
 `round.json` into it and, last, renames it to `<task>/round-<N>/`: only that rename takes round N, so
 a killed run leaves a failed attempt and the next run still takes N. An attempt where some reviewers
 failed is not a round (exit 5); its successful answers stay readable.
+
+**Only the missing answers are paid for again** ([W-090](../decisions/W-090-review-of-0-6-0.md)). `attempt.json` records the attempt's
+**binding**: a digest of the round number, the task, the commits (base, head, previous), the review
+policy and content policy, each selected reviewer's settings (command, model, effort, isolation; not its deadline),
+and the digests of the prompt, the verdict schema and the `--brief` file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
+starting reviewers, a run looks through the task's earlier attempts (never rounds), newest first,
+for one with its own binding; a reviewer's `answer.json` there is reused when it reads and checks as a
+fresh answer would (section 3.5), is not `incomplete`, and was given with the same model and
+effort, its `run.json` saying `done` — or missing, when jackstay was killed after the answer was
+written. The answer is copied into the new attempt, its run marked `reused` with the attempt it
+came from (the report says so), and only the other reviewers run. When every answer is found, no
+source view is built and no reviewer starts. Anything else that changed (a new commit, a round
+taken meanwhile, a new focus, model or policy) is another binding, and every reviewer runs.
 
 **Chains and the ledger.** A task's rounds form chains: round 1 starts one, `--fresh` starts
 another (a full review with an empty ledger), every other round continues the previous one's chain
@@ -342,6 +356,9 @@ next round is ordinary, usually with `--focus` on the redesigned place.
     attempt-2/ …                          an attempt that did not become a round
       source/                            temporary pinned view while a review runs
   .trees/                                 legacy locked worktrees, if any
+  .requests/<task hash>.json              the task's review running in the background (section 6)
+  .requests/<task hash>-<id>.log          its output
+  .ends/<task hash>-<id>.json             how a background request ended, and which sessions were told
 ```
 
 `attempt.json` is written first, so a failed attempt keeps what it was for (task, attempt, commit,
@@ -390,6 +407,36 @@ start lock (section 2) are not both held within `queue_minutes`, it ends `failed
 Codex never starts. An error opening a lock fails at once. A round's reviewers run concurrently,
 each returning a result value; none outlives the call.
 
+**In the background** (W-090; the 0.5.x reviewer pool,
+its store, worker and nine subcommands, folded into `jst review`). `jst review … --background`, and
+the chat's `review.submit`, resolve the commits now and, under the lock of the task's request file
+`<store>/.requests/<task hash>.json`, write the request (id, task, worktree, repository, commits,
+reviewers, `--fresh`, `--past-limit`, `--focus`, the chat sessions to tell); then start, detached in
+a session of its own, `jst bg --for <budget + 1> --name review-<task> -- jst review --task T
+--reviewer R --request ID -- BASE..REV`, and wait at most 10 s for it to take the task's lock, so
+`jst bg` finds its session among its parents. The `jst bg` entry is the pending run's record
+(`jst procs`). There is no worker: reviews of different tasks run at once, bounded by the slots.
+- **One request per task.** While its process lives (id and start in the process table; without a
+  table, until its deadline), an equal submission (same repository, worktree, task, commits,
+  reviewers, flags) joins it (at most 32 sessions) and a different one is refused (exit 2, task
+  busy).
+- **One end per request.** A request ends exactly once, in `<store>/.ends/<task hash>-<id>.json`,
+  written under the request's lock before the request is removed: the request with its sessions,
+  the outcome (status, word, next step cut to 2 KiB, round, report folder) or *lost*, and which
+  sessions have been told. It ends when its run finishes; when its launch fails (sessions that
+  joined meanwhile included); or, lost, when its process is found gone (by a new submission, by
+  `review.status`, or when any session's chat looks for what it is owed). A request with an end is
+  over: it cannot be joined, and a crash between the end and the removal tells the saved outcome.
+- **Telling the sessions.** Each session's `review.finished` event is made from the end, keyed by
+  request and session, and given to the chat's publisher (`internal/chatevent`,
+  [chat.md](chat.md) section 10); each one stored is recorded in the end, the rest pulled at that
+  session's next inbox read or hook. It names a round and report only while the folder still holds
+  that request's attempt. Older fully told ends of the same repository are removed.
+- **Status.** `review.status` answers for the asking repository (Git common folder and its inode)
+  only: its running request and how its latest ended. It reads nothing of the rounds kept by
+  project, which clones of one project share. The chat checks that the review's repository is the
+  one its session registered in.
+
 ## 7. Commands
 
 `jst review [REV | BASE..REV]` runs a round; `last` prints the newest round's report or the newest
@@ -437,6 +484,7 @@ is checked as `REV^..REV`.
 |---|---|
 | `internal/review` | the settings and their validator; the prompt (embedded template and schema); rounds, chains, triage, places and W-019; the store, index and pruning; the commands (`cli.Register`) |
 | `internal/review/codex` | the Codex runner (it knows no rounds or locks: the caller's start lock is released through a callback at Codex's first answer): argv, environment, stdin, deadline and process group, the event stream (first-answer signal, auth failure), outputs, outcomes |
+| `internal/chatevent` | the event a producer publishes into the chat and the `Publisher` the chat registers ([chat.md](chat.md) section 10); without a chat, publishing answers "unavailable" and the event stays owed |
 
 It reuses `internal/config`, `internal/project`, `internal/strictjson`, `internal/gitcli`,
 `internal/homedir` and `internal/cli`. `internal/review` declares `Reviewer` (`Review(ctx, Request)

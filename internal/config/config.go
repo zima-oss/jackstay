@@ -68,9 +68,6 @@ func Schema3Keys(config Config) []string {
 			found = append(found, key)
 		}
 	}
-	if has(objectOf(config["review"]), "pool") {
-		found = append(found, "review.pool")
-	}
 	if has(objectOf(config["adopt"]), "profile_sha256") {
 		found = append(found, "adopt.profile_sha256")
 	}
@@ -407,7 +404,7 @@ func BriefMaxAge(section map[string]any) time.Duration {
 
 var briefSection = object("max_age_hours", boundedInteger(BriefMaxAgeHoursMinimum, BriefMaxAgeHoursMaximum, BriefMaxAgeHours))
 
-// StatusRepositories are the repositories the overview reads by default (`status.repos`), each
+// StatusRepositories are the repositories `jst status` reads by default (`status.repos`), each
 // relative to the folder of the jackstay.json it is in, or absolute.
 func StatusRepositories(section map[string]any, folder string) []string {
 	var found []string
@@ -433,7 +430,7 @@ var Table = object(
 	"chat", chatSection,
 	// The defaults of `jst brief`.
 	"brief", briefSection,
-	// The repositories the overview reads when none are named.
+	// The repositories `jst status` reads when none are named.
 	"status", object("repos", texts()),
 	// docs/design/land.md, section 1: how `jst land` lands a change; the meaning checks are landProblems'.
 	"land", object("host", str(), "autonomy", str(), "method", str(), "checks", texts(), "human_paths", texts()),
@@ -470,7 +467,6 @@ var Table = object(
 		"use", texts(), "brief", text(), "template", text(), "cite", texts(), "severities", texts(), "blocking", texts(),
 		"triage", boolean(), "repeat_rounds", integer(), "repeat_severities", texts(), "round_limit", integer(),
 		"max_concurrent", integer(), "queue_minutes", integer(), "store", text(), "keep_days", integer(),
-		"pool", object("accepting", boolean()),
 	),
 	// docs/design/implementation.md, section 8.1: the account jackstay acts as on GitHub; the meaning checks are
 	// githubProblems'.

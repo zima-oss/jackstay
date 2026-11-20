@@ -59,6 +59,8 @@ is added in a pull request.
 | [W-090](W-090-agent-chat.md) | 0.6.0 chat: the agent chat follows Claude Code's messaging model and extends it: one store per account, repositories as channels, the engine's session ID, delivery over Claude Code's socket with hooks as the fallback |
 | [W-090](W-090-landing.md) | 0.6.0 landing: one `jst land` behind hosting adapters; two autonomy modes chosen at adopt and setup; `jst gh` and the queue removed |
 | [W-092](W-092-thin-land-and-where-tests-run.md) | `jst land` stays thin: push, open, required checks, merge; where tests run is each project's declared split between local and CI |
+| [W-090](W-090-one-status-command.md) | 0.6.0 overview: one `jst status` replaces `jst timeline`, `jst inventory` and `jst workspace board`; the local merge queue is no longer shown |
 | [W-093](W-093-docs-for-people-and-agents.md) | The documentation: a checked style guide; flags, exit codes and keys in one home, references generated from it; the site by task, with `llms.txt` for agents and the contributors' pages (amends W-077) |
+| [W-090](W-090-review-of-0-6-0.md) | 0.6.0 review: the pool folded into `jst review --background` with chat events, only missing answers paid again after a crash, one access profile for Codex and Claude Code, the wrapper measured |
 | [W-094](W-094-unusual-severe-findings-need-an-ordinary-path.md) | A review finding rated unusual and severe blocks only when it names the ordinary-work path to its setup; otherwise it is rare (amends W-048) |
 | [W-095](W-095-the-socket-is-a-doorbell.md) | Claude Code's messaging socket is only a doorbell; a chat message is delivered when the recipient reads it from its inbox |

@@ -77,12 +77,9 @@ var items = []item{
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
 		"- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`\n" +
-			"  or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.\n" +
+			"  or `codex,claude-code` for others); `--background` returns at once and the result comes as a chat\n" +
+			"  event; `jst review check BASE..REV --task NAME` says if it is clear.\n" +
 			"  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.")},
-	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
-		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
-			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
-			"  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(
@@ -93,12 +90,9 @@ var items = []item{
 	{id: "log", commands: []string{"log", "stats"}, wanted: always, text: fixed(
 		"- **After a surprising failure**, read `jst log --session ID` (or `--trace ID`) and\n" +
 			"  `jst stats REPORT` before asking.")},
-	{id: "timeline", commands: []string{"timeline"}, wanted: always, text: fixed(
-		"- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.")},
-	{id: "inventory", commands: []string{"inventory"}, wanted: always, text: fixed(
-		"- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.")},
-	{id: "workspace-board", commands: []string{"workspace board"}, wanted: always, text: fixed(
-		"- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.")},
+	{id: "status", commands: []string{"status"}, wanted: always, text: fixed(
+		"- **What is going on here**: `jst status` shows worktrees, agent sessions, recent events, chat,\n" +
+			"  the brief and background jobs; `jst status PATH…` gives one row per repository.")},
 	{id: "context-brief", commands: []string{"brief save", "brief show"}, wanted: always, text: fixed(
 		"- **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.")},
 	{id: "owner", commands: []string{"owner"}, wanted: always, text: fixed(
