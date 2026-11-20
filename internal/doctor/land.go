@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/adopt"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gh"
 	"github.com/zima-oss/jackstay/internal/gitcli"
@@ -21,8 +22,9 @@ import (
 type LandProject struct {
 	// Config is the project's jackstay.json, which has a `land` section.
 	Config config.Config
-	// Workflows are the checkout's workflow files (.github/workflows/*.yml and *.yaml), by name.
-	Workflows map[string]string
+	// LintWorkflow is the state of the checkout's card-line.yml, which runs `jst lint pr`
+	// (adopt.LintWorkflowState).
+	LintWorkflow string
 	// Connect is the project's host and its repository (owner/name), as `jst land` connects.
 	Connect func(ctx context.Context) (hosting.Host, string, error)
 }
@@ -52,7 +54,7 @@ func realLandProject() (LandProject, bool) {
 	if _, ok := parsed["land"]; !ok {
 		return LandProject{}, false
 	}
-	return LandProject{Config: parsed, Workflows: readWorkflows(root), Connect: func(ctx context.Context) (hosting.Host, string, error) {
+	return LandProject{Config: parsed, LintWorkflow: adopt.LintWorkflowState(root, parsed), Connect: func(ctx context.Context) (hosting.Host, string, error) {
 		repository, err := remote.RepositoryOf(ctx, gitcli.Git{Dir: root}, parsed.Section("github"))
 		if err != nil {
 			return nil, "", fmt.Errorf("which repository this is cannot be told: %w", err)
@@ -134,7 +136,7 @@ func checkLandRules(report *Report, facts map[string]any, project LandProject, l
 		}
 		facts["required_checks"] = names
 	}
-	checkLintRequired(report, base, rules, project.Workflows)
+	checkLintRequired(report, base, rules, project.LintWorkflow)
 	switch {
 	case !rules.MethodsRead:
 		report.note("land-method", "the merge methods the repository allows cannot be read: whether `%s` is allowed is known at the merge", land.Method)
@@ -162,54 +164,25 @@ func checkLandGuard(report *Report, project config.Config) {
 	}
 }
 
-// checkLintRequired reports whether the base's rules require the check of the job that runs
-// `jst lint pr`, which keeps a change of jackstay.json alone in its pull request (rule D0, section
-// 3.3). The job is found in the workflows, not assumed: none is a problem; one whose check the
-// readable rules do not require is a problem; several, one whose check's name cannot be told, or
-// rules that cannot be read leave it unverified (a note).
-func checkLintRequired(report *Report, base string, rules hosting.Rules, workflows map[string]string) {
-	jobs := lintJobs(workflows)
-	var named []string
-	for _, job := range jobs {
-		named = append(named, job.String())
-	}
+// checkLintRequired reports whether the base's rules require the check of adopt's card-line
+// workflow, which runs `jst lint pr` and keeps a change of jackstay.json alone in its pull request
+// (rule D0, section 3.3). Only the workflow adopt manages is judged: jackstay reads no other
+// workflow to learn what it runs, so the project's own is left to a person (a note).
+func checkLintRequired(report *Report, base string, rules hosting.Rules, state string) {
 	switch {
-	case len(jobs) == 0:
-		report.problem("land-lint-missing", "no workflow in .github/workflows runs `jst lint pr`: rule D0 is not enforced, "+
+	case state == adopt.LintWorkflowMissing:
+		report.problem("land-lint-missing", "there is no .github/workflows/card-line.yml, which runs `jst lint pr`: rule D0 is not enforced, "+
 			"and a change of jackstay.json can land with other files",
-			"`jst adopt --apply` writes card-line.yml, which runs it; then require its check in the branch's rules")
+			"`jst adopt --apply` writes it; then require its `"+adopt.LintCheck+"` check in the branch's rules")
+	case state != adopt.LintWorkflowManaged:
+		report.note("land-lint-unverified", "D0 unverified: the lint workflow is the project's own; check by hand that a required job "+
+			"runs `jst lint pr` and fails with it")
 	case !rules.ChecksRead:
-		report.note("land-lint-unverified", "whether the rules of %s require the check of %s, which runs `jst lint pr`, cannot be read",
-			base, strings.Join(named, ", "))
-	case len(jobs) > 1:
-		report.note("land-lint-unverified", "more than one job runs `jst lint pr` (%s): which check the rules of %s must require is not told",
-			strings.Join(named, ", "), base)
-	case jobs[0].Unknown != "":
-		report.note("land-lint-unverified", "%s runs `jst lint pr`, and its check's name cannot be told (%s): whether the rules of %s require it is unverified",
-			jobs[0], jobs[0].Unknown, base)
-	case !slices.ContainsFunc(rules.Required, func(required hosting.RequiredCheck) bool { return required.Name == jobs[0].Check }):
-		report.problem("land-lint-not-required", fmt.Sprintf("the rules of %s do not require `%s`, the check of %s, which runs `jst lint pr`: "+
-			"a change of jackstay.json can land with other files, past rule D0", base, jobs[0].Check, jobs[0]),
-			"require the `"+jobs[0].Check+"` check in the branch's rules on the host")
+		report.note("land-lint-unverified", "whether the rules of %s require `%s`, the check that runs `jst lint pr`, cannot be read",
+			base, adopt.LintCheck)
+	case !slices.ContainsFunc(rules.Required, func(required hosting.RequiredCheck) bool { return required.Name == adopt.LintCheck }):
+		report.problem("land-lint-not-required", fmt.Sprintf("the rules of %s do not require `%s`, the check of card-line.yml, which runs "+
+			"`jst lint pr`: a change of jackstay.json can land with other files, past rule D0", base, adopt.LintCheck),
+			"require the `"+adopt.LintCheck+"` check in the branch's rules on the host")
 	}
-}
-
-// readWorkflows are the workflow files of the checkout at root, by name; none when there are none.
-func readWorkflows(root string) map[string]string {
-	folder := filepath.Join(root, ".github", "workflows")
-	entries, err := os.ReadDir(folder)
-	if err != nil {
-		return nil
-	}
-	found := map[string]string{}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
-			continue
-		}
-		if data, err := os.ReadFile(filepath.Join(folder, name)); err == nil { // #nosec G304 -- the project's own workflow
-			found[name] = string(data)
-		}
-	}
-	return found
 }

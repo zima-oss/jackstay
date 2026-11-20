@@ -23,7 +23,7 @@ is a conflict.
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
 2 usage, or jackstay.json or the profile cannot be read, or --apply needs --autonomy; 3 (--plan)
-changes pending, no conflict.
+changes or an upgrade's blockers pending, no conflict.
 
 example: jst adopt --plan --json
 
@@ -339,7 +339,7 @@ usage: jst doctor [--json] [--prefix DIR] | jst doctor --expect NAME | jst docto
 Checks the installed layout, the jst on PATH, the guard refusing, its logs of the last 7 days, the
 projects heard from and expected, Claude Code's sandbox settings and the lock; in a project, its
 adoption and, with a land section, its landing policy against the host's branch rules (the
-account, the required checks, the check of the job that runs `jst lint pr`, the merge method).
+account, the required checks, the card-line check of adopt's lint workflow, the merge method).
 Only that last part asks the host.
   --json          the report as one JSON object
   --prefix DIR    the install prefix to inspect (default: this binary's own)

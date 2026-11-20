@@ -37,7 +37,7 @@ is a conflict.
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
 2 usage, or jackstay.json or the profile cannot be read, or --apply needs --autonomy; 3 (--plan)
-changes pending, no conflict.
+changes or an upgrade's blockers pending, no conflict.
 
 example: jst adopt --plan --json`
 
@@ -109,7 +109,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch {
 	case len(plan.Conflicts) > 0:
 		return 1
-	case len(plan.Changes) > 0:
+	case len(plan.Changes) > 0, len(plan.Blockers) > 0:
 		return 3
 	}
 	return 0
@@ -275,6 +275,12 @@ func writeText(out io.Writer, plan *Plan) {
 	for _, exception := range plan.Exceptions {
 		fmt.Fprintf(&text, "  %-28s %s\n", exception.ID, exception.Why)
 	}
+	if len(plan.Blockers) > 0 {
+		fmt.Fprintf(&text, "blockers (%d) — the upgrade's next step is not planned until each is settled:\n", len(plan.Blockers))
+		for _, blocker := range plan.Blockers {
+			fmt.Fprintf(&text, "  %s\n", blocker)
+		}
+	}
 	fmt.Fprintf(&text, "notes (%d):\n", len(plan.Notes))
 	for _, note := range plan.Notes {
 		fmt.Fprintf(&text, "  %s\n", note)
@@ -290,7 +296,7 @@ func Check(dir string) (inProject bool, problems, notes []string) {
 		return false, nil, nil
 	}
 	home, _ := os.UserHomeDir()
-	plan, err := Make(Options{Dir: dir, WorkingDir: dir, Home: home, Has: cli.Has, Version: version.Version})
+	plan, err := Make(Options{Dir: dir, WorkingDir: dir, Home: home, Has: cli.Has, Version: runningVersion})
 	if err != nil {
 		return true, []string{"jst adopt cannot plan this project: " + err.Error()}, nil
 	}
@@ -299,7 +305,10 @@ func Check(dir string) (inProject bool, problems, notes []string) {
 	}
 	if len(plan.Changes) > 0 {
 		problems = append(problems, fmt.Sprintf("%s is not up to date with jackstay %s: %d change(s) pending — run `jst adopt --plan`",
-			plan.Project, version.Version, len(plan.Changes)))
+			plan.Project, runningVersion, len(plan.Changes)))
+	}
+	for _, blocker := range plan.Blockers {
+		problems = append(problems, fmt.Sprintf("%s: the upgrade to jackstay %s is pending: %s", plan.Project, runningVersion, blocker))
 	}
 	problems = append(problems, HookProblems(plan.Root, home)...)
 	for _, exception := range plan.Exceptions {
@@ -312,7 +321,15 @@ func Check(dir string) (inProject bool, problems, notes []string) {
 // other files once jackstay.json has merged; after an apply that wrote jackstay.json and other
 // files, that rule D0 lands them in two pull requests.
 func writeApplied(out io.Writer, plan *Plan, settingsOnly bool) {
+	defer func() {
+		for _, blocker := range plan.Blockers {
+			fmt.Fprintf(out, "jst adopt: blocker: %s\n", blocker)
+		}
+	}()
 	switch {
+	case len(plan.Changes) == 0 && len(plan.Blockers) > 0:
+		fmt.Fprintf(out, "jst adopt: %s: nothing written, and the upgrade is not done: its next step waits for each blocker\n", plan.Project)
+		return
 	case len(plan.Changes) == 0 && settingsOnly:
 		fmt.Fprintf(out, "jst adopt: %s: nothing to write in %s; `jst adopt --apply` writes the other files\n", plan.Project, config.Name)
 		return

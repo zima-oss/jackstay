@@ -133,10 +133,12 @@ of `jst adopt --plan` name them and the one due:
    (`--settings-only` keeps it to `jackstay.json`; the AGENTS block follows in the next apply).
 
 Each plan holds only the step that is due: a later step is planned once the earlier one has merged.
-Step 3 also waits for every workflow you keep (your own, or one kept by an exception) that
-downloads jackstay to name a `JACKSTAY_VERSION` of 0.6.0 or later; until then the plan has a
-`blocker:` note naming the file. Record a profile's digest (`--profile-sha256`) in step 3 or after
-the upgrade: step 1 refuses it, since it needs schema 3.
+If you keep workflows of your own (or by an exception) that download jackstay, step 3 waits for
+you to confirm that each downloads 0.6.0 or later, which jackstay does not read from them: add
+`"upgrade:workflows": "release.yml downloads v0.6.0"` (your own words) to `adopt.exceptions`.
+Until then the plan lists a blocker naming the files, `--apply` prints it and `jst doctor` reports
+the project as not up to date. Record a profile's digest (`--profile-sha256`) in step 3 or after
+the upgrade: before step 3 it is refused, since it needs schema 3.
 
 The generated `card-line.yml` and `release.yml` download the pinned Linux archive and check
 `checksums.txt`. For releases with build attestations, set the repository variable

@@ -340,8 +340,8 @@ func TestAProfilesLandDefaultsNeverChooseAutonomy(t *testing.T) {
 
 // upgradeAtWorkflows is a 0.5.x project whose pin moved to 0.6.0 (step 1 merged) and whose
 // workflows, card-line and release, step 2 wrote; release.yml is then the project's, kept by an
-// exception, and names release.
-func upgradeAtWorkflows(t *testing.T, release func(string) string) string {
+// exception, with more exceptions given.
+func upgradeAtWorkflows(t *testing.T, exceptions string) string {
 	t.Helper()
 	settings := `"jackstay_schema": 2, "project": "p", "changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}, ` +
 		`"release": {"merge": "owner", "first": "0.1.0", "files": [{"path": "VERSION", "match": "^(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"}]}, `
@@ -349,47 +349,82 @@ func upgradeAtWorkflows(t *testing.T, release func(string) string) string {
 		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
 	apply(t, landOptions(root, ""))
 	path := filepath.Join(root, ".github/workflows/release.yml")
-	if err := os.WriteFile(path, []byte(release(read(t, root, ".github/workflows/release.yml"))+"# the project's own step\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(read(t, root, ".github/workflows/release.yml")+"# the project's own step\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "jackstay.json"), []byte(`{`+settings+
-		`"adopt": {"pin": "v0.6.0", "exceptions": {"workflow:release:edited": "the project's own release steps"}}}`), 0o600); err != nil {
+		`"adopt": {"pin": "v0.6.0", "exceptions": {"workflow:release:edited": "the project's own release steps"`+exceptions+`}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return root
 }
 
-// Step 2 is judged from the whole plan, exceptions applied: a kept workflow on 0.6.0 lets step 3
-// come; one still on 0.5.x is a blocker that names it.
-func TestStepThreeWaitsForEveryKeptWorkflowToRun060(t *testing.T) {
-	current := upgradeAtWorkflows(t, func(text string) string { return text })
-	made := plan(t, landOptions(current, ""))
-	if !made.AsksAutonomy() || !slices.ContainsFunc(made.Notes, func(note string) bool { return strings.Contains(note, "step 3 of 3 (due)") }) {
-		t.Fatalf("a kept workflow on 0.6.0: changes %v, notes %v", changeIDs(made.Changes), made.Notes)
+// Step 2 is judged from the whole plan, exceptions applied, and jackstay does not read a kept
+// workflow's release: a person confirms it with the exception upgrade:workflows. Until then a
+// blocker names the file and the exception, and the apply and doctor's check say so.
+func TestStepThreeWaitsForTheKeptWorkflowsToBeConfirmed(t *testing.T) {
+	unconfirmed := upgradeAtWorkflows(t, "")
+	made := plan(t, landOptions(unconfirmed, ""))
+	if made.AsksAutonomy() || slices.Contains(changeIDs(made.Changes), "jackstay.json") || len(made.Blockers) != 1 ||
+		!strings.Contains(made.Blockers[0], ".github/workflows/release.yml") || !strings.Contains(made.Blockers[0], ConfirmWorkflows) {
+		t.Fatalf("unconfirmed: changes %v, blockers %v", changeIDs(made.Changes), made.Blockers)
 	}
-	older := upgradeAtWorkflows(t, func(text string) string {
-		return strings.ReplaceAll(text, `JACKSTAY_VERSION: "v0.6.0"`, `JACKSTAY_VERSION: "v0.5.11"`)
-	})
-	made = plan(t, landOptions(older, ""))
-	blocked := slices.ContainsFunc(made.Notes, func(note string) bool {
-		return strings.HasPrefix(note, "blocker: step 3 is not offered: .github/workflows/release.yml") && strings.Contains(note, "v0.5.11")
-	})
-	if made.AsksAutonomy() || slices.Contains(changeIDs(made.Changes), "jackstay.json") || !blocked {
-		t.Fatalf("a kept workflow on 0.5.11: changes %v, notes %v", changeIDs(made.Changes), made.Notes)
+	var out bytes.Buffer
+	writeApplied(&out, made, false)
+	if strings.Contains(out.String(), "up to date") || !strings.Contains(out.String(), "blocker: step 3 is not offered") {
+		t.Fatalf("the apply hides the blocker:\n%s", out.String())
 	}
-	unreadable := upgradeAtWorkflows(t, func(text string) string {
-		return strings.ReplaceAll(text, `JACKSTAY_VERSION: "v0.6.0"`, `JACKSTAY_VERSION: "${{ vars.RELEASE }}"`)
-	})
-	if made = plan(t, landOptions(unreadable, "")); made.AsksAutonomy() ||
-		!slices.ContainsFunc(made.Notes, func(note string) bool { return strings.Contains(note, "cannot be read") }) {
-		t.Fatalf("a kept workflow whose release cannot be read: notes %v", made.Notes)
+	code, stdout, _ := runIn(t, false, "", "--plan", unconfirmed)
+	if code != 3 || !strings.Contains(stdout, "blockers (1)") {
+		t.Fatalf("the plan with a blocker: exit %d:\n%s", code, stdout)
+	}
+	if _, problems, _ := checkAt(t, unconfirmed); !slices.ContainsFunc(problems, func(problem string) bool {
+		return strings.Contains(problem, "pending") && strings.Contains(problem, ConfirmWorkflows)
+	}) {
+		t.Fatalf("doctor's adoption check: %v", problems)
+	}
+	confirmed := upgradeAtWorkflows(t, `, "upgrade:workflows": "release.yml downloads v0.6.0"`)
+	made = plan(t, landOptions(confirmed, ""))
+	if !made.AsksAutonomy() || len(made.Blockers) != 0 || !slices.ContainsFunc(made.Notes, func(note string) bool { return strings.Contains(note, "step 3 of 3 (due)") }) {
+		t.Fatalf("confirmed: blockers %v, notes %v", made.Blockers, made.Notes)
 	}
 }
 
-// Step 1 keeps the file at schema 2: recording a profile's digest there is refused.
-func TestThePinStepRefusesAProfileDigest(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}}`,
+// checkAt is adopt.Check at version 0.6.0.
+func checkAt(t *testing.T, root string) (bool, []string, []string) {
+	t.Helper()
+	saved := runningVersion
+	t.Cleanup(func() { runningVersion = saved })
+	runningVersion = "0.6.0"
+	return Check(root)
+}
+
+// The upgrade is judged by the project's file: a schema-3 key added after the pin merged, while the
+// workflows still download 0.5.x, is refused rather than raising the file to schema 3.
+func TestASchema3KeyWaitsForStepThree(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "cards": {"dir": "docs/cards", "id": "C-[0-9]+", "unit": "pr", "since": "2026-11-17"}}`,
 		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	old := optionsFor(root)
+	old.Version = "0.5.11"
+	applyTwice(t, old)
+	pin := landOptions(root, "")
+	pin.Pin, pin.SettingsOnly = true, true
+	apply(t, pin)
+	options := landOptions(root, "")
+	options.SettingsOnly = true
+	options.Profile, options.ProfileSHA256 = exportedBundle(t, root)
+	var usage *UsageError
+	if _, err := Make(options); !errors.As(err, &usage) || !strings.Contains(err.Error(), "step 2 of 3") {
+		t.Fatalf("a profile digest before step 3: %v", err)
+	}
+	if !strings.Contains(read(t, root, "jackstay.json"), `"jackstay_schema": 2`) {
+		t.Fatal("the file left schema 2")
+	}
+}
+
+// exportedBundle is a profile bundle beside the project and its digest.
+func exportedBundle(t *testing.T, root string) (string, string) {
+	t.Helper()
 	source := exampleProfile(t, root, `{}`, nil)
 	var bundle, failure bytes.Buffer
 	if code := cli.Dispatch([]string{"profile", "export", source}, nil, &bundle, &failure); code != 0 {
@@ -400,9 +435,17 @@ func TestThePinStepRefusesAProfileDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(bundle.Bytes())
+	return bundlePath, hex.EncodeToString(digest[:])
+}
+
+// Step 1 keeps the file at schema 2: recording a profile's digest there is refused.
+func TestThePinStepRefusesAProfileDigest(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}}`,
+		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	bundlePath, digest := exportedBundle(t, root)
 	options := landOptions(root, "")
 	options.Pin, options.SettingsOnly = true, true
-	options.Profile, options.ProfileSHA256 = bundlePath, hex.EncodeToString(digest[:])
+	options.Profile, options.ProfileSHA256 = bundlePath, digest
 	var usage *UsageError
 	if _, err := Make(options); !errors.As(err, &usage) || !strings.Contains(err.Error(), "adopt.profile_sha256") ||
 		!strings.Contains(err.Error(), "step 3") {
@@ -411,5 +454,33 @@ func TestThePinStepRefusesAProfileDigest(t *testing.T) {
 	options.ProfileSHA256 = ""
 	if _, err := Make(options); err != nil {
 		t.Fatalf("step 1 with a loose profile: %v", err)
+	}
+}
+
+// Doctor confirms rule D0 only for card-line.yml as adopt writes it for the project.
+func TestTheLintWorkflowStateIsAdoptsOwnFileOnly(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	state := func() string {
+		return LintWorkflowState(root, mustParse(t, read(t, root, "jackstay.json")))
+	}
+	if got := state(); got != LintWorkflowMissing {
+		t.Fatalf("before adoption: %s", got)
+	}
+	applyTwice(t, landOptions(root, config.AutonomyPrepare))
+	if got := state(); got != LintWorkflowManaged {
+		t.Fatalf("as adopt wrote it: %s", got)
+	}
+	path := filepath.Join(root, ".github/workflows/card-line.yml")
+	if err := os.WriteFile(path, []byte(read(t, root, ".github/workflows/card-line.yml")+"      - run: echo more\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := state(); got != LintWorkflowOwn {
+		t.Fatalf("edited: %s", got)
+	}
+	if err := os.WriteFile(path, []byte("name: card-line\non: pull_request\njobs:\n  card-line:\n    steps:\n      - run: jst lint pr\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := state(); got != LintWorkflowOwn {
+		t.Fatalf("the project's own: %s", got)
 	}
 }

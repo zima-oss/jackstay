@@ -206,13 +206,17 @@ first; the project's file decides.
 
 The upgrade from 0.5.x is three pull requests, planned by adopt and merged by a person: the pin
 (schema 2), the workflows that download 0.6.0, then schema 3 with the `land` section. 0.6.0 reads
-schema 2 without a `land` section.
+schema 2 without a `land` section. Whether the upgrade is due is read from the project's file, and
+a schema-3 key waits for the third step. The second step is done when adopt's plan writes no
+workflow, and a person has confirmed with the exception `upgrade:workflows` that every workflow the
+project keeps which downloads jackstay downloads 0.6.0; until then the plan, the apply and doctor
+name the blocker.
 
 `jst doctor` reports: the `land` section valid; the account connects; the rules readable, with the
-checks they require (none: a note); the check of the job that runs `jst lint pr` required, the job
-found in the checkout's workflows (its `name:`, else its ID; none is a problem; several, a name
-with an expression or a matrix, or rules unread leave it unverified); `method` allowed; a required
-queue; `gh pr merge` refused by the guard; and, from section 7, the CI-covered scopes the rules do
+checks they require (none: a note); rule D0's check `card-line` required, judged only for the
+`card-line.yml` adopt manages (missing: a problem; the project's own, edited or a profile's: a note
+to check by hand, since jackstay reads no workflow to learn what it runs; rules unread: a note);
+`method` allowed; a required queue; `gh pr merge` refused by the guard; and, from section 7, the CI-covered scopes the rules do
 not require.
 
 ## 6. What is removed

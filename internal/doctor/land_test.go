@@ -3,11 +3,10 @@ package doctor
 import (
 	"context"
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 
-	"github.com/zima-oss/jackstay/internal/adopt/templates"
+	"github.com/zima-oss/jackstay/internal/adopt"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/hosting"
 )
@@ -23,36 +22,19 @@ func (host fakeHost) Rules(context.Context, string) (hosting.Rules, error) {
 	return host.rules, nil
 }
 
-// adoptedWorkflows are the workflows `jst adopt` writes for a land project: card-line.yml.
-func adoptedWorkflows(t *testing.T) map[string]string {
-	t.Helper()
-	for _, template := range templates.Embedded() {
-		if template.Name == "card-line" {
-			body, err := templates.Render(template.Text, map[string]string{"jackstay_version": "v0.6.0",
-				"jackstay_repository": templates.Repository, "release_base": "main"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			return map[string]string{"card-line.yml": templates.Marked(template.Name, body)}
-		}
-	}
-	t.Fatal("no card-line template")
-	return nil
-}
-
 func landProject(t *testing.T, text string, rules hosting.Rules, connectErr error) func() (LandProject, bool) {
 	t.Helper()
-	return landProjectWith(t, text, adoptedWorkflows(t), rules, connectErr)
+	return landProjectWith(t, text, adopt.LintWorkflowManaged, rules, connectErr)
 }
 
-func landProjectWith(t *testing.T, text string, workflows map[string]string, rules hosting.Rules, connectErr error) func() (LandProject, bool) {
+func landProjectWith(t *testing.T, text string, lintWorkflow string, rules hosting.Rules, connectErr error) func() (LandProject, bool) {
 	t.Helper()
 	parsed, err := config.Parse([]byte(text))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return func() (LandProject, bool) {
-		return LandProject{Config: parsed, Workflows: workflows, Connect: func(context.Context) (hosting.Host, string, error) {
+		return LandProject{Config: parsed, LintWorkflow: lintWorkflow, Connect: func(context.Context) (hosting.Host, string, error) {
 			if connectErr != nil {
 				return nil, "", connectErr
 			}
@@ -128,9 +110,8 @@ func TestLandChecksSkipAProjectWithoutLand(t *testing.T) {
 	}
 }
 
-// The check rule D0 needs is the one the job running `jst lint pr` reports, read from the
-// workflows, whatever its name.
-func TestTheLintCheckIsFoundInTheWorkflows(t *testing.T) {
+// Rule D0 is confirmed only for the workflow adopt manages: its `card-line` check required.
+func TestTheLintCheckIsAdoptsCardLine(t *testing.T) {
 	file := `{"jackstay_schema":3,"land":{"autonomy":"prepare"}}`
 	requires := func(names ...string) hosting.Rules {
 		rules := hosting.Rules{ChecksRead: true, MethodsRead: true, Methods: []hosting.Method{hosting.Squash}}
@@ -139,40 +120,25 @@ func TestTheLintCheckIsFoundInTheWorkflows(t *testing.T) {
 		}
 		return rules
 	}
-	moved := map[string]string{"card-line.yml": "name: card-line\non: pull_request\njobs:\n  card-line:\n    runs-on: ubuntu-latest\n" +
-		"    steps:\n      - run: echo nothing\n", "policy.yml": "name: policy\non: pull_request\njobs:\n  rules:\n" +
-		"    name: Policy rules\n    runs-on: ubuntu-latest\n    steps:\n      - name: jst lint pr\n        run: |\n" +
-		"          set -e\n          jst lint pr --event \"$GITHUB_EVENT_PATH\"\n"}
-	expression := map[string]string{"lint.yml": "jobs:\n  lint:\n    name: ${{ github.workflow }} lint\n    steps:\n      - run: jst lint pr\n"}
-	matrix := map[string]string{"lint.yml": "jobs:\n  lint:\n    strategy:\n      matrix:\n        os: [linux]\n    steps:\n      - run: jst lint pr\n"}
-	twice := map[string]string{"a.yml": "jobs:\n  one:\n    steps:\n      - run: jst lint pr\n", "b.yml": "jobs:\n  two:\n    steps:\n      - run: jst lint pr\n"}
 	for _, testCase := range []struct {
-		name            string
-		workflows       map[string]string
+		name, state     string
 		rules           hosting.Rules
 		problems, notes string
-		says            string
 	}{
-		{"the adopted card-line, required", adoptedWorkflows(t), requires("card-line"), "", "", ""},
-		{"the adopted card-line, not required", adoptedWorkflows(t), requires("build"), "land-lint-not-required", "", "`card-line`"},
-		{"lint moved to another job, card-line still required", moved, requires("card-line"), "land-lint-not-required", "", "`Policy rules`, the check of policy.yml job rules"},
-		{"lint moved, its check required", moved, requires("Policy rules"), "", "", ""},
-		{"no workflow", nil, requires("card-line"), "land-lint-missing", "", ""},
-		{"an expression name", expression, requires("lint"), "", "land-lint-unverified", "expression"},
-		{"a matrix", matrix, requires("lint"), "", "land-lint-unverified", "matrix"},
-		{"two jobs", twice, requires("one", "two"), "", "land-lint-unverified", "a.yml job one, b.yml job two"},
+		{"managed and required", adopt.LintWorkflowManaged, requires("build", "card-line"), "", ""},
+		{"managed, not required", adopt.LintWorkflowManaged, requires("build"), "land-lint-not-required", ""},
+		{"managed, rules unread", adopt.LintWorkflowManaged, hosting.Rules{MethodsRead: true, Methods: []hosting.Method{hosting.Squash}},
+			"land-rules-unread", "land-lint-unverified"},
+		{"edited or the project's own", adopt.LintWorkflowOwn, requires("card-line"), "", "land-lint-unverified"},
+		{"missing", adopt.LintWorkflowMissing, requires("card-line"), "land-lint-missing", ""},
 	} {
 		report := Report{Facts: map[string]any{}, Problems: []Finding{}, Notes: []Finding{}}
-		checkLand(&report, Inputs{Land: landProjectWith(t, file, testCase.workflows, testCase.rules, nil)})
+		checkLand(&report, Inputs{Land: landProjectWith(t, file, testCase.state, testCase.rules, nil)})
 		if got := kinds(report.Problems); got != testCase.problems {
 			t.Errorf("%s: problems %q, want %q (%+v)", testCase.name, got, testCase.problems, report.Problems)
 		}
 		if got := kinds(report.Notes); got != testCase.notes {
 			t.Errorf("%s: notes %q, want %q (%+v)", testCase.name, got, testCase.notes, report.Notes)
-		}
-		all := append(append([]Finding{}, report.Problems...), report.Notes...)
-		if testCase.says != "" && !slices.ContainsFunc(all, func(finding Finding) bool { return strings.Contains(finding.Text, testCase.says) }) {
-			t.Errorf("%s: no finding says %q: %+v", testCase.name, testCase.says, all)
 		}
 	}
 }

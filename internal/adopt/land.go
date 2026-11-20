@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -20,6 +19,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/install"
+	"github.com/zima-oss/jackstay/internal/release"
 )
 
 // The two answers to adopt's one question (docs/design/land.md section 5), recommended first.
@@ -67,11 +67,16 @@ func (planner *planner) landSection(original *jsondoc.Object, chosen *profile.Pr
 			planner.upgradeNotes(1)
 			return false, nil
 		}
-		if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
+		// The upgrade is due by the project's own file, never by a schema this plan would raise: a
+		// schema-2 file whose workflows download a pinned jackstay. Without a pin no workflow of
+		// jackstay's downloads one yet, so the file moves to schema 3 with this apply's own pin.
+		if schema, _ := original.Get("jackstay_schema"); pin != "" && fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
 			if !planner.options.landNow {
 				// Steps 2 and 3: the workflows are those the coming policy needs; Make judges from
 				// this whole plan whether step 2 is done, and plans again with landNow if it is.
+				// A schema-3 key this apply adds waits for step 3.
 				planner.upgrading, planner.landComing = true, true
+				planner.deferred = planner.schema3Added(original)
 				return true, nil
 			}
 			planner.upgradeNotes(3)
@@ -134,10 +139,8 @@ func (planner *planner) upgradeNotes(due int) {
 	}
 }
 
-// pinStepKeepsSchema refuses a first step that would raise jackstay.json to schema 3: a key it adds
-// that needs 3 (adopt.profile_sha256 from --profile-sha256, say) would be refused by the 0.5.x the
-// workflows still download.
-func (planner *planner) pinStepKeepsSchema(original *jsondoc.Object) error {
+// schema3Added are the keys needing schema 3 that this plan adds to the project's file.
+func (planner *planner) schema3Added(original *jsondoc.Object) []string {
 	before := config.Schema3Keys(config.Config(jsondoc.ToPlain(original).(map[string]any)))
 	var added []string
 	for _, key := range config.Schema3Keys(planner.plain) {
@@ -145,54 +148,53 @@ func (planner *planner) pinStepKeepsSchema(original *jsondoc.Object) error {
 			added = append(added, key)
 		}
 	}
-	if len(added) == 0 {
-		return nil
-	}
-	return &UsageError{fmt.Sprintf("the upgrade's first step moves the pin alone and keeps jackstay.json at schema 2, and this "+
-		"apply would add `%s`, which needs schema 3: leave it out now (record the profile digest in step 3, or after the upgrade)",
-		strings.Join(added, "`, `"))}
+	return added
 }
 
-// downloadsJackstay finds a workflow that downloads a jackstay release; pinnedVersion reads the
-// release it names.
-var (
-	downloadsJackstay = regexp.MustCompile(`JACKSTAY_VERSION|` + regexp.QuoteMeta(templates.Repository))
-	pinnedVersion     = regexp.MustCompile(`(?m)^\s*JACKSTAY_VERSION:\s*["']?v?([0-9]+\.[0-9]+\.[0-9]+)["']?\s*(#.*)?$`)
-)
+// schemaWaits refuses a key needing schema 3 before the upgrade's third step: the 0.5.x the
+// workflows still download would refuse the file (adopt.profile_sha256 from --profile-sha256, say).
+func schemaWaits(step int, added []string) error {
+	return &UsageError{fmt.Sprintf("the upgrade's step %d of 3 keeps jackstay.json at schema 2, and this apply would add `%s`, "+
+		"which needs schema 3: leave it out now (record the profile digest in step 3, or after the upgrade)",
+		step, strings.Join(added, "`, `"))}
+}
+
+// pinStepKeepsSchema refuses a first step that would raise jackstay.json to schema 3.
+func (planner *planner) pinStepKeepsSchema(original *jsondoc.Object) error {
+	if added := planner.schema3Added(original); len(added) > 0 {
+		return schemaWaits(1, added)
+	}
+	return nil
+}
+
+// ConfirmWorkflows is the exception by which a person confirms that every workflow the project
+// keeps (its own, or kept by an exception) downloads jackstay 0.6.0 or later: jackstay does not read
+// those files to find out.
+const ConfirmWorkflows = "upgrade:workflows"
 
 // stepTwoLeft is what keeps the upgrade's second step from being done, read from a whole plan with
-// its settlements and exceptions: whether a managed workflow is still to write or settle, and each
-// workflow the project keeps (its own, or by an exception) that downloads a jackstay older than
-// 0.6.0 or whose release cannot be read.
-func (planner *planner) stepTwoLeft() (pending bool, blockers []string) {
+// its settlements and exceptions: a managed workflow still to write or settle (pending), and the
+// workflows the project keeps that download jackstay, while nobody has confirmed with the exception
+// ConfirmWorkflows that they download 0.6.0 or later (a blocker naming them).
+func (planner *planner) stepTwoLeft(confirmed bool) (pending bool, blockers []string) {
 	for _, change := range planner.plan.Changes {
 		pending = pending || strings.HasPrefix(change.ID, "workflow:")
 	}
 	for _, conflict := range planner.plan.Conflicts {
 		pending = pending || strings.HasPrefix(conflict.ID, "workflow:")
 	}
+	var kept []string
 	for _, path := range planner.retained {
 		input, err := readInput(planner.root, path)
-		if err != nil || !input.exists {
-			blockers = append(blockers, fmt.Sprintf("blocker: step 3 is not offered: %s is kept and cannot be read", path))
-			continue
+		// A file that cannot be read may download jackstay: it counts.
+		if err != nil || !input.exists || strings.Contains(strings.ToLower(input.text), "jackstay") {
+			kept = append(kept, path)
 		}
-		if !downloadsJackstay.MatchString(input.text) {
-			continue
-		}
-		found := pinnedVersion.FindAllStringSubmatch(input.text, -1)
-		if len(found) == 0 {
-			blockers = append(blockers, fmt.Sprintf("blocker: step 3 is not offered: %s is kept and downloads jackstay, "+
-				"and which release it downloads cannot be read (a JACKSTAY_VERSION: vX.Y.Z line)", path))
-			continue
-		}
-		for _, match := range found {
-			if install.Compare(match[1], config.Schema3Release) < 0 {
-				blockers = append(blockers, fmt.Sprintf("blocker: step 3 is not offered: %s is kept and downloads jackstay v%s, "+
-					"which would refuse a schema-3 jackstay.json: move it to %s or later", path, match[1], config.Schema3Release))
-				break
-			}
-		}
+	}
+	if len(kept) > 0 && !confirmed {
+		blockers = append(blockers, fmt.Sprintf("step 3 is not offered: the project keeps %s, which may download jackstay; "+
+			"once each downloads %s or later, confirm it in jackstay.json: \"adopt\": {\"exceptions\": {\"%s\": \"<which and how>\"}}",
+			strings.Join(kept, ", "), config.Schema3Release, ConfirmWorkflows))
 	}
 	return pending, blockers
 }
@@ -290,4 +292,50 @@ func SaveMachineAutonomy(value string) error {
 		data, err := json.MarshalIndent(members, "", "  ")
 		return append(data, '\n'), err
 	})
+}
+
+// The states of the workflow that runs `jst lint pr` (rule D0), as LintWorkflowState reads them.
+const (
+	// LintWorkflowManaged is adopt's card-line.yml, as this jackstay writes it for the project.
+	LintWorkflowManaged = "managed"
+	// LintWorkflowMissing is no card-line.yml.
+	LintWorkflowMissing = "missing"
+	// LintWorkflowOwn is a card-line.yml that is the project's own, edited, or a profile's.
+	LintWorkflowOwn = "own"
+)
+
+// LintCheck is the check adopt's card-line workflow reports: its one job, `card-line`.
+const LintCheck = "card-line"
+
+// LintWorkflowState says whether the project at root has the workflow that runs `jst lint pr` as
+// adopt writes it: card-line.yml with an intact header whose text is jackstay's own template
+// rendered for the project's file. jackstay does not read another workflow to learn what it runs.
+func LintWorkflowState(root string, project config.Config) string {
+	path := workflowsDir + "/card-line.yml"
+	input, err := readInput(root, path)
+	if err != nil {
+		return LintWorkflowOwn
+	}
+	if !input.exists {
+		return LintWorkflowMissing
+	}
+	marked, name, intact := templates.Header(input.text)
+	if !marked || !intact || name != "card-line" {
+		return LintWorkflowOwn
+	}
+	pin, _ := project.Section("adopt")["pin"].(string)
+	values := map[string]string{"jackstay_repository": templates.Repository, "release_base": release.BaseOf(project)}
+	if pin != "" {
+		values["jackstay_version"] = pin
+	}
+	for _, template := range templates.Embedded() {
+		if template.Name != "card-line" {
+			continue
+		}
+		body, err := templates.Render(template.Text, values)
+		if err == nil && templates.Marked(template.Name, body) == input.text {
+			return LintWorkflowManaged
+		}
+	}
+	return LintWorkflowOwn
 }

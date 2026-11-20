@@ -134,6 +134,9 @@ type Plan struct {
 	Conflicts     []Conflict  `json:"conflicts"`
 	Exceptions    []Exception `json:"exceptions"`
 	Notes         []string    `json:"notes"`
+	// Blockers are what keeps the next step of an upgrade from being planned (docs/design/land.md
+	// section 5): the project is not up to date while one stands.
+	Blockers []string `json:"blockers,omitempty"`
 
 	writes  []write
 	inputs  map[string]fileInput
@@ -188,6 +191,10 @@ type planner struct {
 	upgrading bool
 	// retained are the workflows the project keeps: its own, and those kept by an exception.
 	retained []string
+	// deferred are the schema-3 keys this plan adds while the upgrade is before its third step.
+	deferred []string
+	// exceptions are the project's adopt.exceptions.
+	exceptions map[string]string
 }
 
 // newPlanner is the planner of the project at root: the one place base is set, so every path
@@ -206,26 +213,34 @@ func Make(options Options) (*Plan, error) {
 	if err != nil || !planner.upgrading {
 		return plan, err
 	}
+	_, confirmed := planner.exceptions[ConfirmWorkflows]
 	judged := planner
+	var blockers []string
 	if options.SettingsOnly {
 		whole := options
 		whole.SettingsOnly = false
 		if _, judged, err = makePlan(whole); err != nil {
-			plan.Notes = append(plan.Notes, "blocker: step 3 is not offered: the workflows cannot be planned: "+err.Error())
-			planner.upgradeNotes(2)
-			sort.Strings(plan.Notes)
-			return plan, nil
+			judged = nil
+			blockers = append(blockers, "step 3 is not offered: the workflows cannot be planned: "+err.Error())
 		}
 	}
-	pending, blockers := judged.stepTwoLeft()
+	pending := false
+	if judged != nil {
+		var left []string
+		pending, left = judged.stepTwoLeft(confirmed)
+		blockers = append(blockers, left...)
+	}
 	if !pending && len(blockers) == 0 {
 		third := options
 		third.landNow = true
 		plan, _, err = makePlan(third)
 		return plan, err
 	}
+	if len(planner.deferred) > 0 {
+		return nil, schemaWaits(2, planner.deferred)
+	}
 	planner.upgradeNotes(2)
-	plan.Notes = append(plan.Notes, blockers...)
+	plan.Blockers = append(plan.Blockers, blockers...)
 	sort.Strings(plan.Notes)
 	return plan, nil
 }
@@ -243,6 +258,7 @@ func makePlan(options Options) (*Plan, *planner, error) {
 	}
 	planner.existed = existed
 	exceptions := stringMap(original.Object("adopt"), "exceptions")
+	planner.exceptions = stringMap(original.Object("adopt"), "exceptions")
 	chosen, err := planner.readProfile(original)
 	if err != nil {
 		return nil, nil, err
@@ -1275,7 +1291,8 @@ func (planner *planner) except(exceptions map[string]string) {
 	}
 	planner.plan.Conflicts = kept
 	for _, id := range sortedKeysOf(exceptions) {
-		if !used[id] {
+		// The upgrade's confirmation is read by Make, not matched to a conflict.
+		if !used[id] && (id != ConfirmWorkflows || !planner.upgrading) {
 			planner.note("the exception for " + id + " matches no conflict now (stale): it may be removed from jackstay.json")
 		}
 	}
