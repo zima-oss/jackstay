@@ -1,7 +1,5 @@
 package deliverystate
 
-import "errors"
-
 // The journalled writes of a send or a response (section 7.3): what recovery does with an entry,
 // when a message may be served, and how a write is admitted against the store's charges (section 7.4).
 
@@ -31,7 +29,8 @@ const (
 	// and removes the entry.
 	RollForward Recovery = "roll-forward"
 	// KeepEntry leaves the entry: the commit record exists but its folder still cannot be fsynced,
-	// so the operation is neither undone nor served; the next recovery tries again.
+	// so the operation is neither undone nor served, and the store is Stopped until a recovery
+	// resolves it.
 	KeepEntry Recovery = "keep"
 )
 
@@ -96,43 +95,55 @@ type RetryAnswer string
 
 // The answers to a retry.
 const (
-	// FreshSend: no entry knows the key; the send is new.
+	// FreshSend: no message is known by the key; the send is new.
 	FreshSend RetryAnswer = "fresh"
-	// Duplicate: the idempotency entry names a committed message; its IDs are returned.
+	// Duplicate: the idempotency entry names a message whose commit record exists; its IDs are
+	// returned.
 	Duplicate RetryAnswer = "duplicate"
-	// StillUncertain: a kept journal entry carries the key; until recovery makes it durable or
-	// rolls it back, a new send could become a second copy, so the retry is answered uncertain.
-	StillUncertain RetryAnswer = "uncertain"
+	// StaleEntry: the entry names a message that is gone (removed by retention, or a removal cut
+	// short between the commit record and the entry); the entry is removed and the send is fresh.
+	// A key is remembered as long as its message is kept, no longer.
+	StaleEntry RetryAnswer = "stale"
 )
 
-// ResolveRetry answers a send by its key: an idempotency entry first, then a journal entry that
-// carries the key (the journal entry names the key from step 1).
-func ResolveRetry(idempotencyEntry, keptEntryWithKey bool) RetryAnswer {
+// ResolveRetry answers a send by its key. It runs after recovery, so no journal entry is left.
+func ResolveRetry(idempotencyEntry, committed bool) RetryAnswer {
 	switch {
-	case idempotencyEntry:
+	case idempotencyEntry && committed:
 		return Duplicate
-	case keptEntryWithKey:
-		return StillUncertain
+	case idempotencyEntry:
+		return StaleEntry
 	}
 	return FreshSend
 }
 
-// ResponseAdmitted decides whether a response may begin: the request must be open, and no kept
-// journal entry may name it. A kept response could still roll forward and answer the request, so
-// while one waits a second response is refused as store_busy (the caller retries), and the
-// request's deadline waits with it; otherwise the later recovery would overwrite an answer
-// already given.
-func ResponseAdmitted(request RequestState, keptResponse bool) error {
+// ResponseAdmitted decides whether a response may begin: its request must be open.
+func ResponseAdmitted(request RequestState) error {
 	switch {
 	case request == Answered:
 		return ErrAlreadyAnswered
 	case request != Open:
 		return ErrRequestClosed
-	case keptResponse:
-		return ErrStoreBusy
 	}
 	return nil
 }
 
-// ErrStoreBusy means the operation waits for recovery; the caller retries.
-var ErrStoreBusy = errors.New("deliverystate: store_busy")
+// Stopped reports whether the store is stopped: recovery left an entry it could not resolve (a
+// commit record whose folder cannot be fsynced). Then no operation runs, reader or writer, hook,
+// pusher, sweep or freeze: a tool answers store_busy and a hook does nothing, until a recovery
+// resolves the entry. Nothing can then act beside an operation a later recovery may still roll
+// forward (section 7.3).
+func Stopped(keptEntries int) bool { return keptEntries > 0 }
+
+// FreezeMayProceed reports whether a review mailbox may freeze: none of the deliveries of its open
+// requests is `sending`, so no write of a question is under way when the freeze closes it (section
+// 9.1). A pass that stalled past 60 s has been swept to `delivered` (unconfirmed) and no longer
+// holds the freeze.
+func FreezeMayProceed(questionDeliveries []Delivery) bool {
+	for _, delivery := range questionDeliveries {
+		if delivery.State == Sending {
+			return false
+		}
+	}
+	return true
+}

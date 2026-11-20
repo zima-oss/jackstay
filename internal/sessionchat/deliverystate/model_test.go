@@ -19,8 +19,8 @@ type variant struct {
 	separateRequestExpiry bool // as written: a request and its delivery expire with a notice each
 	freezeLeavesDelivery  bool // as written: a freeze closes the mailbox's requests, not their deliveries
 	deadlineSkipsRequest  bool // as written: a pass's or reader's deadline check expires the delivery only
-	failureReopens        bool // as written: a confirmed failure returns a closed request's delivery to pending
 	deadlineNeedsPending  bool // round 1: a deadline closed a request only while its delivery could expire
+	freezeIgnoresPushes   bool // rounds 1 and 2: a freeze closed its questions while one was being pushed
 }
 
 type passState struct {
@@ -42,6 +42,8 @@ type world struct {
 	exposed         bool   // a read returned a native body the engine never accepted
 	pushedClose     bool   // a push of a request began (claim, announce) after it closed
 	lateOpen        bool   // a step that checks the deadline found it passed and left the request open
+	frozen          bool   // the requesting mailbox froze
+	writtenFrozen   bool   // a pass that still owned its claim wrote a question its mailbox had frozen
 	overdue         bool
 	alive           bool
 	deliveryNotices int
@@ -57,8 +59,8 @@ var passNames = [2]string{"pass-1", "pass-2"}
 
 // The distinct states TLC finds for the two modules (docs/design/chat-model/README.md).
 const (
-	deliveryStates = 22336
-	sendStates     = 218
+	deliveryStates = 30480
+	sendStates     = 283
 )
 
 func initialWorlds(rules variant) []world {
@@ -128,7 +130,6 @@ func (w world) apply(event Event, rules variant) (world, bool) {
 	next := w
 	plain := rules.separateRequestExpiry || !w.isRequest ||
 		rules.deadlineSkipsRequest && checksDeadline(event.Kind) ||
-		rules.failureReopens && (event.Kind == Failure || event.Kind == Answer) ||
 		rules.deadlineNeedsPending && (!Expirable(w.delivery.State) ||
 			w.delivery.State != Pending && !namesTheDelivery(event.Kind))
 	if plain {
@@ -181,6 +182,9 @@ func successors(w world, rules variant) []step {
 			for _, answer := range answers {
 				written := w
 				written.passes[index] = passState{pc: "written", reply: answer}
+				if w.frozen && w.delivery.State == Sending && w.delivery.Pusher == name {
+					written.writtenFrozen = true
+				}
 				switch answer {
 				case Accepted:
 					written.engine, written.shown, written.handleKnown = "accepted", w.shown+1, true
@@ -241,7 +245,7 @@ func successors(w world, rules variant) []step {
 	}
 	if w.hook == "announced" {
 		returned := w
-		returned.hook, returned.shown = "idle", w.shown+1
+		returned.hook, returned.shown, returned.handleKnown = "idle", w.shown+1, true
 		add("hook returns the text", returned)
 		lost := w
 		lost.hook = "idle"
@@ -253,12 +257,14 @@ func successors(w world, rules variant) []step {
 		if read, ok := w.apply(Event{Kind: ReadWhole, Overdue: w.overdue}, rules); ok {
 			if read.delivery.State == Read && w.delivery.State != Read {
 				read.read()
+				read.handleKnown = true // the read returned the frame: its request ID
 			}
 			add("chat.inbox reads it whole", read)
 		}
 		if Visible(w.delivery, ByNothing) && !w.overdue {
 			again := w
 			again.read()
+			again.handleKnown = true
 			if again != w {
 				add("chat.inbox returns it again", again)
 			}
@@ -331,8 +337,10 @@ func successors(w world, rules variant) []step {
 			add("the recipient mailbox freezes", frozen)
 		}
 	}
-	if w.fromMailbox && w.request.State == Open && !w.overdue {
+	if w.fromMailbox && w.request.State == Open && !w.overdue &&
+		(rules.freezeIgnoresPushes || FreezeMayProceed([]Delivery{w.delivery})) {
 		frozen := w
+		frozen.frozen = true
 		if rules.freezeLeavesDelivery {
 			frozen.setRequest(Request{State: Closed, Notice: NoticeOwed})
 		} else if request, delivery, err := ExpireRequest(w.request, w.delivery); err == nil {
@@ -381,6 +389,8 @@ func invariant(w world) string {
 		return "RequestAgrees: an answered request's delivery is not final"
 	case w.lateOpen:
 		return "DeadlineClosesRequest: a step past the deadline left the request open"
+	case w.writtenFrozen:
+		return "NoWriteAfterFreeze: a question was written after its mailbox froze"
 	}
 	return ""
 }
@@ -475,8 +485,8 @@ func TestTheSpecBeforeTheModelBreaksAProperty(t *testing.T) {
 		{"two expiry notices for one request (section 4.4)", variant{separateRequestExpiry: true}, "NoticeOnce"},
 		{"a freeze leaving its questions pushable (section 9.1)", variant{freezeLeavesDelivery: true}, "NoPushStartsAfterClose"},
 		{"a deadline check that forgets the request (section 4.10)", variant{deadlineSkipsRequest: true}, "NoticeOnce"},
-		{"a confirmed failure reopening a closed request (section 8.3)", variant{failureReopens: true}, "NoPushStartsAfterClose"},
 		{"an overdue read of a delivered request (section 4.10, review round 1)", variant{deadlineNeedsPending: true}, "DeadlineClosesRequest"},
+		{"a freeze beside a push under way (section 9.1, review rounds 1 and 2)", variant{freezeIgnoresPushes: true}, "NoWriteAfterFreeze"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

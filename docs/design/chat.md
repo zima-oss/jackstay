@@ -325,10 +325,12 @@ A request is a direct message (never to a channel) with a `request` object:
   of its own. So the requester is told once, never twice and never not at all;
 - a request closed early (its review mailbox froze, section 9.1) closes the same way: its delivery,
   if `pending` or `held`, expires with it; if it is `sending`, a confirmed failure or a `held` answer
-  recorded later expires it instead of making it pushable again. A push already under way (claimed
-  under the lock, written after it) cannot be called back, since the lock is not held during a push
-  (section 7.3): it may still arrive after the close, and the recipient's answer to it is refused as
-  `request_closed`. What never happens is a push **begun** after the close.
+  recorded later expires it instead of making it pushable again. A freeze waits for any push of its
+  questions that is under way (section 9.1), so no question is written after its freeze. A request
+  that reaches its **deadline** while a push of it is under way (claimed under the lock, written
+  after it, since the lock is not held during a push, section 7.3) cannot call the push back: it may
+  still arrive, and the answer to it is refused as `request_closed`, as for any message pushed at the
+  moment of its deadline. What never happens is a push **begun** after the close.
 
 Request states are `open`, `answered` and `expired`, kept apart from the delivery state, so a
 request's deadline never erases a truthful `read` receipt. A second response is refused as
@@ -1016,7 +1018,7 @@ to it:
 
 | chat needs | from `internal/durable` | chat adds |
 |---|---|---|
-| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | how it treats `ErrNotSynced`: the folder is fsynced again before the lock is released. If that works, the change is made (a send is `accepted`). If not, a crash of the machine could still undo it, so for a send or a response the operation **stops at its commit record** (section 7.3): nothing that follows from the commit is applied, no derived file is written, the journal entry is kept, and the send answers `uncertain`. The message is not served (section 7.3) until a later recovery has fsynced the folder. The sender retries with the same `idempotency_key`: while the kept entry carries that key the retry answers `uncertain` again, and once recovery has resolved the entry it answers `duplicate` (rolled forward) or makes a fresh send (rolled back); `jst doctor` reports the failure |
+| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | how it treats `ErrNotSynced`: the folder is fsynced again before the lock is released. If that works, the change is made (a send is `accepted`). If not, a crash of the machine could still undo it, so for a send or a response the operation **stops at its commit record** (section 7.3): nothing that follows from the commit is applied, no derived file is written, the journal entry is kept, and the send answers `uncertain`. Until a recovery fsyncs the folder, the store is **stopped** (section 7.3). The sender retries with the same `idempotency_key`: while the store is stopped the retry answers `store_busy`, and once recovery has resolved the entry it answers `duplicate` (rolled forward) or makes a fresh send (rolled back); `jst doctor` reports the failure |
 | a bounded read: a file past its record's bound (section 6.4) is an error | `ReadLimited` (`ErrTooLarge`) | nothing |
 | one lock for the store, with a deadline | `LockFile` on `lock`, waited for with the caller's context | its deadlines: at most 2 s in a hook (then the hook does nothing, so a turn is never held up by chat), 5 s in a tool (then `store_busy`) |
 | a shared mode for readers | not offered: `LockFile` is exclusive | readers take the same exclusive lock for their short read. A shared mode, if it is added to `internal/durable` later, changes nothing else here: section 7.3 never relies on readers running together |
@@ -1036,8 +1038,8 @@ that points at a read delivery, and every reader checks the delivery behind each
 
 **A send or a response** writes many files and is journalled:
 
-1. under the lock, publish `journal/<id>` naming the operation, its `idempotency_key` and the charge
-   it was admitted with (section 7.4): the whole entry is written to a temporary file and fsynced,
+1. under the lock, publish `journal/<id>` naming the operation and its `idempotency_key`: the whole
+   entry is written to a temporary file and fsynced,
    then linked into `journal/` under its final name (a link never replaces an existing name), and the
    folder is fsynced, so an entry is never seen empty or half written;
 2. write the body, the envelope and every delivery; a send with `notify_when_idle` names its
@@ -1059,12 +1061,20 @@ lock (section 7.2) and, under that same acquisition, first lists `journal/`. If 
 finishes each entry before its own work: an operation whose commit record exists is rolled forward
 (the folder fsynced first, then the rest of step 3, then step 4); one without it is rolled back by
 removing the files of that message ID and the idempotency entry the journal entry names, none of
-which any reader has seen. When the commit record exists but its folder still cannot be fsynced,
-the entry is **kept**: the operation is neither undone nor served, every other operation goes on,
-and the next recovery tries again. A kept **response** still holds its request: until recovery
-resolves the entry, another response to that request is refused as `store_busy` (retry), and the
-request's deadline waits, since rolling the kept response forward would otherwise overwrite an
-answer or a closure made meanwhile (found in the model's first review, section 15.0).
+which any reader has seen.
+
+**A failed fsync stops the store.** When the commit record exists but its folder still cannot be
+fsynced, recovery can neither roll the operation forward (a machine crash could still undo it) nor
+roll it back (it may already be durable). It keeps the entry, and the store is **stopped**: every
+operation, reader or writer, hook, pusher, sweep or freeze, takes the lock, finds the entry it
+cannot resolve, and does nothing more. A tool answers `store_busy`, a hook does nothing (as when it
+cannot get the lock), the pusher waits, and `jst doctor` reports the failing folder; the next
+recovery tries the fsync again. This is the rule databases follow after a failed fsync: a disk that
+cannot make a write durable is not written on. It is also what makes the journal safe: nothing can
+act beside an operation that a later recovery may still roll forward, so no other answer, deadline,
+freeze, retry or registration can be overwritten by it or take the room it was admitted with. (The
+model's first two reviews found three such interleavings while operations went on beside a kept
+entry; each patch left another, so the rule was replaced, section 15.0.)
 A review mailbox's freeze (`journal/freeze-<mailbox hash>`, section 9.1) and an idle subscription's
 firing (`journal/fire-<watcher hash>-<recipient hash>-<generation>`: the notice written on the watcher's
 record under that stable name, then the subscription removed from the recipient's) are always rolled
@@ -1073,6 +1083,12 @@ forward. An entry that cannot be parsed (only a fault of the disk can make one) 
 Only then does it read or write. So a reader never sees a half-made send, a request and its response
 always agree, and a client that retries with the same `idempotency_key` after a crash finds the entry
 and gets `duplicate`.
+
+**A `duplicate` names a message that exists.** A retry is answered `duplicate` only when the message
+its idempotency entry names still has its commit record. An entry whose message is gone (removed by
+retention, or by a removal that a crash cut short between the commit record and the entry) is a
+leftover: it is removed and the send is fresh. So a key is remembered as long as its message is
+kept, no longer (the model's second review found the phantom `duplicate`).
 
 **Nothing is served before it is durable.** A message is served (pushed, announced, returned by a
 read, counted in a listing) only when its commit record exists and no journal entry of it is left.
@@ -1118,15 +1134,13 @@ when it is created, not its size on disk: a body its byte length, an envelope 48
 4 KiB, a commit record 1 KiB, a session 64 KiB, a binding 8 KiB. A record can then grow (a reason, a
 note, an owed notice) without ever passing what was charged, so such changes are never refused for
 room, and `usage.json` changes only when records are created or removed. It is therefore a function
-of which files exist and of the journal entries, and recovery and the sweep rebuild it by listing
+of which files exist, and recovery and the sweep rebuild it by listing
 the folders; a writer that finds it missing, or finds a journal entry, rebuilds it before admitting a
 growing write. A send (or a response) is admitted with the charge of **every** record it will
 create: body, envelope, deliveries, commit record, and the derived files of step 4 (an `inbox`
 marker per delivery, the `outbox` marker, the idempotency entry), so recovery never needs room to
-roll a committed send forward and never has to drop a marker. From step 1 until its journal entry
-is removed, that whole charge is counted from the entry, whatever files exist yet, so a session
-registering beside a kept entry cannot take the room it was admitted with (the model found both,
-section 15.0). A send is accepted only while the charges stay under 63 MiB and 4,096 messages after
+roll a committed send forward and never has to drop a marker (the model found this, section
+15.0). A send is accepted only while the charges stay under 63 MiB and 4,096 messages after
 it; the last MiB is kept for journal and temporary files. Every other path that creates a record (a session, a binding, a channel, an idempotency
 entry, an event) passes the same check against the same 63 MiB with its own charge (a marker or
 idempotency entry 512 bytes, a channel 16 KiB); a session or binding that does not fit is refused,
@@ -1373,8 +1387,14 @@ rounds.
    printed in the round's result.
 5. The author answers with `chat.respond`, and may send the reviewer notes of its own with
    `chat.send` to the mailbox's address.
-6. When the next round starts, `jst review` **freezes** the mailbox:
-   all under one exclusive lock:
+6. When the next round starts, `jst review` **freezes** the mailbox. It first waits until no
+   delivery of the mailbox's open requests is `sending` (a push's answer takes at most 2 s, and a
+   pass that died is swept after 60 s), retrying under the lock, so no question is being written to
+   the author when the freeze closes it. A pass that stalled past 60 s was swept to `delivered`
+   (`unconfirmed`) and holds nothing; if it wakes and writes, it is the one late push section 4.2
+   already reports as `unconfirmed`. A hook announcement recorded before the freeze may still be
+   returned right after it; the snapshot shows that question as delivered. Then, all under one
+   exclusive lock:
    1. it creates `journal/freeze-<mailbox hash>` holding the mailbox's key, the task, the round it
       belongs to, and the absolute path of the snapshot it will write in the next round's attempt
       folder; and sets the mailbox `gone`, so later sends are refused as `recipient_gone`;
@@ -1604,38 +1624,45 @@ narrower than the last, and review alone does not end that. The model is in
   `ChatDelivery.tla` is one delivery on each of the five routes, with two passes of the pusher (or the
   bridge) that may pause or crash at any step, the recipient's hook, reads, acks and answers, another
   message carrying the bare ID, the sweep, the deadline, the recipient's end and a mailbox's freeze;
-  `ChatSend.tla` is one send and its retry with the same key, a process crash or a machine crash
-  (which loses a commit record whose folder was not fsynced) at every step of section 7.3,
-  recovery, the pusher, sessions registering near the limit, and the sweep of leftovers;
+  `ChatSend.tla` is one response and its retry with the same key, a process crash or a machine
+  crash (which loses a commit record whose folder was not fsynced) at every step of section 7.3,
+  recovery and the stopped store, the pusher, sessions registering near the limit, another answer
+  or the deadline closing the request, the sweep of leftovers, and retention's two-step removal;
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  TLC and the tests reach the same states, 22,336 for a delivery and 218 for a send, and the tests
+  TLC and the tests reach the same states, 30,480 for a delivery and 283 for a send, and the tests
   fail if either count changes.
 
 Checked: every route pushes a message at most once; a native body is never visible before Claude
 Code accepted it; a crash never makes a delivery look not pushed; final states are never left; the
 deadline is applied before an ack, a read or a push; every `refused`, `dropped` or `expired` delivery
 owes exactly one notice, and a request and its delivery that expire together owe one between them;
-a request and its response agree, and a kept response is never overwritten nor overwrites; no push
-of a closed request begins; a deadline found by any step closes the request; a send retried with its key is
-pushed at most once; a `duplicate` names a message that exists; a subscription or an answer written
+a request and its response agree, answered or closed once and never overwritten; no push of a
+closed request begins, and no question is written after its freeze; a deadline found by any step
+closes the request; a send retried with its key is pushed at most once while the key is remembered;
+a `duplicate` names a message that exists; a subscription or an answer written
 by a send stands only for a message that exists (a rollback leaves the earlier subscription
 untouched); a committed send keeps every marker it was admitted with; the charges never pass 63 MiB;
 `accepted` is said only of a durable send. TLC also checks that a `sending` record is always resolved
 and an overdue delivery always expires.
 
-The model found seven faults in this document as it stood, each fixed in the section named and kept
-as a variant that must still fail (README.md lists their counterexamples): a bare message ID counted
+The model found seven faults in this document as it stood, each fixed in the section named and, but
+for one, kept as a variant that must still fail (README.md lists their counterexamples): a bare message ID counted
 as evidence of a shown frame (4.10); a request and its delivery expired with two notices (4.4); a
 step's deadline check expired a request's delivery without the request, so no notice was owed
 (4.10); a freeze left its questions pushable (9.1); a confirmed failure reopened a closed request's
 delivery (8.3); recovery rolled forward a commit a machine crash could still undo, so a `duplicate`
 could name nothing and a retry could push twice (7.2, 7.3); and a send's derived files were charged
-after its commit, and a kept entry's room could be taken by sessions (7.4). Its first review found
-three more, now fixed and modelled the same way: a read past the deadline left a delivered request
-open (4.10), a kept response could be overwritten by a rival answer (7.3), and pressure could remove
-an expired request's only notice (7.4, a unit test).
+after its commit (7.4). Its two review rounds found more. A read past the deadline left a delivered
+request open (4.10). Pressure could remove an expired request's only notice (7.4, a unit test). A
+retry could be told `duplicate` of a message a cut-short removal had left half gone (7.3). And two
+places drew findings in both rounds, so they were redesigned rather than patched (W-019): operations
+going on beside a journal entry recovery had to keep let a rival answer, the deadline, a freeze, a
+retry or a registration act on what the entry might still roll forward, and now a failed fsync stops
+the store (7.3); a freeze could close a question while a push of it was under way, and now it waits
+for the push (9.1). A confirmed failure that reopened a closed question (8.3) cannot happen once the
+freeze waits; the rule stays as a defence and has a unit test.
 
 ### 15.1 Unit tests (`go test ./internal/sessionchat/...`)
 

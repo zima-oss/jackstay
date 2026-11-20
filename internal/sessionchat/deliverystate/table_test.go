@@ -205,7 +205,7 @@ func TestAResponseToAGoneRequesterOwesItsNotice(t *testing.T) {
 	}
 }
 
-// Review round 1: a push claimed before its mailbox froze may still arrive; it cannot be answered.
+// A push under way when its request reaches its deadline may still arrive; it cannot be answered.
 func TestAPushUnderWayWhenTheRequestClosesCannotBeAnswered(t *testing.T) {
 	request := Request{State: Open}
 	delivery, _ := Apply(New(Native, true, false), Event{Kind: Claim, Pusher: "pass-1"})
@@ -242,18 +242,26 @@ func TestARequestsOwedNoticeKeepsItsMessage(t *testing.T) {
 	}
 }
 
-// Review round 1: a kept response holds its request.
-func TestAKeptResponseHoldsItsRequest(t *testing.T) {
-	if err := ResponseAdmitted(Open, true); err != ErrStoreBusy {
-		t.Fatalf("beside a kept response: %v", err)
-	}
-	if err := ResponseAdmitted(Answered, false); err != ErrAlreadyAnswered {
+func TestAResponseNeedsAnOpenRequest(t *testing.T) {
+	if err := ResponseAdmitted(Answered); err != ErrAlreadyAnswered {
 		t.Fatalf("answered: %v", err)
 	}
-	if err := ResponseAdmitted(Closed, false); err != ErrRequestClosed {
+	if err := ResponseAdmitted(Closed); err != ErrRequestClosed {
 		t.Fatalf("closed: %v", err)
 	}
-	if err := ResponseAdmitted(Open, false); err != nil {
+	if err := ResponseAdmitted(Open); err != nil {
 		t.Fatalf("open: %v", err)
+	}
+}
+
+// Review rounds 1 and 2: a freeze waits for a question being pushed.
+func TestAFreezeWaitsForAQuestionBeingPushed(t *testing.T) {
+	sending, _ := Apply(New(Native, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+	if FreezeMayProceed([]Delivery{sending}) {
+		t.Fatal("froze beside a push under way")
+	}
+	swept, _ := Apply(sending, Event{Kind: Stale})
+	if !FreezeMayProceed([]Delivery{swept, New(Hooks, true, false)}) {
+		t.Fatal("a swept push still holds the freeze")
 	}
 }

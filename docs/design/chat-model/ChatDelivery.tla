@@ -23,8 +23,8 @@ CONSTANTS
     SeparateRequestExpiry,  \* section 4.4 before: a request and its delivery expire apart
     FreezeLeavesDelivery,   \* section 9.1 before: a freeze closes requests, not their deliveries
     DeadlineSkipsRequest,   \* section 4.10 before: a step's deadline check expires the delivery only
-    FailureReopens,         \* section 8.3 before: a confirmed failure reopens a closed request's delivery
-    DeadlineNeedsPending    \* review round 1: a deadline closed a request only if its delivery could expire
+    DeadlineNeedsPending,   \* review round 1: a deadline closed a request only if its delivery could expire
+    FreezeIgnoresPushes     \* review rounds 1 and 2: a freeze closed its questions while one was being pushed
 
 Routes    == {"native", "hooks", "bridge", "mailbox", "poll"}
 States    == {"pending", "sending", "delivered", "held", "read", "acted",
@@ -46,11 +46,13 @@ VARIABLES
     exposed,      \* a read returned a native body the engine never accepted
     pushedClosed, \* a push of a request began (claim, announce) after it closed
     lateOpen,     \* a step that checks the deadline found it passed and left the request open
+    frozen,       \* the requesting mailbox froze
+    writtenFrozen,\* a pass that still owned its claim wrote a question its mailbox had frozen
     overdue, alive,
     dNotices, rNotices            \* times each record's notice became owed
 
 vars == <<d, rq, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
-          exposed, pushedClosed, lateOpen, overdue, alive, dNotices, rNotices>>
+          exposed, pushedClosed, lateOpen, frozen, writtenFrozen, overdue, alive, dNotices, rNotices>>
 
 ----------------------------------------------------------------------------
 (* The table (deliverystate.Apply). *)
@@ -168,7 +170,6 @@ Respond(r, dl, late, named) ==
 Step(ev) ==
     IF /\ isRequest /\ ~SeparateRequestExpiry
        /\ ~(DeadlineSkipsRequest /\ ChecksDeadline(ev.kind))
-       /\ ~(FailureReopens /\ ev.kind \in {"answer", "failure"})
        /\ ~(DeadlineNeedsPending /\ ~(d.state \in Expirable /\ (d.state = "pending" \/ NamesIt(ev.kind))))
     THEN ApplyMessage(rq, d, ev)
     ELSE LET after == Apply(d, ev)
@@ -205,7 +206,7 @@ Init ==
     /\ pass = [p \in Passes |-> [pc |-> "idle", reply |-> "none"]]
     /\ hook = "idle" /\ shown = 0
     /\ handleKnown = FALSE /\ idKnown = FALSE /\ exposed = FALSE /\ pushedClosed = FALSE
-    /\ lateOpen = FALSE
+    /\ lateOpen = FALSE /\ frozen = FALSE /\ writtenFrozen = FALSE
     /\ overdue = FALSE /\ alive = TRUE
     /\ dNotices = 0 /\ rNotices = 0
 
@@ -218,13 +219,13 @@ Claim(p) ==
        /\ LET owns == r.d.state = "sending" /\ r.d.pusher = p /\ d.state = "pending" IN
           /\ pass' = IF owns THEN [pass EXCEPT ![p].pc = "claimed"] ELSE pass
           /\ pushedClosed' = (pushedClosed \/ (owns /\ isRequest /\ rq.state # "open"))
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed, overdue, alive>>
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed, overdue, alive>>
 
 WriteFails(p) ==
     /\ pass[p].pc = "claimed"
     /\ pass' = [pass EXCEPT ![p].pc = "failed"]
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 Write(p) ==
@@ -237,8 +238,9 @@ Write(p) ==
                          [] OTHER               -> "full"
           /\ shown' = IF answer = "accepted" THEN shown + 1 ELSE shown
           /\ handleKnown' = (handleKnown \/ answer = "accepted")
+    /\ writtenFrozen' = (writtenFrozen \/ (frozen /\ d.state = "sending" /\ d.pusher = p))
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, hook, idKnown, exposed, pushedClosed, overdue, alive>>
+    /\ UNCHANGED <<frozen, isRequest, fromMailbox, hook, idKnown, exposed, pushedClosed, overdue, alive>>
 
 Record(p) ==
     /\ pass[p].pc = "written"
@@ -246,7 +248,7 @@ Record(p) ==
           LET r == Step(Ev("answer", p, answer, FALSE, "nothing")) IN
           IF r.ok THEN SetMsg(r) ELSE KeepMsg
     /\ pass' = [pass EXCEPT ![p] = [pc |-> "idle", reply |-> "none"]]
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 RecordFailure(p) ==
@@ -254,14 +256,14 @@ RecordFailure(p) ==
     /\ LET r == Step(Ev("failure", p, "none", FALSE, "nothing")) IN
        IF r.ok THEN SetMsg(r) ELSE KeepMsg
     /\ pass' = [pass EXCEPT ![p] = [pc |-> "idle", reply |-> "none"]]
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 Crash(p) ==
     /\ pass[p].pc \in {"claimed", "written", "failed"}
     /\ pass' = [pass EXCEPT ![p] = [pc |-> "dead", reply |-> "none"]]
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 \* Claude Code releases a held copy to the model, or silently discards it (section 4.2).
@@ -269,12 +271,12 @@ EngineReleases ==
     /\ engine = "held"
     /\ engine' = "accepted" /\ shown' = shown + 1 /\ handleKnown' = TRUE
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, pass, hook, idKnown, exposed, pushedClosed, overdue, alive>>
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, pass, hook, idKnown, exposed, pushedClosed, overdue, alive>>
 
 EngineDiscards ==
     /\ engine = "held" /\ engine' = "dropped"
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 (* The hooks route (section 8.4). *)
@@ -286,18 +288,19 @@ HookAnnounces ==
        /\ LET took == r.d.state = "delivered" /\ d.state = "pending" IN
           /\ hook' = IF took THEN "announced" ELSE hook
           /\ pushedClosed' = (pushedClosed \/ (took /\ isRequest /\ rq.state # "open"))
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, shown, handleKnown, idKnown, exposed, overdue, alive>>
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, handleKnown, idKnown, exposed, overdue, alive>>
 
 HookReturns ==
     /\ hook = "announced" /\ hook' = "idle" /\ shown' = shown + 1
+    /\ handleKnown' = TRUE   \* the hook's text carries the request ID
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, handleKnown, idKnown, exposed, pushedClosed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, idKnown, exposed, pushedClosed,
                    overdue, alive>>
 
 HookLoses ==
     /\ hook = "announced" /\ hook' = "idle"
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 (* The recipient's own calls; a review mailbox makes none. *)
@@ -309,14 +312,16 @@ InboxReads ==
     /\ LET r == Step(Ev("read-whole", "", "none", overdue, "nothing")) IN
        /\ r.ok /\ SetMsg(r)
        /\ exposed' = (exposed \/ (r.d.state = "read" /\ d.state # "read" /\ ShowsNative(d)))
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
+       /\ handleKnown' = (handleKnown \/ (r.d.state = "read" /\ d.state # "read"))
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, idKnown,
                    pushedClosed, overdue, alive>>
 
 InboxReadsAgain ==
     /\ Calls /\ ~overdue /\ Visible(d, "nothing")
     /\ exposed' = (exposed \/ ShowsNative(d))
+    /\ handleKnown' = TRUE
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, idKnown,
                    pushedClosed, overdue, alive>>
 
 InboxNamesIt ==
@@ -324,27 +329,27 @@ InboxNamesIt ==
     /\ LET r == Step(Ev("confirm", "", "none", overdue, Naming)) IN
        /\ r.ok /\ SetMsg(r)
        /\ exposed' = (exposed \/ (Visible(r.d, Naming) /\ ShowsNative(d)))
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
                    pushedClosed, overdue, alive>>
 
 Acks ==
     /\ Calls /\ Naming # "nothing"
     /\ \E kind \in {"ack-read", "ack-acted"} :
           LET r == Step(Ev(kind, "", "none", overdue, Naming)) IN r.ok /\ SetMsg(r)
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 Responds ==
     /\ Calls /\ isRequest /\ Naming = "handle"
     /\ LET r == Respond(rq, d, overdue, "handle") IN r.ok /\ SetMsg(r)
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 \* Another message of the thread carries the bare ID (its `thread` or `reply_to`).
 IdLeaks ==
     /\ ~idKnown /\ idKnown' = TRUE
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 (* The sweep, the deadline, the end, the freezes (sections 4.10, 7.4, 8.2, 9.1). *)
@@ -352,21 +357,21 @@ IdLeaks ==
 SweepStale ==
     /\ LET after == Apply(d, Ev("stale", "", "none", FALSE, "nothing")) IN
        after.ok /\ SetMsg([rq |-> rq, d |-> after.d])
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 SweepExpiresRequest ==
     /\ overdue /\ isRequest /\ rq.state = "open"
     /\ IF SeparateRequestExpiry THEN SetMsg([rq |-> ClosedRq, d |-> d])
        ELSE SetMsg(ExpireRequest(rq, d))
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 SweepExpiresDelivery ==
     /\ overdue /\ (~isRequest \/ SeparateRequestExpiry \/ rq.state # "open")
     /\ LET after == Apply(d, Ev("expire", "", "none", TRUE, "nothing")) IN
        after.ok /\ SetMsg([rq |-> rq, d |-> after.d])
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 RecipientMailboxFreezes ==
@@ -374,27 +379,29 @@ RecipientMailboxFreezes ==
     /\ LET after == Apply(d, Ev("freeze", "", "none", FALSE, "nothing")) IN
        after.ok /\ SetMsg([rq |-> rq, d |-> after.d])
     /\ alive' = FALSE
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue>>
 
 RequestingMailboxFreezes ==
     /\ fromMailbox /\ rq.state = "open" /\ ~overdue
+    /\ FreezeIgnoresPushes \/ d.state # "sending"   \* deliverystate.FreezeMayProceed
     /\ IF FreezeLeavesDelivery THEN SetMsg([rq |-> ClosedRq, d |-> d])
        ELSE SetMsg(ExpireRequest(rq, d))
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ frozen' = TRUE
+    /\ UNCHANGED <<writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
 RecipientEnds ==
     /\ alive /\ alive' = FALSE
     /\ LET after == Apply(d, Ev("end", "", "none", FALSE, "nothing")) IN
        IF after.ok THEN SetMsg([rq |-> rq, d |-> after.d]) ELSE KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue>>
 
 DeadlinePasses ==
     /\ ~overdue /\ overdue' = TRUE
     /\ KeepMsg
-    /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, alive>>
 
 Sweep == SweepStale \/ SweepExpiresRequest \/ SweepExpiresDelivery
@@ -433,6 +440,10 @@ NeverLooksUnpushed == (engine # "none" \/ hook = "announced") => d.state # "pend
 \* No push of a request begins (a claim, an announcement) once it is closed. A push already claimed
 \* when its request closes may still arrive; the answer to it is refused as request_closed.
 NoPushStartsAfterClose == ~pushedClosed
+
+\* No question is written to the author by a pass that still owned its claim when the mailbox froze:
+\* the freeze waits for pushes under way (a pass stalled past 60 s was swept and owns nothing).
+NoWriteAfterFreeze == ~writtenFrozen
 
 \* A step that finds the deadline passed closes an open request, whatever its delivery's state.
 DeadlineClosesRequest == ~lateOpen
