@@ -145,7 +145,10 @@ func TestBackoffStopsAtTheDeadline(t *testing.T) {
 
 func TestWritesAreNeverRetried(t *testing.T) {
 	for name, write := range map[string]func(*Client) error{
-		"merge": func(client *Client) error { _, err := client.Merge(context.Background(), 7, "h", "t", "b"); return err },
+		"merge": func(client *Client) error {
+			_, err := client.Merge(context.Background(), 7, "squash", "h", "t", "b")
+			return err
+		},
 		"create": func(client *Client) error {
 			_, err := client.CreatePullRequest(context.Background(), NewPullRequest{Head: "h"})
 			return err
@@ -285,7 +288,7 @@ func TestCreateEditAndMergeSendWhatTheySay(t *testing.T) {
 	if err := client.EditPullRequestBody(ctx, 7, "new body"); err != nil {
 		t.Fatal(err)
 	}
-	merged, err := client.Merge(ctx, 7, "h1", "Title (#7)", "Card: none (x)")
+	merged, err := client.Merge(ctx, 7, "squash", "h1", "Title (#7)", "Card: none (x)")
 	if err != nil || !merged.Merged || merged.SHA != "m1" {
 		t.Fatalf("merge %+v %v", merged, err)
 	}
@@ -307,6 +310,23 @@ func TestCreateEditAndMergeSendWhatTheySay(t *testing.T) {
 			if fmt.Sprint(body[key]) != fmt.Sprint(value) {
 				t.Errorf("request %d: %s = %v, want %v (%s)", index, key, body[key], value, rec.bodies[index])
 			}
+		}
+	}
+}
+
+func TestMergeSendsTheMethodAsked(t *testing.T) {
+	for _, method := range []string{"squash", "merge", "rebase"} {
+		rec, server := serve(t, jsonAnswer(http.StatusOK, `{"sha": "m1", "merged": true}`))
+		client := newClient(t, server, &clock{now: epoch})
+		if _, err := client.Merge(context.Background(), 7, method, "h1", "", ""); err != nil {
+			t.Fatal(err)
+		}
+		var body map[string]any
+		if err := json.Unmarshal([]byte(rec.bodies[0]), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body["merge_method"] != method || body["sha"] != "h1" {
+			t.Fatalf("%s: sent %v", method, body)
 		}
 	}
 }

@@ -157,7 +157,7 @@ newer file with "upgrade jackstay" rather than half-reading it:
 |---|---|
 | 1 | `guard`, `test`, `receipts`, `lock`, `baseline`, `trash`, `telemetry` |
 | 2 | `cards`, `ids`, `records`, `changes`, `procs`, `release`, `github`, `review`, `adopt` |
-| 3 (jackstay 0.6.0 and later) | `$schema`, `chat`, `queue`, `brief`, `status`, `review.pool`, `adopt.profile_sha256`, `test.selection`, and a scope's, step's or receipts command's `selector`, `report`, `reports`, `empty_exit`, `xcresult_bundles` (and a receipts command's `judge`) |
+| 3 (jackstay 0.6.0 and later) | `$schema`, `land`, `chat`, `brief`, `status`, `adopt.profile_sha256`, `test.selection`, and a scope's, step's or receipts command's `selector`, `report`, `reports`, `empty_exit`, `xcresult_bundles` (and a receipts command's `judge`) |
 
 A project whose workflows download a pinned jackstay (`adopt.pin`) must keep to what that release
 reads. **Do not add `$schema` or another schema-3 key while the pin is older than 0.6.0**: the
@@ -184,13 +184,14 @@ pin. The schema cannot express rules about paths, other fields or Go regular exp
 | `procs` | `jst bg`'s default and maximum deadline | [background](background.md) |
 | `trash` | how long `jst trash` keeps entries | [guard](guard.md#delete-undoably-jst-trash) |
 | `github` | the account jackstay acts as, the remote, wait defaults | [branches and GitHub](branches-and-github.md) |
+| `land` | who merges (`autonomy`), the merge method, extra required checks, paths only a person lands | [branches and GitHub](branches-and-github.md#the-land-section) |
 | `review` | reviewers, brief, severities, round limit; present (even `{}`), the AGENTS block tells agents about `jst review` | [reviews](review.md) |
 | `cards`, `ids`, `records` | the `Card:` line, number series, one-file records | [records](records.md) |
 | `changes`, `release` | changelog entries, versions and the release workflow | [releases](releases.md) |
 | `adopt` | the workflows' pin, the profile, kept exceptions | here |
 | `brief` | `max_age_hours`: how long a saved brief stays fresh (default 168, 1 to 720) | `jst brief save --help` |
 | `status` | `repos`: the repositories `jst status` reads when none are named | `jst status --help` |
-| `chat`, `queue` | session chat and the local merge queue | [session chat](session-chat.md) |
+| `chat` | session chat | [session chat](session-chat.md) |
 | `telemetry` | the journal's retention and how command text is recorded | [observability](observability.md) |
 
 ### A real example

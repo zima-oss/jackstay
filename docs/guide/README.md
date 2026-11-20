@@ -19,7 +19,8 @@ The commands an agent or a person runs while changing code.
 
 - [Tests](tests.md): scopes, counted evidence, receipts and the gate.
 - [The guard, discard and trash](guard.md): what is refused, and where discarded edits go.
-- [Branches and GitHub](branches-and-github.md): a worktree per task, CI checks, tidying up.
+- [Branches and GitHub](branches-and-github.md): a worktree per task, CI checks, landing a change
+  with `jst land`, tidying up.
 - [Reviews](review.md): cold reviews by Codex or Claude Code, and the check of a round.
 - [Background processes and waiting](background.md): deadlines, cleanup, waiting for a file or
   a line.
@@ -27,7 +28,6 @@ The commands an agent or a person runs while changing code.
 - [Changelogs and releases](releases.md): entries, preparation and publication.
 - [What jackstay did](observability.md): the journal, statistics and diagnostics.
 - [Maven Surefire](maven-surefire.md): judging separate XML reports.
-- [Local merge queue](merge-queue.md): one tested candidate for manual landing.
 - [A Homebrew tap formula](homebrew-tap.md): for maintainers of another install channel.
 
 ## Working with several agents

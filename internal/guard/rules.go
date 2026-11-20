@@ -26,6 +26,13 @@ const trashAdvice = "move it to jackstay's trash, which can be undone: `jst tras
 const discardAdvice = "`jst discard <path>` puts the path back to HEAD and keeps your changes in jackstay's trash " +
 	"(`jst trash restore <entry>` brings them back)"
 
+// hostMergeWhy and hostMergeInstead are the words of the rows that refuse a merge on the host (land.md section 3.3).
+const hostMergeWhy = "it merges the change on the host outside jst land, past the project's landing policy " +
+	"(its required checks and the paths only a person lands)"
+
+const hostMergeInstead = "`jst land` pushes, waits for the required checks and merges when the project's policy lets the agent; " +
+	"a change for a person stops at jst land: ready for a person"
+
 var table = []Rule{
 	{ID: "git-reset-hard", Program: "git reset", Words: [][]string{{"git", "reset", "--hard"}},
 		Why:     "it throws away every uncommitted change in the checkout",
@@ -108,6 +115,12 @@ var table = []Rule{
 		Why: "a recursive rm outside temporary and regenerable folders cannot be undone", Instead: trashAdvice},
 	{ID: "find-delete", Program: "find", Words: [][]string{{"find", "-delete"}},
 		Why: "it deletes every file it finds, which nothing brings back", Instead: "`find … -print` first to see what it finds; then `jst trash` what you mean"},
+	{ID: "gh-pr-merge", Program: "gh pr", Words: [][]string{{"gh", "pr", "merge"}}, Unless: []string{"--help", "-h", "help"},
+		Why:     hostMergeWhy,
+		Instead: hostMergeInstead},
+	{ID: "glab-mr-merge", Program: "glab mr", Words: [][]string{{"glab", "mr", "merge"}}, Unless: []string{"--help", "-h", "help"},
+		Why:     hostMergeWhy,
+		Instead: hostMergeInstead},
 	{ID: "env-split-string", Program: "env",
 		Why: "`env -S` runs the words of a string the guard cannot read", Instead: "run the command itself, without `env -S`"},
 	{ID: "zsh-glob", Program: "zsh",
@@ -196,6 +209,31 @@ func truncate(text string, limit int) string {
 		return text[:limit]
 	}
 	return text
+}
+
+// hostValuedOptions are the options of gh and glab that take a value, which may stand before the
+// command group (`gh -R owner/repo pr merge 3`).
+var hostValuedOptions = []string{"-R", "--repo"}
+
+// hostMerge refuses `gh pr merge` and `glab mr merge` (row), however the repository is named before
+// the group; a help request for it is harmless.
+func (reader *reader) hostMerge(inv *invocation, group, row string) {
+	var words []string
+	for index := 1; index < len(inv.args); index++ {
+		text := inv.args[index].value()
+		switch {
+		case text == "--help" || text == "-h":
+			return
+		case slices.Contains(hostValuedOptions, text):
+			index++
+		case strings.HasPrefix(text, "-"):
+		default:
+			words = append(words, text)
+		}
+	}
+	if len(words) >= 2 && words[0] == group && words[1] == "merge" {
+		reader.refuse(row, inv.shown(), "", "")
+	}
 }
 
 // find refuses `-delete` outside what may be removed whole, and reads what `-exec` runs.

@@ -150,15 +150,7 @@ func ReleaseRules(repo release.Repo, baseConfig config.Config, change Change) (f
 		}
 	}
 	if !isRequest && !exempt {
-		reason, hasNone := noneReason(change.Body)
-		switch {
-		case documented && hasNone:
-			found = append(found, Finding{Rule: RuleBothDocumented, Text: "the pull request adds an entry and says `Changes: none`: one or the other"})
-		case !documented && !hasNone:
-			found = append(found, Finding{Rule: RuleUndocumented, Text: fmt.Sprintf("no changelog entry in %s and no `Changes: none (<reason>)` line in the description (`jst changes new`)", entriesDir)})
-		case hasNone && reason == "":
-			found = append(found, Finding{Rule: RuleUndocumented, Text: "`Changes: none` needs a reason in brackets: `Changes: none (<reason>)`"})
-		}
+		found = append(found, changelogLineFindings(documented, change.Body, entriesDir)...)
 	}
 	if !hasRelease {
 		return found, nil, nil
@@ -348,4 +340,67 @@ func overrideRules(repo release.Repo, change Change, filePath string, hasRelease
 		return []Finding{{Rule: RuleInvalidEntry, Text: fmt.Sprintf("%s: %s is not greater than the last release %s", filePath, version, state.History.Last())}}
 	}
 	return nil
+}
+
+// changelogLineFindings is D1 once the diff is read: a changelog entry, or a `Changes: none
+// (reason)` line in the description, not both.
+func changelogLineFindings(documented bool, body, entriesDir string) []Finding {
+	reason, hasNone := noneReason(body)
+	switch {
+	case documented && hasNone:
+		return []Finding{{Rule: RuleBothDocumented, Text: "the pull request adds an entry and says `Changes: none`: one or the other"}}
+	case !documented && !hasNone:
+		return []Finding{{Rule: RuleUndocumented, Text: fmt.Sprintf("no changelog entry in %s and no `Changes: none (<reason>)` line in the description (`jst changes new`)", entriesDir)}}
+	case hasNone && reason == "":
+		return []Finding{{Rule: RuleUndocumented, Text: "`Changes: none` needs a reason in brackets: `Changes: none (<reason>)`"}}
+	}
+	return nil
+}
+
+// ChangelogLine is D1 alone, by the base's settings (W-047): the pull request adds a changelog
+// entry, or its description says `Changes: none (reason)`, not both; nothing for a base without
+// `changes`, a branch `cards.exempt_branches` names, or the release request's branch. It reads the
+// diff from the merge base and the description only, never the release history, so a landing can
+// judge the exact description it sends, also in a shallow clone.
+func ChangelogLine(repo release.Repo, baseConfig config.Config, change Change) ([]Finding, error) {
+	if baseConfig.Section("changes") == nil {
+		return nil, nil
+	}
+	if section := baseConfig.Section("cards"); section != nil {
+		list, _ := section["exempt_branches"].([]any)
+		for _, item := range list {
+			if name, _ := item.(string); name == change.HeadBranch {
+				return nil, nil
+			}
+		}
+	}
+	if baseConfig.Section("release") != nil {
+		settings, problems := release.SettingsOf(baseConfig)
+		if len(problems) > 0 {
+			return nil, fmt.Errorf("the base's release settings: %s", strings.Join(problems, "; "))
+		}
+		if change.HeadBranch == settings.Branch {
+			return nil, nil
+		}
+	}
+	changeSettings, err := changes.SettingsOf(baseConfig)
+	if err != nil {
+		return nil, err
+	}
+	diff, err := repo.Changes(change.MergeBase, change.Head)
+	if err != nil {
+		return nil, err
+	}
+	entriesDir := path.Clean(changeSettings.Dir)
+	documented := false
+	for _, item := range diff {
+		if path.Dir(item.Path) != entriesDir || item.Status == "D" {
+			continue
+		}
+		name := path.Base(item.Path)
+		if name == changes.OverrideName || (strings.HasSuffix(name, ".md") && changes.IsSlug(strings.TrimSuffix(name, ".md"))) {
+			documented = true
+		}
+	}
+	return changelogLineFindings(documented, change.Body, entriesDir), nil
 }

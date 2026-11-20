@@ -181,3 +181,31 @@ func TestGraphQLErrors(t *testing.T) {
 		t.Fatalf("err %v", err)
 	}
 }
+
+func TestEnqueueSendsThePullRequestAndItsExpectedHeadOnce(t *testing.T) {
+	rec, server := serve(t,
+		jsonAnswer(http.StatusOK, `{"data": {"enqueuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}}`),
+		jsonAnswer(http.StatusBadGateway, `{}`))
+	client := newClient(t, server, &clock{now: epoch})
+	if err := client.Enqueue(context.Background(), "PR_node", "h1"); err != nil {
+		t.Fatal(err)
+	}
+	requests := graphQLRequests(t, rec)
+	if len(requests) != 1 || requests[0].Variables["pullRequestId"] != "PR_node" || requests[0].Variables["expectedHeadOid"] != "h1" {
+		t.Fatalf("requests %+v", requests)
+	}
+	if err := client.Enqueue(context.Background(), "PR_node", "h1"); err == nil || len(rec.requests) != 2 {
+		t.Fatalf("a write is not retried: %v after %d requests", err, len(rec.requests))
+	}
+}
+
+func TestEnqueueRefusesAnUnknownNodeAndAnAnswerWithoutAnEntry(t *testing.T) {
+	rec, server := serve(t, jsonAnswer(http.StatusOK, `{"data": {"enqueuePullRequest": null}}`))
+	client := newClient(t, server, &clock{now: epoch})
+	if err := client.Enqueue(context.Background(), "", "h1"); err == nil || len(rec.requests) != 0 {
+		t.Fatalf("no node id: %v, %d requests", err, len(rec.requests))
+	}
+	if err := client.Enqueue(context.Background(), "PR_node", "h1"); err == nil {
+		t.Fatal("an answer without a queue entry is not success")
+	}
+}

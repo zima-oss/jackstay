@@ -47,9 +47,8 @@ func TestJSONSchemaDescribesRuntimeStructure(t *testing.T) {
 	if properties["test"].(map[string]any)["properties"].(map[string]any)["scopes"].(map[string]any)["additionalProperties"] == nil {
 		t.Fatal("dynamic test scope names must be accepted")
 	}
-	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
-	if accepting := pool["accepting"].(map[string]any); accepting["type"] != "boolean" || accepting["default"] != true {
-		t.Fatalf("review pool admission schema: %+v", accepting)
+	if _, found := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"]; found {
+		t.Fatal("review.pool is gone with the reviewer pool (folded into jst review)")
 	}
 	brief := properties["brief"].(map[string]any)["properties"].(map[string]any)["max_age_hours"].(map[string]any)
 	if brief["minimum"] != float64(BriefMaxAgeHoursMinimum) || brief["maximum"] != float64(BriefMaxAgeHoursMaximum) ||
@@ -61,12 +60,11 @@ func TestJSONSchemaDescribesRuntimeStructure(t *testing.T) {
 	}
 }
 
-func TestChatAndQueueProjectPolicy(t *testing.T) {
+func TestChatProjectPolicy(t *testing.T) {
 	parsed, err := Parse([]byte(`{
 		"$schema": "./schemas/jackstay.schema.json",
 		"jackstay_schema": 3,
-		"chat": {"enabled": true, "codex_bridge": {"enabled": true}},
-		"queue": {"enabled": true}
+		"chat": {"enabled": true, "codex_bridge": {"enabled": true}}
 	}`))
 	if err != nil {
 		t.Fatal(err)
@@ -75,9 +73,6 @@ func TestChatAndQueueProjectPolicy(t *testing.T) {
 	if !policy.Enabled || !policy.CodexBridgeEnabled || policy.MaxPending != ChatMaxPending ||
 		policy.MaxMessageBytes != ChatMaxMessageBytes || policy.CodexPollIntervalMS != ChatCodexPollIntervalMS {
 		t.Fatalf("unexpected chat policy: %+v", policy)
-	}
-	if problems := SectionProblems(parsed).Of("queue"); len(problems) != 1 {
-		t.Fatalf("expected a missing base on enabled queue, got %v", problems)
 	}
 	parsed.Section("chat")["max_pending"] = json.Number("24")
 	if problems := SectionProblems(parsed).Of("chat"); len(problems) != 1 || !strings.Contains(problems[0], "unknown key") {
@@ -128,11 +123,11 @@ func TestNewerKeysNeedSchema3AndAnOlderSchemaSaysSo(t *testing.T) {
 		`{"jackstay_schema":2,"chat":{"enabled":false}}`,
 		`{"jackstay_schema":2,"brief":{"max_age_hours":24}}`,
 		`{"jackstay_schema":2,"status":{"repos":["."]}}`,
-		`{"jackstay_schema":2,"review":{"pool":{"accepting":true}}}`,
 		`{"jackstay_schema":2,"test":{"selection":{"order":[]}}}`,
 		`{"jackstay_schema":2,"test":{"scopes":{"unit":{"run":["x"],"report":"r.xml"}}}}`,
 		`{"jackstay_schema":2,"receipts":{"commands":[{"argv":["x"],"judge":"go-json"}]}}`,
-		`{"jackstay_schema":1,"queue":{"enabled":false}}`,
+		`{"jackstay_schema":1,"land":{"autonomy":"prepare"}}`,
+		`{"jackstay_schema":2,"land":{"autonomy":"merge-when-green"}}`,
 	} {
 		parsed, err := Parse([]byte(document))
 		if err != nil {

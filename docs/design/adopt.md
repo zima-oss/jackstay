@@ -347,7 +347,8 @@ Item IDs, what each needs, and what changes with the section:
 | `test` | always | with no `test.scopes`, only `jst test -- COMMAND`; `gate` sentence only with a `gate` scope |
 | `wait`, `bg`, `branches`, `discard`, `guard`, `doctor` | always | the guard's last sentence only with a `guard` section |
 | `lock` | `lock.enabled` true | |
-| `github` | `github.account` | |
+| `land` | `land` | the text follows `land.autonomy`: `merge-when-green` says the agent merges and where it stops; any other value says a person merges |
+| `checks` | `github.account` | |
 | `review` | `review` (a section, even `{}`: every key has a default, W-051) | |
 | `cards` | `cards` | the branch from `cards.branch`, else `origin/main` |
 | `ids` | `ids`; the `jst new`/`jst view` half with `records` | |

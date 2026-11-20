@@ -63,8 +63,19 @@ func Report(settings Settings, record RoundRecord) string {
 		out.WriteString("\n## Rare: for the project's later-findings card (W-048)\n\n")
 		out.WriteString("| found | place | finding | likelihood | consequence | why it waits |\n|---|---|---|---|---|---|\n")
 		for _, finding := range rare {
-			fmt.Fprintf(&out, "| %s, round %d | `%s` | %s | unusual | mild | |\n", record.Task, record.Round,
-				cell(finding.Place), cell(finding.Title))
+			why := ""
+			if finding.Consequence == "severe" {
+				why = "no ordinary-work path named (W-094)"
+			}
+			fmt.Fprintf(&out, "| %s, round %d | `%s` | %s | unusual | %s | %s |\n", record.Task, record.Round,
+				cell(finding.Place), cell(finding.Title), finding.Consequence, why)
+		}
+		// A severe finding deferred for want of a path keeps its detail here, so the session can
+		// judge whether the reviewer left out a real one (W-094).
+		for _, finding := range rare {
+			if finding.Consequence == "severe" {
+				fmt.Fprintf(&out, "\n%s — `%s`, severe, deferred with no ordinary-work path:\n\n%s\n", finding.ID, finding.Place, finding.Detail)
+			}
 		}
 	}
 	out.WriteString("\n## Summaries\n")
@@ -82,11 +93,14 @@ func writeFindings(out *strings.Builder, heading string, findings []LedgerFindin
 	fmt.Fprintf(out, "\n## %s\n", heading)
 	for _, finding := range findings {
 		blocks := ""
-		if settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence) {
+		if settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence, finding.OrdinaryPath) {
 			blocks = ", blocks"
 		}
 		fmt.Fprintf(out, "\n### %s — `%s`\n\n%s (%s, %s, %s%s)\n\n%s\n", finding.ID, finding.Place, finding.Title,
 			finding.Severity, finding.Likelihood, finding.Consequence, blocks, finding.Detail)
+		if path := strings.TrimSpace(finding.OrdinaryPath); path != "" {
+			fmt.Fprintf(out, "\nOrdinary-work path: %s\n", path)
+		}
 	}
 }
 

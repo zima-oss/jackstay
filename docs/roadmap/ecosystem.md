@@ -35,7 +35,7 @@ adopter feedback.
 ### Live worktree occupancy and commit attribution
 
 A new activity view in `jst status` would join worktree identity, Git index state and observed
-local sessions. A later preflight shared by `jst gh pr-land`, `jst release` and other Git-writing
+local sessions. A later preflight shared by `jst land`, `jst release` and other Git-writing
 commands would snapshot HEAD, the index tree and intended path set, then revalidate those facts
 immediately before the write. The report would use stable identity and timestamps, with explicit
 `unknown` when a runner did not publish a liveness signal. It would show a path as contested only

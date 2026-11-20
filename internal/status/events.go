@@ -256,11 +256,26 @@ func stageOf(span journal.Span) string {
 	}
 	switch span.Text(telemetry.AttrCommand) {
 	case "gh":
+		// Spans recorded by jackstay before 0.6.0, whose `jst gh` is removed.
 		switch operation := span.Text(telemetry.AttrGitHubOperation); operation {
 		case "ci-wait", "ci-status", "run-wait", "pr-find", "pr-status", "pr-land":
 			return "github." + operation
 		default:
 			return "github.command"
+		}
+	case "checks":
+		switch operation := span.Text(telemetry.AttrGitHubOperation); operation {
+		case "wait", "status", "run-wait":
+			return "checks." + operation
+		default:
+			return "checks.command"
+		}
+	case "land":
+		switch operation := span.Text(telemetry.AttrGitHubOperation); operation {
+		case "status", "find":
+			return "land." + operation
+		default:
+			return "land.command"
 		}
 	case "lint pr":
 		return "github.lint-pr"

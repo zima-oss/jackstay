@@ -60,8 +60,8 @@ func TestStatusJoinsMixedDeliveryStagesWithoutPrivateFields(t *testing.T) {
 	add(span("review.attempt", 1, 3, 2, point(5), point(6), map[string]any{
 		telemetry.AttrOutcome: "clear", telemetry.AttrHead: head, telemetry.AttrReviewTask: private,
 	}))
-	add(span("jst gh", 1, 1, 0, from.Add(-time.Second), from, map[string]any{
-		telemetry.AttrCommand: "gh", telemetry.AttrGitHubOperation: "ci-status", telemetry.AttrCwd: repository.Root,
+	add(span("jst checks", 1, 1, 0, from.Add(-time.Second), from, map[string]any{
+		telemetry.AttrCommand: "checks", telemetry.AttrGitHubOperation: "status", telemetry.AttrCwd: repository.Root,
 		telemetry.AttrGitHubRepository: "Example/Remote", telemetry.AttrGitHubPull: 24, telemetry.AttrOutcome: "ok",
 		telemetry.AttrHead: head, telemetry.AttrArgs: private,
 	}))
@@ -120,7 +120,7 @@ func TestStatusJoinsMixedDeliveryStagesWithoutPrivateFields(t *testing.T) {
 	for _, entry := range got.Events {
 		stages = append(stages, entry.Stage)
 	}
-	want := []string{"github.ci-status", "test.run", "review.attempt", "review.agent", "background.started"}
+	want := []string{"checks.status", "test.run", "review.attempt", "review.agent", "background.started"}
 	if got.RepositoryID == "" || !slices.Equal(stages, want) || got.Counts.OmittedEvents != 0 {
 		t.Fatalf("timeline %+v", got)
 	}
