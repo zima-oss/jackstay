@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:9870075752a9 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:87bb35b7520e — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,
@@ -65,9 +65,8 @@ the same rules hold.
 - **Numbers** come from `jst id next SERIES`, never by hand.
 - **After a surprising failure**, read `jst log --session ID` (or `--trace ID`) and
   `jst stats REPORT` before asking.
-- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
-- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
-- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
+- **What is going on here**: `jst status` shows worktrees, agent sessions, recent events, chat,
+  the brief and background jobs; `jst status PATH…` gives one row per repository.
 - **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is

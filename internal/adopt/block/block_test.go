@@ -76,7 +76,7 @@ func TestEveryItemIsPrintedForSomeConfig(t *testing.T) {
 	text := Render(Inputs{Config: everySection, Has: everyCommand})
 	for _, word := range []string{"jst test gate", "jst wait", "jst bg", "jst lock", "jst start", "jst discard", "the guard refuses",
 		"jst land --title", "jst checks run-wait", "jst review", "origin/trunk..HEAD", "jst id next", "jst new", "jst changes new", "jst release prepare",
-		"jst log", "jst timeline", "jst inventory", "jst workspace board", "jst brief save", "jst receipts export", "jst profile export", "jst owner", "jst adopt --plan",
+		"jst log", "jst status", "jst brief save", "jst receipts export", "jst profile export", "jst owner", "jst adopt --plan",
 		"jst setup --plan", "jst setup --chat", "jst chat codex-bridge", "jst chat claude-hook", "jst test plan changed"} {
 		if !strings.Contains(text, word) {
 			t.Errorf("the block lacks %q", word)

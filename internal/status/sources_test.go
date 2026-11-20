@@ -1,15 +1,17 @@
-package workspaceboard
+package status
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
@@ -56,14 +58,19 @@ func write(t *testing.T, name, value string) {
 	}
 }
 
+func readBoard(paths ...string) Report {
+	now := time.Now()
+	return Read(context.Background(), paths, window{from: now.Add(-time.Hour), until: now, limit: 20}, len(paths) == 1, now)
+}
+
 func TestBoardKeepsRepositoriesSeparateAndDoesNotWrite(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "state")
 	t.Setenv("JACKSTAY_HOME", home)
 	parent := t.TempDir()
 	first := repository(t, parent, "first")
 	second := repository(t, parent, "second")
-	board := Read(context.Background(), []string{first, second})
-	if board.Partial || board.Schema != 1 || len(board.Repositories) != 2 {
+	board := readBoard(first, second)
+	if board.Partial || board.Schema != 1 || board.Kind != KindBoard || len(board.Repositories) != 2 {
 		t.Fatalf("board: %+v", board)
 	}
 	for _, row := range board.Repositories {
@@ -87,7 +94,7 @@ func TestBoardKeepsRepositoriesSeparateAndDoesNotWrite(t *testing.T) {
 	if _, err := store.Register("private agent", ""); err != nil {
 		t.Fatal(err)
 	}
-	board = Read(context.Background(), []string{first, second})
+	board = readBoard(first, second)
 	if board.Repositories[0].Chat.Sessions != 1 || board.Repositories[1].Chat.Sessions != 0 {
 		t.Fatalf("chat leaked across independent repositories: %+v", board.Repositories)
 	}
@@ -99,13 +106,13 @@ func TestConfiguredMissingCardsDirectoryIsEmpty(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(root, "cards")); err != nil {
 		t.Fatal(err)
 	}
-	board := Read(context.Background(), []string{root})
+	board := readBoard(root)
 	if board.Partial || len(board.Repositories) != 1 || board.Repositories[0].Cards.Status != "none" {
 		t.Fatalf("missing cards source: %+v", board)
 	}
 }
 
-func TestBoardSharesChatAcrossLinkedWorktrees(t *testing.T) {
+func TestBoardSharesChatAcrossLinkedWorktreesAndKeepsEvidencePerCheckout(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("JACKSTAY_HOME", home)
 	parent := t.TempDir()
@@ -113,10 +120,6 @@ func TestBoardSharesChatAcrossLinkedWorktrees(t *testing.T) {
 	linked := filepath.Join(parent, "linked")
 	git(t, root, "worktree", "add", "-qb", "feature", linked)
 	write(t, filepath.Join(linked, "cards", "T-3-live.md"), "---\n{\"state\":\"in_progress\"}\n---\n")
-	write(t, filepath.Join(linked, "feature.txt"), "feature")
-	git(t, linked, "add", "feature.txt")
-	git(t, linked, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "feature")
-
 	common, err := (gitcli.Git{Dir: root}).CommonDir(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -135,16 +138,17 @@ func TestBoardSharesChatAcrossLinkedWorktrees(t *testing.T) {
 	write(t, filepath.Join(home, ".all", "runs.jsonl"),
 		`{"event":"gate","project":"shared","worktree":"`+root+`","head":"`+head+`","epoch":100,"at":"2026-11-19T10:00:00Z","outcome":"passed"}`+"\n")
 
-	board := Read(context.Background(), []string{root, linked})
+	board := readBoard(root, linked)
 	if board.Partial || len(board.Repositories) != 2 {
 		t.Fatalf("board: %+v", board)
 	}
 	mainRow, linkedRow := board.Repositories[0], board.Repositories[1]
-	if mainRow.Chat.Sessions != 1 || linkedRow.Chat.Sessions != 1 {
+	if mainRow.Chat.Sessions != 1 || linkedRow.Chat.Sessions != 1 || mainRow.Counts.Worktrees != 2 ||
+		mainRow.RepositoryID != linkedRow.RepositoryID || mainRow.Worktrees != nil {
 		t.Fatalf("shared sources: %+v %+v", mainRow, linkedRow)
 	}
 	if len(mainRow.Cards.Active) != 1 || len(linkedRow.Cards.Active) != 2 ||
-		mainRow.Gate.Status != "recorded" || linkedRow.Gate.Status != "none" {
+		mainRow.Gate.Status != "recorded" || mainRow.Gate.Freshness != "current" || linkedRow.Gate.Status != "none" {
 		t.Fatalf("checkout sources: %+v %+v", mainRow, linkedRow)
 	}
 }
@@ -155,17 +159,17 @@ func TestBoardReportsPartialRowsAndMalformedLog(t *testing.T) {
 	root := repository(t, t.TempDir(), "valid")
 	write(t, filepath.Join(home, ".all", "runs.jsonl"), "{not-json}\n")
 	missing := filepath.Join(t.TempDir(), "missing")
-	board := Read(context.Background(), []string{missing, root})
+	board := readBoard(missing, root)
 	if !board.Partial || board.Repositories[0].Status != "unknown" || board.Repositories[1].Status != "ok" ||
 		board.Repositories[1].Gate.Status != "unknown" || board.Repositories[1].Receipt.Status != "unknown" {
 		t.Fatalf("partial board: %+v", board)
 	}
 	var output, diagnostics bytes.Buffer
-	if code := runBoard([]string{"--json", missing, root}, nil, &output, &diagnostics); code != 1 {
+	if code := run([]string{"--json", missing, root}, nil, &output, &diagnostics); code != 1 {
 		t.Fatalf("exit %d: %s", code, diagnostics.String())
 	}
-	var decoded Board
-	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil || len(decoded.Repositories) != 2 {
+	var decoded Report
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil || len(decoded.Repositories) != 2 || decoded.Kind != KindBoard {
 		t.Fatalf("JSON: %v: %s", err, output.String())
 	}
 	if strings.Contains(output.String(), "Private card body") || strings.Contains(output.String(), "private agent") {
@@ -173,17 +177,25 @@ func TestBoardReportsPartialRowsAndMalformedLog(t *testing.T) {
 	}
 }
 
-func TestBoardCommandIsReadOnlyAndRequiresPaths(t *testing.T) {
-	entry, _, found := cli.Find([]string{"workspace", "board"})
+func TestStatusIsReadOnlyAndRefusesBadRequests(t *testing.T) {
+	entry, _, found := cli.Find([]string{"status"})
 	if !found || !entry.SkipTelemetry || !entry.PrivateArgs {
-		t.Fatalf("workspace board telemetry settings: %+v", entry)
+		t.Fatalf("status telemetry settings: %+v", entry)
 	}
-	var output, diagnostics bytes.Buffer
-	if code := runBoard([]string{"--json"}, nil, &output, &diagnostics); code != 2 {
-		t.Fatalf("missing path exit %d", code)
+	for _, args := range [][]string{{"--bad"}, {"--since", "0"}, {"--since", "721h"}, {"--limit", "0"},
+		{"--limit", "1001"}, {"--since"}, {"one", "--json"}} {
+		var output, diagnostics bytes.Buffer
+		if code := run(args, nil, &output, &diagnostics); code != 2 || output.Len() != 0 ||
+			!strings.Contains(diagnostics.String(), "usage: jst status") {
+			t.Fatalf("%v: exit %d, %q %q", args, code, &output, &diagnostics)
+		}
 	}
-	if code := runBoard([]string{"--bad", "x"}, nil, &output, &diagnostics); code != 2 {
-		t.Fatalf("unknown flag exit %d", code)
+	many := make([]string, maximumRequests+1)
+	for index := range many {
+		many[index] = "repository"
+	}
+	if code := run(many, nil, io.Discard, io.Discard); code != 2 {
+		t.Fatalf("too many repositories: exit %d", code)
 	}
 }
 
@@ -191,8 +203,7 @@ func TestBoardMarksEvidenceStale(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("JACKSTAY_HOME", home)
 	root := repository(t, t.TempDir(), "repo")
-	gitReader := gitcli.Git{Dir: root}
-	head, err := gitReader.Line(context.Background(), "rev-parse", "HEAD")
+	head, err := (gitcli.Git{Dir: root}).Line(context.Background(), "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,6 +212,8 @@ func TestBoardMarksEvidenceStale(t *testing.T) {
 			"at": "2026-11-19T10:00:00Z", "outcome": "passed"},
 		{"event": "run", "project": "shared", "worktree": root, "head": head, "epoch": 101.0,
 			"at": "2026-11-19T10:01:00Z", "outcome": "passed", "stored": true},
+		{"event": "run", "project": "shared", "worktree": root, "head": head, "epoch": 102.0,
+			"at": "2026-11-19T10:02:00Z", "outcome": "passed", "stored": true, "inside": "outer"},
 	}
 	var log bytes.Buffer
 	for _, record := range records {
@@ -212,13 +225,15 @@ func TestBoardMarksEvidenceStale(t *testing.T) {
 		log.WriteByte('\n')
 	}
 	write(t, filepath.Join(home, ".all", "runs.jsonl"), log.String())
-	git(t, root, "checkout", "-qb", "feature")
+	row := readBoard(root).Repositories[0]
+	if row.Gate.Freshness != "current" || row.Receipt.Freshness != "current" || row.Receipt.At != "2026-11-19T10:01:00Z" {
+		t.Fatalf("evidence for HEAD: %+v", row)
+	}
 	write(t, filepath.Join(root, "feature.txt"), "feature")
 	git(t, root, "add", "feature.txt")
 	git(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "feature")
-	board := Read(context.Background(), []string{root})
-	row := board.Repositories[0]
-	if board.Partial || row.Gate.Freshness != "stale" || row.Receipt.Freshness != "stale" {
+	row = readBoard(root).Repositories[0]
+	if row.Gate.Freshness != "stale" || row.Receipt.Freshness != "stale" {
 		t.Fatalf("old evidence: %+v", row)
 	}
 }
@@ -241,7 +256,7 @@ func TestBoardRejectsFIFOInputsWithoutWaitingForWriter(t *testing.T) {
 	if err := syscall.Mkfifo(log, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	board := Read(context.Background(), []string{root})
+	board := readBoard(root)
 	if !board.Partial || board.Repositories[0].Cards.Status != "unknown" ||
 		board.Repositories[0].Gate.Status != "unknown" || board.Repositories[0].Receipt.Status != "unknown" {
 		t.Fatalf("FIFO sources: %+v", board)
