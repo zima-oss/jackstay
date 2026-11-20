@@ -64,3 +64,4 @@ is added in a pull request.
 | [W-090](W-090-review-of-0-6-0.md) | 0.6.0 review: the pool folded into `jst review --background` with chat events, only missing answers paid again after a crash, one access profile for Codex and Claude Code, the wrapper measured |
 | [W-094](W-094-unusual-severe-findings-need-an-ordinary-path.md) | A review finding rated unusual and severe blocks only when it names the ordinary-work path to its setup; otherwise it is rare (amends W-048) |
 | [W-095](W-095-the-socket-is-a-doorbell.md) | Claude Code's messaging socket is only a doorbell; a chat message is delivered when the recipient reads it from its inbox |
+| [W-096](W-096-clear-limits-over-more-machinery.md) | Every mechanism has simple behaviour and written limits; a place that draws corner cases is narrowed or replaced by an existing solution; CI never runs the same test twice on one commit |
