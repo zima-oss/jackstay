@@ -35,6 +35,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/install"
 	"github.com/zima-oss/jackstay/internal/layout"
 	"github.com/zima-oss/jackstay/internal/release"
+	"github.com/zima-oss/jackstay/internal/remote"
 )
 
 // Options are what a plan is made from besides the project's files.
@@ -474,29 +475,77 @@ func (planner *planner) oldestReader(original *jsondoc.Object, chosen *profile.P
 	for _, template := range wantedTemplates(chosen, planner.plain) {
 		byName[template.Name+".yml"] = template
 	}
-	for _, name := range sortedFiles(existing) {
-		if marked, _, _ := templates.Header(existing[name]); !marked {
-			continue
-		}
-		template, wanted := byName[name]
-		if wanted && slices.Contains(templates.Placeholders(template.Text), "jackstay_version") {
-			body, err := templates.Render(template.Text, planner.workflowValues(chosen, after))
-			if err != nil {
-				return "", &UsageError{fmt.Sprintf("the template %s: %v", template.Name, err)}
+	// The working copy, and the default branch a pull request of it goes to: a workflow rewritten
+	// here has not landed there, and CI runs what landed.
+	sources := []struct {
+		where string
+		files map[string]string
+	}{{workflowsDir + "/", existing}}
+	if ref, files := planner.baseWorkflows(); ref != "" {
+		sources = append(sources, struct {
+			where string
+			files map[string]string
+		}{workflowsDir + "/ on " + ref + ": ", files})
+	}
+	for _, source := range sources {
+		for _, name := range sortedFiles(source.files) {
+			text := source.files[name]
+			if marked, _, _ := templates.Header(text); !marked {
+				continue
 			}
-			if existing[name] == templates.Marked(template.Name, body) {
-				continue // already rewritten for the pin
+			template, wanted := byName[name]
+			if wanted && slices.Contains(templates.Placeholders(template.Text), "jackstay_version") {
+				body, err := templates.Render(template.Text, planner.workflowValues(chosen, after))
+				if err != nil {
+					return "", &UsageError{fmt.Sprintf("the template %s: %v", template.Name, err)}
+				}
+				if text == templates.Marked(template.Name, body) {
+					continue // already rewritten for the pin
+				}
 			}
-		}
-		release, known := workflowRelease(existing[name], template, wanted)
-		switch {
-		case !known:
-			return "the jackstay that " + workflowsDir + "/" + name + " downloads (its release cannot be told; land its update first)", nil
-		case release != "" && tooOld(release):
-			return "the jackstay " + release + " that " + workflowsDir + "/" + name + " downloads", nil
+			release, known := workflowRelease(text, template, wanted)
+			switch {
+			case !known:
+				return "the jackstay that " + source.where + name + " downloads (its release cannot be told; land its update or removal first)", nil
+			case release != "" && tooOld(release):
+				return "the jackstay " + release + " that " + source.where + name + " downloads", nil
+			}
 		}
 	}
 	return "", nil
+}
+
+// baseWorkflows are the managed workflows' files on the default branch a pull request goes to (the
+// remote's, as fetched, else the local main or master), by file name, and that branch's ref; ""
+// outside a repository or without such a branch.
+func (planner *planner) baseWorkflows() (string, map[string]string) {
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
+	defer cancel()
+	git := gitcli.Git{Dir: planner.root}
+	name, err := remote.Name(ctx, git, remote.ConfiguredRemote(planner.plain.Section("github")))
+	if err != nil {
+		name = ""
+	}
+	base, err := remote.DefaultBranch(ctx, git, name)
+	if err != nil {
+		return "", nil
+	}
+	listed, err := git.Run(ctx, "ls-tree", "--name-only", base.Ref, "--", workflowsDir+"/")
+	if err != nil {
+		return "", nil
+	}
+	files := map[string]string{}
+	for _, path := range strings.Split(strings.TrimSpace(string(listed)), "\n") {
+		file := strings.TrimPrefix(path, workflowsDir+"/")
+		if file == path || !strings.HasSuffix(file, ".yml") && !strings.HasSuffix(file, ".yaml") {
+			continue
+		}
+		text, err := git.Run(ctx, "show", base.Ref+":./"+path)
+		if err == nil {
+			files[file] = string(text)
+		}
+	}
+	return base.Short, files
 }
 
 // tooOld says a release (vX.Y.Z or X.Y.Z) reads no schema 3.
@@ -511,7 +560,9 @@ var workflowJackstayVersion = regexp.MustCompile(`(?m)^\s*JACKSTAY_VERSION:\s*["
 // workflowRelease is the oldest jackstay release a managed workflow's text downloads: its
 // JACKSTAY_VERSION, and what stands at @@jackstay_version@@ in the lines of its own template
 // (wanted), whatever that line's other placeholders were. "" and true: it downloads none. false:
-// its template has the placeholder, and its text does not show what stands there.
+// its template has the placeholder, and its text does not show what stands there; or no template
+// wants it now (wanted false) and it names no JACKSTAY_VERSION, so whether it downloads one cannot
+// be told.
 func workflowRelease(text string, template templates.Template, wanted bool) (string, bool) {
 	var found []string
 	for _, match := range workflowJackstayVersion.FindAllStringSubmatch(text, -1) {
@@ -540,7 +591,7 @@ func workflowRelease(text string, template templates.Template, wanted bool) (str
 			}
 		}
 	}
-	if versioned && len(found) == 0 {
+	if (versioned || !wanted) && len(found) == 0 {
 		return "", false
 	}
 	oldest := ""

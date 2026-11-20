@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -892,7 +893,7 @@ func TestAWorkflowWhoseReleaseCannotBeToldHoldsNewerKeysBack(t *testing.T) {
 	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p","adopt":{"pin":"v0.6.0"}}`})
 	options := optionsFor(root)
 	options.Version = "0.6.0"
-	old := map[string]string{"custom": "name: custom\nenv:\n  VERSION: '@@jackstay_version@@'\n  CHANNEL: '@@channel_2@@'\n"}
+	old := map[string]string{"custom": "name: custom\nenv:\n  VERSION: '@@jackstay_version@@-@@channel_2@@'\n"}
 	options.Profile = exampleProfile(t, root, `{}`, old)
 	setValue := func(name, value string) {
 		t.Helper()
@@ -920,6 +921,11 @@ func TestAWorkflowWhoseReleaseCannotBeToldHoldsNewerKeysBack(t *testing.T) {
 	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "cannot be told") {
 		t.Fatalf("a release that cannot be told: %v", err)
 	}
+	// The profile drops the template in the same apply: the workflow still runs, release unknown.
+	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, map[string]string{"tool": "name: tool\n"})
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "update or removal") {
+		t.Fatalf("a dropped template's workflow: %v", err)
+	}
 	// Another managed workflow's VERSION for another tool is not jackstay's.
 	other := map[string]string{"custom": "name: custom\nenv:\n  JST: '@@jackstay_version@@'\n", "tool": "name: tool\nenv:\n  VERSION: 'v0.5.11'\n"}
 	exampleProfile(t, root, `{}`, other)
@@ -929,6 +935,38 @@ func TestAWorkflowWhoseReleaseCannotBeToldHoldsNewerKeysBack(t *testing.T) {
 	options.Accept = nil
 	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, other)
 	options.SettingsOnly = true
+	apply(t, options)
+	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) {
+		t.Fatalf("after the workflows landed:\n%s", text)
+	}
+}
+
+func TestAWorkflowRewrittenHereButNotLandedHoldsNewerKeysBack(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}, ` +
+		`"changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	git := func(args ...string) {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+	}
+	options := optionsFor(root)
+	options.Version = "0.5.11"
+	apply(t, options)
+	git("init", "-q", "-b", "main")
+	git("add", "-A")
+	git("commit", "-qm", "base")
+	// The pin and the workflows move here, and nothing of it lands on main.
+	options.Version, options.Pin = "0.6.0", true
+	apply(t, options)
+	options.Pin, options.SettingsOnly = false, true
+	options.Profile = exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, nil)
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "on main: card-line.yml downloads") {
+		t.Fatalf("a workflow rewritten here but not landed: %v", err)
+	}
+	git("add", "-A")
+	git("commit", "-qm", "the pin and the workflows land")
 	apply(t, options)
 	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) {
 		t.Fatalf("after the workflows landed:\n%s", text)
