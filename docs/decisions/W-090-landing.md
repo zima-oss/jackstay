@@ -7,8 +7,8 @@ Date: 2026-11-20.
 0.5.x lands a change in two half-flows, both written directly against GitHub's API. `jst gh
 pr-land` merges; the unreleased `jst queue` checks local evidence but never merges, and needs an
 approval by someone other than the author. GitLab and Bitbucket are planned for later releases.
-The maintainer ruled on the shape of 0.6.0 (this record keeps the part about landing) and then on
-the landing design's open questions (W-091). How thin the landing is, is
+The maintainer ruled on the shape of 0.6.0 (this record keeps the part about landing, with the
+answers to the landing design's open questions given the same day). How thin the landing is, is
 [W-092](W-092-thin-land-and-where-tests-run.md).
 
 ## Decision
@@ -19,7 +19,7 @@ the landing design's open questions (W-091). How thin the landing is, is
   0.6.0; GitLab and Bitbucket follow.
 - **Two autonomy modes**, chosen explicitly at adopt and setup: by default the agent merges when the
   required checks pass, while `jackstay.json`, `.github/workflows/**` and `.claude/settings.json`
-  (and any listed paths) need a person; or the agent prepares and a person merges. A person is a
+  always need a person, as do any paths a project adds; or the agent prepares and a person merges. A person is a
   change number typed at a terminal, or a merge on the host. Setup keeps the machine's answer as
   the one adopt offers first.
 - **The guard** refuses `gh pr merge` and `glab mr merge`.

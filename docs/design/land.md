@@ -32,8 +32,8 @@ its file.
   "host": "github",
   "autonomy": "merge-when-green",
   "method": "squash",
-  "checks": "rules",
-  "human_paths": [".github/workflows/**", ".claude/settings.json"]
+  "checks": [],
+  "human_paths": []
 }
 ```
 
@@ -42,8 +42,8 @@ its file.
 | `host` | `github` (0.6.0) | the push remote's host | the adapter; its connection stays in `github` (`account`, `remote`, `repository`, `wait`) |
 | `autonomy` | `merge-when-green`, `prepare` | none: adopt asks | the agent merges when the required checks pass, except for human paths; or it stops before every merge |
 | `method` | `squash`, `merge`, `rebase` | `squash` | the merge method asked of the host |
-| `checks` | `rules`, or a list of names | `rules` | the checks that block: the base's branch rules, or the listed names |
-| `human_paths` | glob list | the two above | paths only a person lands; `jackstay.json` is always one |
+| `checks` | list of names | `[]` | checks required in addition to the base's branch rules (section 4); never fewer |
+| `human_paths` | glob list | `[]` | paths only a person lands, in addition to the fixed three: `jackstay.json`, `.github/workflows/**`, `.claude/settings.json` |
 
 `--prepare` lowers autonomy for one run. Nothing lets the agent merge in a `prepare` project; a
 person may (section 3.3). A project without a `land` section has no policy: `jst land` refuses and
@@ -97,14 +97,17 @@ checks.
 1. **Push and open.** The work tree is clean and not on the base; this checkout's branch has
    nothing the head lacks. New commits are pushed (every push destination verified); a change is
    opened when none is, with `--title` and the card line. A draft is not merged.
-2. **Policy.** The paths the change touches, against `jackstay.json` and `human_paths`, read from
-   the base and from the change, so a change that adds or edits the `land` section is judged by
-   both. Any match makes the change a person's (section 3.3).
+2. **Policy.** The paths the change touches (merge base to head), against the fixed human paths
+   and `human_paths` read from the base's file and from the change's, so a change that adds or
+   edits the `land` section is judged by both. Any match makes the change a person's (section
+   3.3). The decision is bound to that base and head.
 3. **Checks.** Wait for the required checks, judged by section 4.
 4. **Freshness.** When the base's rules require the branch to be up to date and it is behind,
-   update it on the host and go back to step 3.
-5. **Recheck.** Read the change and its checks again; a moved head, base or test merge, or a
-   required check no longer passing, stops with `moved` (as `checkLandingEvidence` does today).
+   update it on the host and go back to step 2.
+5. **Recheck.** Read the change, the base tip and the rules again, and read the checks afresh
+   (today's `checkLandingEvidence` compares identities only; this adds the check read). A moved
+   head, base or test merge, changed rules, or a required check no longer passing stops with
+   `moved`; the next run starts at step 2.
 6. **Merge.** Ask the host to merge with the head from step 5, or enqueue it when the rules require
    a queue. A lost answer is settled by reading the change, never by a second request.
 7. **Clean up.** Delete the remote branch only under today's lease and checks (merged at that head,
@@ -129,7 +132,9 @@ checks.
 
 The agent merges only in `merge-when-green`, and only a change that touches no human path. For any
 other change `jst land` stops ready for a person, who either merges on the host's page or runs
-`jst land --confirm` at a terminal and types the change's number. `--confirm` is refused without a
+`jst land --confirm` at a terminal and types the change's number. A person's change still goes
+through steps 1 to 5 before the stop, so it is handed over with its checks passed; `--confirm`
+repeats steps 2 to 5 after the number is typed, then merges. `--confirm` is refused without a
 terminal and with `--prepare`.
 
 Three things keep that true for an agent:
@@ -147,17 +152,20 @@ agent calling the host's API directly is outside it.
 
 ## 4. Required checks
 
-- **Required** (by the rules, or listed in `checks`): each must pass or be skipped on the commit
-  the host judges (the test merge where the host has one, else the head, as today). Pending and not
-  yet registered are waited for; a failure or a cancellation stops.
+- **Required** (by the base's rules, plus any listed in `checks`): each must pass or be skipped on
+  the commit the host judges: the test merge once it has results, else the head (as
+  `withMergeCommitRows` does today). Pending and not yet registered are waited for; a failure or a
+  cancellation stops.
 - **Not required**: never waited for, never blocking; a failure is reported. This changes 0.5.11,
   where any failing check stopped `pr-land`.
 - **Superseded** ([#13](https://github.com/zima-oss/jackstay/issues/13)): a cancelled run with a
   newer run of the same workflow, commit, event and change is judged by the newer run's own job of
   the same name. While that job has no result it is pending; a newer run that finished without it
   leaves the check cancelled. A run's overall conclusion never decides a check.
-- **Rules unread** (a plan or permission refuses them): every check counts, said in the plan;
-  `doctor` recommends listing `checks`. Rules read and requiring none: no check blocks.
+- **Rules unread** (a plan or permission refuses them): every check counts, the listed `checks`
+  must register, and at least one check must have registered before anything is judged (as
+  `pr-land` waits today); the plan says the rules were unread, and `doctor` recommends listing
+  `checks`. Rules read and requiring none: only the listed `checks` block.
 
 ## 5. Adopt, setup and doctor
 
@@ -207,8 +215,14 @@ A test scope gains one key: `ci`, the operating systems on which CI runs it (abs
 }
 ```
 
-- **Before a pull request**: `jst test changed` selects scopes from the changed paths as today, and
-  requires those with no `ci` to pass locally. The selected scopes CI covers are left to CI.
+- **Before a pull request**: `jst test changed` ranks the scopes matched by the changed paths as
+  today (`test.selection.order`, `gate` for a path no rule matches) and picks the strictest. That
+  scope runs locally unless it has `ci`. Every other matched scope with no `ci` also runs locally,
+  since a stricter covered scope will run only in CI. A composite scope such as `gate` counts as
+  covered only through its own `ci`. Example, order `x-go`, `x-ios`, `gate`, `x-go` with
+  `ci: ["linux"]`: a change to Go and Swift files picks `x-ios`, which runs locally, and leaves
+  `x-go` to CI; with the order reversed, `x-go` is picked and left to CI, and `x-ios` still runs
+  locally.
 - **In CI**: the covered scopes run as jobs named after them, and the base's rules require them.
   `jst doctor` reports a covered scope the rules do not require.
 - **Before an install or a tag**: `jst test uncovered` runs every scope whose `ci` does not include
