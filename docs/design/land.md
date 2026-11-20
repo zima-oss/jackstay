@@ -45,7 +45,8 @@ its file.
 | `checks` | list of names | `[]` | checks required in addition to the base's branch rules (section 4); never fewer |
 | `human_paths` | glob list | `[]` | paths only a person lands, in addition to the fixed three: `jackstay.json`, `.github/workflows/**`, `.claude/settings.json` |
 
-`--prepare` lowers autonomy for one run. Nothing lets the agent merge in a `prepare` project; a
+`autonomy` and `checks` are always read from the base's file, never the change's, so a branch
+cannot keep a permission the base has withdrawn. `--prepare` lowers autonomy for one run. Nothing lets the agent merge in a `prepare` project; a
 person may (section 3.3). A project without a `land` section has no policy: `jst land` refuses and
 names `jst adopt`.
 
@@ -115,12 +116,13 @@ checks.
 
 ### 3.2 Exit status and the last line
 
-`jst land` ends with `jst land: STATE` on stderr, so `status` output stays clean.
+`jst land` ends with `jst land: STATE` on stderr, so `status` output stays clean. Only `landed`
+exits 0 with the change merged, so `jst land && jst tidy …` never runs on an unmerged change.
 
 | state | exit | when |
 |---|---|---|
 | `landed` | 0 | merged, or accepted by the host's queue and merged within the wait |
-| `ready for a person` | 0 | `prepare`, `--prepare`, a human path |
+| `ready for a person` | 6 | `prepare`, `--prepare`, a human path, a base that requires no check or whose rules cannot be read |
 | `planned` | 0 | `--plan` |
 | `refused` | 1 | a required check failed or was cancelled; a draft; a conflict; an unsupported operation |
 | `invalid` | 2 | usage, configuration, no account |
@@ -139,9 +141,12 @@ terminal and with `--prepare`.
 
 Three things keep that true for an agent:
 - **`jst lint pr`, rule D0**, keeps a change to `jackstay.json` alone in its pull request, judged by
-  the base's file (W-047).
-- **`jst land`** reads human paths from the base and the change (step 2). A change that introduces
-  the first `land` section is therefore a person's, though the base has no policy yet.
+  the base's file (W-047). Adopt writes the workflow that runs `jst lint pr` for every project with
+  a `land` section, also one without `cards` or `changes`, and doctor checks the base's rules
+  require it.
+- **`jst land`** reads human paths from the base and the change (step 2), and autonomy from the
+  base only. A change that introduces the first `land` section touches `jackstay.json`, so it is a
+  person's, and it cannot authorise its own merge: the base it lands on has no policy yet.
 - **The guard** refuses `gh pr merge` and `glab mr merge`, naming `jst land`. The rule is on in
   every project the 0.6.0 guard runs in, whether or not a `land` section exists, so the first policy
   cannot be merged that way either. It is configurable like every guard rule
@@ -162,10 +167,13 @@ agent calling the host's API directly is outside it.
   newer run of the same workflow, commit, event and change is judged by the newer run's own job of
   the same name. While that job has no result it is pending; a newer run that finished without it
   leaves the check cancelled. A run's overall conclusion never decides a check.
-- **Rules unread** (a plan or permission refuses them): every check counts, the listed `checks`
-  must register, and at least one check must have registered before anything is judged (as
-  `pr-land` waits today); the plan says the rules were unread, and `doctor` recommends listing
-  `checks`. Rules read and requiring none: only the listed `checks` block.
+- **Rules unread** (a plan or permission refuses them): which checks are required cannot be known.
+  With `checks` listed, those are required and every other check is reported only. With none
+  listed, `jst land` waits for the checks to settle, reports them, and stops ready for a person
+  (exit 6), saying the rules could not be read. It never turns an optional check into a blocker.
+- **Rules read and requiring none**, `checks` empty: CI is not a gate for this base, so
+  `merge-when-green` stops ready for a person, saying so in the plan; doctor reports it as an
+  error. This is the GitHub default for a new repository.
 
 ## 5. Adopt, setup and doctor
 
@@ -211,7 +219,7 @@ A test scope gains one key: `ci`, the operating systems on which CI runs it (abs
 ```json
 "scopes": {
   "x-go":  {"run": ["just", "go"], "ci": ["linux"]},
-  "x-ios": {"run": ["just", "ios"]}
+  "x-ios": {"run": ["just", "ios"], "systems": ["darwin"]}
 }
 ```
 
@@ -221,12 +229,15 @@ A test scope gains one key: `ci`, the operating systems on which CI runs it (abs
   since a stricter covered scope will run only in CI. A composite scope such as `gate` counts as
   covered only through its own `ci`. Example, order `x-go`, `x-ios`, `gate`, `x-go` with
   `ci: ["linux"]`: a change to Go and Swift files picks `x-ios`, which runs locally, and leaves
-  `x-go` to CI; with the order reversed, `x-go` is picked and left to CI, and `x-ios` still runs
-  locally.
-- **In CI**: the covered scopes run as jobs named after them, and the base's rules require them.
+  `x-go` to CI; with the order `x-ios`, `x-go`, `gate`, `x-go` is picked and left to CI, and
+  `x-ios` still runs locally.
+- **In CI**: each covered scope runs as one job per listed system, named `jst test SCOPE (SYSTEM)`,
+  and the base's rules require those jobs.
   `jst doctor` reports a covered scope the rules do not require.
-- **Before an install or a tag**: `jst test uncovered` runs every scope whose `ci` does not include
-  this machine's operating system, on the exact commit. `jst release` and `bin/jst install` refuse
+- **Before an install or a tag**: `jst test uncovered` runs, on the exact commit, every scope whose
+  `ci` does not include this machine's operating system, of those that run without arguments (a
+  selector scope that needs a test ID is left out) and that run here (a scope may name the systems
+  it runs on in `systems`; absent: any). `jst release` and `bin/jst install` refuse
   without its passing receipt for that commit. For jackstay, on a Mac, that is the whole gate:
   CI covers Linux only ([W-083](../decisions/W-083-no-macos-job-in-ci.md)).
 - **The AGENTS block** states the split, generated from the scopes: "CI runs x-go, x-integration,
@@ -239,7 +250,9 @@ A test scope gains one key: `ci`, the operating systems on which CI runs it (abs
 - **Checks**: required pass, fail, cancelled, superseded (newer job pending, passed, absent),
   missing; not required failing; rules unread; rules requiring none.
 - **Policy**: `jackstay.json` alone, a human path, a change adding the first `land` section, the
-  base with and without `land`; `prepare`, `--prepare`, `--confirm` without a terminal.
+  base with and without `land`, a branch whose file says `merge-when-green` on a `prepare` base;
+  `prepare`, `--prepare`, `--confirm` without a terminal; rules unread with and without `checks`;
+  rules requiring none.
 - **Races**, deterministic: head moved before the merge, base moved during the wait, a check rerun
   red before the recheck, a lost merge answer with the change merged, a queue that holds it.
 - **Guard**: `gh pr merge` and `glab mr merge` refused with and without a `land` section.

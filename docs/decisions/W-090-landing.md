@@ -17,7 +17,7 @@ answers to the landing design's open questions given the same day). How thin the
   commands, which are removed in 0.6.0 with no aliases.
 - **Adapters.** The engine knows no host; a small hosting adapter maps it to one. GitHub ships in
   0.6.0; GitLab and Bitbucket follow.
-- **Two autonomy modes**, chosen explicitly at adopt and setup: by default the agent merges when the
+- **Two autonomy modes**, chosen explicitly at adopt and setup: in the recommended one the agent merges when the
   required checks pass, while `jackstay.json`, `.github/workflows/**` and `.claude/settings.json`
   always need a person, as do any paths a project adds; or the agent prepares and a person merges. A person is a
   change number typed at a terminal, or a merge on the host. Setup keeps the machine's answer as
