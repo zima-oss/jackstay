@@ -1,5 +1,8 @@
 # Local session chat over MCP
 
+This note describes the 0.5.x chat. The 0.6.0 contract that replaces it is the
+[chat design](../design/chat.md) ([W-090](../decisions/W-090-agent-chat.md)).
+
 Parallel agents need a shared conversation for status, questions, requests and replies. A
 session can ask another session to run a check or coordinate file ownership. The receiving
 agent interprets the request under its own instructions and permissions.
