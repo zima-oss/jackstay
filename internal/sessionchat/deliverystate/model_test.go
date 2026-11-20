@@ -456,3 +456,20 @@ func TestTheSpecBeforeTheModelBreaksAProperty(t *testing.T) {
 		})
 	}
 }
+
+// One notice shown never stands for another: a delivery's refusal shown, then the request's expiry
+// notice marked without reaching the sender, breaks NoticeAtLeastOnce (review round 2).
+func TestOneShownNoticeDoesNotMaskAnother(t *testing.T) {
+	w := world{
+		delivery:      Delivery{Route: Native, State: Refused, Notice: NoticeShown},
+		request:       Request{State: Closed, Notice: NoticeShown},
+		isRequest:     true,
+		engine:        "none",
+		alive:         true,
+		deliveryShows: 1,
+	}
+	w.deliveryNotices, w.requestNotices = 1, 1
+	if broken := invariant(w); !strings.HasPrefix(broken, "NoticeAtLeastOnce") {
+		t.Fatalf("want NoticeAtLeastOnce, got %q", broken)
+	}
+}
