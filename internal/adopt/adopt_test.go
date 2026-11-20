@@ -316,7 +316,7 @@ func TestAnEditInsideTheMarkersIsNeverOverwrittenSilently(t *testing.T) {
 		"CLAUDE.md": "@AGENTS.md\n"})
 	apply(t, optionsFor(root))
 	path := filepath.Join(root, "AGENTS.md")
-	edited := strings.Replace(read(t, root, "AGENTS.md"), "- **Wait**", "- **Wait** (our note)", 1)
+	edited := strings.Replace(read(t, root, "AGENTS.md"), "- **Instead of `sleep N`**", "- **Instead of `sleep N`** (our note)", 1)
 	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
 		t.Fatal(err)
 	}
