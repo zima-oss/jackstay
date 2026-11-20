@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:1fda0943e212 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:0fb2523ec0dd — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed on this machine. Reach for it before a hand-written shell loop:
@@ -41,8 +41,7 @@ the same rules hold.
   Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
   a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
   removes). No scope fits: `jst test -- COMMAND`.
-  A run that keeps receipts, the gate and `jst review` record evidence the agent sandbox may
-  only read: when one says to, run it outside the sandbox.
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
   using the expected digest, revision and key from a trusted source.
 - **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity
@@ -58,10 +57,10 @@ the same rules hold.
 - **The guard** refuses destructive commands and names what to run instead: run that, never a
   workaround. A line `jst guard let this command run, with a warning` means read it before going
   on.
-- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
-  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
-  `jst review check BASE..REV --task NAME` checks the saved round. It records the round, which the
-  agent sandbox may only read: run it outside the sandbox.
+- **Review a change** outside the agent sandbox (it records the round): `jst review BASE..REV
+  --task NAME` runs a cold review by Codex, or by the project's `review.use`; `--reviewer
+  claude-code` (or `codex,claude-code`) picks another.
+  `jst review check BASE..REV --task NAME` checks the saved round.
 - **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
   Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
   Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.

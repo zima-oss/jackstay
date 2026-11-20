@@ -82,14 +82,15 @@ jst log --command guard --since 1h
 Claude Code's Bash sandbox writes only the folders its settings allow. jackstay keeps two kinds of
 things in `~/.jackstay`. Some it writes while an agent's command runs in the sandbox; the rest is
 evidence it later trusts (receipts, gate marks, review rounds, the run log), which the sandbox may
-only read, so an agent cannot record a pass it did not run. `jst setup` adds exactly these to
-`sandbox.filesystem.allowWrite` in `~/.claude/settings.json`, one set per project it knows:
+only read, so an agent cannot record a pass it did not run. `jst test` and `jst review` record
+that evidence, so they run outside the sandbox: inside it, `jst test` runs nothing and says so.
+`jst setup` adds the rest to `sandbox.filesystem.allowWrite` in `~/.claude/settings.json`, one
+set per project it knows:
 
 | Path under `~/.jackstay` | Why jst writes it from a sandboxed command |
 |---|---|
 | `.all/telemetry`, `<project>/telemetry` | the journal |
-| `<project>/outputs` | test output, for `jst test last` |
-| `.all/heavy-suite.lock`, `.all/heavy-suite.lock.queue` | `jst lock` and heavy test runs |
+| `.all/heavy-suite.lock`, its `.queue` and `.holder` | `jst lock` |
 | `.all/procs` | `jst bg` and `jst procs` |
 | `.all/session-chat` | chat commands |
 | `.all/context-brief` | `jst brief save` |
@@ -99,16 +100,16 @@ only read, so an agent cannot record a pass it did not run. `jst setup` adds exa
 `jst doctor` reports `sandbox-blocks-state` when one of them is not writable (a new project, say:
 run `jst setup` again) and `sandbox-writes-evidence` when an entry lets the sandbox write evidence,
 such as the whole `~/.jackstay` an earlier setup added; `jst setup` replaces that entry, keeping a
-backup of the settings. A command that records evidence runs outside the sandbox:
+backup of the settings. What else runs outside the sandbox:
 
 | Command | Inside the sandbox |
 |---|---|
 | `jst review` with Codex | refused, exit 6: Codex must be able to write its login (`~/.codex`) |
 | `jst tidy --fix` | keeps every worktree: the sandbox hides other processes, so it cannot prove a worktree unused |
 | `jst procs stop`, a stop of something the sandbox did not start | refused by the system; jackstay names what to run outside |
-| `jst lock`, `jst test` with the lock | exit 2 when the lock is not writable |
-| `jst test gate`, `jst review` | they record evidence the sandbox may only read: run them outside |
-| `jst test SCOPE` | runs and keeps its output; the receipt is not stored, so the next run is not reused |
+| `jst lock` | exit 2 when the lock is not writable: run `jst setup` |
+| `jst test`, any form that runs something | runs nothing: it records evidence the sandbox may only read |
+| `jst review` | its rounds are evidence too: run it outside the sandbox |
 
 `jst trash` exists because the system's Trash cannot be written from inside the sandbox.
 
@@ -143,7 +144,7 @@ conflict `agents:edited`. A profile adds lines (`agents.rules`) or leaves items 
 | `jst doctor`: `guard-never-called` / `expected-never-called` | No session has called the hook: the project's settings are not loaded (trust dialog), or the path is wrong. |
 | `jst doctor`: `sandbox-blocks-state` | jst cannot keep its logs, locks, chat or jobs in sandboxed sessions; run `jst setup`, which adds only the folders listed above. |
 | `jst doctor`: `sandbox-writes-evidence` | the sandbox may write receipts or gate marks; run `jst setup` to replace a whole-home entry, or narrow a broader one yourself. |
-| `jst test`: `run it outside the sandbox` | the run records evidence the sandbox may only read; run that command outside it. |
+| `jst test`: `Run it outside the sandbox.` | the run records evidence the sandbox may only read; run that command outside it. |
 | The guard says `config-unusable` on every call | `jackstay.json` is broken; the built-in rules still apply. Run `jst check`. |
 
 The design: [the hook contract](../design/guard.md#the-hook-contract), [the hook's answers](../design/guard.md#7-the-hook),

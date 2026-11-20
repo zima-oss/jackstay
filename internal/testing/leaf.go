@@ -195,41 +195,6 @@ func (proj *project) notStarted(why string) result {
 	return result{outcome: receipts.OutcomeNotStarted, status: statusRefused, why: why}
 }
 
-// evidenceUnwritable is the first evidence folder this run must be able to write that it cannot:
-// the receipts (a receipt, a failure note, the removal of a receipt), and, for a gate step or a
-// resumable scope, the gate marks and bars. Without them a failure could not undo an earlier pass,
-// so the run does not start (#59). "" when every one can be written.
-func (proj *project) evidenceUnwritable(receipted, marked bool) string {
-	var folders []string
-	if receipted {
-		folders = append(folders, proj.stateFolder("receipts"))
-	}
-	if marked {
-		folders = append(folders, proj.stateFolder("gate-marks"), proj.stateFolder("gate-bars"))
-	}
-	for _, folder := range folders {
-		if folder == "" || !writable(folder) {
-			return folder
-		}
-	}
-	return ""
-}
-
-// writable says a file can be made and removed in folder (made first if missing): what a sandbox
-// that only lets jst read the folder refuses, whatever the folder's own permissions say.
-func writable(folder string) bool {
-	if err := os.MkdirAll(folder, 0o700); err != nil {
-		return false
-	}
-	probe, err := os.CreateTemp(folder, ".jackstay-write-probe-*")
-	if err != nil {
-		return false
-	}
-	name := probe.Name()
-	closeErr := probe.Close()
-	return os.Remove(name) == nil && closeErr == nil
-}
-
 // runLeaf runs one leaf as `jst test <scope>` does: `requires` (unless checked), a receipt, the
 // lock, the command in its session, the judge, the record. gate is the gate's run id ("" alone).
 func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bool) result {
@@ -274,10 +239,6 @@ func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bo
 	// nothing then.
 	measure := gate == "" && run.entry != nil && run.entry["reuse"] == true
 	reuse := measure && !proj.options.noReuse
-	if folder := proj.evidenceUnwritable(run.entry != nil, gate != "" || chosen.resume); folder != "" {
-		return proj.notStarted(fmt.Sprintf("this run records evidence a later run may reuse, in %s, which cannot be written here "+
-			"(inside Claude Code's sandbox it is read-only, so a failure could not be recorded): run it outside the sandbox", folder))
-	}
 	run.locked = lockEnabled(proj) && chosen.lock
 	if proj.options.lock != nil {
 		run.locked = *proj.options.lock

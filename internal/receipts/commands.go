@@ -107,6 +107,13 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, TestUsage)
 		return 0
 	}
+	if folder, writable := evidenceWritable(); !writable {
+		Say(stderr, "jst test records evidence (the run log, receipts, gate marks) in %s, which cannot be written here: "+
+			"inside Claude Code's sandbox it is read-only, so a run could neither be found again nor undo an earlier pass. "+
+			"Run it outside the sandbox.", folder)
+		Say(stderr, "outcome=not-started (nothing was run)")
+		return StatusUnusable
+	}
 	if scopeCommand != nil && !IsRaw(args) {
 		return scopeCommand(args, stdin, stdout, stderr)
 	}
@@ -122,6 +129,28 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return StatusUnusable
 	}
 	return runner.raw(asked)
+}
+
+// evidenceWritable says a file can be made and removed beside the run log (the folder made first
+// if missing): what Claude Code's sandbox refuses once setup has left jackstay's evidence read-only
+// there (#59), whatever the folder's permissions say. Every jst test that runs something writes
+// the run log, and most also receipts or gate marks beside it, so it runs outside the sandbox.
+func evidenceWritable() (string, bool) {
+	path, err := RunLogPath()
+	if err != nil {
+		return "", false
+	}
+	folder := filepath.Dir(path)
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		return folder, false
+	}
+	probe, err := os.CreateTemp(folder, ".jackstay-write-probe-*")
+	if err != nil {
+		return folder, false
+	}
+	name := probe.Name()
+	closeErr := probe.Close()
+	return folder, os.Remove(name) == nil && closeErr == nil
 }
 
 func receiptsCommand(_ []string, _ io.Reader, _, stderr io.Writer) int {

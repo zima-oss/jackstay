@@ -74,10 +74,10 @@ var items = []item{
 			"  `jackstay.json` (`github.account`).")},
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
-		"- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the\n" +
-			"  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.\n" +
-			"  `jst review check BASE..REV --task NAME` checks the saved round. It records the round, which the\n" +
-			"  agent sandbox may only read: run it outside the sandbox.")},
+		"- **Review a change** outside the agent sandbox (it records the round): `jst review BASE..REV\n" +
+			"  --task NAME` runs a cold review by Codex, or by the project's `review.use`; `--reviewer\n" +
+			"  claude-code` (or `codex,claude-code`) picks another.\n" +
+			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
 	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
 		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
 			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
@@ -155,8 +155,7 @@ func testText(config map[string]any) string {
 }
 
 // evidenceText says where the commands that record evidence run (#59).
-const evidenceText = "  A run that keeps receipts, the gate and `jst review` record evidence the agent sandbox may\n" +
-	"  only read: when one says to, run it outside the sandbox."
+const evidenceText = "  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox."
 
 func guardText(config map[string]any) string {
 	text := "- **The guard** refuses destructive commands and names what to run instead: run that, never a\n" +

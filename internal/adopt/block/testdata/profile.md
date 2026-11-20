@@ -8,8 +8,7 @@
   a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
   removes).
   Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
-  A run that keeps receipts, the gate and `jst review` record evidence the agent sandbox may
-  only read: when one says to, run it outside the sandbox.
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
   using the expected digest, revision and key from a trusted source.
 - **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity

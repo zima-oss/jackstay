@@ -8,8 +8,7 @@
   a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
   removes).
   Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
-  A run that keeps receipts, the gate and `jst review` record evidence the agent sandbox may
-  only read: when one says to, run it outside the sandbox.
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
   using the expected digest, revision and key from a trusted source.
 - **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity
@@ -29,10 +28,10 @@
 - **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
   `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
   `jackstay.json` (`github.account`).
-- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
-  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
-  `jst review check BASE..REV --task NAME` checks the saved round. It records the round, which the
-  agent sandbox may only read: run it outside the sandbox.
+- **Review a change** outside the agent sandbox (it records the round): `jst review BASE..REV
+  --task NAME` runs a cold review by Codex, or by the project's `review.use`; `--reviewer
+  claude-code` (or `codex,claude-code`) picks another.
+  `jst review check BASE..REV --task NAME` checks the saved round.
 - **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
   Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
   Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.

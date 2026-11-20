@@ -13,12 +13,17 @@ an agent inside the sandbox could write a gate mark and get a green gate without
 ## Decision
 
 - Setup grants, by reading what jst writes from a sandboxed Bash command: the journals (shared
-  and per project), each project's test outputs and ids, the heavy-suite lock and its queue,
+  and per project), each project's ids, the heavy-suite lock with its queue and holder note,
   `procs`, `session-chat`, `context-brief` and the trash. Hooks and stdio MCP servers run outside
   the sandbox and need nothing.
 - Receipts and failure notes, gate marks and bars, review rounds, the run log, the delivery record
-  and the expected projects are never granted. `jst test gate` and `jst review` run outside the
-  sandbox; `jst test SCOPE` inside it runs and keeps its output, without a receipt.
+  and the expected projects are never granted. Granting the negative records (failure notes, bars)
+  would not do: write access also deletes them, which re-opens an earlier pass to reuse.
+- So `jst test` and `jst review` run outside the sandbox. Every `jst test` that runs something
+  writes the run log, and most also receipts or gate marks, so `jst test` first checks it can write
+  beside the run log and, inside the sandbox, runs nothing and says to run it outside. A failed run
+  can then never leave an earlier pass standing, and `jst test last` always finds the newest run.
+  The AGENTS block says so.
 - Per-project grants are written for each project folder in the home and each expected project,
   as plain paths (glob support differs between Claude Code's macOS and Linux sandboxes). Doctor
   reports a project whose grants are missing; running setup again adds them.

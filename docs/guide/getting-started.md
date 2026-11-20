@@ -118,8 +118,9 @@ the project's `jackstay.json` has set `rm-recursive` to `warn` or `off` ([The gu
 
 To ask the guard about a command yourself, without an agent, use `jst guard check -- 'COMMAND'`: it
 judges the command as the hook would, whether or not any session has loaded the hook. What the
-guard refuses, and how to change a rule's level: [The guard](guard.md). Claude Code's sandbox
-needs `~/.jackstay` writable: [Claude Code](claude-code.md#the-sandbox).
+guard refuses, and how to change a rule's level: [The guard](guard.md). In Claude Code's sandbox,
+`jst setup` lets jst write what it needs, and `jst test` and `jst review` run outside it:
+[Claude Code](claude-code.md#the-sandbox).
 
 Codex reviews by default:
 

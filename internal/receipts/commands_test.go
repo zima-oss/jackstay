@@ -1,6 +1,7 @@
 package receipts
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -129,5 +130,31 @@ func TestTestLastShowsAGateAndAScope(t *testing.T) {
 	LastCommand([]string{"--project", "alpha"}, nil, &out, &errs)
 	if !strings.HasSuffix(strings.TrimSpace(out.String()), "outcome=exited-0 (60 s, tests counted: 40)") {
 		t.Fatalf("%s", out.String())
+	}
+}
+
+// Inside Claude Code's sandbox the run log's folder is read-only (#59): jst test, raw or by scope,
+// runs nothing there and says to run it outside the sandbox.
+func TestTestRunsNothingWhereItCannotRecordItsEvidence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	shared := filepath.Join(home, ".all")
+	if err := os.MkdirAll(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(shared, 0o700) })
+	marker := filepath.Join(t.TempDir(), "ran")
+	for _, args := range [][]string{{"--", "touch", marker}, {"unit"}} {
+		var stdout, stderr bytes.Buffer
+		if code := TestCommand(args, nil, &stdout, &stderr); code != StatusUnusable ||
+			!strings.Contains(stderr.String(), "Run it outside the sandbox.") || !strings.Contains(stderr.String(), "outcome=not-started") {
+			t.Fatalf("%v: exit %d: %s", args, code, &stderr)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the command ran")
 	}
 }

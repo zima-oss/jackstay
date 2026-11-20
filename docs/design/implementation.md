@@ -228,7 +228,7 @@ A log line is one JSON object appended in a single write, so lines of several pr
 mix; a log that cannot be written never fails the tool that writes it (each tool says what it does
 instead). Claude Code's Bash sandbox writes only the folders in `sandbox.filesystem.allowWrite`.
 `jst setup` lists there only what jst writes from a sandboxed command (`doctor.SandboxGrants`): the
-journals, test outputs, the heavy-suite lock and its queue, `procs`, `session-chat`,
+journals, the heavy-suite lock with its queue and holder note, `procs`, `session-chat`,
 `context-brief`, each project's `ids` and the trash. Evidence (receipts and failure notes, gate
 marks and bars, review rounds, the run log, the delivery record, the expected projects) stays
 read-only to the sandbox, so a sandboxed agent cannot forge a pass (#59); `jst test gate` and

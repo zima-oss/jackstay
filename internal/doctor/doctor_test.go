@@ -298,7 +298,7 @@ func TestSandboxGrantsAndEvidence(t *testing.T) {
 	}
 	grants := SandboxGrants(home, []string{"app"})
 	want := []string{".all/telemetry", ".all/procs", ".all/session-chat", ".all/context-brief", ".all/heavy-suite.lock",
-		".all/heavy-suite.lock.queue", ".all/heavy-suite.lock.holder", ".trash", "app/telemetry", "app/outputs", "app/ids"}
+		".all/heavy-suite.lock.queue", ".all/heavy-suite.lock.holder", ".trash", "app/telemetry", "app/ids"}
 	if len(grants) != len(want) {
 		t.Fatalf("grants %v", grants)
 	}

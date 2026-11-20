@@ -465,7 +465,8 @@ run-record parts have anything to read (`--projects-dir` names another transcrip
 | `timed-out` | The scope's `timeout` ended the whole tree. Raise it, or split the scope. |
 | A scope name refused | Only the six names, or `x-…`. `jst test list` shows yours. |
 | `gave-up` (75) | The lock was busy past `--wait`; `jst lock status` shows who holds it. |
-| `jst lock` exit 2 inside an agent sandbox | The sandbox cannot write `~/.jackstay`. Allow it ([Claude Code](claude-code.md#the-sandbox)), or run heavy runs outside the sandbox. |
+| `jst test` says to run it outside the sandbox | It records evidence (the run log, receipts, gate marks) that Claude Code's sandbox may only read ([Claude Code](claude-code.md#the-sandbox)). Run it outside the sandbox. |
+| `jst lock` exit 2 inside an agent sandbox | The lock is not among the folders the sandbox may write: run `jst setup` ([Claude Code](claude-code.md#the-sandbox)). |
 
 The design: [testing.md](../design/testing.md), and for receipts, the lock and `jst baseline`,
 [implementation.md, sections 5.4 and 9](../design/implementation.md#9-receipts-and-the-baseline-jst-test----command-jst-receipts-jst-baseline).
