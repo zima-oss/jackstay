@@ -232,7 +232,7 @@ embedded one with this project's severity words), so its last message is one JSO
 
 `verdict` is `approve`, `changes` (a new or still-open finding) or `incomplete` (the reason in
 `summary`, the ledger unchanged). `severity` is one of `severities`; W-048's axes are `likelihood`
-`ordinary` (happens by accident) or `unusual` (needs a deliberate setup), and `consequence`
+`ordinary` (happens by accident) or `unusual` (needs a hand-built setup or deliberate misuse), and `consequence`
 `severe` (lost work or data, an unnoticed wrong decision) or `mild`. `repeats` names ledger
 findings this one continues; `prior` answers every open finding, `fixed` or `open`. The schema
 sets `additionalProperties: false` and every member required (`[]` where empty).
@@ -300,7 +300,12 @@ names any other is `inconsistent`. A finding enters the ledger in the round that
 says whether a finding blocks: its severity is in `blocking` and, with `triage` on, it is realistic
 (with `triage` off, the severity alone). A round **blocks** when any *open* finding of its ledger
 blocks after the round, found or answered `open` alike. Rare findings never block; the report lists
-them with a ready row for the project's later-findings card. The session checks the ratings.
+them with a ready row for the project's later-findings card. The session checks the ratings
+([W-094](../decisions/W-094-unusual-severe-findings-need-an-ordinary-path.md)): an `unusual` and
+`severe` finding counts as realistic only when its detail names the ordinary-work path by which that
+setup arises by accident; without one the session treats it as rare (mild for blocking) before it
+calls the finding a blocker or asks for a round past the limit. The prompt asks the reviewer for
+that path, and the next step `jst review` prints for a blocking round reminds the session of it.
 
 **Places.** A place is the finding's `place` string, trimmed, with runs of spaces made one and
 compared without regard to case. The prompt lists prior places and asks for the exact string again

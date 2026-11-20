@@ -88,8 +88,11 @@ func verdictForm(data PromptData) string {
 	}
 	form.WriteString(".\n")
 	form.WriteString("- `likelihood`: `ordinary` if it happens in ordinary work by accident, `unusual` if it needs a\n")
-	form.WriteString("  deliberate or unusual setup. `consequence`: `severe` for lost work or data or a wrong decision\n")
-	form.WriteString("  that passes unnoticed, `mild` for an inconvenience or a wrong output seen at once. Rate honestly.\n")
+	form.WriteString("  hand-built setup or deliberate misuse (the tool guards against accidents, not an adversary).\n")
+	form.WriteString("  `consequence`: `severe` for lost work or data or a wrong decision that passes unnoticed, `mild`\n")
+	form.WriteString("  for an inconvenience or a wrong output seen at once. Rate honestly.\n")
+	form.WriteString("- A finding you rate `unusual` and `severe` must name, in its `detail`, the ordinary-work path by\n")
+	form.WriteString("  which that setup arises by accident. Without such a path, rate it `mild`.\n")
 	if data.Triage {
 		form.WriteString("  An `unusual` and `mild` finding is rare: it is recorded for later, not fixed now.\n")
 	}

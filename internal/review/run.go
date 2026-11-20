@@ -451,9 +451,11 @@ func Disposition(settings Settings, record RoundRecord) (int, string) {
 	case len(record.Outcome.RedesignDue) > 0:
 		return ExitRedesign, "redesign, do not patch (W-019): " + strings.Join(record.Outcome.RedesignDue, "; ")
 	case record.Round >= settings.RoundLimit && record.Outcome.Blocks:
-		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: ask the owner", record.Round, settings.RoundLimit)
+		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: re-check each blocking rating (an unusual and severe "+
+			"finding blocks only with an ordinary-work path, W-094), then ask the owner", record.Round, settings.RoundLimit)
 	case record.Outcome.Blocks:
-		return ExitBlocks, "fix the open blocking findings, then run the next round"
+		return ExitBlocks, "re-check each blocking rating (an unusual and severe finding blocks only with an ordinary-work path, " +
+			"W-094), fix the blocking findings that stand, then run the next round"
 	}
 	return ExitClear, "nothing blocks"
 }

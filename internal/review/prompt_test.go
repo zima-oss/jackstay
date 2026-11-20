@@ -47,3 +47,20 @@ func TestTemplateCannotDropTheForm(t *testing.T) {
 		t.Fatal("an unknown field must be refused")
 	}
 }
+
+func TestAnUnusualAndSevereFindingMustNameItsOrdinaryPath(t *testing.T) {
+	form := verdictForm(PromptData{Triage: true, Severities: []string{"blocker", "major", "minor"}, Blocking: []string{"blocker"}})
+	for _, want := range []string{"hand-built setup or deliberate misuse", "ordinary-work path", "rate it `mild`"} {
+		if !strings.Contains(form, want) {
+			t.Errorf("the verdict form lacks %q:\n%s", want, form)
+		}
+	}
+	settings := testSettings()
+	_, next := Disposition(settings, RoundRecord{Round: 1, Outcome: Outcome{Blocks: true}})
+	_, owner := Disposition(settings, RoundRecord{Round: settings.RoundLimit, Outcome: Outcome{Blocks: true}})
+	for _, guidance := range []string{next, owner} {
+		if !strings.Contains(guidance, "W-094") {
+			t.Errorf("the session is not told to re-check the ratings: %s", guidance)
+		}
+	}
+}
