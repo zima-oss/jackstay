@@ -359,11 +359,11 @@ func (work *session) run() (int, error) {
 		return 0, err
 	}
 	baseTip := "refs/remotes/" + work.remoteName + "/" + work.base
-	cards := cardsSectionOf(work.fileAt(baseTip))
-	if err := cardsNeedAMergeCommit(methodOf(basePolicy), cards != nil); err != nil {
+	baseFile := work.fileAt(baseTip)
+	if err := cardsNeedAMergeCommit(methodOf(basePolicy), cardsSectionOf(baseFile) != nil); err != nil {
 		return 0, err
 	}
-	body, err := work.newDescription(open, line, cards, baseTip)
+	body, err := work.newDescription(open, line, baseFile, baseTip)
 	if err != nil {
 		return 0, err
 	}

@@ -580,6 +580,34 @@ func TestTheChangelogLineIsJudgedOnTheDescriptionSent(t *testing.T) {
 	}
 }
 
+// A hand-over is judged as a merge would be: --prepare on a description that fails the changelog
+// rule is refused, not handed to a person on a check result read by commit.
+func TestAHandOverJudgesTheDescriptionFirst(t *testing.T) {
+	land := newLandRepo(t, changesSettings, map[string]string{"CHANGELOG.md": "# Changelog\n"}, nil)
+	land.Git("push", "-q", "-u", "origin", "feat")
+	land.host.change = land.host.template
+	land.host.change.Body = "What it does.\n"
+	land.host.opened = true
+	out := land.expect(1, "refused", "--prepare")
+	contains(t, out, "fails the changelog rule")
+	land.noMerge()
+}
+
+// The changelog rule is judged on a new change's description before anything is pushed or opened.
+func TestANewDescriptionFailingTheChangelogRuleIsNotOpened(t *testing.T) {
+	land := newLandRepo(t, changesSettings, map[string]string{"CHANGELOG.md": "# Changelog\n"}, nil)
+	out := land.expect(1, "refused", "--title", "a feature")
+	contains(t, out, "fails the changelog rule")
+	if len(land.host.opens) != 0 || land.remoteBranch("feat") != "" {
+		t.Fatalf("opened %v, pushed %q", land.host.opens, land.remoteBranch("feat"))
+	}
+	bodyFile := filepath.Join(t.TempDir(), "body.md")
+	if err := os.WriteFile(bodyFile, []byte("What it does.\n\nChanges: none (a test)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	land.expect(0, "landed", "--title", "a feature", "--body-file", bodyFile)
+}
+
 // --- checks ------------------------------------------------------------------------------------
 
 func TestRulesUnreadWithListedChecksRequireOnlyThose(t *testing.T) {

@@ -152,7 +152,8 @@ a base that does not require the host's merge queue (a queued change merges late
 jackstay's policy: no auto-merge). For any other change `jst land` stops ready for a person, who
 either merges or queues it on the host's page or runs `jst land --confirm` at a terminal and types
 the change's number. A person's change still goes through steps 1 to 5 before the stop, so it is
-handed over with its checks passed; `--confirm` always asks for the number, repeats steps 2 to 5
+handed over with its checks passed and its description judged (a failing one is refused, not
+handed over); `--confirm` always asks for the number, repeats steps 2 to 5
 after it is typed, then merges (or queues). `--confirm` is refused without a terminal and with
 `--prepare`.
 

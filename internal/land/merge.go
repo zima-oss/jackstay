@@ -20,6 +20,11 @@ import (
 //  5. the remote branch deleted under its lease (step 7).
 func (work *session) finish(landing ready, deadline time.Time) (int, error) {
 	if !landing.agentMay && !work.options.confirm {
+		// A hand-over is judged as a merge would be: a description that fails its rules is refused,
+		// not handed to a person to merge on a check result read by commit.
+		if err := work.judgeDescriptionSent(landing); err != nil {
+			return 0, err
+		}
 		if _, err := work.recheck(landing); err != nil {
 			return 0, err
 		}
@@ -54,15 +59,21 @@ func (work *session) localChecks(landing ready) (string, error) {
 	if landing.rules.MethodsRead && !slices.Contains(landing.rules.Methods, method) {
 		return "", failf(exitRefused, "the repository does not allow a %s merge (`land.method`); it allows: %v", method, landing.rules.Methods)
 	}
-	// The description is the merge commit's message: judged here, exactly as it is sent, and the
-	// recheck stops if it changes before the write.
-	if err := work.judgeDescription(landing.cards, change.BaseSHA, change.HeadSHA, change.Body); err != nil {
-		return "", err
-	}
-	if err := work.judgeChangesLine(landing.baseFile, change); err != nil {
+	if err := work.judgeDescriptionSent(landing); err != nil {
 		return "", err
 	}
 	return change.Body, nil
+}
+
+// judgeDescriptionSent judges the description that is the merge commit's message, exactly as it
+// is sent, by the base's file: its Card line and its changelog line, on the merge with the judged
+// base. The recheck after it stops if the description changes before the write.
+func (work *session) judgeDescriptionSent(landing ready) error {
+	change := landing.change
+	if err := work.judgeDescription(landing.cards, change.BaseSHA, change.HeadSHA, change.Body); err != nil {
+		return err
+	}
+	return work.judgeChangesLine(landing.baseFile, change.BaseSHA, change.HeadSHA, change.Body)
 }
 
 // recheck is step 5: the change, the rules and the required checks read again, the base branch's
