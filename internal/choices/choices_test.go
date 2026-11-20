@@ -60,8 +60,14 @@ func TestMachineDefaultsKeepOnlyKnownAnswers(t *testing.T) {
 	if loaded, err := store.Load(); err != nil || len(loaded) != 0 {
 		t.Fatalf("no file: %v %v", loaded, err)
 	}
-	if err := store.Save(Defaults{"reviewer": "claude-code", "autonomy": "prepare"}); err != nil {
-		t.Fatal(err)
+	for id, value := range map[string]string{"reviewer": "claude-code", "autonomy": "prepare"} {
+		// Two updates of one answer each keep both.
+		if err := store.Update(func(current Defaults) error { current[id] = value; return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if kept, err := store.Load(); err != nil || kept["reviewer"] != "claude-code" || kept["autonomy"] != "prepare" {
+		t.Fatalf("kept %v %v", kept, err)
 	}
 	if err := os.WriteFile(store.Path, []byte(`{"reviewer":"claude-code","autonomy":"prepare","chat":"maybe","old":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
@@ -93,17 +99,39 @@ func TestKeysReadAndWriteTheirConfiguration(t *testing.T) {
 		t.Fatal("review.use read from a file without it")
 	}
 	Reviewer.Key.Write(document, "codex,claude-code")
-	Chat.Key.Write(document, "off")
 	if value, set := Reviewer.Key.Read(document); !set || value != "codex,claude-code" {
 		t.Fatal(value)
-	}
-	if _, set := Chat.Key.Read(document); set {
-		t.Fatal("answering off wrote a chat section")
 	}
 	Chat.Key.Write(document, "on")
 	text := string(jsondoc.Format(document))
 	if !strings.Contains(text, `"use": [`) || !strings.Contains(text, `"enabled": true`) ||
 		strings.Index(text, `"brief"`) > strings.Index(text, `"use"`) {
+		t.Fatalf("written:\n%s", text)
+	}
+}
+
+func TestAnEmptyReviewerListIsTheProjectsChoice(t *testing.T) {
+	parsed, err := jsondoc.Parse([]byte(`{"review":{"use":[]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, set := Reviewer.Key.Read(parsed.(*jsondoc.Object)); !set || value != "" {
+		t.Fatalf("an empty review.use: %q %v", value, set)
+	}
+}
+
+func TestChatOffIsKeptAndTurnsOffTheIntegrations(t *testing.T) {
+	parsed, err := jsondoc.Parse([]byte(`{"chat":{"enabled":true,"codex_bridge":{"enabled":true,"socket":"s"},"claude_code":{"enabled":false}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := parsed.(*jsondoc.Object)
+	Chat.Key.Write(document, "off")
+	if value, set := Chat.Key.Read(document); !set || value != "off" {
+		t.Fatalf("chat off not kept: %q %v", value, set)
+	}
+	text := string(jsondoc.Format(document))
+	if strings.Contains(text, `"enabled": true`) || !strings.Contains(text, `"socket": "s"`) {
 		t.Fatalf("written:\n%s", text)
 	}
 }

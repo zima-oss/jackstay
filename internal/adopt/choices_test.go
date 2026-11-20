@@ -28,8 +28,36 @@ func TestAdoptAsksOnlyWhatTheProjectDoesNotSettle(t *testing.T) {
 		t.Fatalf("choices %+v", made.Choices)
 	}
 	settings, err := os.ReadFile(filepath.Join(root, "jackstay.json"))
-	if err != nil || strings.Contains(string(settings), `"chat"`) {
-		t.Fatalf("answering chat off wrote a chat section: %s %v", settings, err)
+	if err != nil || !strings.Contains(string(settings), `"enabled": false`) {
+		t.Fatalf("the chat answer was not kept: %s %v", settings, err)
+	}
+	asked = nil
+	again := apply(t, options)
+	if len(asked) != 0 || again.Choices[1].From != "this project's jackstay.json" {
+		t.Fatalf("a second apply asked %v again: %+v", asked, again.Choices)
+	}
+}
+
+func TestAnOlderPinIsNotAskedAboutChat(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}}`})
+	options := optionsFor(root)
+	options.Ask = func(question choices.Question, _ string) (string, error) {
+		if question.ID == "chat" {
+			t.Fatal("chat was asked of a project pinned to 0.5.11")
+		}
+		return question.Recommended(), nil
+	}
+	made := apply(t, options)
+	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "pinned to v0.5.11") {
+		t.Fatalf("chat %+v", chat)
+	}
+}
+
+func TestAProfileValueIsNamedAsTheProfiles(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "review": {"use": []}}`})
+	made := plan(t, optionsFor(root))
+	if made.Choices[0].From != "this project's jackstay.json" || made.Choices[0].Value != "" {
+		t.Fatalf("an empty review.use is the project's choice: %+v", made.Choices[0])
 	}
 }
 

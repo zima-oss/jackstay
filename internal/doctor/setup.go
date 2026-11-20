@@ -41,7 +41,8 @@ keeps the answers as this machine's defaults (` + "`<jackstay home>/.all/choices
 offers first; a project's jackstay.json still decides:
   reviewer   codex, claude-code, or codex,claude-code: who runs jst review
   autonomy   merge-when-green (the agent merges when the required checks pass; jackstay.json
-             and the listed paths need a person) or prepare (the agent prepares, a person merges)
+             and the listed paths need a person) or prepare (the agent prepares, a person merges);
+             kept for later: no command reads it yet, so jst gh pr-land still merges as before
   chat       off or on: the agent chat, which each repository still turns on in its jackstay.json
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
@@ -333,17 +334,32 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return status
 	}
 	asker := choices.TerminalAsker{In: reader, Out: stdout}
+	asked := choices.Defaults{}
 	for _, question := range machineQuestions() {
 		offered, _ := choices.Offered(question, "", false, defaults)
+		if question.Later() {
+			fmt.Fprintf(stdout, "(%s is kept for later: no command reads it yet)\n", question.ID)
+		}
 		answer, err := asker.Ask(question, offered)
 		if err != nil {
 			fmt.Fprintf(stderr, "jst setup: %s: %v; this machine's answers are unchanged\n", question.ID, err)
 			return max(status, 1)
 		}
-		defaults[question.ID] = answer
+		asked[question.ID] = answer
 	}
-	if err := store.Save(defaults); err != nil {
-		fmt.Fprintf(stderr, "jst setup: keeping this machine's answers: %v\n", err)
+	// Each answer replaces only the value shown when asking: one another setup changed meanwhile
+	// is not overwritten unseen.
+	err := store.Update(func(current choices.Defaults) error {
+		for id, answer := range asked {
+			if current[id] != defaults[id] {
+				return fmt.Errorf("%w (%s)", choices.ErrChanged, id)
+			}
+			current[id] = answer
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "jst setup: keeping this machine's answers: %v; run jst setup again\n", err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "jst setup: kept this machine's answers in %s; jst adopt offers them first\n", store.Path)
@@ -369,6 +385,9 @@ func printMachineChoices(out io.Writer, defaults choices.Defaults, problem error
 	}
 	for _, question := range machineQuestions() {
 		value, from := choices.Offered(question, "", false, defaults)
+		if question.Later() {
+			from += "; kept for later: no command reads it yet"
+		}
 		fmt.Fprintf(out, "choice %s: %s (%s)\n", question.ID, value, from)
 	}
 }
@@ -380,19 +399,19 @@ func keepAnswers(answers choices.Defaults, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "jst setup: %v\n", err)
 		return 1
 	}
-	defaults, err := store.Load()
+	var kept choices.Defaults
+	err = store.Update(func(current choices.Defaults) error {
+		for id, value := range answers {
+			current[id] = value
+		}
+		kept = current
+		return nil
+	})
 	if err != nil {
-		fmt.Fprintf(stderr, "jst setup: %v\n", err)
-		return 1
-	}
-	for id, value := range answers {
-		defaults[id] = value
-	}
-	if err := store.Save(defaults); err != nil {
 		fmt.Fprintf(stderr, "jst setup: keeping this machine's answers: %v\n", err)
 		return 1
 	}
-	printMachineChoices(stdout, defaults, nil)
+	printMachineChoices(stdout, kept, nil)
 	return 0
 }
 

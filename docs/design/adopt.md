@@ -43,7 +43,7 @@ jst adopt --block [DIR]           # the AGENTS block this project gets, printed;
   conflicts; the other files' are planned again by the apply after it merges, and an `--accept` of
   one of theirs is refused here ([W-085](../decisions/W-085-adopt-lands-settings-and-files-apart.md)).
 - `--json`: the plan as one object `{"project", "profile", "changes": [...], "conflicts": [...],
-  "exceptions": [...], "notes": [...]}`; each change `{"id", "path", "what"}`, each conflict
+  "exceptions": [...], "notes": [...], "choices": [...]}`; each change `{"id", "path", "what"}`, each conflict
   `{"id", "path", "what", "settle"}`.
 
 Exit status:
@@ -64,6 +64,17 @@ with the phase and outcome of the latest attempt. After a stop, rerun the same `
 A new plan resumes the previous operation when all inputs and remaining outputs still match
 and the recorded completed effects are visible. If the state has changed, adoption plans a new
 operation and applies its usual conflict checks.
+
+**The questions** (W-090). Some of how jackstay behaves is the project's choice, so adopt asks
+rather than assumes (`internal/choices`): the reviewer (`review.use`; `codex` recommended) and the
+agent chat (`chat.enabled`; `off` recommended, written either way so it is asked once; not asked of a
+project pinned before 0.6.0, which cannot read the chat section). With `--apply` on a terminal it
+asks each question the original file does not answer, offering the machine's answer from `jst
+setup` first; `--answer ID=VALUE` answers without asking and is written over the project's value;
+without a terminal nothing is written. The plan's `choices` give each question's key, value, where
+it came from (`--answer`, asked, the project's file, the profile's defaults) and whether it was
+written. The landing autonomy and each scope's CI split are asked once `land.autonomy` and a scope's
+`ci` exist; setup already keeps a machine answer for the autonomy.
 
 ## 3. What `jst adopt` owns
 

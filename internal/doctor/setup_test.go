@@ -389,7 +389,7 @@ func TestSetupKeepsAnsweredMachineDefaults(t *testing.T) {
 		t.Fatalf("stored %s %v", stored, err)
 	}
 	if !strings.Contains(output.String(), "choice chat: off (recommended)") ||
-		!strings.Contains(output.String(), "choice autonomy: prepare (this machine's default (jst setup))") {
+		!strings.Contains(output.String(), "choice autonomy: prepare (this machine's default (jst setup); kept for later: no command reads it yet)") {
 		t.Fatalf("output:\n%s", &output)
 	}
 	for _, args := range [][]string{{"--answer", "autonomy=yolo"}, {"--answer", "reviewer=codex", "--plan"}} {

@@ -44,7 +44,7 @@ The questions, the recommended answer first. With --apply on a terminal, adopt a
 jackstay.json does not answer yet, offering this machine's default from jst setup; without a
 terminal it writes no answer and the plan says what applies:
   reviewer   codex, claude-code, or codex,claude-code: who runs jst review (review.use)
-  chat       off or on: the agent chat in this repository (chat.enabled)
+  chat       off or on: the agent chat in this repository (chat.enabled; not asked before a pin of 0.6.0)
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
 2 usage, or jackstay.json or the profile cannot be read; 3 (--plan) changes pending, no conflict.
@@ -63,13 +63,13 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "jst adopt: %v\n%s\n", err, strings.SplitN(usage, "\n\n", 2)[0])
 		return 2
 	}
+	if store, err := choices.MachineStore(); err == nil {
+		// Unreadable machine defaults only lose the offer; the recommended answer stands.
+		options.Defaults, _ = store.Load()
+	}
 	if mode == "apply" && terminal(stdin) && terminal(stdout) {
 		asker := choices.TerminalAsker{In: bufio.NewReader(stdin), Out: stdout}
 		options.Ask = asker.Ask
-		if store, err := choices.MachineStore(); err == nil {
-			// Unreadable machine defaults only lose the offer; the recommended answer stands.
-			options.Defaults, _ = store.Load()
-		}
 	}
 	if mode == "block" {
 		body, err := BlockOf(options)

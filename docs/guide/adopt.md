@@ -86,9 +86,10 @@ recommended answer first, and offers this machine's answer from `jst setup` when
 | Question | Answers, recommended first | Written to |
 |---|---|---|
 | `reviewer`: who runs `jst review` | `codex`, `claude-code`, `codex,claude-code` | `review.use` |
-| `chat`: the agent chat in this repository | `off`, `on` | `chat.enabled` (nothing for `off`) |
+| `chat`: the agent chat in this repository | `off`, `on` | `chat.enabled` (needs a pin of 0.6.0 or later; not asked before) |
 
-A value the project already sets is never asked again. Without a terminal adopt writes no answer,
+A value the project already sets is never asked again (an empty `review.use` counts: each run then
+names its reviewer). Without a terminal adopt writes no answer,
 and the plan's `choices` say what applies and how to choose; `--answer ID=VALUE` answers without a
 question and is written even over the project's value:
 

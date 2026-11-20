@@ -30,7 +30,13 @@ type Question struct {
 	Machine bool
 	// Key writes and reads the answer in jackstay.json; nil while no key holds it.
 	Key Key
+	// Schema3 says the key needs "jackstay_schema": 3, so a project pinned to an older jackstay is
+	// not asked.
+	Schema3 bool
 }
+
+// Later says no command reads the answer yet: setup keeps it for the command that will.
+func (question Question) Later() bool { return question.Key == nil }
 
 // Option is one answer.
 type Option struct {
@@ -77,7 +83,7 @@ var (
 			{"prepare", "the agent prepares the change; a person merges"}}}
 	Chat = Question{ID: "chat", Text: "Turn on the agent chat for this repository?", Machine: true,
 		Options: []Option{{"off", "off (recommended; it can be turned on per repository later)"}, {"on", "on"}},
-		Key:     chatEnabled{}}
+		Key:     chatEnabled{}, Schema3: true}
 )
 
 // All are the questions, in order. A project's test scopes get theirs from ScopeQuestions.

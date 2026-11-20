@@ -425,7 +425,7 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 			setAdopt(document, "profile_sha256", strings.ToLower(planner.plan.ProfileSHA256))
 		}
 	}
-	if err := planner.choose(document); err != nil {
+	if err := planner.choose(original, document); err != nil {
 		return err
 	}
 	planner.document = document
@@ -472,19 +472,27 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 // project's own value, else the person's answer when there is a person to ask, else nothing is
 // written and the plan says what applies and how to choose. A question with no key yet is left to
 // jst setup's machine defaults.
-func (planner *planner) choose(document *jsondoc.Object) error {
+func (planner *planner) choose(original, document *jsondoc.Object) error {
+	pin, _ := getString(document.Object("adopt"), "pin")
 	for _, question := range choices.All() {
 		if question.Key == nil {
 			continue
 		}
 		choice := Choice{ID: question.ID, Key: question.Key.Name()}
-		current, set := question.Key.Read(document)
+		ownValue, own := question.Key.Read(original)
+		fromProfile, profiled := question.Key.Read(document)
 		answer, given := planner.options.Answers[question.ID]
 		switch {
 		case given:
 			choice.Value, choice.From, choice.Written = answer, "--answer", true
-		case set:
-			choice.Value, choice.From = current, "this project's jackstay.json"
+		case own:
+			choice.Value, choice.From = ownValue, "this project's jackstay.json"
+		case profiled:
+			choice.Value, choice.From = fromProfile, "the profile's defaults"
+		case question.Schema3 && pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0:
+			choice.Value = question.Recommended()
+			choice.From = fmt.Sprintf("not asked: %s needs jackstay %s or later, and this project is pinned to %s",
+				question.Key.Name(), config.Schema3Release, pin)
 		case planner.options.Ask != nil:
 			offered, _ := choices.Offered(question, "", false, planner.options.Defaults)
 			asked, err := planner.options.Ask(question, offered)
