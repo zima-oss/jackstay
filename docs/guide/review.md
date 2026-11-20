@@ -24,8 +24,8 @@ jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] 
 - `--brief FILE`: a brief made available as a file for this call.
 - `--model`, `--effort`, `--timeout`: override the configuration for this call.
 - `--reviewer codex`, `--reviewer claude-code` or `--reviewer codex,claude-code` selects the
-  reviewers for this round. Without the flag, `review.use` supplies the choice. If neither is
-  set, the command exits 2 and asks you to select a reviewer.
+  reviewers for this round. Without the flag, `review.use` supplies the choice, and without
+  that the reviewer is Codex.
 
 Both reviewers get the same local, read-only snapshot of the review range. They can browse and
 search the reviewed commit under `head/`, compare files with `base/` and, for an incremental
@@ -93,8 +93,9 @@ For a project that regularly asks both reviewers, configure them as the required
 
 `review.reviewers` supplies optional per-provider settings. Built-in names work directly with
 `--reviewer`. Set `review.use` to either name or both to make those reviewers the project's
-default and required set. With an empty `review.use`, `jst review check` still requires a
-recorded round at the requested commits and checks its policy and findings.
+default and required set; without it, both are Codex. With an empty `review.use` a round needs
+`--reviewer`, and `jst review check` still requires a recorded round at the requested commits and
+checks its policy and findings.
 
 Claude Code uses its `Read`, `Glob` and `Grep` tools. Codex can use read-only shell navigation and
 search. Both start in the temporary snapshot and source is limited to tracked Git objects at the
@@ -129,9 +130,9 @@ A branch named like a subcommand is reviewed as `jst review -- list`.
 
 ## The `review` section
 
-Every setting has a default except the reviewer choice. A project can name a built-in reviewer on
-the command line without a `review` section. Add `review.use` to establish a default for future
-rounds and a required reviewer set for `jst review check`.
+Every setting has a default; the reviewer's is Codex. A project can name a built-in reviewer on
+the command line without a `review` section. Add `review.use` to choose another default for future
+rounds and the required reviewer set for `jst review check`.
 
 ```json
 "review": {
@@ -253,7 +254,7 @@ boundary. Keep the same chat session token when reconnecting.
 - **Exit 5, `no slot`**: other reviews held every slot past `queue_minutes`. Rerun later. An
   inaccessible lock instead fails immediately and names the underlying error.
 - **Exit 2, task busy**: another run of the same task is under way; wait for it.
-- **Exit 2, no reviewer selected**: name one with `--reviewer` or configure `review.use`.
+- **Exit 2, no reviewer selected**: `review.use` is empty; name one with `--reviewer` or list it in `review.use`.
 - **A review costs money and minutes** and answers differently each time: it is never part of a
   test scope or the gate.
 

@@ -90,7 +90,7 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	reviewers := ""
 	asJSON := false
 	flags.StringVar(&options.Task, "task", "", "the task the rounds belong to (default: the branch)")
-	flags.StringVar(&reviewers, "reviewer", "", "reviewers, comma-separated (default: review.use)")
+	flags.StringVar(&reviewers, "reviewer", "", "reviewers, comma-separated (default: review.use, else codex)")
 	flags.StringVar(&options.BriefFile, "brief", "", "a brief file added to the prompt")
 	flags.StringVar(&options.Focus, "focus", "", "where to look hardest (never narrows the round)")
 	flags.BoolVar(&options.Fresh, "fresh", false, "start a new chain: a full review from BASE")
@@ -109,6 +109,12 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	if len(positional) == 1 {
 		options.Revision = positional[0]
+	}
+	given := false
+	flags.Visit(func(flag *flag.Flag) { given = given || flag.Name == "reviewer" })
+	if given && strings.TrimSpace(reviewers) == "" {
+		fmt.Fprintln(stderr, "jst review: --reviewer names no reviewer: give codex, claude-code or both, or leave the flag out for the default")
+		return ExitUsage
 	}
 	if reviewers != "" {
 		options.Reviewers = strings.Split(reviewers, ",")

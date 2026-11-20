@@ -27,9 +27,9 @@ on reviews run by hand):
 
 ## 1. The `review` section of `jackstay.json`
 
-Every key is optional. Choose a built-in reviewer explicitly with `--reviewer` or configure the
-project's selection in `review.use`. Both providers' settings are available with or without a
-`review` section. If neither source selects a reviewer, the command exits 2 before starting a round.
+Every key is optional. The reviewer is `--reviewer`, else the project's `review.use`, else Codex.
+Both providers' settings are available with or without a `review` section. An explicitly empty
+`review.use` with no `--reviewer` exits 2 before starting a round.
 Unknown keys and a
 key written twice are refused, as everywhere in `jackstay.json` (`internal/config`, strict). Paths are
 relative to the repository's root and read **from the reviewed commit's tree** (section 3.1), never
@@ -74,7 +74,7 @@ on the command line is the exception (a file outside the tree, copied into the r
 | `reviewers.codex.effort` | reasoning effort, passed as `-c model_reasoning_effort="…"`; one of `minimal`, `low`, `medium`, `high`, `xhigh`; empty passes nothing | `medium` |
 | `reviewers.codex.timeout_minutes` | the hard deadline of one run (section 3.4); 1–120 | 20 |
 | `reviewers.codex.isolation` | the isolation flags, a list of argv words that **replaces** the default list whole. Words jackstay owns are refused here (below) | the set above |
-| `use` | the built-in reviewers a round runs when `--reviewer` is absent, and the reviewers required by `review check`; names must be unique | `[]` |
+| `use` | the built-in reviewers a round runs when `--reviewer` is absent, and the reviewers required by `review check`; names must be unique | `["codex"]` |
 | `brief` | the project's standing brief: what a reviewer of this project must know (its threat model, what to ignore). Put at the top of every prompt | none |
 | `template` | a whole prompt template (Go `text/template`, section 3.2) replacing jackstay's own; for a project whose reviews differ in kind. Its output must still ask for the verdict form, which jackstay appends itself whatever the template says | jackstay's embedded template |
 | `cite` | files and folders (a trailing `/`) the reviewer is told to read as the measure: rules, decisions, specs. Each must exist in the reviewed tree, or the round refuses to start | `["AGENTS.md"]` if it exists, else none |
@@ -525,7 +525,7 @@ nothing is inferred: exit 0 only when all hold, otherwise exit 1 with each reaso
 - its chain's base is exactly BASE — so, by section 4, the chain reviewed every change from BASE to
   REV; a chain from any other base, nearer or farther, does not answer for this range;
 - the latest round records the current review policy and at least one completed reviewer. Every
-  reviewer in `review.use` must have finished successfully. With `review.use` empty, either
+  reviewer in `review.use` must have finished successfully. With `review.use` explicitly empty, either
   provider's completed round can qualify. The policy covers prompt configuration (`brief`, `template`, `cite`), severity,
   triage, repetition and round limits. Scheduling, storage and per-run model, effort and timeout
   overrides are independent of this policy;

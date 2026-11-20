@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report.xsd" version="3.0.2" name="dev.jackstay.fixtures.MixedTest" time="0.002" tests="1" errors="0" skipped="0" failures="1">
+  <properties>
+    <property name="java.specification.version" value="21"/>
+  </properties>
+  <testcase name="failsEveryRun" classname="dev.jackstay.fixtures.MixedTest" time="0.031">
+    <failure message="every attempt" type="org.opentest4j.AssertionFailedError"><![CDATA[org.opentest4j.AssertionFailedError: every attempt
+	at org.junit.jupiter.api.AssertionUtils.fail(AssertionUtils.java:38)
+	at org.junit.jupiter.api.Assertions.fail(Assertions.java:138)
+	at dev.jackstay.fixtures.MixedTest.failsEveryRun(MixedTest.java:28)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+]]></failure>
+    <rerunFailure message="every attempt" type="org.opentest4j.AssertionFailedError">
+      <stackTrace><![CDATA[org.opentest4j.AssertionFailedError: every attempt
+	at org.junit.jupiter.api.AssertionUtils.fail(AssertionUtils.java:38)
+	at org.junit.jupiter.api.Assertions.fail(Assertions.java:138)
+	at dev.jackstay.fixtures.MixedTest.failsEveryRun(MixedTest.java:28)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+]]></stackTrace>
+    </rerunFailure>
+    <rerunFailure message="every attempt" type="org.opentest4j.AssertionFailedError">
+      <stackTrace><![CDATA[org.opentest4j.AssertionFailedError: every attempt
+	at org.junit.jupiter.api.AssertionUtils.fail(AssertionUtils.java:38)
+	at org.junit.jupiter.api.Assertions.fail(Assertions.java:138)
+	at dev.jackstay.fixtures.MixedTest.failsEveryRun(MixedTest.java:28)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+]]></stackTrace>
+    </rerunFailure>
+  </testcase>
+  <testcase name="passes" classname="dev.jackstay.fixtures.MixedTest" time="0.006"/>
+  <testcase name="passesToo" classname="dev.jackstay.fixtures.MixedTest" time="0.005"/>
+  <testcase name="passesOnRerun" classname="dev.jackstay.fixtures.MixedTest" time="0.0">
+    <flakyFailure message="first attempt" type="org.opentest4j.AssertionFailedError">
+      <stackTrace><![CDATA[org.opentest4j.AssertionFailedError: first attempt
+	at org.junit.jupiter.api.AssertionUtils.fail(AssertionUtils.java:38)
+	at org.junit.jupiter.api.Assertions.fail(Assertions.java:138)
+	at dev.jackstay.fixtures.MixedTest.passesOnRerun(MixedTest.java:14)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+]]></stackTrace>
+    </flakyFailure>
+  </testcase>
+  <testcase name="skipped" classname="dev.jackstay.fixtures.MixedTest" time="0.0">
+    <skipped message="fixture skip"/>
+  </testcase>
+</testsuite>

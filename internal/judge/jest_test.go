@@ -48,13 +48,14 @@ func TestJestRejectsIncompleteAndContradictoryReports(t *testing.T) {
 	}
 }
 
-func TestJestRetryNeedsAttemptEvidence(t *testing.T) {
+func TestJestRetriedAssertionIsPassedOnRetry(t *testing.T) {
 	for _, sample := range []struct {
 		file   string
 		status string
 		want   Outcome
 	}{
-		{file: "pass", status: "passed", want: Unjudged},
+		{file: "pass", status: "passed", want: PassedOnRetry},
+		{file: "pass", status: "pending", want: Unjudged},
 		{file: "fail", status: "failed", want: Failed},
 	} {
 		content, err := os.ReadFile(filepath.Join("testdata", "jest", sample.file+".json"))

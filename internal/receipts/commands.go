@@ -205,6 +205,7 @@ type Tally struct {
 	Failed           int     `json:"failed"`
 	NothingRun       int     `json:"nothing_run"`
 	Unjudged         int     `json:"unjudged"`
+	PassedOnRetry    int     `json:"passed_on_retry"`
 	Stopped          int     `json:"stopped"`
 	GaveUp           int     `json:"gave_up"`
 	StoppedWaiting   int     `json:"stopped_waiting"`
@@ -293,6 +294,8 @@ func countRun(tally *Tally, record Record, seconds float64) {
 		tally.NothingRun++
 	case OutcomeUnjudged:
 		tally.Unjudged++
+	case OutcomePassedOnRetry:
+		tally.PassedOnRetry++
 	case OutcomeStopped:
 		tally.Stopped++
 	}
@@ -334,9 +337,9 @@ func statsCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	for _, name := range sortedKeys(summary) {
 		tally := summary[name]
-		fmt.Fprintf(stdout, "%s: %d runs (%d passed, %d failed, %d ran nothing, %d ended 0 uncounted, %d unjudged, %d stopped), "+
-			"%g h; %d runs stored a receipt; %d started and never ended (killed, or running now)\n",
-			name, tally.Runs, tally.Passed, tally.Failed, tally.NothingRun, tally.Exited0, tally.Unjudged, tally.Stopped,
+		fmt.Fprintf(stdout, "%s: %d runs (%d passed, %d passed only on retry, %d failed, %d ran nothing, %d ended 0 uncounted, "+
+			"%d unjudged, %d stopped), %g h; %d runs stored a receipt; %d started and never ended (killed, or running now)\n",
+			name, tally.Runs, tally.Passed, tally.PassedOnRetry, tally.Failed, tally.NothingRun, tally.Exited0, tally.Unjudged, tally.Stopped,
 			hours(tally.RunSeconds), tally.ReceiptsStored, tally.Unfinished)
 		fmt.Fprintf(stdout, "  reused %d times, saving %g h; would have hit %d more (%g h) where reuse is off; "+
 			"%d runs forced over a receipt; gave up waiting %d, stopped while waiting %d\n",
