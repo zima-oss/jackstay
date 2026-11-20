@@ -42,7 +42,7 @@ const (
 	OutcomeFailed         = "failed"
 	OutcomeNothingRun     = "nothing-run"
 	OutcomeUnjudged       = "unjudged"
-	OutcomePassedOnRetry  = "passed-on-retry"
+	OutcomePassedOnRetry  = "passed-on-retry" // #nosec G101 -- an outcome's name
 	OutcomeStopped        = "stopped"
 	OutcomeStoppedWaiting = "stopped-waiting"
 	OutcomeGaveUp         = "gave-up"

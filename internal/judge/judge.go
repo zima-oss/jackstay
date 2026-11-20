@@ -64,7 +64,7 @@ const (
 	TimedOut      Outcome = "timed-out"
 	Stopped       Outcome = "stopped"
 	Unjudged      Outcome = "unjudged"
-	PassedOnRetry Outcome = "passed-on-retry"
+	PassedOnRetry Outcome = "passed-on-retry" // #nosec G101 -- an outcome's name
 	NothingRun    Outcome = "nothing-run"
 	Passed        Outcome = "passed"
 	ExitedZero    Outcome = "exited-0"
