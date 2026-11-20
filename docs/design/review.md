@@ -674,6 +674,9 @@ version per run.
   prune`.
 - Not in the gate: a real Codex round, run by hand (it also confirms that Codex accepts the
   schema, section 3.5).
+- Not in the gate either: the measurement of the wrapper against direct calls, seeded defects over
+  three ranges, recall, precision, time per stage, model and cost (`just review-bench`,
+  [bench/review](../../bench/review/README.md); the run before 0.6.0 is in its `results/`).
 
 ## 9. What it cannot see, and limits
 

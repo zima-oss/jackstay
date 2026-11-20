@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"os/exec"
@@ -92,54 +93,54 @@ type bench struct {
 func main() {
 	var arms, out string
 	var runs int
-	b := bench{log: os.Stderr}
-	flag.StringVar(&b.jst, "jst", "", "the jst binary to measure (absolute)")
+	measurement := bench{log: os.Stderr}
+	flag.StringVar(&measurement.jst, "jst", "", "the jst binary to measure (absolute)")
 	flag.StringVar(&arms, "arms", "codex-jst,codex-direct,claude-jst,claude-direct", "the arms, comma-separated")
 	flag.IntVar(&runs, "runs", 5, "sequential runs of every arm on every range")
-	flag.StringVar(&b.codexModel, "codex-model", "", "the Codex model both Codex arms use (default: the one in ~/.codex/config.toml)")
-	flag.StringVar(&b.claudeModel, "claude-model", "", "the Claude model both Claude arms use (default: the one in ~/.claude/settings.json)")
-	flag.StringVar(&b.codexEffort, "codex-effort", "medium", "Codex's reasoning effort, for both Codex arms")
-	flag.StringVar(&b.claudeEffort, "claude-effort", "", "Claude Code's effort, for both Claude arms")
+	flag.StringVar(&measurement.codexModel, "codex-model", "", "the Codex model both Codex arms use (default: the one in ~/.codex/config.toml)")
+	flag.StringVar(&measurement.claudeModel, "claude-model", "", "the Claude model both Claude arms use (default: the one in ~/.claude/settings.json)")
+	flag.StringVar(&measurement.codexEffort, "codex-effort", "medium", "Codex's reasoning effort, for both Codex arms")
+	flag.StringVar(&measurement.claudeEffort, "claude-effort", "", "Claude Code's effort, for both Claude arms")
 	flag.StringVar(&out, "out", "bench/review/results", "where the raw runs and the report are written")
-	flag.DurationVar(&b.timeout, "timeout", 15*time.Minute, "one run's deadline")
+	flag.DurationVar(&measurement.timeout, "timeout", 15*time.Minute, "one run's deadline")
 	flag.Parse()
-	if err := b.main(strings.Split(arms, ","), runs, out); err != nil {
+	if err := measurement.main(strings.Split(arms, ","), runs, out); err != nil {
 		fmt.Fprintln(os.Stderr, "review bench:", err)
 		os.Exit(1)
 	}
 }
 
-func (b *bench) main(arms []string, runs int, out string) error {
-	if !filepath.IsAbs(b.jst) {
+func (measurement *bench) main(arms []string, runs int, out string) error {
+	if !filepath.IsAbs(measurement.jst) {
 		return errors.New("-jst must be an absolute path to a jst binary")
 	}
 	var err error
-	if b.root, err = os.Getwd(); err != nil {
+	if measurement.root, err = os.Getwd(); err != nil {
 		return err
 	}
-	b.fixture = filepath.Join(b.root, "bench", "review", "testdata")
-	data, err := os.ReadFile(filepath.Join(b.fixture, "defects.json"))
+	measurement.fixture = filepath.Join(measurement.root, "bench", "review", "testdata")
+	data, err := os.ReadFile(filepath.Join(measurement.fixture, "defects.json"))
 	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal(data, &b.defects); err != nil {
+	if err := json.Unmarshal(data, &measurement.defects); err != nil {
 		return err
 	}
-	if b.codexModel == "" {
-		b.codexModel = configuredCodexModel()
+	if measurement.codexModel == "" {
+		measurement.codexModel = configuredCodexModel()
 	}
-	if b.claudeModel == "" {
-		b.claudeModel = configuredClaudeModel()
+	if measurement.claudeModel == "" {
+		measurement.claudeModel = configuredClaudeModel()
 	}
-	if b.work, err = os.MkdirTemp("", "review-bench-"); err != nil {
+	if measurement.work, err = os.MkdirTemp("", "review-bench-"); err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(b.work) }()
-	b.home = filepath.Join(b.work, "jackstay-home")
-	if err := b.makeFixture(); err != nil {
+	defer func() { _ = os.RemoveAll(measurement.work) }()
+	measurement.home = filepath.Join(measurement.work, "jackstay-home")
+	if err := measurement.makeFixture(); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(out, 0o755); err != nil {
+	if err := os.MkdirAll(out, 0o750); err != nil {
 		return err
 	}
 	stamp := time.Now().UTC().Format("2006-01-02T150405Z")
@@ -152,18 +153,18 @@ func (b *bench) main(arms []string, runs int, out string) error {
 	for iteration := 1; iteration <= runs; iteration++ {
 		// The order of the arms turns each iteration, so drift over the hours hits every arm alike.
 		order := append(slices.Clone(arms[(iteration-1)%len(arms):]), arms[:(iteration-1)%len(arms)]...)
-		for position := range b.defects.Ranges {
+		for position := range measurement.defects.Ranges {
 			for _, arm := range order {
-				run := b.one(arm, position, iteration)
+				run := measurement.one(arm, position, iteration)
 				all = append(all, run)
 				line, _ := json.Marshal(run)
 				_, _ = raw.Write(append(line, '\n'))
-				fmt.Fprintf(b.log, "%s %-14s %-7s run %d: %-10s found %s, %d unmatched, %.0f s\n", time.Now().Format("15:04:05"),
+				fmt.Fprintf(measurement.log, "%s %-14s %-7s run %d: %-10s found %s, %d unmatched, %.0f s\n", time.Now().Format("15:04:05"),
 					arm, run.Range, iteration, run.Outcome, strings.Join(run.Found, ","), run.Unmatched, run.Wall)
 			}
 		}
 	}
-	report := b.report(all, arms, runs, stamp)
+	report := measurement.report(all, arms, runs, stamp)
 	path := filepath.Join(out, stamp+".md")
 	if err := os.WriteFile(path, []byte(report), 0o644); err != nil { // #nosec G306 -- a report meant to be read
 		return err
@@ -202,7 +203,7 @@ func configuredClaudeModel() string {
 	return settings.Model
 }
 
-func (b *bench) git(folder string, args ...string) (string, error) {
+func (measurement *bench) git(folder string, args ...string) (string, error) {
 	command := exec.Command("git", append([]string{"-C", folder}, args...)...) // #nosec G204 -- fixed git subcommands
 	command.Env = append(os.Environ(), "GIT_AUTHOR_NAME=bench", "GIT_AUTHOR_EMAIL=bench@example.invalid",
 		"GIT_COMMITTER_NAME=bench", "GIT_COMMITTER_EMAIL=bench@example.invalid", "GIT_CONFIG_GLOBAL=/dev/null")
@@ -215,9 +216,9 @@ func (b *bench) git(folder string, args ...string) (string, error) {
 
 // makeFixture builds the fixture's repository: the base, then one commit per range, and a checkout
 // at each range's head for the direct arms.
-func (b *bench) makeFixture() error {
-	repository := filepath.Join(b.work, "fixture")
-	if err := copyTree(filepath.Join(b.fixture, "fixture", "base"), repository); err != nil {
+func (measurement *bench) makeFixture() error {
+	repository := filepath.Join(measurement.work, "fixture")
+	if err := copyTree(filepath.Join(measurement.fixture, "fixture", "base"), repository); err != nil {
 		return err
 	}
 	config := `{"jackstay_schema": 3, "project": "review-bench", "review": {"use": ["codex"], "cite": []}}` + "\n"
@@ -225,52 +226,56 @@ func (b *bench) makeFixture() error {
 		return err
 	}
 	for _, step := range [][]string{{"init", "-q", "-b", "main"}, {"add", "-A"}, {"commit", "-q", "-m", "The base: stock of items"}} {
-		if _, err := b.git(repository, step...); err != nil {
+		if _, err := measurement.git(repository, step...); err != nil {
 			return err
 		}
 	}
-	head, err := b.git(repository, "rev-parse", "HEAD")
+	head, err := measurement.git(repository, "rev-parse", "HEAD")
 	if err != nil {
 		return err
 	}
-	b.commits = []string{head}
-	for _, part := range b.defects.Ranges {
-		if err := copyTree(filepath.Join(b.fixture, "fixture", part.Step), repository); err != nil {
+	measurement.commits = []string{head}
+	for _, part := range measurement.defects.Ranges {
+		if err := copyTree(filepath.Join(measurement.fixture, "fixture", part.Step), repository); err != nil {
 			return err
 		}
-		if _, err := b.git(repository, "add", "-A"); err != nil {
+		if _, err := measurement.git(repository, "add", "-A"); err != nil {
 			return err
 		}
-		if _, err := b.git(repository, "commit", "-q", "-m", part.Subject); err != nil {
+		if _, err := measurement.git(repository, "commit", "-q", "-m", part.Subject); err != nil {
 			return err
 		}
-		if head, err = b.git(repository, "rev-parse", "HEAD"); err != nil {
+		if head, err = measurement.git(repository, "rev-parse", "HEAD"); err != nil {
 			return err
 		}
-		b.commits = append(b.commits, head)
-		checkout := filepath.Join(b.work, "checkout-"+part.Name)
-		if _, err := b.git(repository, "worktree", "add", "-q", "--detach", checkout, head); err != nil {
+		measurement.commits = append(measurement.commits, head)
+		checkout := filepath.Join(measurement.work, "checkout-"+part.Name)
+		if _, err := measurement.git(repository, "worktree", "add", "-q", "--detach", checkout, head); err != nil {
 			return err
 		}
-		b.checkouts = append(b.checkouts, checkout)
+		measurement.checkouts = append(measurement.checkouts, checkout)
 	}
 	return nil
 }
 
 func copyTree(source, target string) error {
-	return filepath.WalkDir(source, func(path string, entry os.DirEntry, err error) error {
+	root, err := os.OpenRoot(source)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return fs.WalkDir(root.FS(), ".", func(relative string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		relative, _ := filepath.Rel(source, path)
 		if entry.IsDir() {
 			return os.MkdirAll(filepath.Join(target, relative), 0o700)
 		}
-		data, err := os.ReadFile(path) // #nosec G304 -- the fixture's own files
+		data, err := root.ReadFile(relative)
 		if err != nil {
 			return err
 		}
-		return os.WriteFile(filepath.Join(target, relative), data, 0o600)
+		return os.WriteFile(filepath.Join(target, relative), data, 0o600) // #nosec G703 -- a path under the fixture, into the bench's own folder
 	})
 }
 
@@ -282,19 +287,19 @@ func reviewerOf(arm string) string {
 }
 
 // one runs one arm on one range, and scores it.
-func (b *bench) one(arm string, position, iteration int) Run {
-	part := b.defects.Ranges[position]
+func (measurement *bench) one(arm string, position, iteration int) Run {
+	part := measurement.defects.Ranges[position]
 	run := Run{Arm: arm, Reviewer: reviewerOf(arm), Range: part.Name, Iteration: iteration, Started: time.Now()}
-	base, head := b.commits[position], b.commits[position+1]
+	base, head := measurement.commits[position], measurement.commits[position+1]
 	var answer review.Answer
 	var err error
 	switch arm {
 	case "codex-jst", "claude-jst":
-		answer, err = b.wrapped(&run, base, head, fmt.Sprintf("bench-%s-%s-%d-%d", arm, part.Name, iteration, run.Started.Unix()))
+		answer, err = measurement.wrapped(&run, base, head, fmt.Sprintf("bench-%s-%s-%d-%d", arm, part.Name, iteration, run.Started.Unix()))
 	case "codex-direct":
-		answer, err = b.directCodex(&run, b.checkouts[position], base, head)
+		answer, err = measurement.directCodex(&run, measurement.checkouts[position], base, head)
 	case "claude-direct":
-		answer, err = b.directClaude(&run, b.checkouts[position], base, head)
+		answer, err = measurement.directClaude(&run, measurement.checkouts[position], base, head)
 	default:
 		err = fmt.Errorf("unknown arm %q", arm)
 	}
@@ -307,7 +312,7 @@ func (b *bench) one(arm string, position, iteration int) Run {
 	for _, finding := range answer.Findings {
 		run.Findings = append(run.Findings, Finding{Place: finding.Place, Title: finding.Title, Detail: finding.Detail})
 	}
-	b.score(&run)
+	measurement.score(&run)
 	return run
 }
 
@@ -320,11 +325,11 @@ func firstLine(text string) string {
 }
 
 // wrapped is `jst review BASE..HEAD` with one reviewer, a fresh chain, both arms' model.
-func (b *bench) wrapped(run *Run, base, head, task string) (review.Answer, error) {
+func (measurement *bench) wrapped(run *Run, base, head, task string) (review.Answer, error) {
 	args := []string{"review", base + ".." + head, "--task", task, "--reviewer", run.Reviewer, "--fresh", "--json"}
-	model, effort := b.codexModel, b.codexEffort
+	model, effort := measurement.codexModel, measurement.codexEffort
 	if run.Reviewer == "claude-code" {
-		model, effort = b.claudeModel, b.claudeEffort
+		model, effort = measurement.claudeModel, measurement.claudeEffort
 	}
 	if model != "" {
 		args = append(args, "--model", model)
@@ -332,11 +337,11 @@ func (b *bench) wrapped(run *Run, base, head, task string) (review.Answer, error
 	if effort != "" {
 		args = append(args, "--effort", effort)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), b.timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, b.jst, args...) // #nosec G204 -- the binary being measured
-	command.Dir = filepath.Join(b.work, "fixture")
-	command.Env = append(os.Environ(), "JACKSTAY_HOME="+b.home)
+	command := exec.CommandContext(ctx, measurement.jst, args...) // #nosec G204 -- the binary being measured
+	command.Dir = filepath.Join(measurement.work, "fixture")
+	command.Env = append(os.Environ(), "JACKSTAY_HOME="+measurement.home)
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr
 	runErr := command.Run()
@@ -419,31 +424,31 @@ title and a detail. Leave "prior" empty and "repeats" empty. Answer only with th
 `, base, head, base, head)
 }
 
-func (b *bench) schemaFile() (string, error) {
-	path := filepath.Join(b.work, "schema.json")
+func (measurement *bench) schemaFile() (string, error) {
+	path := filepath.Join(measurement.work, "schema.json")
 	return path, os.WriteFile(path, review.Schema([]string{"blocker", "major", "minor"}), 0o600)
 }
 
-func (b *bench) directCodex(run *Run, checkout, base, head string) (review.Answer, error) {
-	schema, err := b.schemaFile()
+func (measurement *bench) directCodex(run *Run, checkout, base, head string) (review.Answer, error) {
+	schema, err := measurement.schemaFile()
 	if err != nil {
 		return review.Answer{}, err
 	}
-	folder, err := os.MkdirTemp(b.work, "codex-direct-")
+	folder, err := os.MkdirTemp(measurement.work, "codex-direct-")
 	if err != nil {
 		return review.Answer{}, err
 	}
 	answerPath := filepath.Join(folder, "answer.json")
 	args := []string{"-a", "never", "exec", "--json", "--ephemeral", "-s", "read-only", "-C", checkout,
 		"-o", answerPath, "--output-schema", schema}
-	if b.codexModel != "" {
-		args = append(args, "-m", b.codexModel)
+	if measurement.codexModel != "" {
+		args = append(args, "-m", measurement.codexModel)
 	}
-	if b.codexEffort != "" {
-		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", b.codexEffort))
+	if measurement.codexEffort != "" {
+		args = append(args, "-c", fmt.Sprintf("model_reasoning_effort=%q", measurement.codexEffort))
 	}
 	args = append(args, "-")
-	ctx, cancel := context.WithTimeout(context.Background(), b.timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, "codex", args...) // #nosec G204 -- the reviewer measured
 	command.Dir = checkout
@@ -457,7 +462,7 @@ func (b *bench) directCodex(run *Run, checkout, base, head string) (review.Answe
 	runErr := command.Run()
 	_ = events.Close()
 	run.Model = time.Since(started).Seconds()
-	run.Models = []string{b.codexModel}
+	run.Models = []string{measurement.codexModel}
 	run.Tokens = codexTokens(filepath.Join(folder, "events.jsonl"))
 	data, err := os.ReadFile(answerPath) // #nosec G304 -- the bench's own folder
 	if err != nil {
@@ -467,17 +472,17 @@ func (b *bench) directCodex(run *Run, checkout, base, head string) (review.Answe
 	return answer, json.Unmarshal(data, &answer)
 }
 
-func (b *bench) directClaude(run *Run, checkout, base, head string) (review.Answer, error) {
+func (measurement *bench) directClaude(run *Run, checkout, base, head string) (review.Answer, error) {
 	args := []string{"--print", "--output-format", "json", "--no-session-persistence",
 		"--json-schema", string(review.Schema([]string{"blocker", "major", "minor"})),
 		"--permission-mode", "dontAsk", "--allowedTools", "Read,Glob,Grep,Bash(git diff:*),Bash(git show:*),Bash(git log:*)"}
-	if b.claudeModel != "" {
-		args = append(args, "--model", b.claudeModel)
+	if measurement.claudeModel != "" {
+		args = append(args, "--model", measurement.claudeModel)
 	}
-	if b.claudeEffort != "" {
-		args = append(args, "--effort", b.claudeEffort)
+	if measurement.claudeEffort != "" {
+		args = append(args, "--effort", measurement.claudeEffort)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), b.timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, "claude", args...) // #nosec G204 -- the reviewer measured
 	command.Dir = checkout
@@ -540,12 +545,12 @@ func match(list []Defect, rangeName string, finding Finding) string {
 }
 
 // score matches each finding to a seeded defect, else to a confirmed extra, else counts it unmatched.
-func (b *bench) score(run *Run) {
+func (measurement *bench) score(run *Run) {
 	found := map[string]bool{}
 	for index, finding := range run.Findings {
-		best := match(b.defects.Defects, run.Range, finding)
+		best := match(measurement.defects.Defects, run.Range, finding)
 		if best == "" {
-			best = match(b.defects.Extras, run.Range, finding)
+			best = match(measurement.defects.Extras, run.Range, finding)
 		}
 		run.Findings[index].Match = best
 		switch {
@@ -567,45 +572,45 @@ func (b *bench) score(run *Run) {
 
 type stat struct{ values []float64 }
 
-func (s *stat) add(value float64) { s.values = append(s.values, value) }
+func (series *stat) add(value float64) { series.values = append(series.values, value) }
 
-func (s stat) mean() float64 {
-	if len(s.values) == 0 {
+func (series stat) mean() float64 {
+	if len(series.values) == 0 {
 		return math.NaN()
 	}
 	total := 0.0
-	for _, value := range s.values {
+	for _, value := range series.values {
 		total += value
 	}
-	return total / float64(len(s.values))
+	return total / float64(len(series.values))
 }
 
-func (s stat) deviation() float64 {
-	if len(s.values) < 2 {
+func (series stat) deviation() float64 {
+	if len(series.values) < 2 {
 		return 0
 	}
-	mean, total := s.mean(), 0.0
-	for _, value := range s.values {
+	mean, total := series.mean(), 0.0
+	for _, value := range series.values {
 		total += (value - mean) * (value - mean)
 	}
-	return math.Sqrt(total / float64(len(s.values)-1))
+	return math.Sqrt(total / float64(len(series.values)-1))
 }
 
-func (s stat) text(format string) string {
-	if len(s.values) == 0 {
+func (series stat) text(format string) string {
+	if len(series.values) == 0 {
 		return "–"
 	}
-	return fmt.Sprintf(format+" ± "+format, s.mean(), s.deviation())
+	return fmt.Sprintf(format+" ± "+format, series.mean(), series.deviation())
 }
 
 // report is the Markdown summary: one row per arm, then per range, then every unmatched finding
 // for a person to confirm or reject.
-func (b *bench) report(all []Run, arms []string, runs int, stamp string) string {
+func (measurement *bench) report(all []Run, arms []string, runs int, stamp string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# Review wrapper measurement, %s\n\n", stamp)
 	fmt.Fprintf(&out, "%d seeded defects over %d ranges (`bench/review/testdata`), %d sequential runs per arm and range, "+
 		"arms in turning order. Codex model %q, effort %q; Claude model %q, effort %q (both arms of a reviewer alike).\n\n",
-		len(b.defects.Defects), len(b.defects.Ranges), runs, b.codexModel, b.codexEffort, b.claudeModel, b.claudeEffort)
+		len(measurement.defects.Defects), len(measurement.defects.Ranges), runs, measurement.codexModel, measurement.codexEffort, measurement.claudeModel, measurement.claudeEffort)
 	out.WriteString("Recall: seeded defects found per run, of those in the range. Precision: confirmed findings — a seeded " +
 		"defect, or one of the fixture's known real issues that were not seeded (`extras`) — of all findings; the findings " +
 		"that match neither are listed below for a person to judge. Mean ± standard deviation over runs.\n\n")
@@ -625,7 +630,7 @@ func (b *bench) report(all []Run, arms []string, runs int, stamp string) string 
 			}
 			answered++
 			seeded := 0
-			for _, defect := range b.defects.Defects {
+			for _, defect := range measurement.defects.Defects {
 				if defect.Range == run.Range {
 					seeded++
 				}
@@ -659,7 +664,7 @@ func (b *bench) report(all []Run, arms []string, runs int, stamp string) string 
 	}
 	out.WriteString("\n## Defects found, by arm (runs that found each)\n\n| defect | what | ")
 	out.WriteString(strings.Join(arms, " | ") + " |\n|---|---|" + strings.Repeat("---|", len(arms)) + "\n")
-	for _, defect := range b.defects.Defects {
+	for _, defect := range measurement.defects.Defects {
 		fmt.Fprintf(&out, "| %s | %s |", defect.ID, defect.What)
 		for _, arm := range arms {
 			hits, runsOfRange := 0, 0

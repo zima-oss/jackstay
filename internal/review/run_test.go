@@ -536,3 +536,23 @@ func TestPromptReferencesBriefWithoutEmbeddingItsContents(t *testing.T) {
 		t.Fatalf("review failed: %+v", result)
 	}
 }
+
+func TestARoundRecordsTheTimeOfItsStages(t *testing.T) {
+	h := newHarness(t, Answer{Verdict: "approve", Summary: "clear"})
+	tick := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	var mutex sync.Mutex
+	h.round.Machine.Now = func() time.Time { // every look at the clock is one second later
+		mutex.Lock()
+		defer mutex.Unlock()
+		tick = tick.Add(time.Second)
+		return tick
+	}
+	result := h.round.Run(context.Background(), Options{})
+	if result.Record == nil || result.Record.PrepareSeconds <= 0 || result.Record.Runs[0].WaitSeconds <= 0 {
+		t.Fatalf("stage times: %+v", result.Record)
+	}
+	saved, err := readRecord(result.Folder)
+	if err != nil || saved.PrepareSeconds != result.Record.PrepareSeconds {
+		t.Fatalf("round.json lacks the stage times: %+v, %v", saved, err)
+	}
+}

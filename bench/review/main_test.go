@@ -21,7 +21,7 @@ func TestScoringMatchesAFindingToTheDefectItNames(t *testing.T) {
 	if len(defects.Defects) != 10 || len(defects.Ranges) != 3 {
 		t.Fatalf("the fixture has %d defects over %d ranges", len(defects.Defects), len(defects.Ranges))
 	}
-	b := bench{defects: defects}
+	measurement := bench{defects: defects}
 	run := Run{Range: "cache", Findings: []Finding{
 		{Place: "cache.go: Get", Title: "Get reads the map without the mutex", Detail: "a data race with Put"},
 		{Place: "cache.go: Cache.Get", Title: "Expired entries are returned", Detail: "the comparison is inverted"},
@@ -31,7 +31,7 @@ func TestScoringMatchesAFindingToTheDefectItNames(t *testing.T) {
 		{Place: "order.go: ParseLine", Title: "index out of range", Detail: "off-by-one"},
 		{Place: "stock.go: ReserveLines", Title: "Reserving lines races with Release", Detail: "no lock"},
 	}}
-	b.score(&run)
+	measurement.score(&run)
 	if !slices.Equal(run.Found, []string{"B1", "B2", "B3"}) || run.Duplicates != 1 || run.Unmatched != 2 || run.Extras != 1 {
 		t.Fatalf("found %v, %d duplicates, %d unmatched (a defect of another range does not count)", run.Found, run.Duplicates, run.Unmatched)
 	}
