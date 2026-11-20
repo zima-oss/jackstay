@@ -27,8 +27,8 @@
 - **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
   `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
   `jackstay.json` (`github.account`).
-- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.
-  Pick `codex` or `claude-code`, or use the project's `review.use`.
+- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
+  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
   `jst review check BASE..REV --task NAME` checks the saved round.
 - **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
   Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.

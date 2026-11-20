@@ -6,7 +6,7 @@ const testHelp = `usage: jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--bas
 
 Runs a scope of jackstay.json's test section (` + "`jst test list`" + ` shows them), or with -- any command, judged,
 recorded and keyed by the tree. Only the outcome passed is a pass: read the last ` + "`jst test:`" + ` line.
-With test.selection configured, use jst test changed [BASE..REV] to select a scope from committed paths.
+With test.selection configured, use jst test changed [BASE..REV] to select a scope from changed paths.
   --no-reuse      run even when a receipt of this tree could be reused
   --wait S        give up waiting for the machine-wide lock after S seconds
   --lock          take the machine-wide lock; --no-lock: do not (default: the scope's lock)
@@ -22,7 +22,7 @@ or [] for none.
 
 exit: 0 passed (or exited 0 uncounted); 1 failed; 2 not started or refused, nothing ran;
 75 gave up waiting for the lock; 76 no test ran; 77 unjudged (output not read to its end, or
-leftovers that cannot be attributed); 124 timed out; 127 the command cannot start. A command that
+leftovers that cannot be attributed); 78 passed only on retry (not a clean pass); 124 timed out; 127 the command cannot start. A command that
 ran and failed passes its own status on, so 2 or 77 may be its own: the last jst test: line names
 the outcome.
 

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/telemetry/mask"
@@ -97,31 +98,10 @@ func (place store) write(entry Entry) bool {
 	if err != nil {
 		return false
 	}
-	if err := os.MkdirAll(place.folder, 0o700); err != nil {
+	if err := durable.MakeFolder(place.folder, 0o700); err != nil {
 		return false
 	}
-	partial, err := os.CreateTemp(place.folder, entry.ID+".json.*.partial")
-	if err != nil {
-		return false
-	}
-	written := func() error {
-		if _, err := partial.Write(data); err != nil {
-			return err
-		}
-		if err := partial.Sync(); err != nil {
-			return err
-		}
-		if err := partial.Close(); err != nil {
-			return err
-		}
-		return os.Rename(partial.Name(), place.entryPath(entry.ID))
-	}()
-	if written != nil {
-		_ = partial.Close()
-		_ = os.Remove(partial.Name())
-		return false
-	}
-	return true
+	return durable.WriteAtomic(place.entryPath(entry.ID), data, 0o600, 0) == nil
 }
 
 // remove removes the entry's file, and its stop request with it.

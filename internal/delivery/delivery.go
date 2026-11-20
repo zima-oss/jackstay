@@ -9,12 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"syscall"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 )
 
@@ -63,24 +60,12 @@ func Digest(data []byte) string {
 
 // Read loads a record. A caller may decode returned legacy bytes if there is no schema.
 func Read[Plan any](place string) (*Record[Plan], []byte, error) {
-	file, err := os.OpenFile(place, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, nil, errors.New("the delivery record is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, Limit+1))
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(data) > Limit {
+	data, err := durable.ReadLimited(place, Limit)
+	if errors.Is(err, durable.ErrTooLarge) {
 		return nil, nil, fmt.Errorf("delivery record exceeds %d bytes", Limit)
+	}
+	if err != nil {
+		return nil, nil, err
 	}
 	var header struct {
 		Schema *int `json:"schema"`
@@ -125,22 +110,5 @@ func (record *Record[Plan]) Checkpoint(place string, phase string, outcome Outco
 	if len(data) >= Limit {
 		return fmt.Errorf("delivery record exceeds %d bytes", Limit)
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(place), ".jackstay-delivery-*")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		_ = temporary.Close()
-		_ = os.Remove(temporary.Name())
-	}()
-	if _, err := temporary.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporary.Name(), place)
+	return durable.WriteAtomic(place, append(data, '\n'), 0o600, 0)
 }

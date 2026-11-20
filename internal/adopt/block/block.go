@@ -74,8 +74,8 @@ var items = []item{
 			"  `jackstay.json` (`github.account`).")},
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
-		"- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.\n" +
-			"  Pick `codex` or `claude-code`, or use the project's `review.use`.\n" +
+		"- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the\n" +
+			"  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.\n" +
 			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
 	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
 		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +

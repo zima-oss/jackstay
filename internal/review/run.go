@@ -155,7 +155,7 @@ func (round Round) Run(ctx context.Context, options Options) Result {
 		settings.Use = names
 	}
 	if len(names) == 0 {
-		return usage("choose a reviewer with --reviewer %s, or set review.use in jackstay.json", strings.Join(KnownReviewers, " or "))
+		return usage("`review.use` is empty: choose a reviewer with --reviewer %s", strings.Join(KnownReviewers, " or "))
 	}
 	if options.Model != "" || options.Effort != "" || options.Timeout != 0 {
 		settings.Reviewers = overridden(settings.Reviewers, names, options)

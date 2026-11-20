@@ -1063,10 +1063,11 @@ usage: jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief
                  [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
 
 A cold review of one commit (default HEAD, against its first parent) or of BASE..REV, in
-rounds (docs/design/review.md). Choose codex or claude-code explicitly or set review.use
-in jackstay.json. A revision named like a subcommand is given after --.
+rounds (docs/design/review.md). The reviewers are --reviewer, else review.use in
+jackstay.json (codex, claude-code or both), else Codex; an empty review.use needs --reviewer.
+A revision named like a subcommand is given after --.
   --task NAME         the task the rounds belong to (default: the branch)
-  --reviewer NAMES    reviewers, comma-separated (default: review.use)
+  --reviewer NAMES    reviewers, comma-separated (default: review.use, else codex)
   --brief FILE        a brief file added to the prompt
   --focus TEXT        where to look hardest (it never narrows the round)
   --fresh             start a new chain: a full review from BASE
@@ -1268,7 +1269,7 @@ usage: jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | -
 
 Runs a scope of jackstay.json's test section (`jst test list` shows them), or with -- any command, judged,
 recorded and keyed by the tree. Only the outcome passed is a pass: read the last `jst test:` line.
-With test.selection configured, use jst test changed [BASE..REV] to select a scope from committed paths.
+With test.selection configured, use jst test changed [BASE..REV] to select a scope from changed paths.
   --no-reuse      run even when a receipt of this tree could be reused
   --wait S        give up waiting for the machine-wide lock after S seconds
   --lock          take the machine-wide lock; --no-lock: do not (default: the scope's lock)
@@ -1284,7 +1285,7 @@ or [] for none.
 
 exit: 0 passed (or exited 0 uncounted); 1 failed; 2 not started or refused, nothing ran;
 75 gave up waiting for the lock; 76 no test ran; 77 unjudged (output not read to its end, or
-leftovers that cannot be attributed); 124 timed out; 127 the command cannot start. A command that
+leftovers that cannot be attributed); 78 passed only on retry (not a clean pass); 124 timed out; 127 the command cannot start. A command that
 ran and failed passes its own status on, so 2 or 77 may be its own: the last jst test: line names
 the outcome.
 
@@ -1334,7 +1335,7 @@ base and checks. Nothing is run. It reads the options of `jst test SCOPE`:
   --base REF       the {base} the words are planned with
   --project NAME   the project's name (default jackstay.json's)
 
-Use SCOPE=auto, or changed when test.selection is configured, to select a declared scope from committed paths. The plan prints the selected
+Use SCOPE=auto, or changed when test.selection is configured, to select a declared scope from changed paths. The plan prints the selected
 scope, every matching path rule and the scope's when. It uses origin/HEAD as the default base;
 without that ref, pass --base REF. Auto takes no test names or --commit in a plan.
 jst test plan changed BASE..REV plans from a temporary clean copy of REV and removes it.

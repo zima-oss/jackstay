@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/delivery"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 )
@@ -402,41 +403,12 @@ func WriteInRepo(root, relative string, data []byte) error {
 // WriteFileAtomic writes data to a temporary file in the same folder and renames it into place,
 // keeping an existing file's permissions.
 func WriteFileAtomic(target string, data []byte) error {
-	dir := filepath.Dir(target)
-	if err := os.MkdirAll(dir, 0o755); err != nil { // #nosec G301 -- a folder of the project's own tree
-		return err
-	}
-	temporary, err := os.CreateTemp(dir, ".jackstay-write-")
-	if err != nil {
-		return err
-	}
-	name := temporary.Name()
-	cleanup := func() { _ = os.Remove(name) }
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		cleanup()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		cleanup()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		cleanup()
+	if err := durable.MakeFolder(filepath.Dir(target), 0o755); err != nil { // #nosec G301 -- a folder of the project's own tree
 		return err
 	}
 	mode := os.FileMode(0o644)
 	if info, err := os.Stat(target); err == nil {
 		mode = info.Mode().Perm()
 	}
-	if err := os.Chmod(name, mode); err != nil {
-		cleanup()
-		return err
-	}
-	if err := os.Rename(name, target); err != nil {
-		cleanup()
-		return err
-	}
-	return nil
+	return durable.WriteAtomic(target, data, mode, 0)
 }
