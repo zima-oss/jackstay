@@ -200,7 +200,7 @@ plans the same input bytes twenty times and compares.
 Text output lists, each line led by its ID: the project and profile, the changes, the conflicts
 ("nothing is written until each is settled"), the exceptions and the notes. For every `:edited`
 conflict the plan also prints the text that would be lost. The
-[adoption guide](../guide/adopt.md#example-a-fresh-repository) shows a plan.
+[adoption guide](../guide/adopt.md#adopt-a-project) shows a plan.
 
 ## 5. Conflicts
 
@@ -399,7 +399,7 @@ Outside a project the check is skipped. `jst doctor --json` carries the summary 
 ## 11. Bringing a project up to date: the checklist
 
 The checklist for whoever brings a project up to date after an upgrade, person or agent, is in the
-[adoption guide](../guide/adopt.md#bringing-a-project-up-to-date-for-an-agent): plan (with the
+[adoption guide](../guide/adopt.md#bring-a-project-up-to-date): plan (with the
 `--profile` the first time), settle each conflict and classify each workflow the project owns,
 apply, check, and land `jackstay.json` alone first when rule D0 needs two pull requests. **Done
 means `jst adopt --plan` exits 0 and `jst doctor` reports no adoption problem**, not anyone's word.

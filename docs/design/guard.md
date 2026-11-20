@@ -421,7 +421,7 @@ read them there.
 
 The guard's advice for `rm -r` must be something a session can do, and macOS's `trash` fails in
 the sandbox (`afpAccessDenied`), so the advice is `jst trash PATH`; the guard knows `jst trash` as
-harmless. Use: the [guard guide](../guide/guard.md#jst-trash).
+harmless. Use: the [guard guide](../guide/guard.md#delete-undoably-jst-trash).
 
 - `jst trash PATH…` moves each item into `<jackstay home>/.trash/<time>-<n>/` beside `entry.json`
   (`path` absolute, `moved_at`, `project`, `session`, `kind`). On the same volume the move is a

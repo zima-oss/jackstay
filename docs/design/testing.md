@@ -49,7 +49,7 @@ When each is required is the project's rule, written **once**, in the scope's `w
 
 ### Declaring a scope
 
-The optional `test` section, abridged (use: the [tests guide](../guide/tests.md#scopes-jst-test-scope)):
+The optional `test` section, abridged (use: the [tests guide](../guide/tests.md#declare-scopes)):
 
 ```json
 "test": {
