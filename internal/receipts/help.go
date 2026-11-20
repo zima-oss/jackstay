@@ -6,7 +6,7 @@ const testHelp = `usage: jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--bas
 
 Runs a scope of jackstay.json's test section (` + "`jst test list`" + ` shows them), or with -- any command, judged,
 recorded and keyed by the tree. Only the outcome passed is a pass: read the last ` + "`jst test:`" + ` line.
-With test.selection configured, use jst test changed [BASE..REV] to select a scope from committed paths.
+With test.selection configured, use jst test changed [BASE..REV] to select a scope from changed paths.
   --no-reuse      run even when a receipt of this tree could be reused
   --wait S        give up waiting for the machine-wide lock after S seconds
   --lock          take the machine-wide lock; --no-lock: do not (default: the scope's lock)

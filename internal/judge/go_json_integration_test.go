@@ -115,3 +115,59 @@ func TestParent(t *testing.T) {
 		})
 	}
 }
+
+func TestGoJSONReadsARealRunWithAttributesAndArtifacts(t *testing.T) {
+	folder := t.TempDir()
+	if err := os.WriteFile(filepath.Join(folder, "go.mod"), []byte("module example.invalid/fixture\n\ngo 1.27.0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := `package fixture
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestAttr(t *testing.T) {
+	t.Attr("issue", "fixture")
+	t.Run("child", func(t *testing.T) { t.Attr("kind", "leaf") })
+}
+
+func TestArtifact(t *testing.T) {
+	if err := os.WriteFile(filepath.Join(t.ArtifactDir(), "out.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+`
+	if err := os.WriteFile(filepath.Join(folder, "fixture_test.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outputs := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "test", "-json", "-count=1", "-artifacts", "-outputdir", outputs, ".")
+	command.Dir = folder
+	command.Env = append(os.Environ(), "GOWORK=off", "GOTOOLCHAIN=local", "GOPROXY=off", "GOFLAGS=")
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("running go test -json -artifacts: %v", err)
+	}
+	for _, action := range []string{`"Action":"attr"`, `"Action":"artifacts"`} {
+		if !strings.Contains(string(output), action) {
+			t.Fatalf("this Go did not emit %s: %s", action, output)
+		}
+	}
+	var reader goJSONReader
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		reader.line(scanner.Text())
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	facts := reader.facts()
+	if facts.Counts.Counted != 2 || len(facts.Unjudged) != 0 || Evaluate(facts, End{}, ScopePolicy).Outcome != Passed {
+		t.Fatalf("real go test -json with attributes and artifacts: %+v", facts)
+	}
+}
