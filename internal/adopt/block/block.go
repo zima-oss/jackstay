@@ -78,7 +78,8 @@ var items = []item{
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
 		"- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`\n" +
 			"  or `codex,claude-code` for others); `--background` returns at once and the result comes as a chat\n" +
-			"  event; `jst review check BASE..REV --task NAME` says if it is clear.")},
+			"  event; `jst review check BASE..REV --task NAME` says if it is clear.\n" +
+			"  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(

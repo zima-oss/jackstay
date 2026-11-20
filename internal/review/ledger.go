@@ -16,16 +16,18 @@ const (
 // LedgerFinding is a finding as the chain keeps it: everything the reviewer gave, jackstay's id, and
 // its history.
 type LedgerFinding struct {
-	ID           string   `json:"id"`
-	Reviewer     string   `json:"reviewer"`
-	AnswerID     string   `json:"answer_id"`
-	Place        string   `json:"place"`
-	PlaceKey     string   `json:"place_key"`
-	Severity     string   `json:"severity"`
-	Likelihood   string   `json:"likelihood"`
-	Consequence  string   `json:"consequence"`
-	Title        string   `json:"title"`
-	Detail       string   `json:"detail"`
+	ID          string `json:"id"`
+	Reviewer    string `json:"reviewer"`
+	AnswerID    string `json:"answer_id"`
+	Place       string `json:"place"`
+	PlaceKey    string `json:"place_key"`
+	Severity    string `json:"severity"`
+	Likelihood  string `json:"likelihood"`
+	Consequence string `json:"consequence"`
+	Title       string `json:"title"`
+	Detail      string `json:"detail"`
+	// OrdinaryPath is the ordinary work by which an unusual setup arises by accident (W-094).
+	OrdinaryPath string   `json:"ordinary_path,omitempty"`
 	Repeats      []string `json:"repeats"`
 	Status       string   `json:"status"`
 	OpenedRound  int      `json:"opened_round"`
@@ -104,7 +106,7 @@ func Advance(settings Settings, before []LedgerFinding, streaks map[string]int, 
 				ID: LedgerID(round, reviewer, written.ID), Reviewer: reviewer, AnswerID: written.ID,
 				Place: strings.TrimSpace(written.Place), PlaceKey: PlaceKey(written.Place),
 				Severity: written.Severity, Likelihood: written.Likelihood, Consequence: written.Consequence,
-				Title: written.Title, Detail: written.Detail, Repeats: append([]string{}, written.Repeats...),
+				Title: written.Title, Detail: written.Detail, OrdinaryPath: written.OrdinaryPath, Repeats: append([]string{}, written.Repeats...),
 				Status: StatusOpen, OpenedRound: round, OpenedCommit: commit,
 			}
 			if len(written.Repeats) > 0 {
@@ -112,7 +114,7 @@ func Advance(settings Settings, before []LedgerFinding, streaks map[string]int, 
 					added.Place, added.PlaceKey = ledger[position].Place, ledger[position].PlaceKey
 				}
 			}
-			if settings.Triage && IsRare(added.Likelihood, added.Consequence) {
+			if settings.Triage && IsRare(added.Likelihood, added.Consequence, added.OrdinaryPath) {
 				added.Status = StatusDeferred
 			}
 			if slices.Contains(settings.RepeatSeverities, added.Severity) {
@@ -135,7 +137,7 @@ func Advance(settings Settings, before []LedgerFinding, streaks map[string]int, 
 	slices.Sort(outcome.RedesignDue)
 
 	for _, finding := range ledger {
-		if finding.Status == StatusOpen && settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence) {
+		if finding.Status == StatusOpen && settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence, finding.OrdinaryPath) {
 			outcome.Blocks = true
 		}
 	}
@@ -157,4 +159,14 @@ func Open(ledger []LedgerFinding) []LedgerFinding {
 		}
 	}
 	return open
+}
+
+// ledgerBlocks says whether an open finding of ledger blocks, by today's predicate.
+func ledgerBlocks(settings Settings, ledger []LedgerFinding) bool {
+	for _, finding := range Open(ledger) {
+		if settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence, finding.OrdinaryPath) {
+			return true
+		}
+	}
+	return false
 }
