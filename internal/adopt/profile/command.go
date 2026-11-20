@@ -12,19 +12,19 @@ import (
 
 const exportHelp = `usage: jst profile export PROFILE
 
-Write a portable version-1 bundle with the profile and its workflow templates to stdout.
-Print the SHA-256 of the exact bundle bytes to stderr.
+Writes the bundle (the profile and its workflow templates) to standard output, and the SHA-256 of
+its exact bytes to standard error.
 
-exit: 0 exported. 1 read, validation or write error. 2 bad arguments.
+exit: 0 exported; 1 read, validation or write error; 2 bad arguments.
 
 example: jst profile export profile.json > policy.bundle.json`
 
 const verifyHelp = `usage: jst profile verify --sha256 DIGEST BUNDLE
 
-Check the bundle's exact bytes against a SHA-256 obtained independently of the bundle.
-Read the bundled profile and templates to check this jackstay can use them offline.
+Take DIGEST from a source other than the bundle. Also checks that this jackstay can use the
+bundled profile and templates offline.
 
-exit: 0 verified. 1 digest, profile or template error. 2 bad arguments.
+exit: 0 verified; 1 digest, profile or template error; 2 bad arguments.
 
 example: jst profile verify --sha256 "$expected" policy.bundle.json`
 

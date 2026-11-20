@@ -3,7 +3,8 @@ package stats
 // help is `jst stats --help`.
 const help = usageText + `
 
-Reports over jackstay's journal (docs/design/observability.md section 11), computed when asked:
+Computed from jackstay's journal when asked. A span counts at the moment it ended; its time is
+clipped to the range. Without REPORT, the list of reports:
   guard        calls by outcome, answer latency by version, failures with caller and stack
   refusals     per rule: refusals, share, retried within 2 minutes, given up
   flaky        test runs of one key and head with both a pass and a failure
@@ -13,9 +14,12 @@ Reports over jackstay's journal (docs/design/observability.md section 11), compu
   background   jst bg starts and ends; background asked for outside jst bg
   sessions     per Claude session: jackstay's time, refusals; --claude adds the session's tokens and cost
   load         per project and day: busy time, the most commands at once
-A span's counts fall on the moment it ended; its time is clipped to the range.
-  --since DUR|TIME (default 30d)  --until TIME  --project P | --all-projects  --session ID
-  --by version|project|day        --json        --claude
+  --since DUR|TIME   the start of the range (default 30d); --until TIME: its end
+  --project P        that project's; --all-projects: every project's
+  --session ID       one Claude session's
+  --by WHAT          group by version, project or day
+  --json             as JSON
+  --claude           with sessions: add the session's tokens and cost
 
 exit: 0 an answer; 1 no journal could be read; 2 the request is wrong.
 

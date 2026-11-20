@@ -1,88 +1,71 @@
 # Branches and GitHub
 
-Four commands replace the fetches, merges, worktree adds, clean-ups and CI polling loops that
-sessions otherwise write by hand: `jst start`, `jst sync`, `jst tidy` and `jst gh`.
+Four commands do what sessions otherwise write by hand as fetches, merges, worktree adds, clean-ups
+and CI polling loops: `jst start` begins a task in its own worktree, `jst sync` brings it up to
+date, `jst tidy` removes what is finished, and `jst gh` waits on GitHub.
 
-## Which remote, which default branch
+All four use one remote: `github.remote` from `jackstay.json`, else `origin`, else the remote your
+local `main` (then `master`) tracks, else the only remote. The default branch is that remote's as
+fetched (`<remote>/HEAD`, else `main`, `master`).
 
-They share one rule: the remote is `github.remote` from `jackstay.json`, else `origin`, else the
-remote your local `main` (then `master`) tracks, else the only remote. The default branch is that
-remote's as fetched (`<remote>/HEAD`, else `main`, `master`).
-
-## `jst start`
-
-```text
-jst start NAME [--from REF] [--path DIR] [--no-fetch]
-```
-
-Fetches, then makes branch `NAME` on the default branch as fetched (not a stale local `main`), in a
-worktree of its own: `.claude/worktrees/NAME` when git ignores that folder, else a folder beside the
-checkout, `<checkout>-worktrees/NAME`. `--path` chooses the folder; `--from REF` starts elsewhere.
+## Start a task: `jst start`
 
 ```sh
-jst start fix-parser                        # prints the folder it made
-jst start fix-parser-2 --path ../fix-parser-2   # or choose the folder
+jst start fix-parser
+jst start fix-parser-2 --path ../fix-parser-2
 cd ../fix-parser-2
 ```
 
-Exit: 0 made; 1 git refused; 2 a taken name or folder, or a `REF` that is not a commit.
+`jst start` fetches, then makes the branch on the default branch as fetched (not a stale local
+`main`), in a worktree of its own, and prints its folder: `.claude/worktrees/NAME` when git ignores
+that folder, else `<checkout>-worktrees/NAME` beside the checkout. `--path` chooses the folder;
+`--from REF` starts from another commit. Every flag and exit status: `jst start --help`.
 
-## `jst sync`
-
-```text
-jst sync [--no-fetch] [--push] [DIR]
-```
-
-Brings this branch up to date with the default branch: a fast-forward on the default branch, a
-merge on any other. Never a rebase (`--rebase` is refused): a rebase replays every commit and can
-write over files git ignores. Before merging it checks, in memory, that the merge would not write
-over an untracked or ignored file.
+## Bring a branch up to date: `jst sync`
 
 ```sh
 jst sync
-jst sync --push      # then push exactly this branch to its own upstream
+jst sync --push
 ```
 
-Exit: 0 done or nothing to do; 1 a conflict (the files are named; resolve or abort the merge
-yourself), or git refused; 2 uncommitted work, a detached HEAD, or a merge already under way.
+`jst sync` fast-forwards the default branch, and merges the default branch into any other. It
+never rebases (`--rebase` is refused). Before merging it checks, in memory, that the merge would
+not write over an untracked or ignored file. `--push` then pushes exactly this branch to its own
+upstream.
 
-## `jst tidy`
+It stops with exit 1 on a conflict, naming the files: resolve or abort the merge yourself. It
+refuses (exit 2) uncommitted work, a detached HEAD, or a merge already under way. Every flag:
+`jst sync --help`.
 
-```text
-jst tidy [--fix] [--branch NAME]... [--worktree PATH]... [--no-fetch] [--no-github] [--json] [DIR]
-```
-
-Reports the branches and worktrees whose work is done; `--fix` removes them. A branch is finished
-when its commits are on the default branch, when merging it would change nothing, or when GitHub
-lists a merged pull request at its tip. It is kept when a pull request from it is open, or when
-nothing shows it finished. A worktree is removed only with nothing modified, staged or untracked,
-nothing ignored but regenerable folders, not locked, and no process working in it.
+## Remove what is finished: `jst tidy`
 
 ```sh
-jst tidy                             # the report
-jst tidy --fix --branch fix-parser   # remove only that branch and its worktree
-jst tidy --no-github                 # git alone; branches only GitHub could show finished are kept
+jst tidy
+jst tidy --fix --branch fix-parser
+jst tidy --no-github
 ```
 
-`--fix` judges each item again right before removing it, runs `git worktree remove` without
-`--force`, and deletes the branch only at the tip it judged. Remote branches are never touched.
+The first reports the branches and worktrees whose work is done. The second removes only that
+branch and its worktree. The third asks git alone; branches only GitHub could show finished are
+kept.
 
-Exit: 0 nothing finished is left; 1 something finished is listed and not removed, or a removal
-failed; 2 the request is wrong.
+- A branch is finished when its commits are on the default branch, when merging it would change
+  nothing, or when GitHub lists a merged pull request at its tip. It is kept when a pull request
+  from it is open, or when nothing shows it finished.
+- A worktree is removed only with nothing modified, staged or untracked, nothing ignored but
+  regenerable folders, not locked, and no process working in it.
+- `--fix` judges each item again right before removing it, runs `git worktree remove` without
+  `--force`, and deletes the branch only at the tip it judged. Remote branches are never touched.
+- Inside an agent sandbox `jst tidy` cannot see every process, so it keeps every worktree and says
+  why: run `--fix` outside the sandbox.
 
-Inside an agent sandbox `jst tidy` cannot see every process, so it keeps every worktree and says
-why; run `--fix` outside the sandbox.
+`jst tidy` exits 1 while something finished is listed and not removed. Every flag: `jst tidy --help`.
 
-## `jst gh`
+## Wait on GitHub: `jst gh`
 
-```text
-jst gh ci-wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
-jst gh ci-status [PR|URL]
-jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
-jst gh pr-find [--head BRANCH] [--search TEXT] [--repo URL] [--wait S] [--state open|closed|merged|all]
-jst gh pr-status [--pr PR|URL]
-jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
-               [--no-wait] [--no-merge] [--dry-run] [--timeout S] [--interval S] [--lines N]
+```sh
+jst gh ci-wait --timeout 1200
+jst gh run-wait release --ref main
 ```
 
 - `ci-wait` waits until every check on a pull request's current head settles (default: this
@@ -96,6 +79,21 @@ jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reaso
 - `pr-status` says where this branch and its pull request stand, including the pull request's base.
 - When a branch has multiple open pull requests, select one by number or URL. For `pr-status` and
   `pr-land`, use `--pr PR|URL` to select an open pull request from this branch and repository.
+
+Defaults: `--timeout` 1800 s, `--interval` 20 s, `--lines` 25, or the `github.wait` values.
+
+The exit codes are a contract, so a loop can act on them: 0 fine; 1 not fine (the reason printed);
+2 a bad request (also: no account configured, a wrong login); 3 still pending at the deadline;
+4 the pull request changed and the check results no longer apply; 5 GitHub answered in a shape
+jackstay does not know. Every flag: `jst gh --help`.
+
+### Land a pull request: `jst gh pr-land`
+
+```sh
+jst gh pr-land --title 'Fix the parser' --dry-run
+jst gh pr-land --title 'Fix the parser' --body-file pr-body.md
+```
+
 - `pr-land` pushes, opens the pull request, waits for its checks, squash-merges the head that was
   checked and deletes the remote branch. The checks it waits for are the ones the base branch's
   rules (rulesets and branch protection) require; another check that fails still stops it, one
@@ -104,20 +102,6 @@ jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reaso
   The plan is printed first; `--dry-run` stops there. It
   never switches, pulls or deletes anything in your checkout; `jst tidy` removes the local branch
   afterwards.
-
-Exit codes are a contract, because these run inside loops: 0 fine; 1 not fine (the reason
-printed); 2 a bad request (also: no account configured, a wrong login); 3 still pending at the
-deadline; 4 the pull request changed and the check results no longer apply; 5 GitHub answered in
-a shape jackstay does not know.
-
-```sh
-jst gh pr-land --title 'Fix the parser' --dry-run
-jst gh pr-land --title 'Fix the parser' --body-file pr-body.md
-jst gh ci-wait --timeout 1200
-jst gh run-wait release --ref main
-```
-
-Defaults: `--timeout` 1800 s, `--interval` 20 s, `--lines` 25, or the `github.wait` values.
 
 ### The account
 
@@ -133,20 +117,20 @@ accounts signed in to the GitHub CLI it never depends on, or changes, the active
 }
 ```
 
-The token comes from `gh auth token --user <account>`, so you need the [GitHub CLI](https://cli.github.com/)
-installed and that account signed in (`gh auth login --hostname github.com`). `JACKSTAY_GITHUB_ACCOUNT`
-overrides the account for one call. A `GH_TOKEN` in your environment is ignored outside Actions
-(it could belong to any account); inside Actions, `GH_TOKEN` is the only token used. Only
-github.com is supported.
+- The token comes from `gh auth token --user <account>`: install the
+  [GitHub CLI](https://cli.github.com/) and sign that account in
+  (`gh auth login --hostname github.com`). Only github.com is supported.
+- `JACKSTAY_GITHUB_ACCOUNT` overrides the account for one call.
+- Outside Actions a `GH_TOKEN` in your environment is ignored, since it could belong to any
+  account; inside Actions, `GH_TOKEN` is the only token used.
+- Without `github.account`, `jst gh` and `jst lint pr --pr` exit 2 and `jst tidy` does not ask
+  GitHub. Everything else keeps working.
 
 The account covers jackstay's API calls only. `pr-land`'s push and the remote branch delete go
 through git, with git's own credentials. Every effective push URL of the selected remote must
 name the GitHub repository of the pull request, including URLs set by `pushurl` or URL rewrites.
 After merging, `pr-land` skips deletion if it cannot verify the destination or if another open
 pull request in the repository still uses the branch.
-
-Without `github.account`: `jst gh` exits 2, `jst tidy` does not ask GitHub, and `jst lint pr --pr`
-exits 2. Everything else keeps working.
 
 ## What can go wrong
 

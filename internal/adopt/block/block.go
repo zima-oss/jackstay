@@ -43,27 +43,26 @@ func hasSection(name string) func(map[string]any) bool {
 var items = []item{
 	{id: "test", commands: []string{"test", "test list", "test last"}, wanted: always, text: testText},
 	{id: "evidence", commands: []string{"receipts export", "receipts verify"}, wanted: hasSection("receipts"), text: fixed(
-		"- **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`\n" +
-			"  using the expected digest, revision and key from a trusted source.")},
+		"- **Share a counted pass**: `jst receipts export KEY`. Check one with `jst receipts verify`, taking\n" +
+			"  the expected digest, revision and key from a trusted source, never from the receipt.")},
 	{id: "ci-evidence", commands: []string{"receipts attest-ci", "receipts verify-ci"}, wanted: hasSection("receipts"), text: fixed(
 		"- **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity\n" +
 			"  independently of the uploaded receipt and attestation.")},
 	{id: "wait", commands: []string{"wait"}, wanted: always, text: fixed(
-		"- **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.")},
+		"- **Wait** for a process, a file or a log line with `jst wait … --timeout S`, never a `sleep` loop.")},
 	{id: "bg", commands: []string{"bg", "procs", "procs stop"}, wanted: always, text: fixed(
-		"- **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or\n" +
-			"  `nohup`; `jst procs` lists them, `jst procs stop NAME` stops yours.")},
+		"- **Background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or `nohup`; `jst procs stop N`\n" +
+			"  stops it.")},
 	{id: "lock", commands: []string{"lock"}, wanted: func(config map[string]any) bool {
 		enabled, _ := section(config, "lock")["enabled"].(bool)
 		return enabled
 	}, text: fixed("- **A heavy command** others on this machine must not overlap: `jst lock -- COMMAND`.")},
 	{id: "branches", commands: []string{"start", "sync", "tidy"}, wanted: always, text: fixed(
-		"- **Branches**: `jst start NAME` (a branch and its worktree from the fetched default branch),\n" +
-			"  `jst sync` (merges the default branch in; never rebases), `jst tidy` (what is finished;\n" +
-			"  `--fix --branch NAME` removes only what you made).")},
+		"- **Branches**: `jst start NAME` makes a branch and its worktree; `jst sync` merges the default branch\n" +
+			"  in (never rebase); `jst tidy --fix --branch NAME` removes yours once it is finished.")},
 	{id: "discard", commands: []string{"discard", "trash"}, wanted: always, text: fixed(
-		"- **Drop uncommitted changes**: `jst discard PATH…` — what it drops goes to jackstay's trash\n" +
-			"  (`jst trash restore`); never `git restore` or `git checkout -- PATH`.")},
+		"- **Drop uncommitted changes** with `jst discard PATH…`, never `git restore` or\n" +
+			"  `git checkout -- PATH`; `jst trash restore` brings them back.")},
 	{id: "guard", commands: []string{"guard"}, wanted: always, text: guardText},
 	{id: "github", commands: []string{"gh"}, wanted: func(config map[string]any) bool {
 		account, _ := section(config, "github")["account"].(string)
@@ -74,10 +73,9 @@ var items = []item{
 			"  `jackstay.json` (`github.account`).")},
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
-		"- **Review a change** outside the agent sandbox (it records the round): `jst review BASE..REV\n" +
-			"  --task NAME` runs a cold review by Codex, or by the project's `review.use`; `--reviewer\n" +
-			"  claude-code` (or `codex,claude-code`) picks another.\n" +
-			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
+		"- **Review**, outside the agent sandbox (it records the round): `jst review BASE..REV --task NAME`\n" +
+			"  (the project's reviewers; `--reviewer claude-code` or `codex,claude-code` for others);\n" +
+			"  `jst review check BASE..REV --task NAME` says if it is clear.")},
 	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
 		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
 			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
@@ -90,8 +88,8 @@ var items = []item{
 		"- **Releases** are made by the release workflow's pull request, never a tag by hand;\n" +
 			"  `jst release prepare` shows the next one.")},
 	{id: "log", commands: []string{"log", "stats"}, wanted: always, text: fixed(
-		"- **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a\n" +
-			"  surprising failure, before asking.")},
+		"- **After a surprising failure**, read `jst log --session ID` (or `--trace ID`) and\n" +
+			"  `jst stats REPORT` before asking.")},
 	{id: "timeline", commands: []string{"timeline"}, wanted: always, text: fixed(
 		"- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.")},
 	{id: "inventory", commands: []string{"inventory"}, wanted: always, text: fixed(
@@ -103,7 +101,7 @@ var items = []item{
 	{id: "owner", commands: []string{"owner"}, wanted: always, text: fixed(
 		"- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.")},
 	{id: "profiles", commands: []string{"profile export", "profile verify"}, wanted: hasSection("adopt"), text: fixed(
-		"- **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.")},
+		"- **Share an adoption profile** with `jst profile export`; verify its digest before adopting it.")},
 	{id: "queue", commands: []string{"queue status", "queue test", "queue handoff", "queue reconcile"}, wanted: func(config map[string]any) bool {
 		return section(config, "queue")["enabled"] == true
 	}, text: fixed(
@@ -138,16 +136,14 @@ func fixed(text string) func(map[string]any) string {
 func testText(config map[string]any) string {
 	scopes := section(section(config, "test"), "scopes")
 	if len(scopes) == 0 {
-		return "- **Run tests**: `jst test -- COMMAND` runs any test command, judged and recorded; only `passed`\n" +
-			"  is a pass — read the last `jst test:` line. After a failure, `jst test last`, not a rerun (a run\n" +
-			"  that says it was not logged names its output file instead).\n" + evidenceText
+		return "- **Tests**: `jst test -- COMMAND`. Only `passed` is a pass: read the last `jst test:` line.\n" +
+			"  After a failure, `jst test last`, not a rerun (a run not logged names its output file).\n" + evidenceText
 	}
-	text := "- **Run tests**: `jst test <scope>`; `jst test list` shows the scopes and when each is required.\n" +
-		"  Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not\n" +
-		"  a rerun (a run that says it was not logged names its output file instead)."
+	text := "- **Tests**: `jst test SCOPE` (`jst test list` names them and when each is due). Only `passed`\n" +
+		"  is a pass: read the last `jst test:` line. After a failure, `jst test last`, not a rerun (a run\n" +
+		"  not logged names its output file)."
 	if _, gate := scopes["gate"]; gate {
-		text += " Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and\n" +
-			"  removes)."
+		text += "\n  Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit)."
 	}
 	if section(section(config, "test"), "selection") != nil {
 		text += "\n  Preview path-based selection with `jst test plan changed --base REF`."
@@ -159,11 +155,10 @@ func testText(config map[string]any) string {
 const evidenceText = "  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox."
 
 func guardText(config map[string]any) string {
-	text := "- **The guard** refuses destructive commands and names what to run instead: run that, never a\n" +
-		"  workaround. A line `jst guard let this command run, with a warning` means read it before going\n" +
-		"  on."
+	text := "- **When the guard refuses** a command, run what it names instead, never a workaround. Read a\n" +
+		"  `jst guard let this command run, with a warning` line before going on."
 	if section(config, "guard") != nil {
-		text += " This project sets the guard's rules in `jackstay.json` (`guard`)."
+		text += " Its rules: `jackstay.json` (`guard`)."
 	}
 	return text
 }
@@ -198,8 +193,8 @@ func ItemIDs() []string {
 func Render(inputs Inputs) string {
 	var out strings.Builder
 	out.WriteString("## jst: the tools for working on this project\n\n")
-	out.WriteString("`jst` is installed on this machine. Reach for it before a hand-written shell loop:\n")
-	out.WriteString("`jst <command> --help` gives a command's details, `jst help` lists every command.\n\n")
+	out.WriteString("`jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,\n")
+	out.WriteString("`jst <command> --help` gives a command's flags, an example and its exit codes.\n\n")
 	for _, entry := range items {
 		if slices.Contains(inputs.LeaveOut, entry.id) || !entry.wanted(inputs.Config) {
 			continue

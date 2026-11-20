@@ -1,0 +1,36 @@
+{{- /* /llms.txt (llmstxt.org): the site's title and what it is, then each page of the guide in the
+  sidebar's order, linking its Markdown. A top-level page or group gets a heading of its own. No
+  build time is printed, so the same pages always make the same file. */ -}}
+# {{ site.Title }}
+
+> {{ site.Home.Description }}
+
+{{ with site.GetPage "/guide" -}}
+{{ index (split (.RawContent | replaceRE `^# [^\n]*\n+` "") "\n\n") 0 }}
+
+- [{{ .Title }}]({{ template "llms-markdown" . }}): the guide's index.
+
+Every page below, in one file: {{ "llms-full.txt" | absURL }}
+{{- template "llms-tree" (dict "page" . "level" 2) }}
+{{ end -}}
+
+{{- define "llms-markdown" -}}
+{{ with .OutputFormats.Get "markdown" }}{{ .Permalink }}{{ else }}{{ .Permalink }}{{ end }}
+{{- end -}}
+
+{{- define "llms-line" -}}
+- [{{ .Title }}]({{ template "llms-markdown" . }})
+{{- if not .IsSection }}{{ with .Summary | plainify | htmlUnescape | strings.TrimSpace }}: {{ index (split (replace . "\n" " ") ". ") 0 }}{{ end }}{{ end }}
+{{- end -}}
+
+{{- define "llms-tree" -}}
+{{- $level := .level -}}
+{{- range .page.Pages.ByWeight }}
+{{- if or .IsSection (eq $level 2) }}
+
+{{ strings.Repeat $level "#" }} {{ .Title }}
+{{ end }}
+{{ template "llms-line" . }}
+{{- if .IsSection }}{{ template "llms-tree" (dict "page" . "level" (add $level 1)) }}{{ end }}
+{{- end }}
+{{- end -}}

@@ -1,7 +1,8 @@
 # Install
 
-jackstay is one static binary, `jst`, for macOS and Linux on x86-64 or arm64. It installs into
-`~/.local` by default, without `sudo`, and keeps its state apart, in `~/.jackstay`.
+You get `jst` and `jst-guard` in `~/.local/bin`, without `sudo`, on macOS or Linux, x86-64 or
+arm64. jackstay keeps its state apart, in `~/.jackstay`. On Linux, `lsof` must be installed for
+background process tracking and worktree clean-up.
 
 ## The quick install
 
@@ -12,41 +13,46 @@ script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.
 ```
 
 The script ([install.sh](https://github.com/zima-oss/jackstay/blob/main/install.sh), also served
-beside this site as `/install.sh`) downloads the newest release for your platform, checks the
-archive against the release's `checksums.txt` before it unpacks or runs anything, installs it with
-`jst install` and prints what to run next: when the install is not on your `PATH`, the line that
-puts it there (for sh, bash or zsh; for another shell, the folder), then `jst doctor` and
-`jst adopt`. Installation writes within its prefix. With a terminal and a release that provides
-`jst setup`, the installer can also offer machine settings repairs before printing the next steps.
-The install step changes only its prefix. If both input and output are terminals, the optional
-interactive setup can apply the machine settings you choose after showing each change; see
-[plan machine setup](#plan-machine-setup). The script runs only once curl has downloaded all of
-it and reads none of your own curl settings.
+beside this site as `/install.sh`):
 
-Two settings, given to the `sh` that runs the script, as in this line (in sh, bash or zsh):
+1. runs only once curl has downloaded all of it, and reads none of your own curl settings;
+2. downloads the newest release for your platform and checks the archive against the release's
+   `checksums.txt` before it unpacks or runs anything;
+3. installs it with `jst install`, which writes only within its prefix;
+4. prints what to run next: the line that puts the install on your `PATH` when it is missing (for
+   sh, bash or zsh; for another shell, the folder), then `jst doctor` and `jst adopt`.
+
+With a terminal and a release that provides `jst setup`, the installer can also offer machine settings repairs before printing the next steps.
+If both input and output are terminals, the optional interactive setup can apply the machine settings you choose after showing each change; see [plan machine setup](#plan-machine-setup).
+
+It needs `curl`, `tar` and `sha256sum` or `shasum`, and names the one missing. It exits 0 when it
+installed, 1 when nothing was installed (the message says why), otherwise with `jst install`'s
+status.
+
+### Choose the version, the folder and the checks
+
+Give settings to the `sh` that runs the script:
 
 ```sh
 script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && JACKSTAY_VERSION=0.5.11 JACKSTAY_PREFIX="$HOME/tools" sh -c "$script"
 ```
 
-- `JACKSTAY_VERSION=0.5.11` (or `v0.5.11`) installs that release instead of the newest.
-- `JACKSTAY_PREFIX=DIR` installs under `DIR` instead of `~/.local`.
-- `JACKSTAY_PROVENANCE=attestation` requires `gh` and verifies a signed GitHub build attestation
-  for the archive, `zima-oss/jackstay`, `.github/workflows/release.yml`, and the selected tag.
-- `JACKSTAY_SHA256=HEX` requires the archive to match a separately obtained, 64-digit lowercase
-  SHA-256 digest. Record it outside the release and its `checksums.txt`. It also works for older
-  releases and without `gh`; the script still downloads the archive and checksum over the network.
-  If both settings are provided, both checks must pass.
-- It needs `curl`, `tar` and `sha256sum` or `shasum`, and names the one missing.
-- Exit: 0 installed; 1 nothing was installed (the message says why); otherwise `jst install`'s own.
+| Setting | Effect |
+|---|---|
+| `JACKSTAY_VERSION=0.5.11` (or `v0.5.11`) | installs that release instead of the newest |
+| `JACKSTAY_PREFIX=DIR` | installs under `DIR` instead of `~/.local` |
+| `JACKSTAY_PROVENANCE=attestation` | requires `gh` and verifies the release's signed GitHub build attestation for `zima-oss/jackstay`, `.github/workflows/release.yml` and the selected tag |
+| `JACKSTAY_SHA256=HEX` | requires the archive to match a 64-digit lowercase SHA-256 digest you obtained separately; works for older releases and without `gh` |
 
-The default checksum guards against a damaged download. It does not establish release provenance:
-the archive and `checksums.txt` come from the same place, and the installer prints an integrity-only
-warning. This default keeps releases made before attestations usable. For an attested release,
-install with `JACKSTAY_PROVENANCE=attestation`; a missing verifier, attestation, or identity match
-stops before unpacking. A digest copied from the same release is not an independent pin. On macOS
-the binary is also signed with a Developer ID and notarised, which
-`codesign -dv ~/.local/bin/jst` shows.
+With both of the last two, both checks must pass.
+
+The default checksum only guards against a damaged download: the archive and `checksums.txt` come
+from the same place, so it does not prove where the release came from, and the installer prints an
+integrity-only warning. For an attested release, install with `JACKSTAY_PROVENANCE=attestation`; a
+missing verifier, attestation or identity match stops before unpacking. A digest for
+`JACKSTAY_SHA256` must come from outside the release: one copied from the same release proves
+nothing more. On macOS the binary is also signed with a Developer ID and notarised;
+`codesign -dv ~/.local/bin/jst` shows it.
 
 ### Read it before you run it
 
@@ -62,10 +68,9 @@ curl -q --proto '=https' --tlsv1.2 -fsSL -o "$dir/install.sh" https://raw.github
 The script is served from `main`. A release made after the script was added carries it at its tag
 too: `https://raw.githubusercontent.com/zima-oss/jackstay/vX.Y.Z/install.sh`.
 
-## Put it on your PATH
+## Check the machine
 
-Put `~/.local/bin` (or your prefix's `bin`) on your `PATH`; the script prints the line to add
-(for sh, bash or zsh). Then check the machine:
+Put `~/.local/bin` (or your prefix's `bin`) on your `PATH`, open a new terminal, then:
 
 ```sh
 jst version
@@ -73,10 +78,23 @@ jst doctor
 ```
 
 `jst doctor` checks the install, that the guard refuses a probe command, and Claude Code's sandbox
-settings. On a new machine it reports `guard-never-called` until a session with the guard hook has
-made a call; see [What jackstay did](observability.md#jst-doctor). Each problem it reports is
-followed by its fix. What else an install leaves to you:
-[getting started](getting-started.md#what-an-install-leaves-to-you).
+settings, and follows each problem with its fix. On a new machine it reports `guard-never-called`
+until a session with the guard hook has made a call ([What jackstay did](observability.md#check-the-machine-jst-doctor)).
+
+## What an install leaves to you
+
+The install changes nothing outside its prefix. These steps are yours:
+
+| Step | Where | Needed for |
+|---|---|---|
+| Put `~/.local/bin` on `PATH` | your shell's profile; the script prints the line | running `jst` |
+| Let Claude Code's sandbox write `~/.jackstay` | `~/.claude/settings.json` ([Claude Code](claude-code.md#the-sandbox)) | records of runs in sandboxed sessions |
+| `jst adopt --apply`, then commit what it wrote | each project ([Adopting a project](adopt.md)) | the guard hook and the `AGENTS.md` block |
+| Accept Claude Code's trust dialog | the first session in each project | Claude Code loading the hook |
+| Optional: install Codex or Claude Code and sign in | your terminal | review rounds ([Reviews](review.md)) |
+| Optional: `gh auth login`, and `github.account` in `jackstay.json` | your terminal; the project | `jst gh` and GitHub in `jst tidy` ([Branches and GitHub](branches-and-github.md#the-account)) |
+
+`jst doctor` checks what it can of these.
 
 ### Plan machine setup
 
@@ -185,14 +203,21 @@ Install at a version tag (`@v0.5.11`), not a branch or a commit: `jst version` t
 
 ## Update
 
-Run the quick install again, or install a newer release by any of the ways above. The new version
-goes live in one step, so a running hook never sees half an install. A version only moves forward:
+Run the quick install again, or install a newer release any other way above. The new version goes
+live in one step, so a running hook never sees half an install. A version only moves forward:
 installing a lower version than the live one is refused, and there is no rollback command.
 
-Reinstall the same version and commit from a trusted binary to repair an installation whose
-launchers fail their probes. `jst install` verifies the replacement before it switches the live
-executable. This also repairs a missing or non-executable live `jst` when the active version folder's
-markers and links still identify it as jackstay's.
+To repair an installation whose launchers fail their probes, reinstall the same version and commit
+from a trusted binary. `jst install` verifies the replacement before it switches the live
+executable. This also repairs a missing or non-executable live `jst` when the active version
+folder's markers and links still identify it as jackstay's.
+
+On macOS, `jst install` can sign a binary you built with your own code-signing identity, so a
+firewall's rule for `jst` survives an update: see
+[signing at install](../design/implementation.md#74-signing-at-install-w-070). A release's binary,
+already signed and notarised, is kept as it is.
+
+Every flag and exit status: `jst install --help`.
 
 ## Remove
 
@@ -203,23 +228,6 @@ jst uninstall
 It removes the commands and every installed version. It leaves `~/.jackstay` (run records, the
 trash, the journal) and says so; remove that folder yourself if you want it gone. Projects whose
 hooks name `jst-guard` then run without the guard.
-
-## The commands
-
-```text
-jst install [--prefix DIR] [--checkout DIR | --binary FILE]
-jst uninstall [--prefix DIR]
-jst version                     # jackstay <version> (<commit>)
-```
-
-- `--prefix DIR` installs under `DIR` instead of `~/.local`.
-- `--checkout DIR` builds from that jackstay checkout; `--binary FILE` installs a binary you have.
-- Exit: 0 installed (or already installed); 1 a step failed half-way (run it again to finish);
-  2 refused, nothing changed.
-
-On macOS, `jst install` can sign the binary with your own code-signing identity, so a firewall's
-rule for `jst` survives an update: see [signing at install](../design/implementation.md#74-signing-at-install-w-070).
-It signs only a binary you built; a release's binary, already signed and notarised, is kept as it is.
 
 ## What can go wrong
 
