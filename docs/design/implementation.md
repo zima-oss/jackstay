@@ -1235,6 +1235,10 @@ The Vitest producer check runs separately. There is no macOS job
 ([W-083](../decisions/W-083-no-macos-job-in-ci.md)): `*_darwin.go` is checked by the maintainers'
 `just gate` on a Mac before an install and a release.
 
+This recipe set, the `just gate` workflow and the separate `go` and `integration` runs are the state
+before the migration to the scope graph; the 0.6.0 target (one Go scope with the integration tests,
+one `jst test ci (linux)` job) is [land.md](land.md) section 7.6.
+
 **Practices:**
 - The commit is injected at build (`-X …/internal/version.Commit`), else the build info's
   revision (`+changes` dirty, `unknown` none). No logging library: spans in the journal.

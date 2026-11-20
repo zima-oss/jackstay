@@ -300,9 +300,9 @@ and 3, so a schema-2 project keeps working unchanged; a scope with both is an er
 with no deps between its members runs in its declared order and stops at the first failure, as in
 0.5.x; what changes is that a step two lists share runs once, and that `--resume` is gone. The
 0.5.x key `"resume": false` is read as `"cache": false`. A schema-2 list's own `requires` keep
-their 0.5.x meaning: when the list is in the run's graph, they run once, before its first dep, and
-one that fails makes the list `not-started` before any of its deps runs; a dep run without the list
-does not run them. In schema 3 a composite's `requires` are refused (below).
+one meaning: when the list is in the run's graph, they run once, before any node of the run
+starts, and gate the whole run (one that fails makes the run `not-started`, 2, with nothing run);
+a run whose graph does not contain the list does not run them. In schema 3 a composite's `requires` are refused (below).
 
 `jst check` refuses an unknown name in `deps`, a cycle (naming it), `steps` and `deps` together,
 `ci: [S]` on a scope that is not S-eligible (section 7.2; naming the first dep on the path that
@@ -313,13 +313,16 @@ another scope depends on and that has no `cache` key (section 7.3, "Verdicts onl
 
 ### 7.2 The run
 
-1. **The graph.** The scopes asked for, with their deps, and the deps of those, to the end. Each
-   name is one node, however many scopes depend on it.
+1. **The walk.** From the scopes asked for, descend into deps, but only into deps eligible on
+   this system (below). A dep that is not eligible is a node, `skipped`, and its own deps are not
+   visited through it: they enter only when another eligible path reaches them. Each name is one
+   node, however many scopes depend on it. This is the one walk: section 7.4 uses it, for a system
+   S, with S-eligible in place of eligible on this system.
 2. **The order.** A depth-first walk from the scopes asked for, in the order given, visiting each
    node's deps in their declared order and listing a node after its deps; a node already listed is
    not visited again. So the order follows the declarations wherever the graph allows, and `steps`
-   lists keep their 0.5.x order. With the example above, `jst test gate` runs `x-docs`, `x-build`,
-   `x-go`, `x-ios`, then judges `gate`.
+   lists keep their 0.5.x order. With the example above, `jst test gate` on a Mac runs `x-docs`,
+   `x-build`, `x-go`, `x-ios`, then judges `gate`.
 3. **One at a time.** Nodes run one after another, in that order, each under its own `timeout`,
    lock and leftovers (testing.md sections 3 and 6). No two run at once in 0.6.0.
 4. **Each node, in turn**, is settled by the first of these that applies:
@@ -347,8 +350,8 @@ or one of two that only a graph has:
 | `skipped` | not on this system (step 4.1): ignored by a composite, not a failure | no |
 | `not-run` | a dep did not pass (step 4.2), or an earlier failure ended the run (step 5) | no |
 
-**Eligible on a system.** The one rule for where a scope can run, used by step 4.1, by `jst check`
-(section 7.1) and by coverage (section 7.4). For a system S:
+**Eligible on a system.** The one rule for where a scope can run, used by the walk (step 1), by
+step 4.1, by `jst check` (section 7.1) and by coverage (section 7.4). For a system S:
 
 - a scope with `run` is **S-eligible** when its `systems` (absent: any) include S and every one of
   its deps is S-eligible;
@@ -361,18 +364,34 @@ S-eligible, the first dep on the path that breaks it is the first not-S-eligible
 order of a scope with `run`, or the first dep of a composite none of whose deps is S-eligible,
 followed down to a scope whose own `systems` leave S out.
 
-The last `jst test:` line reads the run as a whole:
+**The run's outcome** is the first in this order that the run has, with or without
+`--keep-going`; the last `jst test:` line names it and the node it comes from, and `jst test` exits
+with its status:
 
-- **`passed`** when every scope asked for passed: by running now, or `cached` (the cache holds
-  only counted passes of identical inputs, so a cached pass is the same claim), with `skipped` deps
-  of a composite named. Only `passed` is a pass, as before; the detail says how much ran now:
-  `jst test: outcome=passed (gate, 41 s: x-docs=exited-0 cached, x-build=exited-0,
-  x-go=passed, x-ios=passed)`. When nothing ran now, the detail says `nothing ran now: every scope
-  cached`. A scope asked for that is exit-judged ends `exited-0`, cached or not.
-- **The failure** otherwise, by the order of testing.md section 2 (`failed` > `timed-out` >
-  `stopped` > `unjudged` > `nothing-run`, then `not-started`), naming the node: `outcome=failed (gate failed at x-go)`.
-- **`skipped`** (exit 79) when a scope asked for is `skipped` and nothing failed: it does not run
-  on this system.
+| order | outcome | from | exit status |
+|---|---|---|---|
+| 1 | `failed` | a node | the node's own (1 for a veto line, 127 for a command that cannot start) |
+| 2 | `passed-on-retry` | a node | 78 |
+| 3 | `timed-out` | a node | 124 |
+| 4 | `stopped` | a node, or the run asked to stop | ends by that signal |
+| 5 | `stopped-waiting` | a node waiting for the lock | ends by that signal |
+| 6 | `unjudged` | a node | 77 |
+| 7 | `nothing-run` | a node | 76 |
+| 8 | `gave-up` | a node that did not get the lock | 75 |
+| 9 | `not-started` | a node's `requires`, a schema-2 list's `requires`, or an unusable configuration | 2 |
+| 10 | `needs-other-system` | `jst test changed` (section 7.4) | 80 |
+| 11 | `skipped` | a scope asked for that is not eligible here | 79 |
+| 12 | `left-to-ci` | `jst test changed` or `jst test uncovered` with nothing to run here (section 7.4) | 0 |
+| 13 | `exited-0` | every scope asked for passed or ended `exited-0`, and one ended `exited-0` | 0 |
+| 14 | `passed` | every scope asked for passed | 0 |
+
+`not-run` is never the run's outcome: a node is `not-run` only after a failure higher in the order.
+`cached` is a mark, not an outcome: a cached node keeps its stored `passed` or `exited-0`, since the
+cache holds only counted passes of identical inputs, so it is the same claim. Only `passed` is a
+pass, as before; its detail says how much ran now and names the `skipped` deps of a composite:
+`jst test: outcome=passed (gate, 41 s: x-docs=exited-0 cached, x-build=exited-0, x-go=passed,
+x-ios=passed)`, or `nothing ran now: every scope cached`. A failure names its node:
+`outcome=failed (gate failed at x-go)`.
 
 `jst test plan SCOPE` prints the order, each node's hash, and whether it would be cached, skipped
 or run; it runs nothing.
@@ -464,12 +483,12 @@ limit, not a defect.
 
 ### 7.4 Local and CI
 
-A scope is **covered on a system** S when it is S-eligible (section 7.2) and its own `ci` lists S
-or a scope covered on S depends on it. A scope is **covered** when it is covered on some system.
+A scope is **covered on a system** S when the walk of section 7.2 for S, from a scope whose own
+`ci` lists S, reaches it and it is S-eligible. A scope is **covered** when it is covered on some system.
 `jst check` refuses `ci: [S]` on a scope that is not S-eligible (section 7.1).
 
-**Three groups.** `jst test changed` and `jst test uncovered` expand the graphs of their selected
-scopes and put every node with `run` in exactly one group, the first that fits; a composite only
+**Three groups.** `jst test changed` and `jst test uncovered` take the walk of section 7.2 from
+their selected scopes on this machine's system and put every node with `run` in exactly one group, the first that fits; a composite only
 leads to its deps:
 
 1. **here**: it is eligible on this system and is not covered in the command's sense;
@@ -621,8 +640,12 @@ failure stops the release.
   do not depend on a failure and nothing else changed; `requires` checked before every cache
   lookup, a failing check making the node `not-started` with the cache neither read nor written,
   `requires` or another run setting on a schema-3 composite refused, naming the scope; a schema-2
-  list's `requires` run once before its first dep when the list is in the graph, a failing one
-  making the list `not-started` before its deps run, and not run when a dep is asked for alone; a
+  list's `requires` run once before any node when the list is in the graph, a failing one making
+  the run `not-started` (2) with nothing run, and not run when a scope whose graph lacks the list is
+  asked for, also for a step listed directly in one list and through a nested checked list; the
+  walk on Linux for a gate over a `darwin`-only test whose build could run on either: the test
+  `skipped`, the build not run unless an eligible scope needs it; the run's outcome and exit status
+  for each row of the order in section 7.2, under `--keep-going` the first failure in that order; a
   schema-2 file with `steps` and
   `"resume": false` read unchanged.
 - **The cache**: a hit for each passed and each exit-judged node, the run `passed` with `nothing ran
