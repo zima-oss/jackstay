@@ -116,7 +116,7 @@ func Filesystem(request Request, home string) string {
 	}
 	entries := []string{`":root"="read"`}
 	seen := map[string]bool{}
-	for _, path := range access.SecretPaths(home, access.Codex, environ) {
+	for _, path := range append(access.SecretPaths(home, access.Codex, environ), envLinks(request)...) {
 		if resolved, err := canonicalPath(path); err == nil {
 			path = resolved
 		}

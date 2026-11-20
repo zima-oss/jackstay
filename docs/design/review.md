@@ -283,10 +283,13 @@ round's report merges their findings by `place`.
     `//**/.env.*` (anchored at the filesystem's root, not at its working folder), through
     `--settings`. Codex: each path `"none"` in the profile, and `.env` / `.env.*` globs `"none"`.
     On macOS they are `"/**/.env"` and `"/**/.env.*"`, checked at every read. On Linux Codex
-    expands a glob when the run starts (`glob_scan_max_depth` 12) and refuses one rooted at `/`, so
-    the globs are rooted at the source view, the live checkout and the folder beside it (not when
-    that is the account's home): a `.env` elsewhere, deeper, or made during the run is not denied
-    to Codex there (taken from Codex 0.169.0's Linux sandbox source; not run on Linux here).
+    expands a glob when the run starts (`glob_scan_max_depth` 12), takes regular files only, refuses
+    a glob rooted at `/`, and stops every sandboxed command when its scan meets a folder it cannot
+    read. So the globs are rooted at the source view and the live checkout only, and a `.env`
+    symbolic link at the checkout's top is denied by its literal path and its target's. A `.env`
+    elsewhere, deeper, or made during the run is not denied to Codex there, and an unreadable folder
+    inside the checkout stops Codex's commands (taken from Codex 0.169.0's Linux sandbox source; not
+    run on Linux here).
   - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
     `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
     local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,

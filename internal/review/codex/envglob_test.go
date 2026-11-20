@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"testing"
@@ -15,10 +17,29 @@ func TestEnvFilesAreDeniedUnderRootsThisPlatformTakes(t *testing.T) {
 		}
 		return
 	}
-	if !slices.Equal(roots, []string{"/work/view", "/work/checkouts/project", "/work/checkouts"}) {
-		t.Fatalf("roots: %v (Codex refuses a glob whose prefix is the root here)", roots)
+	if !slices.Equal(roots, []string{"/work/view", "/work/checkouts/project"}) {
+		t.Fatalf("roots: %v (only the view and the checkout: Codex's scan stops on an unreadable folder)", roots)
 	}
-	if beside := envGlobRoots(Request{RepositoryRoot: "/home/r/project"}, "/home/r"); slices.Contains(beside, "/home/r") {
-		t.Fatalf("the account's home is walked: %v", beside)
+}
+
+func TestALinkedEnvFileIsDeniedByItsPaths(t *testing.T) {
+	checkout, shared := t.TempDir(), t.TempDir()
+	target := filepath.Join(shared, "settings")
+	if err := os.WriteFile(target, []byte("X=made-up\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(checkout, ".env")); err != nil {
+		t.Fatal(err)
+	}
+	links := envLinks(Request{RepositoryRoot: checkout})
+	if runtime.GOOS == "darwin" {
+		if len(links) != 0 {
+			t.Fatalf("macOS needs no literal links: %v", links)
+		}
+		return
+	}
+	resolved, _ := filepath.EvalSymlinks(target)
+	if !slices.Contains(links, filepath.Join(checkout, ".env")) || !slices.Contains(links, resolved) {
+		t.Fatalf("links: %v", links)
 	}
 }
