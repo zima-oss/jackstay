@@ -21,17 +21,21 @@ import (
 
 const attestCIUsage = `usage: jst receipts attest-ci --trust-root NAME --issuer ID --repository ID --workflow ID --run ID --signing-key KEY RECEIPT
 
-Sign the exact exported receipt bytes and CI run identity with an Ed25519 private key in PKCS#8
-PEM format. Keep the key outside Git. Write the attestation to stdout.
+Signs the receipt's exact bytes and the CI run's identity, and writes the attestation to standard
+output. KEY is an Ed25519 private key file (PKCS#8 PEM), kept outside Git.
 
-exit: 0 attested; 1 invalid receipt, key or write failure; 2 bad request.`
+exit: 0 attested; 1 invalid receipt, key or write failure; 2 bad request.
+
+example: jst receipts attest-ci --trust-root ci-2026 --issuer github-actions --repository example/widgets --workflow gate.yml --run "$ci_run" --signing-key "$ci_signing_key" evidence.json > evidence.attestation.json`
 
 const verifyCIUsage = `usage: jst receipts verify-ci --trust-root NAME --public-key KEY --issuer ID --repository ID --workflow ID --run ID --head SHA --key KEY --manifest SHA RECEIPT ATTESTATION
 
-Verify the Ed25519 attestation against a trusted public key and independently expected CI
-identity, revision, receipt key and manifest. Both files are portable; no repository is needed.
+Take the public key and every expected value from a source other than the two files. Needs no
+repository.
 
-exit: 0 verified; 1 invalid or mismatched evidence; 2 bad request.`
+exit: 0 verified; 1 invalid or mismatched evidence; 2 bad request.
+
+example: jst receipts verify-ci --trust-root ci-2026 --public-key "$ci_public_key" --issuer github-actions --repository example/widgets --workflow gate.yml --run "$expected_run" --head "$expected_head" --key "$expected_key" --manifest "$expected_manifest" evidence.json evidence.attestation.json`
 
 const ciEvidenceSchema = 1
 const maxCIFileBytes = 4096

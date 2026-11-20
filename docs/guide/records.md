@@ -1,19 +1,13 @@
 # Numbers, records and cards
 
-Parallel sessions collide on two things: the "next free number" taken on a branch, and files that
-everybody appends to (ledgers, indexes). jackstay hands out numbers from one counter per project on
-the machine, and keeps each record as a file of its own. It also reads which task card each change
-was for from a `Card:` line in the commit message, instead of hashes typed into cards.
+Parallel sessions stop colliding on numbers and shared files: jackstay hands out the next free
+number from one counter per project on the machine, keeps each record (a decision, a task) as a
+file of its own instead of a row in a shared ledger, and reads which task card a change was for
+from a `Card:` line in its message instead of hashes typed into cards.
 
-## `jst id`: one counter per project
+## Take the next number: `jst id`
 
-```sh
-jst id next SERIES [--count N] [--json]   # hand out the next number(s), recorded
-jst id list [SERIES] [--json]             # what was handed out, when, by which session
-jst id peek SERIES                        # what next would hand out; nothing recorded
-```
-
-A series is declared in `jackstay.json`:
+Declare a series in `jackstay.json`:
 
 ```json
 "ids": {
@@ -22,25 +16,22 @@ A series is declared in `jackstay.json`:
 }
 ```
 
+```sh
+jst id next D
+jst id next T --count 3
+jst id list D
+```
+
 `next` takes the highest number it can see, adds one, records it and prints it: `D-007`. It sees
 every number it handed out before, every matching file in every worktree, every local branch and
 remote-tracking ref, and the `also_in` files. So a number is never handed out twice on this
 machine, whatever branch or worktree asks; a number never used is a gap, and gaps are fine.
 
-```sh
-jst id next D             # D-007
-jst id next T --count 3   # three numbers
-```
-
-It cannot see other machines, cloud sessions, or a number someone typed without asking until a
+`list` shows what was handed out, when, and by which session; `jst id peek D` shows what `next`
+would hand out without recording it. It cannot see other machines, cloud sessions, or a number someone typed without asking until a
 file with it exists. `jst lint tree` catches two files with one number before they land.
 
-## `jst new` and `jst view`: one file per record
-
-```sh
-jst new SERIES --slug SLUG [--card ID] [--set KEY=VALUE]...
-jst view SERIES [--where KEY=VALUE]... [--format table|list|json]
-```
+## Keep one file per record: `jst new` and `jst view`
 
 A series listed under `records` is one file per record: a front matter of one JSON object between
 `---` lines, then a body. `jst new` takes a number, copies the template, fills `id` (and `card`, and
@@ -64,19 +55,21 @@ The template:
 ```
 
 ```sh
-jst new D --slug use-a-justfile --set status=open    # docs/decisions/D-008-use-a-justfile.md
+jst new D --slug use-a-justfile --set status=open
 jst view D --where status=open
 ```
+
+The first prints `docs/decisions/D-008-use-a-justfile.md`.
 
 `before` names an old ledger that stays frozen: `jst view` names it under the table, and
 `jst lint tree` refuses a new row in it.
 
-## The `Card:` line and `jst cards`
+## Say which card a change is for: the `Card:` line
 
 With a `cards` section, every change that reaches the cards branch says which task cards it is work
 for, on lines of their own in its message:
 
-```
+```text
 Card: T-140
 Card: T-140, T-141
 Card: none (dependency update)
@@ -98,29 +91,21 @@ Card: none (dependency update)
   `"commits": []`; nothing writes hashes into them.
 
 ```sh
-jst cards [ID...] [--json] [--ref REF]   # each card's state and what landed for it
-jst cards --check [--json]               # only disagreements between cards and history; exit 1 for one
-jst cards --stale [--commit-map FILE]    # hashes in cards' commits fields that are not on the branch
-jst cards snapshot [--write]             # what landed, as a snapshot (before a history rewrite)
-jst cards compare FILE                   # after a rewrite: entries history no longer has
-```
-
-```sh
 jst cards T-140 T-141
 jst cards --check
 ```
 
+`jst cards` shows each card's state and what landed for it; `--check` lists only disagreements
+between cards and history (exit 1 for one), and `--stale` the hashes in cards' `commits` fields
+that are not on the branch. Every flag: `jst cards --help`.
+
 Before a history rewrite that collapses commits, `jst cards snapshot --write` and commit the file;
 after it, `jst cards compare` lists what was lost.
 
-## `jst lint range` and `jst lint tree`
+## Check the history and the tree: `jst lint range` and `jst lint tree`
 
-```sh
-jst lint range A..B        # every commit in the range has valid Card lines
-jst lint tree [--rev REV]  # the tree's rules
-```
-
-`lint range` is for what is pushed straight to the cards branch:
+`lint range` checks that every commit in a range has valid `Card:` lines. It is for what is pushed
+straight to the cards branch:
 
 ```sh
 jst lint range origin/main..HEAD
@@ -129,12 +114,12 @@ jst lint range origin/main..HEAD
 In a `pr` project a branch's own commits carry no line, so `lint range` on a branch is red by
 design; such a project checks the description with `jst lint pr` ([releases](releases.md#jst-lint-pr)).
 
-`lint tree` refuses two files of one series with the same number, a new card with hashes in
+`jst lint tree` refuses two files of one series with the same number, a new card with hashes in
 `commits`, a changed or deleted snapshot, a record file outside its series' folder, and a new row
 in a frozen ledger.
 
-Exit for both: 0 fine; 1 problems, each named with its rule id; 2 the request or `jackstay.json`
-cannot be used; 5 (`lint range`) `git log` gave a record of another shape.
+Both exit 1 with each problem named by its rule id. Every flag and exit status:
+`jst lint range --help`, `jst lint tree --help`.
 
 ## Where the `Card:` check runs
 

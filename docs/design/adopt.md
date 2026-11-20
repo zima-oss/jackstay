@@ -11,11 +11,8 @@ nothing named after a project), [W-037](../decisions/W-037-current-go-and-depend
 
 ## 1. What it removes
 
-Without it, a project learns jackstay from a block of text copied by hand into its `AGENTS.md` and
-fitted there, and from workflow files copied by hand and fitted
-(measured). Every jackstay change to a tool then means a
-prose instruction to each project, and several agents turn one instruction into different
-results. Only a tool is idempotent (W-058).
+Without it, projects copy jackstay's text and workflows by hand, and each change becomes a prose
+instruction that agents carry out differently (W-058).
 
 `jst adopt` computes, from the project's `jackstay.json`, the running jackstay and an optional profile, what
 the project's jackstay-owned files must hold; `--plan` prints the difference and the conflicts it must
@@ -24,25 +21,21 @@ nothing. `jst doctor` reports a project that has drifted.
 
 ## 2. The command
 
-```
-jst adopt [--plan] [--settings-only] [--profile PATH] [--json] [DIR]
-jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [DIR]
-jst adopt --block [DIR]           # the AGENTS block this project gets, printed; nothing written
-```
+Flags: `jst adopt --help`. The contract of each mode:
 
-- `DIR` (default `.`): any folder of the project; the project is the nearest `jackstay.json` above it,
-  else the git work tree's top (a project with no `jackstay.json` yet gets one, section 3.1).
-- `--plan` is the default. It reads, never writes.
-- `--profile PATH`: the profile (section 6). Without it, the profile the project's `jackstay.json`
-  names in `adopt.profile`, if any. Given, `--apply` records it there (section 3.1).
-- `--accept ID` (repeatable, only with `--apply`): let `jst adopt` overwrite the one thing the
-  conflict `ID` protects (section 5). Accepting is for one run; nothing is remembered.
-- `--pin`: set `adopt.pin` (the jst release every jackstay-written workflow downloads) to this jackstay's
-  version (section 7.3). Without it the pin is never moved.
-- `--settings-only` (with `--plan` or `--apply`): `jackstay.json` alone, its changes and its
-  conflicts; the other files' are planned again by the apply after it merges, and an `--accept` of
-  one of theirs is refused here ([W-085](../decisions/W-085-adopt-lands-settings-and-files-apart.md)).
-- `--json`: the plan as one object `{"project", "profile", "changes": [...], "conflicts": [...],
+- The project is the nearest `jackstay.json` at or above `DIR` (default `.`), else the git work
+  tree's top (a project with no `jackstay.json` yet gets one, section 3.1).
+- `--plan` is the default. It reads, never writes. `--block` prints the AGENTS block this project
+  gets and writes nothing.
+- The profile (section 6) is `--profile PATH`, else `adopt.profile`; a given one is recorded there
+  by `--apply` (section 3.1).
+- `--accept ID` lets one `--apply` overwrite the one thing the conflict `ID` protects (section 5);
+  nothing is remembered.
+- `adopt.pin` is moved only by `--pin` (section 7.3).
+- `--settings-only` plans or applies `jackstay.json` alone; the other files are planned again after
+  it merges, and an `--accept` of one of theirs is refused
+  ([W-085](../decisions/W-085-adopt-lands-settings-and-files-apart.md)).
+- `--json` prints the plan as one object `{"project", "profile", "changes": [...], "conflicts": [...],
   "exceptions": [...], "notes": [...]}`; each change `{"id", "path", "what"}`, each conflict
   `{"id", "path", "what", "settle"}`.
 
@@ -204,26 +197,10 @@ lexical order; within each group of the plan, entries are sorted by ID; profile 
 values are taken in lexical order of their names. Nothing depends on a Go map's order. A test
 plans the same input bytes twenty times and compares.
 
-Text output, in this order, each line led by its ID:
-
-```
-jst adopt: project storefront (/home/…/storefront), profile ../org-profile.json
-changes (4):
-  jackstay.json:jackstay_schema        jackstay.json: jackstay_schema 1 -> 2
-  jackstay.json:github           jackstay.json: add github (from the profile)
-  agents-block             AGENTS.md: append the block (34 lines)
-  workflow:card-line       .github/workflows/card-line.yml: new
-conflicts (2) — nothing is written until each is settled:
-  file:knope.toml:present  the profile forbids knope.toml: changelog entries and releases are
-                           `jst changes` and jackstay's release workflow
-  file:Makefile:present    the profile forbids Makefile: recipes live in a justfile
-exceptions (0)
-notes (1):
-  .github/workflows/pr-checks.yml is the project's own; jackstay leaves it alone
-```
-
-For every `:edited` conflict the plan also prints the text that would be
-lost, so what matters can be moved out before accepting.
+Text output lists, each line led by its ID: the project and profile, the changes, the conflicts
+("nothing is written until each is settled"), the exceptions and the notes. For every `:edited`
+conflict the plan also prints the text that would be lost. The
+[adoption guide](../guide/adopt.md#adopt-a-project) shows a plan.
 
 ## 5. Conflicts
 
@@ -265,33 +242,7 @@ A profile is one JSON file — data, never code (W-059) — read strictly like `
 refused). Files it names are relative to its own folder and must stay inside it. Every key is
 optional but `jackstay_profile` and `name`.
 
-```json
-{
-  "jackstay_profile": 1,
-  "name": "example",
-  "about": "what this profile is for, one line",
-  "files": {
-    "required": [{"path": "justfile", "why": "the recipes the scopes run"}],
-    "forbidden": [{"path": "Makefile", "why": "one runner per project", "instead": "a justfile"}]
-  },
-  "scopes": {
-    "required": ["gate"],
-    "run_with": ["just"]
-  },
-  "jackstay_json": {
-    "required": ["github.account"],
-    "defaults": {"procs": {"default_minutes": 30, "max_minutes": 240}}
-  },
-  "workflows": {
-    "card-line": {"file": "workflows/card-line.yml", "when": ["cards", "changes"]}
-  },
-  "values": {"runner": "self-hosted"},
-  "agents": {
-    "rules": ["`just gate` is the gate; `jst test gate` runs it."],
-    "leave_out": ["owner"]
-  }
-}
-```
+The [example profile](../profiles/example/profile.json) uses every key:
 
 | key | capability | conflict it makes |
 |---|---|---|
@@ -345,18 +296,15 @@ followed by a `# vX.Y.Z` comment, a local `./path`, or `docker://…@sha256:<64 
 makes the template invalid (W-037). A test checks the embedded ones; `jst adopt` checks a
 profile's on every run.
 
-Kept for the fork guard: both templates run only for branches of the same repository
-(`if: github.event.pull_request.head.repo.full_name == github.repository` on `card-line`), so a
-self-hosted runner a profile substitutes never runs a fork's code.
+Both templates run only for branches of the same repository (`card-line`'s
+`if: github.event.pull_request.head.repo.full_name == github.repository`), so a substituted
+self-hosted runner never runs a fork's code.
 
 ### 7.2 The project's own workflows
 
-`jst adopt` does not judge what a project's own workflow does: an overlap check — a template's
-pattern matched against the other files — would have to be right for every state of the folder
-before and after an apply, under renames, accepts and exceptions (W-019: a place that keeps failing
-is redesigned, not patched). The plan instead lists, as notes, every workflow jackstay does not own
-(unmarked, or marked and kept by an exception), and the checklist of section 11 asks for each to
-be classified: keep it, or remove from it what jackstay's templates now do.
+`jst adopt` does not judge what a project's own workflow does (W-019). The plan lists, as notes,
+every workflow jackstay does not own (unmarked, or kept by an exception), and the checklist of
+section 11 has each classified: keep it, or remove what jackstay's templates now do.
 
 ### 7.3 Values
 
@@ -370,12 +318,10 @@ A template's text holds `@@name@@` where a value goes. jackstay defines:
 
 A profile adds its own through `values`.
 
-**The pin is data in `jackstay.json`, never read back from a generated file**: reading it from the
-workflow would make the version depend on the file's state, so a template could hide it and
-accepting a repaired file would move it. Every rendering is a function of the prospective `jackstay.json`, the profile
-and jackstay's templates alone: a newer jackstay does not make every project drift, `--accept` of an edited
-workflow renders it with the same pin, and a project moves its pin on purpose (`--pin`), in a pull
-request of its own.
+**The pin is data in `jackstay.json`, never read back from a generated file.** Every rendering is a
+function of the prospective `jackstay.json`, the profile and jackstay's templates alone, so a newer
+jackstay does not make projects drift, `--accept` of an edited workflow keeps the pin, and a
+project moves its pin on purpose (`--pin`), in a pull request of its own.
 
 **A change of `jackstay.json` and other files lands in two pull requests**, settings first: rule D0
 of `jst lint pr` lands `jackstay.json` alone. `jst adopt --apply --pin --settings-only` writes it
@@ -390,54 +336,9 @@ from `jackstay.json`: an item appears only when what it needs is there, so the b
 the project has not enabled. An item also appears only when every command it names is in this
 jackstay's command table, so a block is never ahead of the binary that prints it.
 
-The text, for a project with every section (`internal/adopt/block`, golden-tested):
-
-```markdown
-## jst: the tools for working on this project
-
-`jst` is installed on this machine. Reach for it before a hand-written shell loop:
-`jst <command> --help` gives a command's details, `jst help` lists every command.
-
-- **Run tests**: `jst test <scope>`; `jst test list` shows the scopes and when each is required.
-  Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
-  a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
-  removes). No scope fits: `jst test -- COMMAND`.
-- **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`
-  using the expected digest, revision and key from a trusted source.
-- **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
-- **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or
-  `nohup`; `jst procs` lists them, `jst procs stop NAME` stops yours.
-- **A heavy command** others on this machine must not overlap: `jst lock -- COMMAND`.
-- **Branches**: `jst start NAME` (a branch and its worktree from the fetched default branch),
-  `jst sync` (merges the default branch in; never rebases), `jst tidy` (what is finished;
-  `--fix --branch NAME` removes only what you made).
-- **Drop uncommitted changes**: `jst discard PATH…` — what it drops goes to jackstay's trash
-  (`jst trash restore`); never `git restore` or `git checkout -- PATH`.
-- **The guard** refuses destructive commands and names what to run instead: run that, never a
-  workaround. A line `jst guard let this command run, with a warning` means read it before going
-  on. This project sets the guard's rules in `jackstay.json` (`guard`).
-- **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
-  `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
-  `jackstay.json` (`github.account`).
-- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
-  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
-  `jst review check BASE..REV --task NAME` checks the saved round.
-- **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
-  `jst lint range origin/main..HEAD` before pushing; `jst cards ID` shows what landed per card.
-- **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a
-  record, `jst view SERIES` prints their table.
-- **A user-facing change** gets a changelog entry: `jst changes new --slug S`; `jst changes check`.
-- **Releases** are made by the release workflow's pull request, never a tag by hand;
-  `jst release prepare` shows the next one.
-- **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a
-  surprising failure, before asking.
-- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
-- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
-- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
-- **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
-- **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
-  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.
-```
+The text is the code's (`internal/adopt/block`); for a project with every section it is the
+golden file `internal/adopt/block/testdata/every-section.md`, and jackstay's own `AGENTS.md` carries
+its block.
 
 Item IDs, what each needs, and what changes with the section:
 
@@ -459,8 +360,8 @@ Item IDs, what each needs, and what changes with the section:
 
 Then the profile's `agents.rules`, under `### This project's organisation`, one bullet each.
 
-The full text of each item is the code's; this section is its approved shape. A change to an item
-is a change to the golden file and to this section in the same commit.
+A change to an item is a change to its golden file, and to this table when what it needs changes,
+in the same commit.
 
 `docs/adoption/agents-block.md` says the block is printed by `jst adopt --block` and points to the
 items. When a tool is added or its use changes, the item in `internal/adopt/block` and its golden
@@ -469,11 +370,8 @@ file change in the same commit; after an install, `jst doctor` in a project repo
 
 ## 9. `jst <command> --help`
 
-The block's promise needs every command to answer `--help` the same way, and before it runs: a
-command that took `--help` for an argument could act on it (read it as a series name, or move a
-file named `--help` into the trash).
-
-So `cli.Main` answers `--help` (or `-h`) given as the only word after a command's name, before the
+Every command answers `--help` the same way and before it runs (a command that took `--help` for an
+argument could act on it). `cli.Main` answers `--help` (or `-h`) given as the only word after a command's name, before the
 command runs:
 
 - `cli.Command` has `Usage string`: the usage line(s); every option the command accepts, one line
@@ -482,10 +380,8 @@ command runs:
 - A word that is only the first word of two-word commands (`jst changes --help`, `jst lint --help`)
   prints those commands with their summaries.
 - `jst help X` is the same as `jst X --help`.
-- A test walks the table: every command has a `Usage` with a usage line, and `--help` runs nothing
-  (the command's `Run` is never called). Every command's `--help` output is a committed golden
-  file (`internal/cli/testdata/help.txt`), so a review reads all help text in one place and a
-  change to it shows in the diff.
+- A test walks the table: every command has a `Usage`, and `--help` never calls `Run`. All help
+  output is one committed golden file, `internal/cli/testdata/help.txt`.
 
 ## 10. `jst doctor` reports drift
 
@@ -502,30 +398,11 @@ Outside a project the check is skipped. `jst doctor --json` carries the summary 
 
 ## 11. Bringing a project up to date: the checklist
 
-A checklist for whoever brings a project up to date with jackstay after an upgrade, a person or an
-agent; the same for every project and every jackstay version:
-
-> Bring this project up to date with jackstay.
->
-> 1. Run `jst adopt --plan` (the first time, with `--profile <path>` if your organisation has one; give
->    the same `--profile` to the first `--apply` too — it is recorded only then).
-> 2. Settle each conflict it lists, and look at each workflow it lists as the project's own:
->    keep it, or remove from it what jackstay's workflows now do. For a migration (`file:…:present`, `scope:…`), do it as the
->    project's own work with its card, or add an exception to `jackstay.json` (`adopt.exceptions`) with
->    the reason and the task that will do it; ask the project's maintainer where the choice is theirs.
->    Before `--accept …:edited`, move this project's own lines out
->    of the text the plan shows will be replaced. Never edit inside the `jackstay-adopt` markers.
-> 3. Run `jst adopt --apply` with the `--accept` IDs you decided on (and the `--profile` of step
->    1); then `jst adopt --plan` must print nothing to change, name the profile, and exit 0.
-> 4. Run `jst doctor`: no problem for this project. Run the project's gate.
-> 5. Open a pull request with the result, listing each conflict and how it was settled. When its
->    diff against the base changes `jackstay.json` and other files (adopt's writes, or your own
->    exceptions), rule D0 wants two: `jackstay.json` alone first (`jst adopt --apply
->    --settings-only`, with `--pin` and `jackstay.json`'s `--accept` IDs), merged by the owner; then,
->    on the merged base, steps 3 to 5 again for the other files.
->
-> Done means `jst adopt --plan` exits 0 and `jst doctor` reports no adoption problem — not your
-> word.
+The checklist for whoever brings a project up to date after an upgrade, person or agent, is in the
+[adoption guide](../guide/adopt.md#bring-a-project-up-to-date): plan (with the
+`--profile` the first time), settle each conflict and classify each workflow the project owns,
+apply, check, and land `jackstay.json` alone first when rule D0 needs two pull requests. **Done
+means `jst adopt --plan` exits 0 and `jst doctor` reports no adoption problem**, not anyone's word.
 
 ## 12. Packages
 
@@ -536,47 +413,21 @@ agent; the same for every project and every jackstay version:
 | `internal/adopt/block` | the AGENTS block's items, conditions, markers |
 | `internal/adopt/profile` | the profile's strict reading and validation |
 | `internal/adopt/templates` | the embedded templates, `@@name@@` rendering, the pin check, the marked header |
-| `internal/cli` | `Usage`, `--help` before `Run`, `jst help X` |
-| every command package | its `Usage` text |
-| `internal/config` | the `adopt` section in the table; `adopt` in `Stage1Sections` |
-| `internal/doctor` | the `adoption` check |
-| `docs/profiles/` | the example profile, its README, its example template |
+| elsewhere | `internal/cli` (`--help`), each command's `Usage`, `internal/config` (the `adopt` section), `internal/doctor` (`adoption`), `docs/profiles/` (the example) |
 
 ## 13. Test plan
 
-- **Golden: apply twice → no diff.** For four fixture projects (empty folder with git; a schema-1
-  project with a block fitted by hand; a project with every section; the example profile
-  applied), `--apply` with the needed `--accept`s, then a second `--apply` writes nothing (every
-  file's bytes and modification time unchanged) and `--plan` exits 0.
-- **jackstay adopts itself first**: in `cmd/jst` (so the real command table is used), the plan of
-  jackstay's own checkout has no change and no conflict. When a command is added or a block item
-  changes, the test fails until `jst adopt --apply` is run in jackstay's checkout and its
-  `AGENTS.md` is committed with the change.
-- **Ownership**: a marked block or workflow edited by one byte → `:edited`; an unmarked
-  `card-line.yml` (a copy made by hand) → `:unmarked`; `--accept` replaces; an exception
-  keeps it and `--apply` succeeds; a stale exception is a note; `--accept` of an absent ID is
-  exit 2.
-- **Markers**: malformed markers refused.
-- **`jackstay.json`**: schema 1 → 2 only when needed; defaults never replace a value; key order and
-  bytes kept when nothing changes; `adopt` written only with a profile or exception; a default
-  enabling an item (`lock.enabled`) lands with its block line in one `--apply`; a default that
-  breaks a meaning check beside the project's value (`procs`) is `jackstay.json:invalid`; the same input
-  planned twenty times gives the same bytes.
-- **Hook**: present in the reference form → nothing; missing → added, other hooks kept;
-  not an object → conflict.
-- **Profiles**: every key of the example profile exercised; each invalidity of section 6 refused;
-  a path outside the profile's folder refused; an unpinned `uses:` refused.
-- **Templates**: every embedded `uses:` pinned (40 hex + version comment); every `@@name@@`
-  defined; the pin comes from `adopt.pin` only: written by the first apply, moved only by
-  `--pin`, unchanged by `--accept workflow:<name>:edited` under a newer jackstay; a template renamed in
-  the profile — the old marked file removed, the new one written, a second apply clean; a marked
-  workflow whose template left the profile is removed (hash holds) or a conflict (edited), and
-  kept by an exception it is listed among the project's own workflows.
-- **Block**: a golden file per variation of section 8 (no sections; every section; no scopes;
-  `leave_out`); an item naming a command missing from the table is left out.
-- **`--help`**: the table walk of section 9; `jst trash --help` moves nothing.
-- **Doctor**: drift and a missing profile are problems; exceptions are notes; outside a project
-  skipped.
+- **Apply twice → no diff**: for four fixture projects (empty; schema 1 with a hand-fitted block;
+  every section; the example profile), a second `--apply` writes nothing (bytes and modification
+  times unchanged) and `--plan` exits 0. The same input planned twenty times gives the same bytes.
+- **jackstay adopts itself**: in `cmd/jst`, with the real command table, jackstay's own checkout
+  plans no change and no conflict, so a new command or block item fails the test until
+  `jst adopt --apply` is run here and `AGENTS.md` committed with it.
+- Each rule of sections 3 to 10 has a case: ownership (`:edited`, `:unmarked`, accept, exception,
+  stale exception, an absent `--accept`), markers, `jackstay.json` merging and validity, the hook,
+  every profile key and invalidity, every template pin and value and removed or renamed templates,
+  a golden block per variation of section 8, the `--help` table walk (`jst trash --help` moves
+  nothing), and doctor's drift, profile and exception findings.
 
 ## 14. What it does not do
 

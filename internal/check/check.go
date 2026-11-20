@@ -35,7 +35,7 @@ const (
 )
 
 func init() {
-	cli.Register(cli.Command{Name: "check", Summary: "[DIR]: is this project's jackstay.json usable? (for the project's gate)", Usage: help, Run: run})
+	cli.Register(cli.Command{Name: "check", Summary: "is this project's jackstay.json usable?", Usage: help, Run: run})
 }
 
 func run(args []string, _ io.Reader, stdout, stderr io.Writer) int {

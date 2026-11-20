@@ -39,14 +39,13 @@ const usage = `usage: jst baseline --repo DIR --since YYYY-MM-DD --until YYYY-MM
                    [--transcripts GLOB ...] [--also NAME=DIR ...] [--projects-dir DIR] [--jackstay-log FILE]
                    [--examples FILE] [--json]
 
-The days are UTC. The project's kinds of run come from the ` + "`baseline`" + ` section of its jackstay.json (or --config);
-the flags replace what they name. --examples writes each command the guard would refuse to a file
-(it may hold private text).`
+The kinds of run come from jackstay.json's ` + "`baseline`" + ` section (or --config); a flag replaces
+what it names. Writes nothing but --examples.`
 
 const exitBadRequest = 2
 
 func init() {
-	cli.Register(cli.Command{Name: "baseline", Summary: "test runs by kind, their time, merges and destructive commands, from transcripts, git and jackstay's log",
+	cli.Register(cli.Command{Name: "baseline", Summary: "test runs by kind, their time, merges and destructive commands, from transcripts, git and the log",
 		Usage: help, Run: run})
 }
 

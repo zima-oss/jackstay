@@ -1,49 +1,54 @@
 <div class="jackstay-home">
   <section class="jackstay-hero" aria-labelledby="jackstay-title">
     <div class="jackstay-hero-copy">
-      <h1 id="jackstay-title">Git workflows for coding agents</h1>
-      <p class="jackstay-intro">jackstay gives agents a reliable way to protect edits, run tests with evidence, and finish work across parallel sessions. One Go binary adds the commands and records.</p>
+      <h1 id="jackstay-title">Safe, provable work for coding agents</h1>
+      <p class="jackstay-intro">jackstay stops an agent's destructive shell commands, counts the tests a change passed, and keeps parallel sessions from stepping on each other. One Go binary, <code>jst</code>, on macOS and Linux.</p>
       <div class="jackstay-actions">
-        <a class="jackstay-primary" href="{{ "guide/getting-started/" | relURL }}">Get started</a>
-        <a class="jackstay-secondary" href="{{ "guide/" | relURL }}">Browse the guide</a>
+        <a class="jackstay-primary" href="{{ "guide/start/getting-started/" | relURL }}">Start in five minutes</a>
+        <a class="jackstay-secondary" href="{{ "guide/" | relURL }}">Read the guide</a>
       </div>
     </div>
-    <div class="jackstay-terminal" aria-label="Example jackstay workflow">
+    <div class="jackstay-terminal" aria-label="Example jackstay session">
       <div class="jackstay-terminal-head"><span>my-service</span><span>agent session</span></div>
       <div class="jackstay-terminal-body">
-        <p><span class="jackstay-prompt">$</span> jst adopt --plan</p>
-        <p class="jackstay-output">changes (4) · conflicts (0)</p>
-        <p><span class="jackstay-prompt">$</span> jst test gate</p>
-        <p class="jackstay-output jackstay-success">jst test: outcome=passed</p>
-        <p><span class="jackstay-prompt">$</span> jst timeline --since 4h</p>
-        <p class="jackstay-output">local test, review and process history</p>
-      </div>
-    </div>
-  </section>
-
-  <section class="jackstay-routes" aria-labelledby="jackstay-routes-title">
-    <div class="jackstay-section-heading">
-      <h2 id="jackstay-routes-title">Follow the work from edit to delivery</h2>
-      <p>Each command answers <code>--help</code>. The guide follows the same tasks you do in a repository.</p>
-    </div>
-    <div class="jackstay-route-list">
-      <div class="jackstay-route">
-        <div><h3>Protect edits</h3><p>The guard catches destructive shell commands. Discard keeps recoverable copies, and background jobs stop at a deadline.</p></div>
-        <div class="jackstay-route-links"><a href="{{ "guide/guard/" | relURL }}">Guard and recovery</a><a href="{{ "guide/background/" | relURL }}">Processes and waits</a></div>
-      </div>
-      <div class="jackstay-route">
-        <div><h3>Verify a change</h3><p>Test scopes collect evidence from the project’s own runner. Receipts bind counted passes to the tree that produced them.</p></div>
-        <div class="jackstay-route-links"><a href="{{ "guide/tests/" | relURL }}">Tests and receipts</a><a href="{{ "guide/review/" | relURL }}">Optional code reviews</a></div>
-      </div>
-      <div class="jackstay-route">
-        <div><h3>Deliver and trace</h3><p>Worktrees, GitHub checks, records and releases have explicit steps. The local timeline helps reconstruct what happened.</p></div>
-        <div class="jackstay-route-links"><a href="{{ "guide/branches-and-github/" | relURL }}">Branches and GitHub</a><a href="{{ "guide/observability/" | relURL }}">Timeline and diagnostics</a></div>
+        <p><span class="jackstay-prompt">$</span> rm -r build-cache</p>
+        <p class="jackstay-output">jst guard refused this command; nothing was run.</p>
+        <p class="jackstay-output">… Instead: <code>jst trash build-cache</code></p>
+        <p><span class="jackstay-prompt">$</span> jst test quick</p>
+        <p class="jackstay-output jackstay-success">jst test: outcome=passed (12 s, counted=1204)</p>
+        <p><span class="jackstay-prompt">$</span> jst review origin/main..HEAD --task parser-fix</p>
+        <p class="jackstay-output">jst review: round 1 of parser-fix: clear</p>
       </div>
     </div>
   </section>
 
   <section class="jackstay-start" aria-labelledby="jackstay-start-title">
-    <div><h2 id="jackstay-start-title">Start in an existing repository</h2><p>Install on macOS or Linux, inspect the adoption plan, then apply and commit the project files it writes.</p><a href="{{ "guide/install/" | relURL }}">Installation options</a></div>
+    <div><h2 id="jackstay-start-title">Install</h2><p>Downloads a release, checks it against the release's checksums and installs <code>jst</code> into <code>~/.local/bin</code>, without <code>sudo</code>.</p><a href="{{ "guide/start/install/" | relURL }}">Other ways to install</a></div>
     <pre class="jackstay-command"><code>{{ strings.TrimSpace .Inner }}</code></pre>
+  </section>
+
+  <section class="jackstay-routes" aria-labelledby="jackstay-routes-title">
+    <div class="jackstay-section-heading">
+      <h2 id="jackstay-routes-title">Find your way</h2>
+      <p>The guide follows the order work happens in a repository.</p>
+    </div>
+    <div class="jackstay-route-list">
+      <div class="jackstay-route">
+        <div><h3>Start</h3><p>Adopt one project: the files jackstay writes, a counted test run, a guard check.</p></div>
+        <div class="jackstay-route-links"><a href="{{ "guide/start/getting-started/" | relURL }}">Getting started</a><a href="{{ "guide/start/adopt/" | relURL }}">Adopting a project</a></div>
+      </div>
+      <div class="jackstay-route">
+        <div><h3>Daily work</h3><p>Tests with evidence, the guard and the trash, a worktree per task, reviews.</p></div>
+        <div class="jackstay-route-links"><a href="{{ "guide/daily-work/tests/" | relURL }}">Tests</a><a href="{{ "guide/daily-work/guard/" | relURL }}">The guard</a><a href="{{ "guide/daily-work/branches-and-github/" | relURL }}">Branches</a><a href="{{ "guide/daily-work/review/" | relURL }}">Reviews</a></div>
+      </div>
+      <div class="jackstay-route">
+        <div><h3>Several agents</h3><p>Sessions in parallel: chat, compaction briefs, Claude Code and Codex.</p></div>
+        <div class="jackstay-route-links"><a href="{{ "guide/agents/" | relURL }}">Working with several agents</a></div>
+      </div>
+      <div class="jackstay-route">
+        <div><h3>Configuration and reference</h3><p>Every command, flag, exit code and <code>jackstay.json</code> key, generated from the code.</p></div>
+        <div class="jackstay-route-links"><a href="{{ "guide/configuration/" | relURL }}">Configuration</a><a href="{{ "guide/reference/commands/" | relURL }}">Commands</a><a href="{{ "guide/upgrading/" | relURL }}">Upgrading from 0.5.x</a></div>
+      </div>
+    </div>
   </section>
 </div>

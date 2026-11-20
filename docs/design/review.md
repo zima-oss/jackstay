@@ -5,25 +5,15 @@ Status: built ([W-051](../decisions/W-051-jst-review-codex-rounds.md)). It follo
 is redesigned), [W-048](../decisions/W-048-review-findings-triaged-by-realism.md) (findings rated by
 likelihood and consequence), W-036 and
 [W-037](../decisions/W-037-current-go-and-dependencies.md) (Go design, current versions) and
-[W-013](../decisions/W-013-quality-testing-declarative.md) (tests). Codex runs outside Claude's
-sandbox, and the reviewers are configured through `jackstay.json`. One executor outside the sandbox,
-with a pool, is an idea kept for later and not designed here.
+[W-013](../decisions/W-013-quality-testing-declarative.md) (tests). How to run a review is the
+[review guide](../guide/review.md).
 
 ## What it removes
 
-Without it, every session builds a review by hand: the prompt (read only, the verdict line, the
-commit, earlier findings), the frozen tree, the round number and file name, the launch flags, where
-the answer goes and how to read it. Each of those steps done by hand fails now and then (measured
-on reviews run by hand):
-
-| failure of a hand-built review | what removes it here |
-|---|---|
-| stdin left open with the prompt as an argument: Codex waits on stdin for minutes | the prompt is always written to Codex's stdin and stdin is then closed (section 3.4) |
-| Claude's sandbox: Codex cannot write `~/.codex` or reach its auth host | jackstay refuses to start Codex where it cannot write Codex's login (section 2) |
-| a prompt written to the sandbox's `$TMPDIR`, missing for the unsandboxed rerun | prompts live under `~/.jackstay/`, never `$TMPDIR` (section 5) |
-| the tree changed while Codex read it | Reviewers read snapshots at fixed Git object IDs (section 3.1) |
-| no or ambiguous verdict line; a malformed event | the answer is JSON against a schema Codex is given; every failure to read it is a named outcome (section 3.5) |
-| a batch launch through `xargs` too long | several reviewers are one call; the prompt never goes through argv (section 6) |
+A review built by hand fails in known ways, each removed here: a prompt left on an open stdin
+(section 3.4), Codex in Claude's sandbox losing its login (section 2), a prompt in the sandbox's
+`$TMPDIR` (section 5), a tree changing under the reviewer (section 3.1), an ambiguous verdict line
+(section 3.5), a prompt too long for argv (section 6).
 
 ## 1. The `review` section of `jackstay.json`
 
@@ -36,36 +26,6 @@ relative to the repository's root and read **from the reviewed commit's tree** (
 the live checkout, so a brief edited after the commit cannot change what was reviewed; `--brief`
 on the command line is the exception (a file outside the tree, copied into the round's folder).
 
-```json
-"review": {
-  "reviewers": {
-    "codex": {
-      "command": "codex",
-      "model": "",
-      "effort": "medium",
-      "timeout_minutes": 20,
-      "isolation": ["--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
-                    "-c", "mcp_servers={}", "-c", "features.apps=false"],
-      "mcp_servers": {}
-    }
-  },
-  "use": ["codex"],
-  "brief": "docs/review-brief.md",
-  "template": "",
-  "cite": ["AGENTS.md", "docs/decisions/", "docs/design/"],
-  "severities": ["blocker", "major", "minor"],
-  "blocking": ["blocker"],
-  "triage": true,
-  "repeat_rounds": 2,
-  "repeat_severities": ["blocker", "major"],
-  "round_limit": 6,
-  "max_concurrent": 4,
-  "queue_minutes": 15,
-  "store": "",
-  "keep_days": 30
-}
-```
-
 | Key | Meaning | Default |
 |---|---|---|
 | `reviewers` | overrides for built-in `codex` and `claude-code` settings, by name | built-in settings for both |
@@ -73,8 +33,8 @@ on the command line is the exception (a file outside the tree, copied into the r
 | `reviewers.codex.model` | passed as `-m`; empty means Codex's own default (with `--ignore-user-config` that is Codex's built-in one, not the user's `config.toml`) | empty |
 | `reviewers.codex.effort` | reasoning effort, passed as `-c model_reasoning_effort="…"`; one of `minimal`, `low`, `medium`, `high`, `xhigh`; empty passes nothing | `medium` |
 | `reviewers.codex.timeout_minutes` | the hard deadline of one run (section 3.4); 1–120 | 20 |
-| `reviewers.<name>.mcp_servers` | MCP servers given back to that reviewer, by name (letters, digits, `_`, `-`): `{"command": "…", "args": […]}`. The user's own servers stay closed (section 3.4); these are the project's explicit choice. Needs `"jackstay_schema": 3` | none |
-| `reviewers.codex.isolation` | the isolation flags, a list of argv words that **replaces** the default list whole. Words jackstay owns are refused here (below) | the set above |
+| `reviewers.codex.isolation` | the isolation flags, a list of argv words that **replaces** the default list whole. Words jackstay owns are refused here (below) | `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--skip-git-repo-check`, and `-c` `mcp_servers={}`, `features.apps=false` |
+| `reviewers.<name>.mcp_servers` | MCP servers given back to that reviewer, by name: `{"command": "…", "args": […]}`; the user's own stay closed (section 3.4). Needs `"jackstay_schema": 3` | none |
 | `use` | the built-in reviewers a round runs when `--reviewer` is absent, and the reviewers required by `review check`; names must be unique | `["codex"]` |
 | `brief` | the project's standing brief: what a reviewer of this project must know (its threat model, what to ignore). Put at the top of every prompt | none |
 | `template` | a whole prompt template (Go `text/template`, section 3.2) replacing jackstay's own; for a project whose reviews differ in kind. Its output must still ask for the verdict form, which jackstay appends itself whatever the template says | jackstay's embedded template |
@@ -103,18 +63,15 @@ always (section 3.4):
     <command> -a never exec --json -C <view> -o <answer> --output-schema <schema>
               [-m <model>] [-c model_reasoning_effort="<effort>"] <isolation…> <pinned permissions> -
 
-Projects configure it in their `jackstay.json` `review` section. The section's
-types go into `config.Table`; its meaning (the refused words, ranges, known names in `use`, `blocking`
+The section's types go into `config.Table`; its meaning (the refused words, ranges, known names in `use`, `blocking`
 ⊆ `severities`, `cite` present in the tree) is `internal/review`'s validator, which `jst check` runs
 as it runs the release's.
 
 ### 1.1. Claude Code adapter
 
-Select it with `--reviewer claude-code` or include it in `review.use`. Its defaults are command `claude`,
-the CLI's own model and effort defaults, and the same 20-minute timeout as Codex. Available effort
-overrides are `low`, `medium`, `high`, `xhigh`, `max` and `ultracode`. Set
-`reviewers.claude-code` to override its settings. Claude Code safety flags
-are fixed. Configuration with a nonempty Claude Code `isolation` array is refused.
+Selected by `--reviewer claude-code` or `review.use`; overridden by `reviewers.claude-code`. Defaults:
+command `claude`, the CLI's model and effort, a 20-minute timeout. Efforts: `low`, `medium`, `high`,
+`xhigh`, `max`, `ultracode`. Its safety flags are fixed: a nonempty `isolation` is refused.
 
 Jackstay verifies `claude --version` locally and requires 2.1.248 or newer before the run. It
 starts the CLI in the pinned source view with `--print --restricted --safe-mode
@@ -128,33 +85,23 @@ CLI consumes the prompt through stdin and uses existing CLI credentials. Managed
 managed hooks still apply on machines where administrators configure them.
 [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
 
-Both reviewers use the same on-demand source layout (section 3.1). A large range adds files and
-patch bytes to the local view. The initial prompt size depends on instructions and open findings.
-
 Claude Code gets the same verdict JSON Schema via `--json-schema` and returns a JSON envelope via
 `--output-format json`. Jackstay accepts `structured_output` only in a successful result,
-writes that field as the round's answer, and passes it through the same schema validation and
-ledger as Codex. A second file can carry numeric token counts. The run record omits the provider's
-raw stdout and stderr. The machine-wide start lock is released when the subprocess finishes or
-after 120 seconds, because the JSON envelope arrives only at completion.
+writes it as the round's answer, through the same validation and ledger as Codex (token counts in
+a second file; raw output not recorded). The start lock is released when it finishes or after 120 s,
+since the envelope arrives only at the end. Both reviewers read the source view of section 3.1.
 [Claude Code headless mode](https://code.claude.com/docs/en/headless)
 
 ## 2. Codex runs outside the sandbox, and its login is refreshed by one run at a time
 
-`jst review` starts Codex itself, outside Claude's sandbox. The session runs `jst review` as a
-command that bypasses the sandbox, as sessions already run `codex`; jackstay does not try to escape a
-sandbox it is in.
+The session runs `jst review` outside Claude's sandbox, and jackstay starts Codex itself; it never
+tries to escape a sandbox it is in.
 
-**Why the login matters**. Codex keeps its ChatGPT login in `$CODEX_HOME/auth.json`
-(`~/.codex` by default) and refreshes it through `auth.openai.com`, writing the new tokens back. If
-the refresh is made where the file cannot be written — inside the sandbox — the new refresh token
-can be lost while the server has spent the old one (inferred: such refresh tokens are usually
-single-use; a refresh failure of this kind has been seen), and the login is lost for every session
-and the user. Two runs refreshing at once can race the same way (inferred).
-
-Codex refreshes its login rarely, not per run, and keeps a lock file of its own (`auth.lock`)
-around it (both inferred from the files, not documented). So the race is rare, and jackstay's part is
-small and cheap:
+**Why the login matters.** Codex keeps its login in `$CODEX_HOME/auth.json` (`~/.codex` by default)
+and refreshes it by writing new tokens back. A refresh where the file cannot be written (inside the
+sandbox), or two at once, can spend the old refresh token and lose the new one, and with it the
+login for every session (inferred). Codex refreshes rarely and keeps its own `auth.lock` (inferred),
+so jackstay's part is small:
 
 1. **Refuse inside a sandbox.** Before anything is started, jackstay opens `$CODEX_HOME/auth.json` for
    writing (`O_WRONLY|O_APPEND`, nothing written, closed at once; its time does not change). If that
@@ -166,24 +113,20 @@ small and cheap:
    `flock` (released by the kernel if jackstay dies), is held from just before Codex is started until its
    first event that needs the model to have answered — the first `item.started`, `item.completed`,
    `turn.completed`, `turn.failed` or `error` on its `--json` stream — or until Codex exits, or for
-   at most 120 s. Whatever Codex refreshes at start or on its first request is then done by one run
-   at a time, across every project and session on the machine. It costs the time to first answer
-   per start (seconds), against runs of minutes.
+   at most 120 s, so a refresh at start is made by one run at a time on the machine.
 3. **Stop the cascade.** A run that ends with no answer and whose failure is Codex's own
    authentication failure writes
    `~/.jackstay/.all/reviews/login-failed` (the time and the message). Every later `jst review` refuses with
    exit 6 while that file is newer than `auth.json`; the user's `codex login` rewrites `auth.json`
-   and so lifts it, with nothing to clear by hand. Starting more runs on a broken login only
-   multiplies failures. "Codex's own failure" is read only where Codex reports about itself: the
+   and so lifts it. "Codex's own failure" is read only where Codex reports about itself: the
    message of a top-level `error` event or of `turn.failed`, and Codex's log lines on standard
    error (`ERROR`/`WARN` lines of its own modules) — never the content of an `item` (the model's
    text, a command's output), which in a review of login code is full of "401" and "refresh
    token". The patterns are a short table in the code (an HTTP 401 from the provider, "refresh
    token", "not logged in", "log in again"), each with a test from a recorded failure.
 
-The lock does not cover a Codex the user runs by hand or another tool runs; Codex's own
-`auth.lock` is what covers those (inferred). An executor that owned the login whole is an idea kept
-for later; this spec does not need it.
+The lock does not cover a Codex run by hand or by another tool; Codex's `auth.lock` does
+(inferred).
 
 ## 3. A round
 
@@ -215,14 +158,11 @@ checkout filters supply no files to the view. The provider can read these paths:
 | `review-brief.md` | the optional copy of the operator's `--brief` |
 | `open-findings.json` | the complete open findings, when a prior round has any |
 
-The attempt removes the view after the reviewers stop and before publishing a round. A subsequent
-run of the same task reclaims its abandoned attempt views under the task lock. The existing
-retention policy also reclaims expired tasks. Cleanup recognizes legacy locked review worktrees.
-
-Projection is offline. A partial clone needs the objects for the pinned revisions locally. The
-host filesystem must represent the tracked path names distinctly. Projection reports unavailable
-objects and path collisions as review failures. Git uses the pinned head's tracked attributes
-for the change files. Git-local administrative `info/attributes` can still override them.
+The view is removed after the reviewers stop, before the round is published; the next run of the
+task reclaims abandoned views under the task lock, and pruning reclaims expired tasks and legacy
+locked review worktrees. Projection is offline: the pinned objects must be local, and a missing
+object or a path collision on the host's file system is a review failure. Change files use the
+pinned head's attributes (a local `info/attributes` can still override them).
 
 ### 3.2 The prompt
 
@@ -310,10 +250,9 @@ round's report merges their findings by `place`.
 - **working folder**: the tree (`-C` and the process's own).
 - **outputs**: `-o attempt-<k>/<reviewer>/answer.json` (the last message alone); standard output (the
   `--json` events) to `events.jsonl` and standard error to `stderr.txt`, both in that folder,
-  each capped at 64 MiB (past the cap jackstay stops writing and notes it; the run goes on).
-- **deadline**: `timeout_minutes`. Codex runs in a process group of its own; at the deadline, or
-  when jackstay is asked to stop (TERM/INT, as `jst bg` passes it on), the group gets TERM, then KILL after
-  5 s. A run past its deadline is outcome `timeout`.
+  each capped at 64 MiB (past the cap writing stops, noted; the run goes on).
+- **deadline**: `timeout_minutes`; at it, or on TERM/INT to jackstay, Codex's process group gets
+  TERM, then KILL after 5 s. Past the deadline the outcome is `timeout`.
 - **probe**: `<command> --version` is run first (10 s deadline) and its answer recorded; a missing
   program is exit 6, "Codex is not installed".
 
@@ -342,21 +281,18 @@ embedded one with this project's severity words), so its last message is one JSO
 }
 ```
 
-`verdict` is `approve`, `changes` or `incomplete`. An incomplete review records the reason in
-`summary` and leaves the ledger unchanged. `changes` identifies a new or still-open finding.
-`severity` is one of `severities`; `likelihood` `ordinary` (happens
-in ordinary work by accident) or `unusual` (needs a deliberate or unusual setup); `consequence`
-`severe` (lost work or data, a wrong decision that passes unnoticed) or `mild` (an inconvenience,
-a wrong output seen at once) — W-048's two axes in two words each. `repeats` names ledger findings
-this one continues. `prior` answers every open finding of the ledger, `fixed` or `open`. The schema sets `additionalProperties: false` and every member required (`[]`
-where empty), as structured outputs require; Codex honours it.
+`verdict` is `approve`, `changes` (a new or still-open finding) or `incomplete` (the reason in
+`summary`, the ledger unchanged). `severity` is one of `severities`; W-048's axes are `likelihood`
+`ordinary` (happens by accident) or `unusual` (needs a deliberate setup), and `consequence`
+`severe` (lost work or data, an unnoticed wrong decision) or `mild`. `repeats` names ledger
+findings this one continues; `prior` answers every open finding, `fixed` or `open`. The schema
+sets `additionalProperties: false` and every member required (`[]` where empty).
 
 jackstay reads `answer.json` with `internal/strictjson` (one value, no member twice, no unknown member, 1
 MiB at most) into a Go type, then checks it: ids unique; severities, likelihoods and consequences
 from the lists; `repeats` and `prior` naming only findings of the ledger; every open finding of
-the ledger answered in `prior`, once. jackstay does not trust the reviewer's `verdict` for the outcome: it
-computes it (section 4) and records a disagreement (`approve` with a blocking realistic finding,
-or the reverse) in the report.
+the ledger answered in `prior`, once. The outcome is computed (section 4), not taken from `verdict`;
+a disagreement is recorded in the report.
 
 **Outcomes** of a reviewer's run, each named in the report and the index:
 
@@ -371,35 +307,27 @@ or the reverse) in the report.
 | `unparsable` | `answer.json` is not one JSON object of the schema (the strict reader's error kept) | 5 |
 | `inconsistent` | read, but a check above fails (which one kept) | 5 |
 
-A run that ends in anything but `done` is not retried by jackstay — the session decides, with the reason
-and the files in front of it — and it does not take a round number: the next run of the task reuses
-N, and the answers the other reviewers gave (section 4, "Attempts and rounds").
+A run that ends in anything but `done` is not retried, and takes no round number; the next run
+of the task reuses N and the answers the other reviewers gave (section 4).
 
 ## 4. Rounds, triage and W-019
 
 A **task** is what is reviewed in rounds: by default the session's current branch name, else
 `--task NAME` (required on a detached head); a name is any text git accepts as a branch name, at
-most 200 bytes. New tasks use the lower-case SHA-256 of that name as a fixed-length folder
-component. A `task.json` inside stores the original name, so the store can enumerate tasks. An
-exactly named legacy percent-encoded folder stays readable and writable. Case variants remain
-distinct on filesystems that fold case.
+most 200 bytes. Its folder is the lower-case SHA-256 of the name, with `task.json` holding the name
+(case variants stay distinct); a legacy percent-encoded folder stays readable and writable.
 
 **One run of a task at a time.** A run takes the task's lock, `<store>/.locks/v2/<task hash>.lock`
-(`flock`, outside the task's folder so pruning cannot remove it under a holder), before it reads
-the round number and keeps it until its report and index line are written. A second `jst review` of
-the same task while one runs refuses at once (exit 2, "task busy", naming the holder's process),
-so two runs can never take one number or write one folder. Pruning takes the same lock without
-waiting and skips a task it cannot take. A writer of an existing legacy folder also takes that
-folder's old lock to avoid colliding with a previous binary that already holds it.
+(`flock`, outside the task's folder), before it reads the round number, until its report and index
+line are written. A second run of the task refuses at once (exit 2, "task busy", naming the
+holder). Pruning skips a task whose lock it cannot take. A writer of a legacy folder also takes its
+old lock.
 
 **Attempts and rounds.** Every run is an *attempt*, written from its first byte into
-`<task>/attempt-<k>/` (k counts every attempt of the task, never reused). When every reviewer of
-the attempt ended `done`, jackstay writes the round's record (`round.json`, section 5) into it and then,
-as the last step, renames the folder to `<task>/round-<N>/` — that rename is the only thing that
-takes round number N, so a jackstay killed at any point leaves an `attempt-<k>/` that is simply a failed
-attempt, with its evidence, and the next run takes k+1 and still N. Rounds are numbered 1, 2, … in
-the order of those renames. With several reviewers and some failing, the attempt is not a round
-and exit is 5; the successful answers stay in its folder, readable.
+`<task>/attempt-<k>/` (k never reused). When every reviewer ended `done`, jackstay writes
+`round.json` into it and, last, renames it to `<task>/round-<N>/`: only that rename takes round N, so
+a killed run leaves a failed attempt and the next run still takes N. An attempt where some reviewers
+failed is not a round (exit 5); its successful answers stay readable.
 
 **Only the missing answers are paid for again** ([W-090](../decisions/W-090-review-of-0-6-0.md)). `attempt.json` records the attempt's
 **binding**: a digest of the round number, the task, the commits (base, head, previous), the review
@@ -415,33 +343,29 @@ source view is built and no reviewer starts. Anything else that changed (a new c
 taken meanwhile, a new focus, model or policy) is another binding, and every reviewer runs.
 
 **Chains and the ledger.** A task's rounds form chains: round 1 starts one, `--fresh` starts
-another (a full review of `BASE..REV` with an empty ledger), every other round continues the
-chain of the round before it, from the same base (3.1). So a chain at commit C has reviewed,
-between its rounds, every change from its base to C: the first round the whole range, each later
-one the tree difference since the round before (a rebase included, since the diff is of trees).
-Every round in a chain uses the same review policy and the same reviewer names. A change to either,
-or an older round without a policy ID, requires a full BASE..REV review with `--fresh`.
+another (a full review with an empty ledger), every other round continues the previous one's chain
+from the same base (3.1). So a chain at commit C has reviewed every change from its base to C: the
+first round the whole range, each later one the tree difference since the round before. A chain
+keeps one review policy and one set of reviewer names; a change to either, or a round without a
+policy ID, needs `--fresh`.
 
 The **ledger** of a chain is jackstay's list of its findings, computed from the rounds' answers and kept
 whole in each `round.json` (section 5): every field the reviewer gave, plus the **ledger id** jackstay
 assigns, `r<round>-<reviewer>-<answer id>` (`r2-codex-F3`), unique in the chain whatever ids the
 answers reuse. The prompt shows ledger ids; `prior` and `repeats` must use them, and an answer that
 names any other is `inconsistent`. A finding enters the ledger in the round that reports it:
-- **open** if it is not rare (with `triage` off, every finding is open). It stays open until a
-  later round's reviewer answers `fixed` for it in `prior`. Every round sees and answers the whole
-  open ledger (3.2, 3.5), so an open finding is re-examined until it is fixed; nothing leaves the
-  ledger by being skipped, by a focus, or by an empty `findings`.
-- **deferred** if it is rare: not fixed, kept with its history,
-  listed in the report for the project's later card, and not put to later rounds. A rare finding
-  found again later is a new finding of that round (it then counts for W-019 as any finding).
+- **open** if it is not rare (every finding, with `triage` off), until a later round answers
+  `fixed` in `prior`. Every round answers the whole open ledger, so nothing leaves it by being
+  skipped, by a focus, or by an empty `findings`.
+- **deferred** if it is rare: kept with its history, listed for the project's later card, not put to
+  later rounds. Found again later, it is a new finding of that round.
 
 **Triage and blocking** (W-048). With `triage` on, a finding is **realistic** when `likelihood` is
 `ordinary` or `consequence` is `severe`, **rare** when it is `unusual` and `mild`. One predicate
 says whether a finding blocks: its severity is in `blocking` and, with `triage` on, it is realistic
 (with `triage` off, the severity alone). A round **blocks** when any *open* finding of its ledger
-blocks after the round — those it found and those it answered `open` alike. Rare findings never
-block; the report lists them apart with a ready row for the project's later-findings card (jackstay does
-not write the project's repository). The session checks the ratings; `jst review` only computes from them.
+blocks after the round, found or answered `open` alike. Rare findings never block; the report lists
+them with a ready row for the project's later-findings card. The session checks the ratings.
 
 **Places.** A place is the finding's `place` string, trimmed, with runs of spaces made one and
 compared without regard to case. The prompt lists prior places and asks for the exact string again
@@ -449,23 +373,16 @@ when a finding is about the same place; a finding that names a prior one in `rep
 one's place whatever it wrote. Places are merged across the reviewers of a round.
 
 **W-019, in the tool.** A round **hits** a place when, in that round, the place has a finding of a
-`repeat_severities` severity that the round found or answered `open` — realistic or rare alike:
-a place that keeps drawing findings, rare ones included, is due for redesign. Found anew and confirmed still there count the same, so the count does not
-depend on how a reviewer chooses to write it. When a place is hit in `repeat_rounds` rounds
-running of one chain, jackstay says it is **to be redesigned, not patched**, names it with the rounds and
-findings, and exits 3; the round is then **redesign-due** until a later round of the chain does not
-hit that place. The default leaves out the lowest severity (`minor`: wording and small clarity),
-because W-019 is about defects; a project that wants every finding counted lists every severity.
+`repeat_severities` severity that the round found or answered `open`, realistic or rare alike. When
+a place is hit in `repeat_rounds` rounds running of one chain, jackstay says it is **to be
+redesigned, not patched**, names it with the rounds and findings, and exits 3; the round is
+**redesign-due** until a later round does not hit that place. The default leaves out `minor`, since
+W-019 is about defects.
 
 **The owner is asked** when round `round_limit` ends and still blocks: exit 4, and the report's
-first line says the owner decides (merge with what is known, redesign, or more rounds). A further
-round of the task is refused (exit 4, nothing run) unless `--past-limit` is given; the session gives
-it only after the owner's word, which it records as any ruling. Exit 3 takes precedence over 4
-when both hold: the redesign is the answer the rules already give.
-
-**After a redesign** the next round is an ordinary round of the chain, usually with `--focus`
-naming the redesigned place (3.2). It reviews the whole delta since the round before and every open
-finding; `--focus` only says where to look hardest.
+first line says the owner decides. A further round is refused (exit 4, nothing run) unless
+`--past-limit` is given, after the owner's recorded word. Exit 3 wins over 4. After a redesign the
+next round is ordinary, usually with `--focus` on the redesigned place.
 
 ## 5. Storage
 
@@ -507,86 +424,72 @@ answer's checks.
 
 `index.jsonl` holds per run `at`, `task`, `round` (or `null`), `reviewer`, `commit`, `base`,
 `outcome`, `blocks`, counts of realistic and rare findings, `seconds`, and the path. Every write of
-the index — an appended line, pruning's rewrite, a rebuild — is made under `<store>/index.lock`
-(`flock`, a file that is never replaced), held from opening the index to closing it, so an append
-can never land in a file that a rewrite is about to replace. The index is a convenience for
-`jst review list`, rebuilt from the folders by `jst review list --rebuild` if it is lost or damaged
-(a line that does not read is skipped with a warning).
+it (an append, pruning's rewrite, a rebuild) holds `<store>/index.lock` (`flock`, never replaced)
+from open to close. It is a convenience for `jst review list`, rebuilt from the folders by
+`--rebuild` (an unreadable line is skipped with a warning).
 
-**Pruning.** At the start of every `jst review` of a project and by `jst review prune`, a task whose
-newest round or attempt is older than `keep_days` is removed whole, and the index rewritten
-without it. Pruning acquires the index lock before removing tasks and holds it through the atomic
-rewrite. A review of a recreated task can append its results after pruning releases that lock.
-The rounds of a task are kept together while it is alive, so W-019's count never loses a round in
-the middle of a chain.
+**Pruning**, at the start of every `jst review` and by `jst review prune`, removes whole each task
+whose newest round or attempt is older than `keep_days` and rewrites the index under its lock. A
+task's rounds are kept together, so W-019's count never loses a round in a chain.
 
 ## 6. In the background, and several at once
 
-A review takes minutes. A session runs it as it runs other long commands ([implementation.md](implementation.md) section 5.1):
+A session runs a review under `jst bg` ([implementation.md](implementation.md) section 5.1;
+the [review guide](../guide/review.md) shows the line) and reads `jst review last`. `jst review` is
+a plain foreground command with **one budget**: `queue_minutes` (source admission, reviewer slots
+and the start lock together) plus the longest `timeout_minutes` plus 2. It prints the budget first;
+the documented `--for` is it rounded up (37 with the defaults: 15 + 20 + 2), `jst bg`'s deadline
+being only the backstop.
 
-    jst bg --for 37 --name review-<task> -- jst review [REV] …
+**The machine's cap.** Source views and reviewer runs each take machine-wide slots, with the same
+ceiling: a project whose `max_concurrent` is M holds only slot k < M of
+`~/.jackstay/.all/reviews/slots/<k>.lock` (k = 0…15, `flock`). A view holds its slot through
+cleanup. A run tries the slots in order and waits (saying so every minute); if a slot and then the
+start lock (section 2) are not both held within `queue_minutes`, it ends `failed` ("no slot") and
+Codex never starts. An error opening a lock fails at once. A round's reviewers run concurrently,
+each returning a result value; none outlives the call.
 
-with the Bash tool's background flag; the session is told when the call ends and reads
-`jst review last`. `jst review … --background` does that itself and returns at once (W-090: the
-0.5.x reviewer pool, its store, worker and nine subcommands, folded into `jst review`):
-- **Submission.** It resolves `REV` (and `BASE`) to commit ids now and, under the lock of the
-  task's request file `<store>/.requests/<task hash>.json`, writes the request (id, task, the
-  worktree, the commits, the reviewers, `--fresh`, `--past-limit`, `--focus`, the chat sessions to
-  tell) and starts, detached in a session of its own, `jst bg --for <budget + 1> --name
-  review-<task> -- jst review --task T --reviewer R --request ID -- BASE..REV`. The `jst bg` entry is
-  the durable record of the pending run (`jst procs`). It waits, at most 10 s, for the run to take
-  the task's lock, so `jst bg` finds the session it belongs to among its parents. The chat's
-  `review.submit` tool is the same submission.
-- **One request per task.** While the request's process lives (its id and start in the process
-  table; without a table, until its deadline), an equal submission (same worktree, task, commits,
-  reviewers and flags) joins it, adding its session (at most 32), and a different one is refused
-  (exit 2, "task busy"). A request whose process is gone is ended as lost (below) before a new one
-  is written.
-- **Concurrency** is section 6's slots and nothing else: reviews of different tasks run at once, up
-  to `max_concurrent` reviewer runs; there is no machine-wide worker.
-- **The end.** The run with `--request` marks the request running once it holds the task's lock
-  (a run whose request was replaced refuses, exit 2). Every request ends exactly once, in one
-  record, `<store>/.ends/<task hash>-<request id>.json`, written under the request's lock before the
-  request is removed: the request (its sessions included), its outcome (exit status, outcome word,
-  next step, round and report folder), whether it was **lost**, and which sessions have been told.
-  A request ends when its run finishes, whatever the outcome; when its launch fails (the sessions
-  that joined meanwhile are told too); or, lost, when its process is found gone — by a new
-  submission of the task, by `review.status`, or when any session's chat looks for what it is owed.
-  Recovery has one rule: a request with an end is over — it cannot be joined, and a crash after the
-  end was written and before the request was removed tells the saved outcome, never a second one.
-  An end's next step is cut to 2 KiB, so it always fits its file.
-- **Telling the sessions.** Each session's `review.finished` event is made from the end (outcome
-  word, round, report path, next step, `jst:review/<task>/<round>`), keyed by request and session,
-  and given to the chat's publisher (`internal/chatevent`, [chat.md](chat.md) section 10); each one
-  the chat stored is recorded in the end. What it did not take is pulled when that session's chat
-  next reads its inbox or reaches its hook; a repeat stores nothing new. An older end of the task
-  of the same repository whose sessions were all told is removed when a newer one is written.
-- **Status.** A request records its repository (the Git common folder). `review.status` answers for
-  the asking repository only: its request running, if any, and how its latest one ended (outcome,
-  round, report). It reads nothing of the rounds kept by project and task, which clones of one
-  project share; a round made in the foreground is read with `jst review last`.
+**In the background** (W-090; the 0.5.x reviewer pool,
+its store, worker and nine subcommands, folded into `jst review`). `jst review … --background`, and
+the chat's `review.submit`, resolve the commits now and, under the lock of the task's request file
+`<store>/.requests/<task hash>.json`, write the request (id, task, worktree, repository, commits,
+reviewers, `--fresh`, `--past-limit`, `--focus`, the chat sessions to tell); then start, detached in
+a session of its own, `jst bg --for <budget + 1> --name review-<task> -- jst review --task T
+--reviewer R --request ID -- BASE..REV`, and wait at most 10 s for it to take the task's lock, so
+`jst bg` finds its session among its parents. The `jst bg` entry is the pending run's record
+(`jst procs`). There is no worker: reviews of different tasks run at once, bounded by the slots.
+- **One request per task.** While its process lives (id and start in the process table; without a
+  table, until its deadline), an equal submission (same repository, worktree, task, commits,
+  reviewers, flags) joins it (at most 32 sessions) and a different one is refused (exit 2, task
+  busy).
+- **One end per request.** A request ends exactly once, in `<store>/.ends/<task hash>-<id>.json`,
+  written under the request's lock before the request is removed: the request with its sessions,
+  the outcome (status, word, next step cut to 2 KiB, round, report folder) or *lost*, and which
+  sessions have been told. It ends when its run finishes; when its launch fails (sessions that
+  joined meanwhile included); or, lost, when its process is found gone (by a new submission, by
+  `review.status`, or when any session's chat looks for what it is owed). A request with an end is
+  over: it cannot be joined, and a crash between the end and the removal tells the saved outcome.
+- **Telling the sessions.** Each session's `review.finished` event is made from the end, keyed by
+  request and session, and given to the chat's publisher (`internal/chatevent`,
+  [chat.md](chat.md) section 10); each one stored is recorded in the end, the rest pulled at that
+  session's next inbox read or hook. It names a round and report only while the folder still holds
+  that request's attempt. Older fully told ends of the same repository are removed.
+- **Status.** `review.status` answers for the asking repository (Git common folder and its inode)
+  only: its running request and how its latest ended. It reads nothing of the rounds kept by
+  project, which clones of one project share. The chat checks that the review's repository is the
+  one its session registered in.
 
 ## 7. Commands
 
-    jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,…] [--brief FILE] [--focus TEXT]
-              [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
-    jst review [REV | BASE..REV] --background [--task NAME] [--reviewer NAME,…] [--focus TEXT]
-              [--fresh] [--past-limit]                  the same round under `jst bg`, section 6
-    jst review last [--task NAME] [--json]          the newest round's report, or the newest attempt's failure
-    jst review check [--task NAME] BASE..REV        is BASE..REV reviewed and clear? (below)
-    jst review list [--task NAME] [--rebuild] [--json]
-    jst review show TASK ROUND [--json]             one round's report
-    jst review prune                                remove tasks past keep_days, now
+`jst review [REV | BASE..REV]` runs a round; `last` prints the newest round's report or the newest
+attempt's failure; `check BASE..REV` answers whether a range is reviewed and clear (below); `list`
+lists rounds; `show TASK ROUND` prints one round's report; `prune` removes tasks past `keep_days`
+now. Flags: `jst review --help`.
 
-`last`, `check`, `list`, `show` and `prune` are two-word entries of the command table and win over a
-revision of that name; a branch named `list` can be reviewed as
-`jst review --reviewer codex -- list`. `--model`,
-`--effort` and `--timeout` override the configuration for this call and apply to every reviewer
-named. `--json` prints the round's
-result as one JSON object (`round.json`'s fields, or the attempt's outcome) instead of the
-summary. Without it,
-`jst review` prints three lines: the outcome, the report's path, and the next step (fix, redesign the
-named place, ask the owner, or rerun).
+The subcommands win over a revision of that name (`jst review --reviewer codex -- list` reviews a
+branch `list`). `--model`, `--effort` and `--timeout` apply to every reviewer named. `--json` prints
+`round.json`'s fields or the attempt's outcome; otherwise three lines: the outcome, the report's
+path, and the next step.
 
 | exit | meaning |
 |---|---|
@@ -598,23 +501,19 @@ named place, ask the owner, or rerun).
 | 5 | a reviewer did not give a usable answer (timeout, failure, no answer, unparsable, inconsistent, no slot) |
 | 6 | the environment refuses: inside a sandbox (Codex's `auth.json` or Claude Code's state file not writable), no `auth.json`, the login failed earlier and was not renewed, a reviewer not installed |
 
-**`jst test` and the gate.** `jst review` is not a test scope and the gate never runs it: a review
-costs money and minutes, needs the network and gives a different answer each time, against W-013
-(no test depends on time or the network).
+The gate never runs `jst review`: it costs money, needs the network and answers differently each
+time (W-013).
 
 **`jst review check [--task NAME] BASE..REV`** is the one answer to "is this change reviewed and
-clear?", for a session before it lands, or later the merge queue; no consumer reads the index or
-`last` for it. The consumer names the change it means — both ends, resolved to commit ids — and
-nothing is inferred: exit 0 only when all hold, otherwise exit 1 with each reason that failed:
+clear?"; no consumer reads the index or `last` for it. Both ends are resolved to commit ids and
+nothing is inferred: exit 0 only when all hold, else exit 1 with each reason that failed:
 - the task's newest **round** (attempts that did not become rounds are ignored; a newer failed
   attempt is reported as a note) was made at exactly REV;
 - its chain's base is exactly BASE — so, by section 4, the chain reviewed every change from BASE to
   REV; a chain from any other base, nearer or farther, does not answer for this range;
-- the latest round records the current review policy and at least one completed reviewer. Every
-  reviewer in `review.use` must have finished successfully. With `review.use` explicitly empty, either
-  provider's completed round can qualify. The policy covers prompt configuration (`brief`, `template`, `cite`), severity,
-  triage, repetition and round limits. Scheduling, storage and per-run model, effort and timeout
-  overrides are independent of this policy;
+- the round records the current review policy (`brief`, `template`, `cite`, severities, triage,
+  repetition, round limit; not scheduling, storage or per-run overrides) and every reviewer of
+  `review.use` finished (with `review.use` explicitly empty, any one completed reviewer);
 - after it, no open finding of the ledger blocks;
 - it is not redesign-due, and not past `round_limit` without `--past-limit` having been given.
 No other field promises anything; `blocks: false` on a record is not "reviewed". A single commit
@@ -628,74 +527,31 @@ is checked as `REV^..REV`.
 | `internal/review/codex` | the Codex runner (it knows no rounds or locks: the caller's start lock is released through a callback at Codex's first answer): argv, environment, stdin, deadline and process group, the event stream (first-answer signal, auth failure), outputs, outcomes |
 | `internal/chatevent` | the event a producer publishes into the chat and the `Publisher` the chat registers ([chat.md](chat.md) section 10); without a chat, publishing answers "unavailable" and the event stays owed |
 
-Reused, not duplicated: `internal/config` (the `review` keys added to `config.Table`; `Load` with
-`need: ["review"]`), `internal/project` (`Open`, the root, the name, `Repo` for `brief`/`cite`
-paths, kept inside the repository), `internal/strictjson` (the answer), `internal/gitcli` (rev-parse,
-status, legacy worktree cleanup, log), `internal/homedir` (`ProjectPath`, `SharedPath`,
-`AppendLine`, `MarkerName`), `internal/cli`.
+It reuses `internal/config`, `internal/project`, `internal/strictjson`, `internal/gitcli`,
+`internal/homedir` and `internal/cli`. `internal/review` declares `Reviewer` (`Review(ctx, Request)
+Result`: always a result, never only an error) and a small git interface; `internal/review/runner`
+holds the shared subprocess types, and the dispatcher picks `internal/review/codex` or
+`internal/review/claude` by name. Locks are `internal/flock`'s (`TryFile`, `WaitFile`,
+`File.Release`); every child runs through `internal/supervise` (Mode Group, grace 5 s) with the
+process model of [implementation.md](implementation.md) section 5.2, git with hooks and fsmonitor
+off. `jst tidy` skips locked worktrees, including review trees under a store's `.trees/`. Libraries:
+the standard library and `golang.org/x/sys` (W-037); no `errgroup`, since goroutines return result
+values. Codex is not pinned; its version is recorded per run.
 
-**Interfaces where used** (W-037): `internal/review` declares `Reviewer` (`Review(ctx, Request)
-Result`, a result always, never only an error) and a small git interface (resolve, status,
-build the source view and remove legacy worktrees). `internal/review/runner` holds the shared subprocess
-request and result types. The dispatcher selects `internal/review/codex` or
-`internal/review/claude` by reviewer name. Tests use
-hand-written fakes of both (a fake reviewer returning a scripted answer, a timeout, an unparsable
-file, a login failure). `log/slog` only if a diagnostic log is kept; the outcomes go in `run.json`.
-
-**Shared with jackstay's process runner**: review uses the shared packages, so jackstay has one of
-each:
-- *`flock` on a file* — `internal/flock`'s `TryFile`, `WaitFile` and `File.Release`: the task lock,
-  the slots, the start lock and the index lock.
-- *Every child process* — `internal/supervise` (Mode Group, grace 5 s): git and Codex alike run in a
-  process group of their own, and a group is signalled **only while its leader is not reaped**, so
-  its id cannot have been reused: the leader's end is watched without reaping it (kqueue on darwin,
-  `waitid` with `WNOWAIT` on linux), the group is stopped (TERM, 5 s, KILL) at the deadline or what
-  it left is ended, output reading is bounded, and the leader is reaped last. Review's git also runs
-  with hooks and fsmonitor off, so it starts nothing of the repository's own. `internal/gitcli` runs
-  git the same way (its own group, TERM then KILL at the context's end, the group never signalled
-  after the reap): a git descendant (a hook, a checkout filter) cannot hold a call past the budget.
-- *`jst tidy`.* It must skip locked worktrees, and in particular review trees under a store's
-  `.trees/`; review removes its own.
-- *`jst bg`.* Section 6 uses only its command line.
-
-**Libraries** (W-037): standard library only — `os/exec`, `syscall` process groups,
-`text/template`, `embed`, `encoding/json/v2` through `strictjson`, `regexp` — plus `golang.org/x/sys`
-for `unix.Flock`. No `errgroup`: the goroutines return result values (section 6), so
-`golang.org/x/sync` is not needed. jackstay does not pin Codex (the user's tool); it records its
-version per run.
-
-**Tests** (W-013: no clock, no network):
-- Unit, with fakes: settings and every refused word and range; prompt building (fresh, delta,
-  `--fresh`, `--focus`, a project template, the verdict form always appended); the answer's
-  reading (every outcome of 3.5, a member twice, an unknown member, a `prior` that misses one);
-  triage and blocking with `triage` on and off; places (case, spaces, `repeats`); W-019 across a
-  chain of 2 and 3 rounds and not across `--fresh`; the round limit and `--past-limit`; exit-code
-  precedence; failed runs not taking a number, and an attempt left by a killed run (no rename)
-  becoming a failed attempt; the ledger over a chain (opened, answered `open` twice, fixed; a
-  missing `prior` answer refused; an empty `findings` with an open blocker still blocking); every
-  reason of `jst review check` (wrong commit, chain without a full start, an open blocker,
-  redesign due, past the limit, a newer failed attempt only noted); pruning with dates from the
-  files given, not now; the index rebuilt from folders.
-- The Codex runner against a **fake `codex`**: a small Go test program built into `t.TempDir()`
-  and named as `command`, scripted by a file — it checks its argv and environment, reads stdin to
-  EOF (and fails if stdin is a terminal or never ends), emits events, writes `-o`, sleeps past a
-  deadline, exits non-zero, prints an auth error. This proves the stdin, environment, deadline and
-  group-kill rules without Codex.
-- The locks across processes: two test processes hold the start lock in turn; slots beyond M wait;
-  a holder killed releases.
-- The sandbox refusal: `auth.json` made unwritable (mode 0400) gives exit 6.
-- `//go:build integration` (real git): a pinned tree is at the commit and unchanged by edits to the
-  checkout; removed after; a stale tree of a dead pid removed; locked trees survive `git worktree
-  prune`.
-- Not in the gate: a real Codex round, run by hand (it also confirms that Codex accepts the
-  schema, section 3.5).
+**Tests** (W-013: no clock, no network). Unit tests with fakes cover every rule of sections 1 to 7
+(each refused word and range, prompt building, every outcome of 3.5, triage on and off, places,
+W-019 across chains and not across `--fresh`, the round limit, exit precedence, killed attempts, the
+ledger, every reason of `review check`, pruning, index rebuild). The runner is tested against a
+fake `codex` built into `t.TempDir()` that checks its argv, environment and closed stdin, and
+scripts events, deadlines, failures and auth errors. Cross-process tests cover the locks and slots;
+an unwritable `auth.json` gives exit 6; integration tests (real git) cover the pinned tree. A real
+Codex round is run by hand, outside the gate.
 
 ## 9. What it cannot see, and limits
 
 - Whether a reviewer's ratings are right: jackstay computes from them; the session checks them (W-048).
 - Whether two places are one: places are strings; a reviewer that renames a place splits its count
   (the prompt lists prior places to keep them stable; `repeats` joins them).
-- Codex's own refresh timing and lock: inferred (section 2); the start lock is cheap insurance, not
-  proof.
+- Codex's refresh timing and lock are inferred (section 2).
 - Whether Codex honours `--output-schema` exactly in every version: an answer that does not match is
   `unparsable`, never guessed at.
