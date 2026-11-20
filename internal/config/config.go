@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -52,7 +53,7 @@ const Schema3Release = "0.6.0"
 var Stage1Sections = []string{"cards", "ids", "records", "changes", "procs", "release", "github", "review", "adopt"}
 
 // Stage3Sections need "jackstay_schema": 3, and so do the keys Schema3Keys names inside older sections.
-var Stage3Sections = []string{"$schema", "chat", "queue", "brief", "status"}
+var Stage3Sections = []string{"$schema", "chat", "brief", "status", "land"}
 
 // stage3RunKeys are the keys of a test scope or step, and of a receipts command, that need
 // "jackstay_schema": 3.
@@ -66,9 +67,6 @@ func Schema3Keys(config Config) []string {
 		if _, ok := config[key]; ok {
 			found = append(found, key)
 		}
-	}
-	if has(objectOf(config["review"]), "pool") {
-		found = append(found, "review.pool")
 	}
 	if has(objectOf(config["adopt"]), "profile_sha256") {
 		found = append(found, "adopt.profile_sha256")
@@ -434,7 +432,8 @@ var Table = object(
 	"brief", briefSection,
 	// The repositories the overview reads when none are named.
 	"status", object("repos", texts()),
-	"queue", object("enabled", boolean(), "base_ref", str(), "require_pull_request", boolean(), "review_task", str()),
+	// docs/design/land.md, section 1: how `jst land` lands a change; the meaning checks are landProblems'.
+	"land", object("host", str(), "autonomy", str(), "method", str(), "checks", texts(), "human_paths", texts()),
 	"guard", object(
 		"regenerable", texts(),
 		"deny", list(object("id", str(), "env", mapOf(regex()), "command", regex(), "unless", regex(), "why", str(), "instead", str())),
@@ -468,7 +467,6 @@ var Table = object(
 		"use", texts(), "brief", text(), "template", text(), "cite", texts(), "severities", texts(), "blocking", texts(),
 		"triage", boolean(), "repeat_rounds", integer(), "repeat_severities", texts(), "round_limit", integer(),
 		"max_concurrent", integer(), "queue_minutes", integer(), "store", text(), "keep_days", integer(),
-		"pool", object("accepting", boolean()),
 	),
 	// docs/design/implementation.md, section 8.1: the account jackstay acts as on GitHub; the meaning checks are
 	// githubProblems'.
@@ -659,7 +657,7 @@ func SectionProblems(config Config) Problems {
 			problems.add(key, typeProblems(config[key], sub, key)...)
 		}
 	}
-	for _, section := range []string{"receipts", "lock", "guard", "baseline", "adopt", "test", "github", "telemetry", "queue", "chat"} {
+	for _, section := range []string{"receipts", "lock", "guard", "baseline", "adopt", "test", "github", "telemetry", "land", "chat"} {
 		if _, ok := config[section]; ok && len(problems.found[section]) == 0 {
 			problems.add(section, sectionCheck(section, config)...)
 		}
@@ -807,11 +805,8 @@ func sectionCheck(section string, config Config) []string {
 		if objectOf(chat["claude_code"])["enabled"] == true && chat["enabled"] != true {
 			found = append(found, "`chat.claude_code.enabled` requires `chat.enabled`")
 		}
-	case "queue":
-		queue := objectOf(config["queue"])
-		if queue["enabled"] == true && !has(queue, "base_ref") {
-			found = append(found, "`queue.base_ref` is required when the queue is enabled")
-		}
+	case "land":
+		found = landProblems(objectOf(config["land"]))
 	case "github":
 		found = githubProblems(objectOf(config["github"]))
 	case "telemetry":
@@ -1109,7 +1104,7 @@ var GuardRules = func() map[string]GuardRule {
 		"git-restore-worktree", "git-clean-force", "git-rm-force", "git-push-force", "git-push-prune",
 		"git-push-delete-protected", "git-branch-force-delete", "git-branch-reset", "git-stash-drop", "git-stash-clear",
 		"git-worktree-force", "git-update-ref-delete", "git-update-ref-move", "git-filter-branch", "git-filter-repo",
-		"git-read-tree-reset", "git-checkout-index-force", "cards-push"} {
+		"git-read-tree-reset", "git-checkout-index-force", "cards-push", "gh-pr-merge", "glab-mr-merge"} {
 		rules[id] = GuardRule{Configurable: true, Default: LevelRefuse}
 	}
 	for _, id := range []string{"rm-recursive", "find-delete"} {
@@ -1344,6 +1339,126 @@ func (config Config) GitHub() (GitHub, bool) {
 		settings.Wait.LogLines = int(lines)
 	}
 	return settings, true
+}
+
+// --- the land section (docs/design/land.md, section 1) ----------------------------------------------------
+
+// FixedHumanPaths are the paths only a person lands, whatever land.human_paths says.
+var FixedHumanPaths = []string{"jackstay.json", ".github/workflows/**", ".claude/settings.json"}
+
+// Land is a usable `land` section.
+type Land struct {
+	Host       string // "" when not set: the push remote's host
+	Autonomy   string // "merge-when-green" or "prepare"
+	Method     string // "squash" when not set
+	Checks     []string
+	HumanPaths []string
+}
+
+// The two values of `land.autonomy`: the agent merges a green change, or a person merges.
+const (
+	AutonomyMergeWhenGreen = "merge-when-green"
+	AutonomyPrepare        = "prepare"
+)
+
+// The values the `land` section takes.
+var (
+	landHosts   = []string{"github"}
+	landMethods = []string{"squash", "merge", "rebase"}
+)
+
+const landDefaultMethod = "squash"
+
+func landProblems(section map[string]any) []string {
+	var found []string
+	if host, ok := section["host"].(string); ok && !contains(landHosts, host) {
+		found = append(found, fmt.Sprintf("`land.host` must be \"github\": %q", host))
+	}
+	autonomy, isText := section["autonomy"].(string)
+	switch {
+	case !has(section, "autonomy"):
+		found = append(found, "`land.autonomy` is missing: \"merge-when-green\" (the agent merges when the required checks pass) or \"prepare\" (it stops before every merge)")
+	case isText && autonomy != AutonomyMergeWhenGreen && autonomy != AutonomyPrepare:
+		found = append(found, fmt.Sprintf("`land.autonomy` must be \"merge-when-green\" or \"prepare\": %q", autonomy))
+	}
+	if method, ok := section["method"].(string); ok && !contains(landMethods, method) {
+		found = append(found, fmt.Sprintf("`land.method` must be \"squash\", \"merge\" or \"rebase\": %q", method))
+	}
+	for index, raw := range items(section["human_paths"]) {
+		pattern, _ := raw.(string)
+		if problem := PathGlobProblem(pattern); problem != "" {
+			found = append(found, fmt.Sprintf("`land.human_paths[%d]` (%q): %s", index, pattern, problem))
+		}
+	}
+	return found
+}
+
+// PathGlobProblem says why a repository-relative path glob cannot be used, or "": `**` stands for
+// zero or more whole path segments, other wildcards stay within one segment (path.Match).
+func PathGlobProblem(pattern string) string {
+	if pattern == "" || strings.HasPrefix(pattern, "/") || strings.HasSuffix(pattern, "/") {
+		return "use a nonempty repository-relative path glob"
+	}
+	for _, part := range strings.Split(pattern, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "empty, `.` and `..` path segments are not allowed"
+		}
+		if part == "**" {
+			continue
+		}
+		if strings.Contains(part, "**") {
+			return "`**` must be a whole path segment"
+		}
+		if _, err := path.Match(part, "file"); err != nil {
+			return err.Error()
+		}
+	}
+	return ""
+}
+
+// Land is the `land` section as Load left it: (the section, true), or false when the file has none.
+func (config Config) Land() (Land, bool) {
+	section := config.Section("land")
+	if section == nil {
+		return Land{}, false
+	}
+	settings := Land{Host: stringAt(section, "host"), Autonomy: stringAt(section, "autonomy"),
+		Method: stringAt(section, "method"), Checks: textsAt(section, "checks"), HumanPaths: textsAt(section, "human_paths")}
+	if settings.Method == "" {
+		settings.Method = landDefaultMethod
+	}
+	return settings, true
+}
+
+// LandOf reads the `land` section of a jackstay.json given as bytes (another revision's file, as
+// `git show REV:jackstay.json` gives it): (section, true, nil); (zero, false, nil) when the file has
+// no land section; an error when the file cannot be parsed or its land section has problems (the
+// problems named).
+func LandOf(data []byte) (Land, bool, error) {
+	parsed, err := Parse(data)
+	if err != nil {
+		return Land{}, false, err
+	}
+	if _, ok := parsed["land"]; !ok {
+		return Land{}, false, nil
+	}
+	problems := SectionProblems(parsed)
+	if found := append(problems.Of(""), problems.Of("land")...); len(found) > 0 {
+		return Land{}, false, errors.New(strings.Join(found, "; "))
+	}
+	settings, _ := parsed.Land()
+	return settings, true, nil
+}
+
+// textsAt is a list of strings at key, never nil.
+func textsAt(members map[string]any, key string) []string {
+	out := []string{}
+	for _, raw := range items(members[key]) {
+		if text, ok := raw.(string); ok {
+			out = append(out, text)
+		}
+	}
+	return out
 }
 
 // Sections is every section jackstay.json takes, for a caller that needs all but some (Load's need).

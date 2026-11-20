@@ -302,7 +302,7 @@
           "type": "string"
         },
         "remote": {
-          "description": "Names the remote that `jst sync`, `jst start`, `jst tidy` and `jst gh` use; without it they take `origin`, else the remote `main` (then `master`) tracks, else the only remote.",
+          "description": "Names the remote that `jst sync`, `jst start`, `jst tidy` and `jst land` use; without it they take `origin`, else the remote `main` (then `master`) tracks, else the only remote.",
           "pattern": "\\S",
           "type": "string"
         },
@@ -313,7 +313,7 @@
         },
         "wait": {
           "additionalProperties": false,
-          "description": "Sets the defaults of `jst gh ci-wait`, `run-wait` and `pr-land`; their flags still win.",
+          "description": "Sets the defaults of `jst checks wait`, `jst checks run-wait` and `jst land`; their flags still win.",
           "properties": {
             "interval_seconds": {
               "description": "Waits this many seconds between looks at GitHub (default 20).",
@@ -460,6 +460,59 @@
       ],
       "type": "integer"
     },
+    "land": {
+      "additionalProperties": false,
+      "description": "Says how `jst land` lands a change: who merges, which method, which checks are required and which paths only a person lands.",
+      "properties": {
+        "autonomy": {
+          "description": "Chooses who merges: `merge-when-green` (the agent, when the required checks pass and no human path is touched) or `prepare` (a person).",
+          "enum": [
+            "merge-when-green",
+            "prepare"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "checks": {
+          "description": "Names checks required in addition to the base's rules, never fewer.",
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "host": {
+          "description": "Names the code host's adapter (`github`); unset, the push remote's host.",
+          "enum": [
+            "github"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "human_paths": {
+          "description": "Lists globs of paths only a person lands, besides jackstay.json, CI workflows and .claude/settings.json.",
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "method": {
+          "description": "Chooses the merge method asked of the host: `squash` (the default), `merge` or `rebase`.",
+          "enum": [
+            "squash",
+            "merge",
+            "rebase"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "required": [
+        "autonomy"
+      ],
+      "type": "object"
+    },
     "lock": {
       "additionalProperties": false,
       "description": "Turns on the machine-wide lock that heavy test runs take in turn.",
@@ -512,46 +565,6 @@
       "description": "Names the project; without it the name is the main checkout's folder name.",
       "pattern": "\\S",
       "type": "string"
-    },
-    "queue": {
-      "additionalProperties": false,
-      "description": "Turns on the local merge candidate queue and says what it lands on.",
-      "if": {
-        "properties": {
-          "enabled": {
-            "const": true
-          }
-        },
-        "required": [
-          "enabled"
-        ]
-      },
-      "properties": {
-        "base_ref": {
-          "description": "Names the full ref the queue merges onto (`refs/heads/main`, or a fetched `refs/remotes/…`); required when the queue is enabled.",
-          "pattern": "\\S",
-          "type": "string"
-        },
-        "enabled": {
-          "description": "Turns on `jst queue` for this repository.",
-          "type": "boolean"
-        },
-        "require_pull_request": {
-          "description": "Refuses a handoff that has no pull request: `jst queue add` then needs `--pr`.",
-          "type": "boolean"
-        },
-        "review_task": {
-          "description": "Requires a current, clear `jst review` round of this task for the pinned base-to-head range before handoff.",
-          "pattern": "\\S",
-          "type": "string"
-        }
-      },
-      "then": {
-        "required": [
-          "base_ref"
-        ]
-      },
-      "type": "object"
     },
     "receipts": {
       "additionalProperties": false,
@@ -863,18 +876,6 @@
         "max_concurrent": {
           "description": "Lets this project's reviews hold at most this many reviewer runs at once on the machine (default 4).",
           "type": "integer"
-        },
-        "pool": {
-          "additionalProperties": false,
-          "description": "Configures this repository's requests to the machine's reviewer queue (`jst review pool`).",
-          "properties": {
-            "accepting": {
-              "default": true,
-              "description": "Accepts new review jobs from this repository (default true); existing jobs can still be queried, retried and processed. Accept new review jobs from this repository. Existing jobs remain available for processing and retry.",
-              "type": "boolean"
-            }
-          },
-          "type": "object"
         },
         "queue_minutes": {
           "description": "Waits at most this many minutes for a source view, reviewer slots and the start lock, 1 to 120 (default 15).",

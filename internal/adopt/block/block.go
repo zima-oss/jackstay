@@ -23,7 +23,12 @@ type Inputs struct {
 }
 
 type item struct {
-	id       string
+	id string
+	// first puts the item in the block's first list: a substitution, "instead of X, run Y", which
+	// agents most need and least follow (measured over 13 sessions: raw test runners 675 times, gh
+	// 119, sleep 55, git worktree 30). The list keeps the order of items, the most frequent first;
+	// landing (`jst land`, the substitute for `gh pr merge` and a raw push) has its own item.
+	first    bool
 	commands []string
 	wanted   func(config map[string]any) bool
 	text     func(config map[string]any) string
@@ -41,45 +46,41 @@ func hasSection(name string) func(map[string]any) bool {
 }
 
 var items = []item{
-	{id: "test", commands: []string{"test", "test list", "test last"}, wanted: always, text: testText},
+	{id: "test", commands: []string{"test", "test list", "test last"}, wanted: always, first: true, text: testText},
+	{id: "checks", commands: []string{"checks"}, wanted: func(config map[string]any) bool {
+		account, _ := section(config, "github")["account"].(string)
+		return account != ""
+	}, first: true, text: fixed(
+		"- **Instead of `gh pr checks --watch` or `gh run watch`**, run `jst checks wait` or\n" +
+			"  `jst checks run-wait`; `jst checks status` reads them once. jackstay acts as `github.account`.")},
+	{id: "wait", commands: []string{"wait"}, wanted: always, first: true, text: fixed(
+		"- **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a\n" +
+			"  log line matches.")},
+	{id: "branches", commands: []string{"start", "sync", "tidy"}, wanted: always, first: true, text: fixed(
+		"- **Instead of `git worktree add` or `remove`**, run `jst start NAME` and, once it is merged,\n" +
+			"  `jst tidy --fix --branch NAME`. `jst sync` merges the default branch in; never rebase.")},
+	{id: "bg", commands: []string{"bg", "procs", "procs stop"}, wanted: always, first: true, text: fixed(
+		"- **Instead of `&` or `nohup`**, run `jst bg --for MIN --name N -- COMMAND`; `jst procs stop N`\n" +
+			"  stops it.")},
+	{id: "discard", commands: []string{"discard", "trash"}, wanted: always, first: true, text: fixed(
+		"- **Instead of `git restore` or `git checkout -- PATH`**, run `jst discard PATH…`;\n" +
+			"  `jst trash restore` brings the changes back.")},
 	{id: "evidence", commands: []string{"receipts export", "receipts verify"}, wanted: hasSection("receipts"), text: fixed(
 		"- **Share a counted pass**: `jst receipts export KEY`. Check one with `jst receipts verify`, taking\n" +
 			"  the expected digest, revision and key from a trusted source, never from the receipt.")},
-	{id: "ci-evidence", commands: []string{"receipts attest-ci", "receipts verify-ci"}, wanted: hasSection("receipts"), text: fixed(
-		"- **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity\n" +
-			"  independently of the uploaded receipt and attestation.")},
-	{id: "wait", commands: []string{"wait"}, wanted: always, text: fixed(
-		"- **Wait** for a process, a file or a log line with `jst wait … --timeout S`, never a `sleep` loop.")},
-	{id: "bg", commands: []string{"bg", "procs", "procs stop"}, wanted: always, text: fixed(
-		"- **Background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or `nohup`; `jst procs stop N`\n" +
-			"  stops it.")},
 	{id: "lock", commands: []string{"lock"}, wanted: func(config map[string]any) bool {
 		enabled, _ := section(config, "lock")["enabled"].(bool)
 		return enabled
 	}, text: fixed("- **A heavy command** others on this machine must not overlap: `jst lock -- COMMAND`.")},
-	{id: "branches", commands: []string{"start", "sync", "tidy"}, wanted: always, text: fixed(
-		"- **Branches**: `jst start NAME` makes a branch and its worktree; `jst sync` merges the default branch\n" +
-			"  in (never rebase); `jst tidy --fix --branch NAME` removes yours once it is finished.")},
-	{id: "discard", commands: []string{"discard", "trash"}, wanted: always, text: fixed(
-		"- **Drop uncommitted changes** with `jst discard PATH…`, never `git restore` or\n" +
-			"  `git checkout -- PATH`; `jst trash restore` brings them back.")},
 	{id: "guard", commands: []string{"guard"}, wanted: always, text: guardText},
-	{id: "github", commands: []string{"gh"}, wanted: func(config map[string]any) bool {
-		account, _ := section(config, "github")["account"].(string)
-		return account != ""
-	}, text: fixed(
-		"- **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,\n" +
-			"  `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in\n" +
-			"  `jackstay.json` (`github.account`).")},
+	{id: "land", commands: []string{"land"}, wanted: hasSection("land"), text: landText},
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
 		"- **Review**, outside the agent sandbox (it records the round): `jst review BASE..REV --task NAME`\n" +
 			"  (the project's reviewers; `--reviewer claude-code` or `codex,claude-code` for others);\n" +
-			"  `jst review check BASE..REV --task NAME` says if it is clear.")},
-	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
-		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
-			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
-			"  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.")},
+			"  `--background` returns at once and the result comes as a chat\n" +
+			"  event; `jst review check BASE..REV --task NAME` says if it is clear.\n" +
+			"  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(
@@ -102,11 +103,6 @@ var items = []item{
 		"- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.")},
 	{id: "profiles", commands: []string{"profile export", "profile verify"}, wanted: hasSection("adopt"), text: fixed(
 		"- **Share an adoption profile** with `jst profile export`; verify its digest before adopting it.")},
-	{id: "queue", commands: []string{"queue status", "queue test", "queue handoff", "queue reconcile"}, wanted: func(config map[string]any) bool {
-		return section(config, "queue")["enabled"] == true
-	}, text: fixed(
-		"- **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`\n" +
-			"  for the operator's landing decision. After landing, run `jst queue reconcile --commit SHA`.")},
 	{id: "chat", commands: []string{"chat serve", "setup"}, wanted: func(config map[string]any) bool {
 		return section(config, "chat")["enabled"] == true
 	}, text: fixed(
@@ -136,12 +132,14 @@ func fixed(text string) func(map[string]any) string {
 func testText(config map[string]any) string {
 	scopes := section(section(config, "test"), "scopes")
 	if len(scopes) == 0 {
-		return "- **Tests**: `jst test -- COMMAND`. Only `passed` is a pass: read the last `jst test:` line.\n" +
-			"  After a failure, `jst test last`, not a rerun (a run not logged names its output file).\n" + evidenceText
+		return "- **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test -- COMMAND`.\n" +
+			"  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`\n" +
+			"  (a run not logged names its output file).\n" + evidenceText
 	}
-	text := "- **Tests**: `jst test SCOPE` (`jst test list` names them and when each is due). Only `passed`\n" +
-		"  is a pass: read the last `jst test:` line. After a failure, `jst test last`, not a rerun (a run\n" +
-		"  not logged names its output file)."
+	text := "- **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`\n" +
+		"  (`jst test list` names them and when each is due). Only `passed` is a pass: read the last\n" +
+		"  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its\n" +
+		"  output file)."
 	if _, gate := scopes["gate"]; gate {
 		text += "\n  Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit)."
 	}
@@ -161,6 +159,20 @@ func guardText(config map[string]any) string {
 		text += " Its rules: `jackstay.json` (`guard`)."
 	}
 	return text
+}
+
+// landText follows land.autonomy: only merge-when-green lets the agent merge; any other value,
+// or none, is read as prepare.
+func landText(config map[string]any) string {
+	if autonomy, _ := section(config, "land")["autonomy"].(string); autonomy == "merge-when-green" {
+		return "- **Land a change**: `jst land --title T` pushes, opens the change request, waits for the required\n" +
+			"  checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,\n" +
+			"  `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host\n" +
+			"  (`gh pr merge` is refused), never run `--confirm`."
+	}
+	return "- **Land a change**: `jst land --title T` pushes, opens the change request and waits for the\n" +
+		"  required checks; a person merges. At `jst land: ready for a person`, say so and stop; never merge\n" +
+		"  on the host (`gh pr merge` is refused), never run `--confirm`."
 }
 
 func cardsText(config map[string]any) string {
@@ -195,22 +207,16 @@ func Render(inputs Inputs) string {
 	out.WriteString("## jst: the tools for working on this project\n\n")
 	out.WriteString("`jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,\n")
 	out.WriteString("`jst <command> --help` gives a command's flags, an example and its exit codes.\n\n")
-	for _, entry := range items {
-		if slices.Contains(inputs.LeaveOut, entry.id) || !entry.wanted(inputs.Config) {
-			continue
+	out.WriteString("### Instead of a hand-written command\n\n")
+	for _, first := range []bool{true, false} {
+		if !first {
+			out.WriteString("\n### The other tools\n\n")
 		}
-		present := true
-		for _, command := range entry.commands {
-			if !inputs.Has(command) {
-				present = false
-				break
+		for _, entry := range items {
+			if entry.first == first {
+				writeItem(&out, entry, inputs)
 			}
 		}
-		if !present {
-			continue
-		}
-		out.WriteString(entry.text(inputs.Config))
-		out.WriteString("\n")
 	}
 	if len(inputs.Rules) > 0 {
 		out.WriteString("\n### This project's organisation\n\n")
@@ -226,6 +232,20 @@ const (
 	// End is the line that closes the block.
 	End = "<!-- jackstay-adopt: end agents-block -->"
 )
+
+// writeItem writes an item when the project wants it and this jackstay has every command it names.
+func writeItem(out *strings.Builder, entry item, inputs Inputs) {
+	if slices.Contains(inputs.LeaveOut, entry.id) || !entry.wanted(inputs.Config) {
+		return
+	}
+	for _, command := range entry.commands {
+		if !inputs.Has(command) {
+			return
+		}
+	}
+	out.WriteString(entry.text(inputs.Config))
+	out.WriteString("\n")
+}
 
 // Begin is the line that opens a block whose text is body.
 func Begin(body string) string {

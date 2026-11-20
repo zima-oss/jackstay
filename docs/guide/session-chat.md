@@ -46,14 +46,13 @@ more than one agent, so use the recipient ID returned by discovery.
 - `chat.ack` acknowledges that the current recipient processed a message.
 
 The same MCP connection offers `review.submit` and `review.status`. Submit `{ "base": "main", "head": "HEAD", "task": "feature-branch",
-"reviewers": ["codex", "claude-code"] }` to pin a review range in the local pool.
-`review.status` accepts the returned `job_id` and shows only requests submitted by this
-session in this repository. Repeating the same submission returns its original job. A
-foreground `jst review pool next` worker processes one request. When an attempt completes or
-fails, the submitter receives a `review-pool` message through `chat.inbox` or its configured
-active-turn host integration. Read `review.status` for the verdict, then call `chat.ack` with
-the notification's message ID. The event survives server restarts until chat accepts it;
-acknowledgment is still the recipient's separate processing decision.
+"reviewers": ["codex", "claude-code"] }` to start `jst review` in the background on those pinned
+commits; an equal review already running is joined. `review.status` takes the `task` and shows this
+repository's running review and how its latest one ended. When the round ends, each submitter receives a
+`review.finished` message from `jackstay` through `chat.inbox` or its configured active-turn host
+integration; call `chat.ack` with its message ID once read. A result the chat could not take is kept
+by the review store and delivered when the recipient next reads its inbox. See
+[Run a review in the background](review.md#run-it-in-the-background).
 
 A successful send means the local service accepted and persisted the message. The recipient
 acknowledges processing separately. Use a reply with evidence when the requester needs to verify

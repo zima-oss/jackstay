@@ -1,24 +1,16 @@
 # Monitoring and analytics: jackstay's journal of OpenTelemetry traces, `jst log`, `jst stats`
 
-Decision: [W-056](../decisions/W-056-observability-otel-traces-local.md), from a study of what
-Claude Code and Codex expose, the state of OpenTelemetry, and the guard's refusals. Rulings it
-follows:
-[W-037](../decisions/W-037-current-go-and-dependencies.md) (current versions, checked at the source),
-[W-019](../decisions/W-019-repeated-findings-mean-redesign.md) (a place that draws findings again is
-redesigned, not patched).
-
-Status: built.
+Decision: [W-056](../decisions/W-056-observability-otel-traces-local.md); versions checked at the
+source ([W-037](../decisions/W-037-current-go-and-dependencies.md)). Status: built. How to read
+the journal is the [observability guide](../guide/observability.md).
 
 ## 0. What it is for, in one paragraph
 
-Separate per-command logs with their own field sets share no id, carry no Claude session on test
-runs, no parent process and no stack, so a guard call that failed open cannot be traced to the
-process that made it. This design gives every jackstay process one
-OpenTelemetry trace context, writes
-what each process did as spans into one local journal in the standard OTLP-JSON encoding, carries
-the context to every child through `TRACEPARENT`, records the Claude and Codex ids that join jackstay's
-spans to their sessions, and answers the questions of section 11 with two commands. jackstay's own
-stores stay the source of truth (section 9): a lost span loses no state.
+Every jackstay process gets one OpenTelemetry trace context, so any call can be traced to the
+process and session that made it. Each process writes what it did as spans into one local journal
+in OTLP-JSON, passes the context to every child through `TRACEPARENT`, records the Claude and Codex
+ids that join its spans to their sessions, and `jst log` and `jst stats` answer the questions of
+section 11. jackstay's own stores stay the source of truth (section 9): a lost span loses no state.
 
 ## 1. Versions, checked at the source on 2026-11-17 (W-037)
 
@@ -29,14 +21,9 @@ stores stay the source of truth (section 9): a lost span loses no state.
 | JSON of protobuf | `google.golang.org/protobuf` at the version `proto/otlp` v1.11.1 requires | its go.mod |
 | GenAI conventions | repository `open-telemetry/semantic-conventions-genai`, commit **`e6658f14c9d9ea0760825f029cb82e7673f48fab`** (2026-11-06; the repository has no tags), schema `https://opentelemetry.io/schemas/gen-ai-dev/1.42.0-dev`, stability *development*; built on semconv **v1.45.0** | GitHub API, `model/manifest.yaml` at that commit |
 
-The stable parts used: the Tracing API and SDK, the W3C trace context, the OTLP v1 data model and
-its JSON encoding (OTLP specification, "JSON Protobuf Encoding": ids as hex strings, enums as
-numbers, lowerCamelCase names), semconv's stable `error.type`, `exception.*`, `service.*`. What is
-*development* — every `gen_ai.*` name and the environment-variable carrier of `TRACEPARENT`
-(release candidate) — is confined to one adapter (section 6) or is trivially the W3C header text.
-
-No metrics SDK, no logs SDK, no exporter module, no collector, no network. The SDK's
-`resource.Default()` detectors are not used (they probe the host); the resource is built by hand.
+Everything *development* (every `gen_ai.*` name, the environment carrier of `TRACEPARENT`) is
+confined to one adapter (section 6) or is the W3C header text. No metrics or logs SDK, no exporter
+module, no collector, no network; the resource is built by hand, without `resource.Default()`.
 
 ## 2. The span model
 
@@ -52,9 +39,8 @@ them:
 | **child** | `exec <argv0 base name>` (`exec just`, `exec go`, `exec codex`) | CLIENT | every process started through `supervise.Run` (the one runner) | the phase or command that starts it |
 | **agent** | `invoke_agent codex` (GenAI, section 6) | CLIENT | each Codex run of `jst review`: a span `internal/review` owns, opened before the run and ended only after the run's `events.jsonl` is read and its outcome known; the run's `exec codex` child span is under it | the attempt |
 
-Not spanned, and why: each `git` call through `gitcli` (hundreds per command, milliseconds each;
-they get `TRACEPARENT` through the environment and are summed on the phase as
-`jackstay.git.calls`/`jackstay.git.seconds`); reads of files and the process table.
+Not spanned: `git` calls (summed on the phase as `jackstay.git.calls`/`jackstay.git.seconds`), and
+reads of files and the process table.
 
 **Span events** (point facts inside a span, never spans of their own):
 
@@ -64,35 +50,25 @@ they get `TRACEPARENT` through the environment and are summed on the phase as
 | `jackstay.test.verdict` | a test step or gate step | `jackstay.test.outcome` (the receipts vocabulary: passed, failed, reused, …), `jackstay.test.count`, `jackstay.test.key`, `jackstay.test.head` |
 | `jackstay.review.verdict` | a round | `jackstay.review.outcome`, `jackstay.review.findings` by severity (`jackstay.review.findings.blocker` …), `jackstay.review.disposition` |
 | `jackstay.codex.turn` | the agent span | the turn's usage (section 6), `jackstay.codex.turn.index`, `jackstay.codex.turn.failed` |
-| `jackstay.bg.started` / `jackstay.bg.requested_outside` | `jst bg`'s span (a confirmed start) / the guard's span (a request: on the guard's decision, allowed or refused, recorded with it) | `jackstay.github.operation`, `jackstay.github.repository`, `jackstay.github.pull_request` | string, string, int | `jst gh`'s subcommand and the repository and number of a resolved pull request |
-| `jackstay.bg.id`, `jackstay.bg.deadline`; for a request, the guard's outcome on it |
+| `jackstay.bg.started` / `jackstay.bg.requested_outside` | `jst bg`'s span (a confirmed start) / the guard's span (a request: on the guard's decision, allowed or refused, recorded with it) | `jackstay.bg.id`, `jackstay.bg.deadline`; for a request, the guard's outcome on it |
 | `jackstay.lock.acquired` | a wait span | `jackstay.lock.holder_pid` (the holder before, from its note), `jackstay.lock.queued`; the note's text is never recorded (it holds the holder's raw argv) |
 | `exception` (semconv, stable) | any span that ends by a panic or a fault | `exception.type`, `exception.message`, `exception.stacktrace` (`runtime/debug.Stack()` at the recover) |
 
-**Status and errors.** A span's status is *Error* when its operation did not do what was asked:
-a command's exit status is not 0, a child exited non-zero or by a signal, a wait gave up, a Codex
-run's outcome is not `done`, the guard failed open. `error.type` (stable semconv) names the class
-in jackstay's own words (`exit_1`, `signal_SIGTERM`, `timeout`, `gave_up`, `no_verdict`, `panic`,
-`failed_open`); `jackstay.outcome` keeps the command's own outcome word (a test's `failed`, a guard's
-`refused`) so a query can tell a red test from a crash. A refusal by the guard is not an error
-(it is the guard working); its status is *Unset* and its outcome `refused`.
+**Status and errors.** A span is *Error* when its operation did not do what was asked: exit status
+not 0, a child ended non-zero or by a signal, a wait gave up, a Codex run not `done`, the guard
+failed open. `error.type` names the class (`exit_1`, `signal_SIGTERM`, `timeout`, `gave_up`,
+`no_verdict`, `panic`, `failed_open`); `jackstay.outcome` keeps the command's own word, so a red
+test differs from a crash. A guard refusal is not an error: status *Unset*, outcome `refused`.
 
-**Every span is ended, a signalled command's included.** `internal/telemetry` keeps the process's
-open spans on a stack. `telemetry.Finish(status)` ends them innermost first (each still open
-ends with `jackstay.outcome` = `stopped`, status Error, `error.type` = `signal_<NAME>` when a signal
-is the cause) and flushes; it is idempotent and bounded (it gives up after 200 ms). It is called
-by `cli.Main` after `entry.Run` returns, and by `supervise.EndBy` **before** it restores the
-signal's default action and signals jackstay itself (`internal/supervise/signals.go`: `jst test` and
-`jst bg` end that way when stopped, and `entry.Run` never returns). A process killed by SIGKILL
-or that crashes in the runtime writes nothing for its open spans; their ended children are in the
-journal, and `jst log` shows such a child under "parent not recorded".
+**Every span is ended, a signalled command's included.** `telemetry.Finish(status)` ends the open
+spans innermost first (still open: `jackstay.outcome` = `stopped`, `error.type` = `signal_<NAME>`)
+and flushes, idempotent and bounded at 200 ms. `cli.Main` calls it after `entry.Run`, and
+`supervise.EndBy` before it re-raises a signal. A process killed by SIGKILL writes nothing for its
+open spans; `jst log` shows their ended children under "parent not recorded".
 
-**The caller.** Every command span carries `process.pid` and `process.parent_pid`. The guard's
-span, when the guard fails open or panics, also carries `jackstay.caller.argv` — the parent
-process's arguments (masked, section 7), read from the kernel (`sysctl kern.procargs2` on darwin,
-`/proc/<ppid>/cmdline` on linux), at most 1 KiB; only then, for its latency budget (section 8). So
-a guard started with an empty standard input records its caller's argv, its pid and the inherited
-trace.
+**The caller.** Every command span carries `process.pid` and `process.parent_pid`. A guard that
+fails open or panics also records `jackstay.caller.argv`: the parent's arguments, masked, from the
+kernel (`kern.procargs2`, `/proc/<ppid>/cmdline`), at most 1 KiB.
 
 ## 3. Attributes
 
@@ -100,8 +76,7 @@ Resource (one per process, written on every line): `service.name` = `jst`, `serv
 `internal/version`, `jackstay.build.commit`, `process.pid`, `process.parent_pid`, `host.name` is **not**
 recorded (one machine), `jackstay.project` (the project's name, `config.ProjectName`, or absent).
 
-`jackstay.*` attributes (no convention covers them; they are jackstay's and stable by jackstay's own rule — a rename
-is a change to this section and to the queries in the same commit):
+`jackstay.*` attributes (a rename changes this table and the queries in the same commit):
 
 | attribute | type | on |
 |---|---|---|
@@ -118,89 +93,64 @@ is a change to this section and to the queries in the same commit):
 | `jackstay.review.task`, `jackstay.review.round`, `jackstay.review.attempt`, `jackstay.review.store` | string/int | review phases; `jackstay.review.store` is the round's folder (the link into jackstay's store, section 9) |
 | `jackstay.test.scope`, `jackstay.test.key`, `jackstay.test.run_id`, `jackstay.test.output` | string | test phases; `jackstay.test.output` is the kept output's path |
 | `jackstay.bg.id`, `jackstay.bg.name` | string | `jst bg` |
+| `jackstay.github.operation`, `jackstay.github.repository`, `jackstay.github.pull_request` | string, string, int | `jst checks` and `jst land status`/`find`: the subcommand; with `jst land`, the repository and number of a resolved pull request |
 | `jackstay.lock.name`, `jackstay.lock.path`, `jackstay.wait.gave_up` | string/bool | wait spans |
 | `jackstay.guard.command` | string | guard: the masked command, at most 1,000 bytes; `jackstay.guard.command_sha256` of the unmasked text so equal commands stay equal |
 | `jackstay.git.calls`, `jackstay.git.seconds` | int/double | phases and command |
 
-The raw Claude and Codex ids are kept under `jackstay.*` as well as under the adapter's `gen_ai.*`
-names on purpose: the queries read them through the adapter (section 6), and if a revision of the
-conventions renames `gen_ai.conversation.id`, the journal written before the change still answers.
+The raw Claude and Codex ids are kept under `jackstay.*` beside the adapter's `gen_ai.*` names, so
+an older journal still answers after the conventions rename one.
 
 ## 4. The journal: OTLP-JSON lines under `~/.jackstay`
 
-**Where.** `<jackstay home>/<project marker>/telemetry/<YYYY-MM-DD>.otlp.jsonl` — the project's own
-folder (`homedir.ProjectPath`), so each project's retention follows its own `jackstay.json`; a process
-with no project writes under `<jackstay home>/.all/telemetry/`. The date is the local date when the span
-ended. Folder 0700, files 0600.
+**Where.** `<jackstay home>/<project marker>/telemetry/<YYYY-MM-DD>.otlp.jsonl`, so each project's
+retention follows its own `jackstay.json`; a process with no project writes under `.all/telemetry/`.
+The date is the local date the span ended. Folder 0700, files 0600.
 
-**What a line is.** One `TracesData` message of the OTLP v1 protocol in its JSON encoding, on one
-line: one `ResourceSpans` (the process's resource), one `ScopeSpans` (scope `jst`, version the jackstay
-version), and the span(s) ended together — usually one. A line is self-contained, so any OTLP
-file reader (the specification's file exporter format, otel-desktop-viewer, a collector's
-`otlpjsonfile` receiver) reads the folder as it is; no separate export step exists.
+**A line** is one OTLP v1 `TracesData` in its JSON encoding: one `ResourceSpans`, one `ScopeSpans`
+(scope `jst`, the jackstay version), and the span(s) ended together. Lines are self-contained, so any
+OTLP file reader (a collector's `otlpjsonfile` receiver, otel-desktop-viewer) reads the folder as it
+is.
 
-**The exporter** (`journal.Exporter`, implementing the SDK's `trace.SpanExporter`), registered
-with `trace.WithSyncer` — the SDK's simple processor, so each span is written synchronously when
-it ends, and a process that crashes after a span ended has written it:
+**The exporter** (`journal.Exporter`, registered with `trace.WithSyncer`, so a span is written when
+it ends):
 
-1. The SDK's `ReadOnlySpan`s are converted to the shape of OTLP v1's `ResourceSpans` — the
-   conversion is jackstay's, written against the proto and the SDK's read-only interface.
-2. Every string attribute value, event attribute and status message passes the mask (section 7).
-3. The message is encoded in OTLP's JSON encoding (ids as lowercase hex, enums as numbers,
-   64-bit integers as strings) by jackstay's own structs and `encoding/json`, not `protojson`: the
-   protobuf runtime in the binary cost the guard's latency budget (section 16). The pinned
-   `go.opentelemetry.io/proto/otlp` stays the reference: package
-   `journal/otlpcheck` (imported by tests only) decodes every line of the tests' journals with
-   `protojson` into `tracepb.TracesData` and encodes it back, and the two must be equal.
-4. The day file is opened for reading and appending, locked with `flock(LOCK_EX)` tried without
-   blocking every 5 ms for at most 200 ms, written in one `write`, unlocked, and closed. If the
-   last byte is not a newline, the append starts with one. This keeps a fragment from an interrupted
-   write separate from the new span, so readers can report the damaged line and read the new one.
-   A lock not had in 200 ms drops the line.
-5. A line larger than 256 KiB has its largest attribute values cut to 4 KiB each with
+1. Converts the SDK's `ReadOnlySpan`s to OTLP `ResourceSpans`.
+2. Masks every string attribute, event attribute and status message (section 7).
+3. Encodes OTLP JSON (ids lowercase hex, enums as numbers, 64-bit integers as strings) with its own
+   structs and `encoding/json`, not `protojson` (section 16). `journal/otlpcheck` (tests only)
+   round-trips every test line through the pinned proto's `protojson`, and the two must be equal.
+4. Appends in one `write` under `flock(LOCK_EX)`, tried every 5 ms for at most 200 ms (else the line
+   is dropped). If the file's last byte is not a newline, the line starts with one, so a torn write
+   stays its own damaged line.
+5. Cuts a line over 256 KiB by cutting its largest attribute values to 4 KiB, with
    `jackstay.truncated` = true; a span is never split.
-6. When the open created the day's file, the folder's upkeep runs (section 10), after the write.
+6. Runs the folder's upkeep (section 10) after the write that created a day's file.
 
-The exporter never fails a command: every error is swallowed. `JACKSTAY_TELEMETRY=off` turns the
-provider into a no-op (for the latency measurement of section 8 and for tests that must not see a
-journal); nothing else reads it.
+The exporter never fails a command. `JACKSTAY_TELEMETRY=off` makes the provider a no-op.
 
-**Reading.** `journal.Read(folders, from, to)` yields the spans that **overlap** the range —
-started before `to` and ended at or after `from`. Files are named by the end date, so it reads
-every day file from `from`'s date through today (a span ending after `to` is in a later file),
-and keeps a span only if it overlaps; reports that sum time (`load`, `sessions`, `phases`) clip
-each span to the range. Of one date, it reads **one** file: the plain `.otlp.jsonl` when it
-exists (upkeep removes it only after the `.gz` was verified whole, so while both exist the plain
-one is complete), else the `.gz` — never both, so an upkeep stopped between its rename and its
-removal counts nothing twice (a test runs the queries in that state). It yields spans flattened into one Go record each
-(trace, span, parent, name, kind, start, end, status, attributes, events, resource attributes),
-decoding the lines with `encoding/json` into jackstay's own small mirror of the OTLP JSON shape (the
-reader does not need protobuf). It reads only the files whose date lies in the range, `.gz` ones
-through `gzip`, skips a line it cannot decode and counts it (`jst log` and `jst stats` print the
-count on standard error), and tolerates a torn last line.
+**Reading.** `journal.Read(folders, from, to)` yields the spans that **overlap** the range, reading
+every day file from `from`'s date through today (files are named by end date); time-summing reports
+clip spans to the range. Of one date it reads one file: the plain one when it exists, else the
+`.gz` (upkeep removes the plain one only after verifying the `.gz`), so nothing counts twice. Spans
+come flattened into one Go record each, decoded with `encoding/json` into a small mirror of the
+OTLP shape. A line it cannot decode is skipped and counted (printed on standard error); a torn last
+line is tolerated.
 
 ## 5. Context: `TRACEPARENT` in and out
 
 - **In.** `cli.Main` reads `TRACEPARENT` (and `TRACESTATE`) from its environment with the SDK's W3C
   `propagation.TraceContext` over an environment carrier. A valid value makes the command span its
-  child (a remote parent): jackstay under jackstay (`jst test` → `just` → `jst check`), and jackstay under Claude Code
-  when the user turns on Claude's beta tracing (then a jackstay command is a true child of Claude's
-  `claude_code.tool` span). An invalid value is ignored and recorded as `jackstay.traceparent.invalid`.
-  The sampled flag of the parent is ignored: jackstay always records (`sdktrace.AlwaysSample`), its
-  journal is not a sample.
-- **Out.** As soon as the command span exists, `cli.Main` sets `TRACEPARENT` in its own process
-  environment to the command span, so every child started by any path (`exec.Command` in `gitcli`,
-  `os.StartProcess` in `supervise`) inherits it. `supervise.Run` additionally gives each child the
-  context of that child's own span (its `Spec.Env`, or jackstay's environment with `TRACEPARENT`
-  replaced), so a jackstay command run as a test step is the child of that step's `exec` span.
+  child: jackstay under jackstay, and under Claude Code's beta tracing a child of its
+  `claude_code.tool` span. An invalid value is ignored and recorded as
+  `jackstay.traceparent.invalid`. The sampled flag is ignored: jackstay always records.
+- **Out.** `cli.Main` sets `TRACEPARENT` in its own environment to the command span, so every child
+  inherits it; `supervise.Run` gives each child its own `exec` span's context instead.
 - **Claude's ids** come from the hook input in the guard (`session_id`, `tool_use_id`,
   `prompt_id`, `agent_id`, `agent_type`, `transcript_path`) and from `CLAUDE_CODE_SESSION_ID` in
-  every other command (present in Bash children; undocumented, so best effort).
-  `CLAUDE_CODE_SESSION_ID` is passed on to children unchanged (it is already in the environment).
-- **Codex's id** is the `thread_id` of the `thread.started` event in the round's `events.jsonl`
-  (written by `jst review` today); it is the join key into `~/.codex/sessions`. Codex is not given
-  a `TRACEPARENT` it would honour (not documented); it gets it in its
-  environment anyway, harmless.
+  every other command (undocumented, so best effort).
+- **Codex's id** is the `thread_id` of the `thread.started` event in the round's `events.jsonl`,
+  the join key into `~/.codex/sessions`.
 
 **What joins what, exactly:**
 
@@ -236,20 +186,16 @@ The only package that knows a `gen_ai.*` name. It holds the pinned revision as c
   `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens`,
   `gen_ai.usage.reasoning.output_tokens`; `error.type` on failure. Each turn is a `jackstay.codex.turn`
   event with the same usage names (the turn's own).
-- `Tracer(provider)` gives the tracer the GenAI-annotated spans are created from, made with
-  `trace.WithSchemaURL(SchemaURL)` (in v1.47 the schema URL belongs to the tracer, not to a
-  span); the agent span is created from it, so its line's `ScopeSpans` carries the pinned
-  schema. Every other span comes from jackstay's own tracer (scope `jst`, no schema URL).
+- `Tracer(provider)` is made with `trace.WithSchemaURL(SchemaURL)`; the agent span comes from it, so
+  its `ScopeSpans` carries the pinned schema. Other spans use jackstay's tracer (scope `jst`).
 
 **Reading** — the queries never name a `gen_ai.*` attribute; they call the adapter:
 `ConversationOf(span)`, `ToolCallOf(span)`, `AgentRunOf(span)` (provider, agent, model, thread,
 usage, failure) and `IsAgentRun(span)`. Each reads the current names and falls back to the
 `jackstay.*` raw copy, so a journal written under an older revision still answers.
 
-**Golden tests** (`internal/telemetry/golden`, run in the gate and named in the
-update procedure below). Five scenarios, each produced by the real instrumented code paths with a
-fake clock, fake ids and fakes at the edges (a fake Codex printing a recorded `--json` stream, a
-hook input from a fixture), written to a journal in `t.TempDir()`; then **both** checked:
+**Golden tests** (`internal/telemetry/golden`, in the gate): five scenarios run through the real
+code with a fake clock, fake ids and fakes at the edges, each checked for content and query answer:
 
 | scenario | produced by | content checked (golden file of the normalised spans: ids and times replaced by order) | query answer checked |
 |---|---|---|---|
@@ -259,23 +205,14 @@ hook input from a fixture), written to a journal in `t.TempDir()`; then **both**
 | error | the guard given empty standard input under a parent whose argv is known; and a command that panics | the guard span with status Error, `error.type` = `failed_open`, `jackstay.caller.argv`, `process.parent_pid`; the panicking command's span with an `exception` event holding the stack | `jst stats guard` lists the failed-open call with its caller; `jst log --outcome error` shows the stack's first frames |
 | nested agent | a Claude subagent's call (`agent_type` = `Explore`) through the guard, then `jst review` started under the same session with an inherited `TRACEPARENT`, running Codex | the guard span with `gen_ai.agent.name` = `Explore`; `jst review`'s command span the child of the inherited parent; `invoke_agent codex` three levels below; one conversation id on all | `jst log --session ID` shows one tree under the inherited parent with the guard call beside it, and `jst stats sessions` attributes the review's minutes and tokens to the session |
 
-**Update procedure** (written into the package's doc comment): moving the pinned revision, or
-`otel`/`proto-otlp`, is one commit that changes the constants, regenerates nothing by hand, runs
-the golden tests, and changes the golden files only where the conventions changed a name — the
-diff of the golden files is the review of the migration. The query answers must not change.
+**Update procedure**: moving the pinned revision, `otel` or `proto-otlp` is one commit that changes
+the constants and the golden files only where a name changed; the query answers must not change.
 
 ## 7. Secrets and content in command text
 
-W-056 keeps command text with secrets masked, and no classifier of arbitrary shell text can keep
-the text and also promise that no content is ever recorded. So this section states what is
-protected, against what, and gives the user the strict alternative as a setting.
-
-**Threat model.** The journal is local: files 0600 under `~/.jackstay`, the user's account, nothing sent
-anywhere by jackstay. Every command an agent runs is already stored verbatim, at the same permissions, in
-Claude Code's transcripts on the same disk (`~/.claude/projects`). What
-masking protects against is a journal **leaving** that boundary by hand: a `jst log` excerpt pasted
-into a pull request or chat, a day file attached to a bug report, a load into a viewer. So the
-guarantees are:
+**Threat model.** The journal is local (files 0600, nothing sent), and Claude Code's transcripts
+already hold every command verbatim. Masking protects a journal that **leaves** by hand: an excerpt
+pasted into a pull request, a day file attached to a bug report. The guarantees:
 
 1. **Secrets** — credentials recognised by name, position or shape (below) — are never written, in
    any mode. This is the promise the tests hold, on all four command attributes.
@@ -285,14 +222,9 @@ guarantees are:
    body) is reduced where its place is known, and otherwise kept in `masked` mode as part of the
    command text, exactly as the transcript already keeps it. `skeleton` mode removes all of it.
 
-**Identity attributes are never touched.** Ids and digests — `jackstay.head`, `jackstay.test.head`, `jackstay.test.key`,
-`jackstay.test.run_id`, `jackstay.guard.command_sha256`, `jackstay.codex.thread_id`, the `jackstay.claude.*` ids,
-`jackstay.bg.id`, `jackstay.review.*`, `gen_ai.conversation.id`, `gen_ai.tool.call.id`, `gen_ai.agent.id`,
-`process.pid`/`parent_pid`, trace and span ids — are declared identities in
-`internal/telemetry`'s table of names. Every attribute name must be in that table, as an identity,
-a command attribute, free text or a plain value (numbers, outcomes, rule names); an undeclared
-name is refused at the call, and a test walks every instrumented path, so nothing escapes
-classification by being new.
+**Every attribute name is declared** in `internal/telemetry`'s table as an identity (ids and
+digests, never masked), a command attribute, free text or a plain value; an undeclared name is
+refused at the call, and a test walks every instrumented path.
 
 **Command attributes** (`jackstay.guard.command`, `jackstay.args`, `jackstay.child.argv`, `jackstay.caller.argv`). A command
 text is split into simple commands and words by `mvdan.cc/sh` (the guard's parser, already a
@@ -323,15 +255,13 @@ what they run is classified as a command of its own: `env`, `nohup`, `time`, `ti
   operators; every other word is `<N bytes>`.
 
 Examples (golden fixtures): `curl -u user:pw https://api` → `curl -u *** https://api`;
-`sshpass -p s3cr3t ssh host` → `sshpass -p *** ssh host`; `curl -H 'X-Api-Key: 3f…' https://api` →
-`curl -H *** https://api`; `codex exec 'Review the plan'` → `codex exec <15 bytes>`;
-`jst bg --for 47 -- codex exec 'p'` → `jst bg --for 47 -- codex exec <1 bytes>`;
-`sed -i '' 's/old/confidential/' note.txt` → `sed -i '' <20 bytes> note.txt`; `git reset --hard
-HEAD~1` unchanged; and in `skeleton` mode `git checkout -- docs/plan.md` → `git checkout -- <12 bytes>`.
+`codex exec 'Review the plan'` → `codex exec <15 bytes>`; in `skeleton` mode
+`git checkout -- docs/plan.md` → `git checkout -- <12 bytes>`.
 
 **Free text** (status and exception messages, stacks) is masked by the same token
 shapes, URL userinfo, `Authorization`/`Cookie`/`Bearer`/`Basic` values and `NAME=value` rules, and
-cut to 4 KiB. It comes from jackstay's own words and exit descriptions, never from a child's output, and never from a text that embeds another process's argv (the lock's holder note is reduced to its pid, section 2); a test makes a lock contended by `jst lock -- sshpass -p s3cr3t ssh host` and finds no `s3cr3t` in the journal in either mode.
+cut to 4 KiB. It comes from jackstay's own words, never a child's output or another process's argv
+(the lock's holder note is reduced to its pid).
 
 **The setting**: `telemetry.commands` in `jackstay.json` (section 10) — `masked` (the default: command
 text kept with secrets masked, W-056) or `skeleton`. `jackstay.guard.command_sha256` of the unreduced
@@ -339,45 +269,24 @@ text is written in both modes, so equal commands stay equal.
 
 ## 8. The guard: what it writes and what it may cost
 
-The guard writes **every** call: an allowed Bash call as its command span with the decision event
-(outcome `allowed`, the masked command, the Claude ids) — about 0.6 KiB; a refusal, a warning, a
-failed-open or a crash in full (rules, warnings, the caller, the stack). Non-Bash calls write a
-span with outcome `ignored_tool` and no command. All of it after the answer is on standard
-output, in the existing "after" step (bounded by `exitBy`), as the guard's log is written today.
+The guard writes **every** call after its answer, bounded by `exitBy`: an allowed call as its span
+and decision event (about 0.6 KiB), a refusal, warning, failure or crash in full, a non-Bash call
+as `ignored_tool` with no command.
 
-**Budget: +1 ms on the median** of the hook's wall time, measured end to end (process start to
-exit, as Claude Code waits for it). The measurement: the built binary run 500 times on a recorded
-allowed call and 500 times on a refused one, each with `JACKSTAY_TELEMETRY=off` and on, interleaved,
-a fresh `JACKSTAY_HOME`; median and p95 of each. The `just guard-latency` recipe runs it (measured). If the budget is not met,
-the order of remedies: (1) build the provider lazily after the answer, so nothing of OpenTelemetry
-runs before it; (2) skip the caller's argv on allowed calls (already the design); (3) write allowed
-calls without the SDK through the same exporter's line writer.
-
-The guard keeps no log of its own: the span is the guard's only record.
+**Budget: +1 ms on the median** of the hook's wall time, process start to exit. `just
+guard-latency` runs the built binary 500 times each on an allowed and a refused call, telemetry off
+and on, interleaved, with a fresh `JACKSTAY_HOME`, and reports median and p95. The span is the
+guard's only record.
 
 ## 9. jackstay's stores stay the source of truth
 
-Receipts, `runs.jsonl`, the review folders and ledgers, the process table (`procs`), the id
-counters, the expected list, the gate's marks: unchanged, written first, read by the commands as
-today. Spans **observe** them: a span is made after (or around) the write it describes and links
-to it by path or id (section 5, the last row). No command reads the journal to decide anything;
-`jst log`, `jst stats` and the 7-day window of `jst doctor` (a report, not a decision) are its only readers. A journal deleted whole changes no command's
-behaviour (a test of each instrumented command runs it with the journal folder unwritable).
-
-The guard and the process table keep no separate event logs: `jst stats` and `jst log` answer from
-the journal, the `jst bg` events `held` and `cleaned` are span events too, and `jst doctor`'s 7-day
-window reads the guard's spans (a config error is the span attribute `jackstay.guard.config_error`).
-`runs.jsonl` stays: receipts read it.
+Receipts, `runs.jsonl`, review folders, `procs`, id counters, the expected list and gate marks are
+written first and read by the commands. Spans **observe** them and link to them by path or id. No
+command reads the journal to decide anything; its readers are `jst log`, `jst stats` and
+`jst doctor`'s 7-day report. A journal deleted whole changes no behaviour (each instrumented
+command is tested with the folder unwritable). The guard and `jst bg` keep no other event log.
 
 ## 10. Retention, compression, the `telemetry` section of `jackstay.json`
-
-```json
-"telemetry": {
-  "keep_days": 180,
-  "compress_after_days": 14,
-  "commands": "masked"
-}
-```
 
 | key | meaning | default | bounds |
 |---|---|---|---|
@@ -385,24 +294,17 @@ window reads the guard's spans (a config error is the span attribute `jackstay.g
 | `compress_after_days` | a day file older than this is gzipped to `<date>.otlp.jsonl.gz` | 14 | 1–3650 |
 | `commands` | how command text and argv are recorded (section 7): `masked` or `skeleton` | `masked` | one of the two |
 
-Strict like every section (unknown keys refused; `internal/config`'s table). A project without the
-section gets the defaults; `.all` always gets the defaults.
+A project without the section, and `.all`, get the defaults.
 
-**Upkeep** runs in the process that creates a folder's day file (so at most once a day per
-project, by whichever jackstay process comes first), after its own write, under a non-blocking lock
+**Upkeep** runs in the process that creates a day file, after its write, under a non-blocking
 `telemetry/.upkeep.lock` (held: skip). It gzips each plain file older than `compress_after_days`
-(write `.gz.partial`, fsync, rename, then remove the plain file — a stop in between leaves both,
-and the next upkeep removes the plain one only when the `.gz` decodes whole), deletes each file
-older than `keep_days`, and stops after 2 seconds of work (the rest waits for tomorrow). The
-guard runs upkeep only inside its `exitBy` bound; `jst tidy` is not involved.
-
-Size, *inferred* (a few thousand guard calls a day at ~0.6 KiB, plus the other commands' spans): a
-few MB a day before gzip, under 1 GB for 180 days.
+(`.gz.partial`, fsync, rename, then remove the plain file only once the `.gz` decodes whole),
+deletes files older than `keep_days`, and stops after 2 s of work. The guard runs it only inside
+its `exitBy` bound. Size, *inferred*: a few MB a day before gzip.
 
 ## 11. The questions the system must answer (acceptance tests)
 
-Each is a test over a journal produced by the instrumented code (section 13), asserting the
-answer, not the formatting. The aim is to find out exactly what happened.
+Each is a test over a journal produced by the instrumented code, asserting the answer.
 
 | # | question | answered by |
 |---|---|---|
@@ -423,31 +325,17 @@ answer, not the formatting. The aim is to find out exactly what happened.
 
 ## 12. `jst log` and `jst stats`
 
-```
-jst log [--since DUR|TIME] [--until TIME] [--project P|--all-projects] [--session ID]
-       [--trace ID] [--tool-call ID] [--command NAME] [--outcome WORD|error]
-       [--tree] [--json] [--limit N]
-jst stats [REPORT] [--since DUR|TIME] [--until TIME] [--project P|--all-projects]
-         [--session ID] [--by version|project|day] [--json] [--claude]
-```
+Flags: `jst log --help`, `jst stats --help`; use: the [observability guide](../guide/observability.md).
 
 - Defaults: `jst log` the last 24 hours of the current project's folder (`--all-projects` reads
   every project's and `.all`); `jst stats` the last 30 days. `--session`, `--trace` and
   `--tool-call` read every project (a session crosses projects). `--since` takes `2h`, `7d`, or an
   RFC 3339 time.
-- `jst log` prints one line per command span (time, project, command, outcome, duration, short
-  session), indented children with `--tree` (implied by `--trace`), events under their span.
-  `--json`: one JSON object per span — jackstay's flattened reading record (section 4), stable keys,
-  for `jq`/DuckDB.
-- `jst stats` alone lists the reports; `jst stats REPORT` prints a table; `--json` the same as one
-  JSON object (`{"report": …, "range": …, "rows": [...], "unreadable_lines": N}`).
-- Reports: `guard`, `refusals`, `flaky`, `tests`, `phases`, `reviews`, `background`, `sessions`,
-  `load` (section 11). Each is a Go function from spans to rows, unit-tested on its own;
-  derived episodes (retry after refusal, flakiness, convergence) are computed at query time, so
-  their definitions can improve without touching the journal.
+- `jst log --json` prints one object per span: the flattened reading record of section 4, stable
+  keys. `jst stats REPORT --json` prints `{"report", "range", "rows", "unreadable_lines"}`.
+- Reports (section 11) are Go functions from spans to rows; derived episodes (retry after refusal,
+  flakiness, convergence) are computed at query time, never stored.
 - Exit 0 with an answer (an empty one included), 2 for usage, 1 when no folder could be read.
-- The AGENTS block (`internal/adopt/block`) names both commands: an agent reaches for them after a
-  surprising failure, before asking what happened.
 
 ## 13. Packages and seams
 
@@ -456,8 +344,7 @@ jst stats [REPORT] [--since DUR|TIME] [--until TIME] [--project P|--all-projects
 | `internal/telemetry` (the one shared package) | the provider (`Start` from `cli.Main`, `Finish` with the exit status, panic capture), `Phase`/`Wait`/`Child` helpers that take a `context.Context` or fall back to the command span, `ChildEnv` (TRACEPARENT out), the caller's argv, the `jackstay.*` names |
 | `internal/telemetry/journal` | the exporter (conversion, mask hook, OTLP JSON, lock, day files), upkeep, the reader; `journal/otlpcheck` (tests only) holds the pinned proto |
 | `internal/telemetry/mask` | section 7: the word classifier over the guard's parser, the free-text shapes, the output sweep (section 16) |
-| `internal/telemetry/genai` | section 6 |
-| `internal/telemetry/golden` | the golden scenarios of section 6 and their fixtures |
+| `internal/telemetry/genai`, `/golden` | section 6 |
 | `internal/telemetry/query` | what `jst log` and `jst stats` share: reading, ranges, clipping |
 | `internal/logs` (`jst log`) and `internal/stats` (`jst stats`, nine reports, the transcript reader for `--claude`) | section 12 |
 | `internal/cli` | the command span around `entry.Run`; `TRACEPARENT` in and out; `cli.Main` recovers a panic only to record it, then panics again (the crash is unchanged) |
@@ -465,51 +352,30 @@ jst stats [REPORT] [--since DUR|TIME] [--until TIME] [--project P|--all-projects
 | `internal/flock` | a wait span in `Acquire`/`WaitFile` when the lock was not free at once |
 | `internal/review` | the attempt spans; the agent span it owns around each Codex run, annotated from the attempt's `events.jsonl` and the run's outcome before it ends |
 | `internal/receipts` (`RunLog.Write`) | each run-log line also becomes a span start/end or a verdict event — the seam for `jst test` and the gate, so `internal/testing` knows nothing of telemetry |
-| `internal/procs`, `internal/procs/background` | `jst bg` start/end/deadline events, unregistered processes |
-| `internal/guard` (hook) | the decision span and the tool-call annotation, in the existing "after" step; stack on a recovered panic |
-| `internal/config` | the `telemetry` section's types and bounds |
+| `internal/procs`, `internal/procs/background` | `jst bg` events, unregistered processes |
+| `internal/guard` (hook) | the decision span and the tool-call annotation; stack on a recovered panic |
 
-Dependencies: `go.opentelemetry.io/otel`, `/otel/trace`, `/otel/sdk`, and, for tests only,
-`go.opentelemetry.io/proto/otlp` with `google.golang.org/protobuf`. `govulncheck` and `gosec` run
-over them in the gate.
+`proto/otlp` and `protobuf` are test-only dependencies.
 
 ## 14. Tests
 
-- **Unit**: the exporter (lines decode as OTLP via `protojson`; ids hex; one line per span; the
-  200 ms lock give-up with a held `flock`; a 256 KiB span cut; an unwritable folder changes
-  nothing); upkeep with a fake clock (compress, delete, the `.gz.partial` stop, a corrupt `.gz`
-  kept with its plain file, the 2 s bound); the mask corpus; `TRACEPARENT` in (valid, invalid,
-  unsampled) and out (the child sees its own span); the reader (gz, torn line, a range); each
-  report on hand-built spans; `jst log` filters and tree.
-- **Golden** (section 6): five scenarios, content and query answers, produced by the guard hook,
-  `jst review` with a fake Codex through the real runner, and `cli.Main`.
-- **Acceptance** (section 11): A1–A14, each over a journal produced by running the instrumented
-  code (in-process, fakes at the edges), asserting the answers (`internal/stats/acceptance_test.go`;
-  A3, A4, A8, A10 and A13 also in the golden scenarios, A14 in `internal/telemetry`).
-- **Integration** (`//go:build integration`): the built binary — a `jst test -- sleep 30` stopped
-  by SIGTERM leaves its command span ended with outcome `stopped` and `error.type` =
-  `signal_SIGTERM`, and jackstay still dies by that signal; `jst test -- jst version` makes one
-  trace of two command spans and a child span between them; a panic in a command (a test-only
-  command registered by the test binary) leaves an `exception` event with a stack; the guard
-  with empty input records the caller's argv; two processes writing the same day file at once
-  leave whole lines only.
-- **No journal changes behaviour**: each instrumented command's existing tests run unchanged with
-  `JACKSTAY_HOME` in `t.TempDir()`; one test per command makes the telemetry folder unwritable.
-- **Latency** (section 8): `just guard-latency`, outside the gate (timing is not a pass/fail on a
-  shared machine); a benchmark of the exporter's write in the gate as a smoke check.
+- **Unit**: the exporter (OTLP decoding, the 200 ms lock give-up, the 256 KiB cut, an unwritable
+  folder), upkeep with a fake clock (including a stop at `.gz.partial` and a corrupt `.gz`), the
+  mask corpus, `TRACEPARENT` in and out, the reader, each report, `jst log`'s filters.
+- **Golden** (section 6) and **acceptance** (section 11: A1–A14, `internal/stats/acceptance_test.go`).
+- **Integration** (built binary): a `jst test -- sleep 30` stopped by SIGTERM ends its span
+  `stopped` with `signal_SIGTERM` and still dies by the signal; `jst test -- jst version` makes one
+  trace; a panic leaves an `exception` event; the guard with empty input records its caller; two
+  writers to one day file leave whole lines.
+- **No journal changes behaviour**: one test per command makes the telemetry folder unwritable.
+- **Latency** (section 8) is outside the gate; an exporter benchmark runs in it as a smoke check.
 
 ## 16. Implementation details
 
-Where the implementation refines the sections above:
-
-- **No protobuf in the binary** (section 4, step 3): the OTLP JSON is written with jackstay's own
-  structs and the mask's patterns are compiled on first use, which keeps the guard within its +1 ms
-  budget (measured). Conformance with the
-  pinned proto is a test (`otlpcheck`), so the lines are exactly what `protojson` reads and writes.
-- **Span names**: `jst <command>`; `test.run` (a run of `jst test`, from the run log's
-  `start`/`run` lines; a gate's steps are runs under it) and `test.gate`; `review.attempt` (the
-  attempt that becomes a round, or does not); `wait <lock file name>`; `exec <program>`;
-  `invoke_agent codex`.
+- **No protobuf in the binary** (section 4, step 3), and the mask's patterns compiled on first use,
+  keep the guard within its +1 ms budget.
+- **`test.run`** spans come from the run log's `start`/`run` lines; a gate's steps are runs under
+  `test.gate`.
 - **Attributes added**: `jackstay.guard.answer_ms` (the hook's time to its answer, the latency
   report's measure), `jackstay.guard.tool`, `jackstay.review.reviewer`, `jackstay.reason` (free text).
 - **`jackstay.outcome`** of a command that says none is `ok` for exit 0; a command's own word (the
@@ -522,9 +388,8 @@ Where the implementation refines the sections above:
   range, over every span, so a span keeps its parent across midnight and nothing is counted twice.
   `load` counts a command once, on the local day its span ended.
 
-**The mask, as it works** (section 7's rules, made exact; each rule is strict rather than precise,
-because finding *where* a named secret's value lies in arbitrary shell syntax — option clusters,
-glued values, unknown value-taking options, arrays — cannot be done reliably):
+**The mask, as it works** (section 7 made exact; each rule is strict rather than precise, because
+where a secret's value lies in arbitrary shell syntax cannot be found reliably):
 
 - **Options** are read per program from one table of the options whose value is a secret or
   content, as getopt reads a short-option cluster (`-suUSER:PW`: everything after the first such
@@ -541,8 +406,6 @@ glued values, unknown value-taking options, arrays — cannot be done reliably):
   short options, and URLs without user information; every other word, an assignment-shaped one
   included, becomes `***`. Commands that name no secret keep the content-position rules of
   section 7.
-- **The sweep.** The mask ends with a sweep of its own output: every token of what it is about to
-  write that is shaped like a secret (URL user information, a token prefix, a long hex or base64
-  run, a PEM marker) is replaced whole, whatever brought it there. The rules before it remove what
-  has no shape (a short password after a named option, content in known places); the sweep is the
-  guarantee for everything with one.
+- **The sweep.** Last, every token of the output shaped like a secret (URL user information, a token
+  prefix, a long hex or base64 run, a PEM marker) is replaced whole: the guarantee for everything
+  with a shape.

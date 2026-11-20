@@ -635,6 +635,10 @@ func (process *shell) dispatch(inv *invocation, how flow) (*state, *state) {
 		return after, after
 	case program == "find":
 		process.reader.find(inv)
+	case program == "gh":
+		process.reader.hostMerge(inv, "pr", "gh-pr-merge")
+	case program == "glab":
+		process.reader.hostMerge(inv, "mr", "glab-mr-merge")
 	case shells[program]:
 		process.shellProgram(inv, program)
 	}

@@ -221,8 +221,7 @@ type ReviewerRun struct {
 // RoundRecord is `round.json` (section 5).
 type RoundRecord struct {
 	Task          string            `json:"task"`
-	PoolAttempt   string            `json:"pool_attempt,omitempty"`
-	PoolExit      *int              `json:"pool_exit,omitempty"`
+	Request       string            `json:"request,omitempty"`
 	Round         int               `json:"round"`
 	Attempt       int               `json:"attempt"`
 	Chain         int               `json:"chain"`
@@ -245,11 +244,11 @@ const AttemptName = "attempt.json"
 
 // AttemptRecord is `attempt.json`.
 type AttemptRecord struct {
-	Task        string `json:"task"`
-	PoolAttempt string `json:"pool_attempt,omitempty"`
-	Attempt     int    `json:"attempt"`
-	Commit      string `json:"commit"`
-	Base        string `json:"base"`
+	Task    string `json:"task"`
+	Request string `json:"request,omitempty"`
+	Attempt int    `json:"attempt"`
+	Commit  string `json:"commit"`
+	Base    string `json:"base"`
 }
 
 // Entry is a round or an attempt in a task's folder.

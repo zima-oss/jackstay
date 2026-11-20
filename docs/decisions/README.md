@@ -32,7 +32,7 @@ is added in a pull request.
 | [W-042](W-042-recoverable-trash.md) | `jst trash`: a recoverable delete inside the sandbox, named by the guard's advice |
 | [W-043](W-043-guard-go-design-approved-trash-seven-days.md) | `jst trash` keeps entries 7 days by default |
 | [W-047](W-047-release-redesign-fixed-settings-no-one-off-imports.md) | Release simplified: no one-off imports; the settings file changes alone; prepare only prints; a GitHub release created once |
-| [W-048](W-048-review-findings-triaged-by-realism.md) | Review findings rated by likelihood and consequence; rare ones go to a later-findings card |
+| [W-048](W-048-review-findings-triaged-by-realism.md) | Review findings rated by likelihood and consequence; rare ones go to a later-findings card (amended by W-094) |
 | [W-050](W-050-go-part3-design-github-account-all-steps-here.md) | GitHub through go-github with a project's own `github.account` |
 | [W-051](W-051-jst-review-codex-rounds.md) | `jst review`: Codex review rounds; its defaults, effort medium |
 | [W-052](W-052-guard-dead-end-and-clean-copy-gate.md) | `jst discard` ends the guard's keep-a-copy dead end; the gate runs on a clean copy it removes |
@@ -61,3 +61,5 @@ is added in a pull request.
 | [W-092](W-092-thin-land-and-where-tests-run.md) | `jst land` stays thin: push, open, required checks, merge; where tests run is each project's declared split between local and CI |
 | [W-090](W-090-sandbox-writes-only-what-jst-needs.md) | 0.6.0 sandbox: `jst setup` lets the agent sandbox write only the folders jst needs from it; receipts, gate marks, review rounds and the run log stay read-only there |
 | [W-093](W-093-docs-for-people-and-agents.md) | The documentation: a checked style guide; flags, exit codes and keys in one home, references generated from it; the site by task, with `llms.txt` for agents and the contributors' pages (amends W-077) |
+| [W-094](W-094-unusual-severe-findings-need-an-ordinary-path.md) | A review finding rated unusual and severe blocks only when it names the ordinary-work path to its setup; otherwise it is rare (amends W-048) |
+| [W-095](W-095-the-socket-is-a-doorbell.md) | Claude Code's messaging socket is only a doorbell; a chat message is delivered when the recipient reads it from its inbox |

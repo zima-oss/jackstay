@@ -14,7 +14,7 @@ import (
 
 const usage = `usage: jst workspace board [--json] [REPO...]
 
-Read a summary of each explicitly supplied Git checkout. Linked worktrees share queue and chat
+Read a summary of each explicitly supplied Git checkout. Linked worktrees share chat
 state; gate and receipt summaries are for the named checkout. No remote service is contacted.
 No message bodies, receipt contents, or card bodies are printed.
 At most 32 repositories may be supplied in one call. With none named, the repositories are the
@@ -75,10 +75,6 @@ func runBoard(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			if repository.Cards.Status == "ok" {
 				fmt.Fprintf(stdout, " %d active", len(repository.Cards.Active))
 			}
-			fmt.Fprintf(stdout, "; queue %s", repository.Queue.Status)
-			if repository.Queue.Status == "queued" {
-				fmt.Fprintf(stdout, " (%s)", repository.Queue.Freshness)
-			}
 			fmt.Fprintf(stdout, "; gate %s", repository.Gate.Status)
 			if repository.Gate.Status == "recorded" {
 				fmt.Fprintf(stdout, " %s (%s)", repository.Gate.Outcome, repository.Gate.Freshness)
@@ -93,7 +89,7 @@ func runBoard(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			}
 			fmt.Fprintln(stdout)
 			for _, source := range []struct{ label, errorText string }{{"repository", repository.Error}, {"cards", repository.Cards.Error},
-				{"queue", repository.Queue.Error}, {"gate", repository.Gate.Error}, {"receipt", repository.Receipt.Error}, {"chat", repository.Chat.Error}} {
+				{"gate", repository.Gate.Error}, {"receipt", repository.Receipt.Error}, {"chat", repository.Chat.Error}} {
 				if source.errorText != "" {
 					fmt.Fprintf(stdout, "  %s: %s\n", source.label, source.errorText)
 				}

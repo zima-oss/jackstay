@@ -46,7 +46,7 @@ jackstay they change, so related work is found together. When an issue closes, i
 
 | Issue | Area |
 |---|---|
-| [#39](https://github.com/zima-oss/jackstay/issues/39) Review pinned Git snapshots on demand | review ([pool](reviewer-pool.md)) |
+| [#39](https://github.com/zima-oss/jackstay/issues/39) Review pinned Git snapshots on demand | review |
 | [#45](https://github.com/zima-oss/jackstay/issues/45) Measure Claude Code chat delivery during active turns | chat |
 | [#48](https://github.com/zima-oss/jackstay/issues/48) Explain guard policy and prove host hook coverage | guard |
 | [#50](https://github.com/zima-oss/jackstay/issues/50) Aggregate workspace timeline coverage and measured review usage | observation ([board](workspace-board.md)) |

@@ -92,7 +92,7 @@ The install changes nothing outside its prefix. These steps are yours:
 | `jst adopt --apply`, then commit what it wrote | each project ([Adopting a project](adopt.md)) | the guard hook and the `AGENTS.md` block |
 | Accept Claude Code's trust dialog | the first session in each project | Claude Code loading the hook |
 | Optional: install Codex or Claude Code and sign in | your terminal | review rounds ([Reviews](review.md)) |
-| Optional: `gh auth login`, and `github.account` in `jackstay.json` | your terminal; the project | `jst gh` and GitHub in `jst tidy` ([Branches and GitHub](branches-and-github.md#the-account)) |
+| Optional: `gh auth login`, and `github.account` in `jackstay.json` | your terminal; the project | `jst checks`, `jst land` and GitHub in `jst tidy` ([Branches and GitHub](branches-and-github.md#the-account)) |
 
 `jst doctor` checks what it can of these.
 

@@ -45,6 +45,7 @@ The built-in rules, by id:
 | `git-read-tree-reset`, `git-checkout-index-force` | `git read-tree -u --reset`, `git checkout-index -f` | `jst discard <path>` |
 | `git-config-alias`, `git-config-worktree` | git configuration on the line the guard cannot read (aliases, includes, config files), moving the work tree | the git command written out |
 | `cards-push`, `card-push-unreadable-config` | a push to the cards branch without valid `Card:` lines ([records](records.md)) | `jst lint range` |
+| `gh-pr-merge`, `glab-mr-merge` | `gh pr merge`, `glab mr merge`: a merge on the host outside `jst land`, past the project's landing policy | `jst land` |
 | `rm-recursive` | `rm -r` of anything but temporary and regenerable folders | `jst trash <path>` |
 | `find-delete` | `find … -delete` | `find … -print`, then `jst trash` |
 | `env-split-string` | `env -S STRING` it cannot split | the command without `env -S` |
