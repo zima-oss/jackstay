@@ -138,8 +138,8 @@ func backgroundText(jobs BackgroundStatus) string {
 	if jobs.Status == "listed" {
 		text = fmt.Sprintf("%d job(s)", len(jobs.Jobs))
 	}
-	if jobs.Unattributed > 0 {
-		text += fmt.Sprintf(", %d of an older jst whose folder is gone (`jst procs --all`)", jobs.Unattributed)
+	if jobs.Elsewhere > 0 {
+		text += fmt.Sprintf("; %d more on this machine (`jst procs --all`)", jobs.Elsewhere)
 	}
 	return text
 }

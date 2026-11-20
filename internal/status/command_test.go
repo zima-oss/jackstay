@@ -178,7 +178,7 @@ func TestJobsAreAttributedByTheRepositoryRecordedAtLaunch(t *testing.T) {
 	git(t, root, "worktree", "move", filepath.Join(parent, "linked"), filepath.Join(parent, "moved"))
 	found := readBoard(root).Repositories[0]
 	if len(found.Background.Jobs) != 2 || found.Background.Jobs[0].ID != "1800000000-1" ||
-		found.Background.Jobs[1].ID != "1800000000-2" || found.Background.Unattributed != 0 {
+		found.Background.Jobs[1].ID != "1800000000-2" || found.Background.Elsewhere != 2 {
 		t.Fatalf("jobs %+v", found.Background)
 	}
 
@@ -195,11 +195,17 @@ func TestJobsAreAttributedByTheRepositoryRecordedAtLaunch(t *testing.T) {
 		t.Fatalf("a new clone at the old path took the jobs: %+v", found.Background)
 	}
 
-	writeJob(t, home, "1800000000-5", filepath.Join(parent, "vanished"), "", true)
-	writeJob(t, home, "1800000000-6", filepath.Join(parent, "vanished"), "", false)
+	// A job placed nowhere, as after a move across file systems with the old path made again, is
+	// never hidden: it is counted, and the report is not partial for it.
+	writeJob(t, home, "1800000000-5", root, "inode:moved-across-file-systems", true)
 	report := readBoard(renamed)
-	if report.Repositories[0].Background.Unattributed != 1 || !report.Partial {
-		t.Fatalf("a live job that can be placed nowhere: %+v", report.Repositories[0].Background)
+	if found := report.Repositories[0].Background; len(found.Jobs) != 2 || found.Elsewhere != 3 || report.Partial {
+		t.Fatalf("a job placed nowhere: %+v (partial %v)", found, report.Partial)
+	}
+	var text bytes.Buffer
+	writeText(&text, report, time.Now())
+	if !strings.Contains(text.String(), "2 job(s); 3 more on this machine (`jst procs --all`)") {
+		t.Fatalf("the other jobs are not shown:\n%s", &text)
 	}
 }
 

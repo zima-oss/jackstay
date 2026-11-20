@@ -68,6 +68,3 @@ func jobsOf(host machine, place store) ([]Job, error) {
 	sort.Slice(found, func(left, right int) bool { return found[left].ID < found[right].ID })
 	return found, nil
 }
-
-// Live says the job's group may still be running: neither gone nor unknown.
-func (job Job) Live() bool { return job.State != stateGone && job.State != stateUnknown }

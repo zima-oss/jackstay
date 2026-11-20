@@ -67,14 +67,14 @@ type BriefStatus struct {
 	Error string `json:"error,omitempty"`
 }
 
-// BackgroundStatus are the `jst bg` jobs started in the repository. Unattributed counts jobs of
-// an older jst whose folder no longer exists, which may be this repository's: the report is then
-// partial.
+// BackgroundStatus are the `jst bg` jobs proven to be this repository's, and how many other jobs
+// this machine has. Attribution never guesses: a job it cannot place here is counted in Elsewhere,
+// so a person always sees that it exists (`jst procs --all` lists them all).
 type BackgroundStatus struct {
-	Status       string           `json:"status"`
-	Jobs         []background.Job `json:"jobs,omitempty"`
-	Unattributed int              `json:"unattributed"`
-	Error        string           `json:"error,omitempty"`
+	Status    string           `json:"status"`
+	Jobs      []background.Job `json:"jobs,omitempty"`
+	Elsewhere int              `json:"elsewhere"`
+	Error     string           `json:"error,omitempty"`
 }
 
 func readCards(root string, loaded config.Config) CardStatus {
@@ -204,12 +204,10 @@ func readBrief(root string) BriefStatus {
 	return BriefStatus{Status: "saved", Summary: summary}
 }
 
-// readBackground are the jobs started in this repository, found by the repository identity
-// `jst bg` recorded at launch: its common folder's device and inode, which a renamed or moved
-// checkout keeps and a new clone at an old path does not get. A job of an older jst carries none
-// and is placed by its folder while that exists. A live job that can be placed nowhere (its folder
-// gone, and its identity unknown here, as after a move across file systems) is counted as
-// unattributed, which makes the report partial, rather than guessed or dropped.
+// readBackground places each job by the repository identity `jst bg` recorded at launch (its
+// common folder's device and inode, which a renamed or moved checkout keeps and a new clone at an
+// old path does not get), or, for a job of an older jst that recorded none, by its folder while
+// that folder is inside one of the worktrees. Every other job is counted as elsewhere.
 func readBackground(found checkout) BackgroundStatus {
 	jobs, err := background.Jobs()
 	if err != nil {
@@ -222,17 +220,12 @@ func readBackground(found checkout) BackgroundStatus {
 			result.Jobs = append(result.Jobs, job)
 		case job.Repository == "" && found.holds(job.Cwd):
 			result.Jobs = append(result.Jobs, job)
-		case job.Live() && !exists(job.Cwd):
-			result.Unattributed++
+		default:
+			result.Elsewhere++
 		}
 	}
 	if len(result.Jobs) > 0 {
 		result.Status = "listed"
 	}
 	return result
-}
-
-func exists(path string) bool {
-	_, err := os.Lstat(path)
-	return err == nil
 }

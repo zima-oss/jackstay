@@ -77,8 +77,7 @@ type JournalStatus struct {
 func (repository Repository) complete() bool {
 	return repository.Status == "ok" && repository.Journal.Status == "complete" &&
 		repository.Brief.Status != stateUnknown && repository.Chat.Status != stateUnknown &&
-		repository.Background.Status != stateUnknown && repository.Background.Unattributed == 0 &&
-		repository.Gate.Status != stateUnknown &&
+		repository.Background.Status != stateUnknown && repository.Gate.Status != stateUnknown &&
 		repository.Receipt.Status != stateUnknown && repository.Cards.Status != stateUnknown
 }
 
