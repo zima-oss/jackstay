@@ -39,12 +39,15 @@ whether a cached pass may cross between a person's machine and CI (recommended: 
 how scopes become CI jobs (recommended: one graph job per system).
 
 The cache keeps verdicts, never outputs, so a scope whose files other scopes use, such as a build,
-is not cached; neither is one that reads the network or a database outside the repository. A
-composite carries only its deps; its checks move to the scopes that need them.
+is not cached, nor is any scope that depends on it; neither is one that reads the network or a
+database outside the repository. A composite carries only its deps; its checks move to the scopes
+that need them, and a schema-2 list keeps its own. A scope is covered by CI on a system only when
+its whole graph runs there.
 
-CI restores the default branch's cache, so a release workflow on a tagged commit already tested on
-the default branch hits every cached scope and runs only those not cached, with no coupling between
-workflows.
+A release does not run the CI gate again: jackstay's release workflow requires the successful
+required `jst test` checks for the exact tagged commit and fails naming a missing one; it runs only
+its uncached security scope. Only an install refuses without the local `jst test uncovered` record;
+a release does not, and a full gate on a Mac runs on the version-bump commit before the tag.
 
 jackstay's own scopes change with the code, so that no test runs twice on one commit in Linux CI
 (land.md section 7.6): one Go scope runs `go test -race -tags integration ./...`, the unit and the
