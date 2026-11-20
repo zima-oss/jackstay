@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/review"
+	"github.com/zima-oss/jackstay/internal/review/codex"
 	"github.com/zima-oss/jackstay/internal/supervise"
 )
 
@@ -71,6 +72,7 @@ type Run struct {
 	Extras    int       `json:"extras"`    // findings of a confirmed issue that was not seeded
 	Unmatched int       `json:"unmatched"` // findings that name no seeded defect
 	False     int       `json:"false"`     // findings a person judged not to be a real issue
+	Unjudged  int       `json:"unjudged"`  // findings no person has labelled yet
 	// The settings asked for: the model and effort of this run's reviewer.
 	RequestedModel  string `json:"requested_model"`
 	RequestedEffort string `json:"requested_effort"`
@@ -87,6 +89,7 @@ type Finding struct {
 
 type bench struct {
 	labels                         map[string]string // a person's judgement of findings, by labelKey
+	proposeLabels                  bool              // -propose: write the matcher's guesses for unlabelled findings
 	root, fixture, jst, work, home string
 	codexModel, claudeModel        string
 	codexEffort, claudeEffort      string
@@ -110,7 +113,8 @@ func main() {
 	flag.StringVar(&measurement.claudeEffort, "claude-effort", "", "Claude Code's effort, for both Claude arms")
 	flag.StringVar(&out, "out", "bench/review/results", "where the raw runs and the report are written")
 	flag.DurationVar(&measurement.timeout, "timeout", 40*time.Minute, "one run's deadline (past jst review's own 37-minute budget)")
-	flag.StringVar(&rescore, "rescore", "", "score the runs of this .jsonl again with testdata/defects.json and rewrite its report; no model call")
+	flag.StringVar(&rescore, "rescore", "", "score the runs of this .jsonl again from its labels and rewrite its report; no model call")
+	flag.BoolVar(&measurement.proposeLabels, "propose", false, "with -rescore: add the matcher's guesses for unlabelled findings to the labels file, for a person to check")
 	flag.Parse()
 	var err error
 	if rescore != "" {
@@ -225,6 +229,15 @@ func (measurement *bench) rescore(path string, arms []string) error {
 			return fmt.Errorf("%s: %w", labelsPath, err)
 		}
 	}
+	// A setting a run did not keep is "unknown", unless the operator names it.
+	given := map[string]bool{}
+	flag.Visit(func(set *flag.Flag) { given[set.Name] = true })
+	for name, setting := range map[string]*string{"codex-model": &measurement.codexModel, "codex-effort": &measurement.codexEffort,
+		"claude-model": &measurement.claudeModel, "claude-effort": &measurement.claudeEffort} {
+		if !given[name] {
+			*setting = "unknown"
+		}
+	}
 	var all []Run
 	runs := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(saved)), "\n") {
@@ -245,6 +258,29 @@ func (measurement *bench) rescore(path string, arms []string) error {
 				measurement.claudeModel, measurement.claudeEffort = run.RequestedModel, run.RequestedEffort
 			}
 		}
+	}
+	if measurement.proposeLabels {
+		if measurement.labels == nil {
+			measurement.labels = map[string]string{}
+		}
+		for index := range all {
+			for _, finding := range all[index].Findings {
+				if _, labelled := measurement.labels[labelKey(all[index], finding)]; !labelled {
+					if guess := measurement.propose(all[index], finding); guess != "" {
+						measurement.labels[labelKey(all[index], finding)] = guess
+					}
+				}
+			}
+			measurement.score(&all[index])
+		}
+		data, err := json.MarshalIndent(measurement.labels, "", "  ")
+		if err == nil {
+			err = os.WriteFile(labelsPath, append(data, '\n'), 0o600)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(measurement.log, "proposed labels written to %s: a person reads every one before trusting the report\n", labelsPath)
 	}
 	stamp := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	report := measurement.report(all, arms, runs, stamp)
@@ -544,12 +580,25 @@ func (measurement *bench) directCodex(run *Run, checkout, base, head string) (re
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
 	started := time.Now()
-	captured, runErr := supervise.Capture(ctx, append([]string{"codex"}, args...), checkout, os.Environ(), []byte(directPrompt(base, head)))
-	if runErr == nil && captured.Status != 0 {
-		runErr = fmt.Errorf("exit status %d", captured.Status)
-	}
-	if err := os.WriteFile(filepath.Join(folder, "events.jsonl"), captured.Stdout, 0o600); err != nil {
+	// The events go to a file as they come, as the wrapped runner's do, so none is lost to a cap.
+	events, err := os.Create(filepath.Join(folder, "events.jsonl")) // #nosec G304 -- the bench's own folder
+	if err != nil {
 		return review.Answer{}, err
+	}
+	path, err := exec.LookPath("codex")
+	if err != nil {
+		_ = events.Close()
+		return review.Answer{}, err
+	}
+	spec := codex.GroupSpec(append([]string{path}, args...))
+	spec.Dir, spec.Env, spec.Input, spec.Context = checkout, os.Environ(), []byte(directPrompt(base, head)), ctx
+	spec.StdoutTo, spec.StderrTo = events, io.Discard
+	outcome, runErr := supervise.Run(nil, spec)
+	if closeErr := events.Close(); runErr == nil {
+		runErr = closeErr
+	}
+	if runErr == nil && outcome.Status() != 0 {
+		runErr = fmt.Errorf("exit status %d", outcome.Status())
 	}
 	run.Model = time.Since(started).Seconds()
 	run.Models = []string{measurement.codexModel}
@@ -567,9 +616,23 @@ func (measurement *bench) directCodex(run *Run, checkout, base, head string) (re
 // complete is a direct arm's answer held to the wrapped arm's rules: one object of the schema, not
 // an incomplete verdict.
 func complete(data []byte) (review.Answer, error) {
-	var answer review.Answer
-	if err := json.Unmarshal(data, &answer); err != nil {
-		return review.Answer{}, fmt.Errorf("the answer does not read: %w", err)
+	// The wrapped arm's own reader: one JSON object of the schema, no member twice or unknown,
+	// every list present.
+	file, err := os.CreateTemp("", "answer-*.json")
+	if err != nil {
+		return review.Answer{}, err
+	}
+	defer func() { _ = os.Remove(file.Name()) }()
+	_, err = file.Write(data)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return review.Answer{}, err
+	}
+	answer, outcome, reason := review.ReadAnswer(file.Name())
+	if outcome != "done" {
+		return review.Answer{}, fmt.Errorf("the answer does not read as the wrapped arm's would (%s): %s", outcome, reason)
 	}
 	if answer.Verdict != "approve" && answer.Verdict != "changes" {
 		return review.Answer{}, fmt.Errorf("the verdict is %q, not a completed review", answer.Verdict)
@@ -658,36 +721,37 @@ func match(list []Defect, rangeName string, finding Finding) (string, int) {
 	return best, bestScore
 }
 
-// score matches each finding to the seeded defect or confirmed extra it names best (an extra wins
-// a tie: a finding of a known unseeded issue never earns a seeded defect), else counts it
-// unmatched. A person's label for the finding (labels) overrides the match: a defect or extra id,
-// or "false" for a finding that is not a real issue.
+// propose is the matcher's guess for a finding: the seeded defect or extra it names best (an extra
+// wins a tie), "" for none. It only proposes: the metrics read a person's labels.
+func (measurement *bench) propose(run Run, finding Finding) string {
+	best, bestScore := match(measurement.defects.Defects, run.Range, finding)
+	if extra, extraScore := match(measurement.defects.Extras, run.Range, finding); extraScore >= bestScore && extraScore > 0 {
+		best = extra
+	}
+	return best
+}
+
+// score counts a run's findings from a person's labels (measurement.labels): each finding is
+// labelled with the seeded defect or extra it reports, or "false" when it is not a real issue. A
+// finding without a label is unjudged, and counts for nothing: the report says how many there are.
 func (measurement *bench) score(run *Run) {
 	found := map[string]bool{}
-	run.Found, run.Extras, run.Unmatched, run.Duplicates, run.False = nil, 0, 0, 0, 0
+	run.Found, run.Extras, run.Unmatched, run.Duplicates, run.False, run.Unjudged = nil, 0, 0, 0, 0, 0
 	for index, finding := range run.Findings {
-		best, bestScore := match(measurement.defects.Defects, run.Range, finding)
-		if extra, extraScore := match(measurement.defects.Extras, run.Range, finding); extraScore >= bestScore && extraScore > 0 {
-			best = extra
-		}
-		if label, labelled := measurement.labels[labelKey(*run, finding)]; labelled {
-			best = label
-		}
-		if best == "false" {
-			run.Findings[index].Match = best
-			run.False++
-			continue
-		}
-		run.Findings[index].Match = best
+		label, labelled := measurement.labels[labelKey(*run, finding)]
+		run.Findings[index].Match = label
 		switch {
-		case best == "":
-			run.Unmatched++
-		case strings.HasPrefix(best, "E"):
+		case !labelled:
+			run.Findings[index].Match = "unjudged"
+			run.Unjudged++
+		case label == "false":
+			run.False++
+		case strings.HasPrefix(label, "E"):
 			run.Extras++
-		case found[best]:
-			run.Duplicates++
+		case found[label]:
+			run.Duplicates++ // the same defect again: real, judged, not found twice
 		default:
-			found[best] = true
+			found[label] = true
 		}
 	}
 	for id := range found {
@@ -738,13 +802,15 @@ func (measurement *bench) report(all []Run, arms []string, runs int, stamp strin
 		"arms in turning order. Codex model %q (requested; Codex does not report the model it ran), effort %q; Claude model %q "+
 		"(requested; the models column shows what Claude Code reported), effort %q; both arms of a reviewer alike.\n\n",
 		len(measurement.defects.Defects), len(measurement.defects.Ranges), runs, measurement.codexModel, measurement.codexEffort, measurement.claudeModel, measurement.claudeEffort)
-	out.WriteString("Recall: seeded defects found per run, of those in the range. Precision: confirmed findings — a seeded " +
-		"defect, or one of the fixture's known real issues that were not seeded (`extras`) — of all findings; the findings " +
-		"that match neither are listed below for a person to judge. Mean ± standard deviation over runs.\n\n")
-	out.WriteString("| arm | runs answered | recall | precision | extras per run | wall s | prepare s | wait s | model and tools s | tokens | cost USD | models |\n")
-	out.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|\n")
+	out.WriteString("Every finding is judged by a person (`<time>.labels.json`): the seeded defect or known unseeded real issue " +
+		"(`extras`) it reports, or false. Recall: seeded defects found per run, of those in the range. Precision: findings " +
+		"judged real, of the judged findings. Unjudged findings count for nothing and are listed below; while there are any, " +
+		"the metrics are partial. Mean ± standard deviation over runs.\n\n")
+	out.WriteString("| arm | runs answered | unjudged findings | recall | precision | extras per run | wall s | prepare s | wait s | model and tools s | tokens | cost USD | models |\n")
+	out.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, arm := range arms {
 		var recall, precision, extras, wall, prepare, wait, model, tokens, cost stat
+		unjudged := 0
 		answered, total := 0, 0
 		models := map[string]bool{}
 		for _, run := range all {
@@ -764,7 +830,10 @@ func (measurement *bench) report(all []Run, arms []string, runs int, stamp strin
 			}
 			recall.add(float64(len(run.Found)) / float64(seeded))
 			if len(run.Findings) > 0 {
-				precision.add(float64(len(run.Findings)-run.Unmatched-run.False) / float64(len(run.Findings)))
+				if judged := len(run.Findings) - run.Unjudged; judged > 0 {
+					precision.add(float64(judged-run.False) / float64(judged))
+				}
+				unjudged += run.Unjudged
 			}
 			extras.add(float64(run.Extras))
 			wall.add(run.Wall)
@@ -786,7 +855,7 @@ func (measurement *bench) report(all []Run, arms []string, runs int, stamp strin
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		fmt.Fprintf(&out, "| %s | %d/%d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", arm, answered, total,
+		fmt.Fprintf(&out, "| %s | %d/%d | %d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", arm, answered, total, unjudged,
 			recall.text("%.2f"), precision.text("%.2f"), extras.text("%.1f"), wall.text("%.0f"), prepare.text("%.1f"), wait.text("%.1f"),
 			model.text("%.0f"), tokens.text("%.0f"), cost.text("%.3f"), strings.Join(names, ", "))
 	}
@@ -808,10 +877,10 @@ func (measurement *bench) report(all []Run, arms []string, runs int, stamp strin
 		}
 		out.WriteString("\n")
 	}
-	out.WriteString("\n## Findings that name no seeded defect\n\n")
+	out.WriteString("\n## Findings not yet judged\n\n")
 	for _, run := range all {
 		for _, finding := range run.Findings {
-			if finding.Match == "" {
+			if finding.Match == "unjudged" {
 				fmt.Fprintf(&out, "- %s, %s, run %d: `%s` — %s\n", run.Arm, run.Range, run.Iteration, finding.Place, finding.Title)
 			}
 		}
