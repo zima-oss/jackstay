@@ -1,11 +1,12 @@
 # Maven Surefire test reports
 
-jackstay can judge JUnit XML reports from Maven Surefire. The verified producer is Maven 3.9.11,
-Surefire 3.5.4 and TestNG 7.11.0. A single selected class writes a `TEST-<class>.xml` report.
-jackstay requires every declared report file to be present and valid before it accepts a passing
-run.
+Your Maven tests count as a pass only when Surefire's JUnit XML reports prove it: jackstay requires
+every report file you declare to be present and valid. Checked with Maven 3.9.11, Surefire 3.5.4
+and TestNG 7.11.0.
 
-Configure Surefire in the project's `pom.xml` to write into jackstay's private report directory:
+## Judge one test class
+
+First let jackstay choose where Surefire writes its reports, in the project's `pom.xml`:
 
 ```xml
 <properties>
@@ -25,7 +26,8 @@ Configure Surefire in the project's `pom.xml` to write into jackstay's private r
 </build>
 ```
 
-Then declare a selected test class in `jackstay.json`:
+Then declare a scope for one test class in `jackstay.json`. A single selected class writes one
+`TEST-<class>.xml` report:
 
 ```json
 {
@@ -43,9 +45,11 @@ Then declare a selected test class in `jackstay.json`:
 }
 ```
 
-Replace the class and report name with those produced by your project. The exact file name must
-be known before the run. `{report_dir}` gives Maven a fresh directory for each attempt, and
-`reports` does not expand globs. Run `jst test full --no-reuse` to execute the scope.
+Use your own class and report name. `reports` takes exact file names, not globs, so each name must
+be known before the run. `{report_dir}` gives Maven a fresh folder for each attempt. Run the scope
+with `jst test full --no-reuse`.
+
+## Judge two test classes
 
 With this pinned TestNG provider, `-Dtest=FirstTest,SecondTest` aggregates both classes into one
 `TEST-TestSuite.xml` report. To keep two class reports, invoke Maven once per selected class with
@@ -70,9 +74,14 @@ mvn -B -ntp -Djackstay.reportsDirectory="$report_dir" -Dtest=SecondTest \
 }
 ```
 
-This wrapper is an example for fixed classes. A changing full suite needs a way to declare all
-expected report names before the run. The checked-in producer integration test exercises the two
-Maven invocations and verifies both XML files.
+This works for a fixed set of classes. A full suite whose classes change needs a way to declare every
+report name before the run. jackstay's own producer test runs these two Maven calls and checks both
+files.
+
+Independently selected classes can also run as separate scopes; either way each declared file must
+come from its intended selection.
+
+## Empty and failed runs
 
 In the pinned producer, a passed case and a skipped case produce a passing report; an all-skipped
 class is `nothing-run`; a failed case produces XML and Maven exits 1. When a `-Dtest` selection
@@ -107,10 +116,7 @@ fails once and then passes. Surefire 3.5.4 writes both attempts under the same t
 with the first attempt skipped. jackstay returns `unjudged` because it cannot tell which attempt
 gives the final result. Do not use TestNG retries in a scope that requires a counted pass.
 
-## Separate scopes
-
-Independently selected classes can run as separate scopes or as the two declared reports in the
-wrapper above. Each declared file must come from its intended selection.
+## Not covered yet
 
 Multi-module aggregation and other Surefire versions need their own producer proof and report
 inventory. Each module needs declared report paths and a completion rule before it can be treated

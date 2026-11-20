@@ -64,7 +64,8 @@ it.
 
 8. **Public text.** English. No private names, account names, machine paths, internal commit
    hashes or attribution lines. Examples use made-up names: `my-service`, `example.invalid`,
-   `/home/you`.
+   `/home/you`. **Checked**: no commit hash written as code in the guide, the roadmap or the
+   README.
 
 ## Form
 
