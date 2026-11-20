@@ -1021,7 +1021,7 @@ example: jst uninstall
 Plan and apply selected machine setup repairs.
 
 ```text
-usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]
+usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
 POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
@@ -1031,6 +1031,11 @@ POSIX shell profile and allow jackstay's state folder in Claude Code's enabled s
   --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
+  --autonomy MODE keep merge-when-green or prepare as this machine's answer to who merges
+
+Once per machine, a terminal is also asked who merges a project's changes: the agent when the
+required checks pass, or a person. `jst adopt` offers that answer first when it writes a project's
+land section; the project's jackstay.json decides.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
@@ -1068,7 +1073,7 @@ Bring jackstay.json, the AGENTS block, the guard hook and workflows to jackstay'
 
 ```text
 usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--autonomy MODE] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Works on the project around DIR (default: here) and changes nothing else; what it must not decide
@@ -1080,13 +1085,16 @@ is a conflict.
   --pin            with --apply: set adopt.pin, the jst release the workflows download, to this one
   --settings-only  plan or write jackstay.json alone; land it in its own pull request, then
                    --apply again on the merged base
+  --autonomy MODE  merge-when-green or prepare: who merges, for a new land section (at a
+                   terminal --apply asks; without one it needs this flag); an existing one is kept
   --profile PATH   an organisation's profile; --apply records it in jackstay.json
   --profile-sha256 DIGEST  the exact bundle bytes to accept; recorded by --apply
   --json           the plan as one JSON object
   --block          print the AGENTS block this project gets; writes nothing
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
-2 usage, or jackstay.json or the profile cannot be read; 3 (--plan) changes pending, no conflict.
+2 usage, or jackstay.json or the profile cannot be read, or --apply needs --autonomy; 3 (--plan)
+changes pending, no conflict.
 
 example: jst adopt --plan --json
 ```

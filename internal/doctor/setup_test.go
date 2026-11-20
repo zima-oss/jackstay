@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zima-oss/jackstay/internal/adopt"
+	"github.com/zima-oss/jackstay/internal/config"
 )
 
 func TestPathFindingAndPlan(t *testing.T) {
@@ -325,5 +328,49 @@ func TestChatEngineSetupIsExplicitAndDoesNotPromiseDelivery(t *testing.T) {
 	}
 	if answer, err := reader.ReadString('\n'); err != nil || answer != "a\n" {
 		t.Fatalf("chat prompts consumed the next repair choice: %q, %v", answer, err)
+	}
+}
+
+// Setup asks who merges once per machine and keeps the answer adopt offers first.
+func TestSetupAsksWhoMergesOncePerMachine(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	unanswered := autonomyItem(adopt.MachineAutonomy())
+	if unanswered.Status != "ask" {
+		t.Fatalf("a new machine: %+v", unanswered)
+	}
+	var output bytes.Buffer
+	plan := SetupPlan{Items: []SetupItem{unanswered}}
+	if err := askMachineAutonomy(plan, bufio.NewReader(strings.NewReader("2\n")), &output, adopt.SaveMachineAutonomy); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), adopt.AnswerMergeWhenGreen) {
+		t.Fatalf("the question was not asked:\n%s", output.String())
+	}
+	saved, err := adopt.MachineAutonomy()
+	if err != nil || saved != config.AutonomyPrepare {
+		t.Fatalf("kept %q, %v", saved, err)
+	}
+	answered := autonomyItem(saved, nil)
+	if answered.Status != "done" {
+		t.Fatalf("an answered machine: %+v", answered)
+	}
+	output.Reset()
+	if err := askMachineAutonomy(SetupPlan{Items: []SetupItem{answered}}, bufio.NewReader(strings.NewReader("")), &output, adopt.SaveMachineAutonomy); err != nil || output.Len() != 0 {
+		t.Fatalf("asked again: %q, %v", output.String(), err)
+	}
+	if item := autonomyItem("", errors.New("broken")); item.Status != "manual" {
+		t.Fatalf("an unreadable answer: %+v", item)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := RunSetup([]string{"--autonomy", "merge-when-green"}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("--autonomy: exit %d: %s", code, stderr.String())
+	}
+	if saved, _ := adopt.MachineAutonomy(); saved != config.AutonomyMergeWhenGreen {
+		t.Fatalf("--autonomy kept %q", saved)
+	}
+	for _, args := range [][]string{{"--autonomy", "always"}, {"--autonomy", "prepare", "--plan"}} {
+		if code := RunSetup(args, strings.NewReader(""), &stdout, &stderr); code != 2 {
+			t.Fatalf("%v: exit %d", args, code)
+		}
 	}
 }

@@ -1,0 +1,304 @@
+package adopt
+
+import (
+	"bufio"
+	"bytes"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/zima-oss/jackstay/internal/config"
+)
+
+// landsLast is the third step of the upgrade (docs/design/land.md section 5): after the pin and the
+// workflows, the plan writes schema 3 and the land section, and nothing else is planned with it
+// that a later apply would not write.
+func landsLast(t *testing.T, options Options) {
+	t.Helper()
+	options.Accept = nil
+	made := plan(t, options)
+	if !slices.ContainsFunc(made.Notes, func(note string) bool { return strings.Contains(note, "step 3 of 3 (due)") }) {
+		t.Fatalf("step 3 is not due: notes %v", made.Notes)
+	}
+	if !made.AsksAutonomy() || !slices.Contains(changeIDs(made.Changes), "jackstay.json") {
+		t.Fatalf("step 3 plans %v, asks %v", changeIDs(made.Changes), made.AsksAutonomy())
+	}
+	options.Autonomy = config.AutonomyPrepare
+	applyTwice(t, options)
+	land, ok, err := config.LandOf([]byte(read(t, options.Dir, "jackstay.json")))
+	if err != nil || !ok || land.Autonomy != config.AutonomyPrepare {
+		t.Fatalf("the land section after step 3: %+v, %v, %v", land, ok, err)
+	}
+}
+
+func landOptions(root, autonomy string) Options {
+	options := optionsFor(root)
+	options.Version, options.Autonomy = "0.6.0", autonomy
+	return options
+}
+
+// The golden file of each mode: a 0.6.0 adoption writes the land section in full, with the answer.
+func TestANewProjectGetsTheLandSectionInFullForEachAnswer(t *testing.T) {
+	for _, autonomy := range []string{config.AutonomyMergeWhenGreen, config.AutonomyPrepare} {
+		root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p"}`,
+			".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+		made := plan(t, landOptions(root, autonomy))
+		if made.AsksAutonomy() {
+			t.Fatalf("%s: --autonomy given and still asked", autonomy)
+		}
+		if got := changeIDs(made.Changes); !slices.Equal(got, []string{"agents-block", "jackstay.json", "workflow:card-line"}) {
+			t.Fatalf("%s: changes %v", autonomy, got)
+		}
+		applyTwice(t, landOptions(root, autonomy))
+		want := `{
+  "jackstay_schema": 3,
+  "project": "p",
+  "land": {
+    "host": "github",
+    "autonomy": "` + autonomy + `",
+    "method": "squash",
+    "checks": [],
+    "human_paths": []
+  },
+  "adopt": {
+    "pin": "v0.6.0"
+  }
+}
+`
+		if got := read(t, root, "jackstay.json"); got != want {
+			t.Fatalf("%s: jackstay.json\n%s\nwant\n%s", autonomy, got, want)
+		}
+		agents := read(t, root, "AGENTS.md")
+		merges := strings.Contains(agents, "waits for the required\n  checks and merges")
+		if merges != (autonomy == config.AutonomyMergeWhenGreen) {
+			t.Fatalf("%s: the block's land item does not follow the answer:\n%s", autonomy, agents)
+		}
+	}
+}
+
+// A section the project has is completed, and its autonomy is never changed silently.
+func TestAnExistingAutonomyIsKept(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p", "land": {"autonomy": "prepare", "checks": ["build"]}}`,
+		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	made := plan(t, landOptions(root, ""))
+	if made.AsksAutonomy() {
+		t.Fatal("a project with land.autonomy is asked again")
+	}
+	var usage *UsageError
+	if _, err := Make(landOptions(root, config.AutonomyMergeWhenGreen)); !errors.As(err, &usage) || !strings.Contains(err.Error(), "never changes it") {
+		t.Fatalf("--autonomy against the file's: %v", err)
+	}
+	applyTwice(t, landOptions(root, config.AutonomyPrepare))
+	land, _, err := config.LandOf([]byte(read(t, root, "jackstay.json")))
+	if err != nil || land.Autonomy != config.AutonomyPrepare || !slices.Equal(land.Checks, []string{"build"}) || land.Host != "github" {
+		t.Fatalf("the completed section: %+v, %v", land, err)
+	}
+	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"human_paths": []`) || !strings.Contains(text, `"method": "squash"`) {
+		t.Fatalf("the section is not written in full:\n%s", text)
+	}
+}
+
+// A jackstay before 0.6.0 writes no land section.
+func TestAJackstayBefore060WritesNoLandSection(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	if made := plan(t, optionsFor(root)); made.AsksAutonomy() || len(made.Changes) != 1 {
+		t.Fatalf("0.5.0 plans %v", changeIDs(made.Changes))
+	}
+}
+
+// The upgrade from 0.5.11 is three pull requests, in order: the pin (schema 2), the workflows that
+// download 0.6.0, then schema 3 with the land section. 0.6.0 reads the schema-2 file meanwhile.
+func TestTheUpgradeFrom0511IsThreeStepsInOrder(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "cards": {"dir": "docs/cards", "id": "C-[0-9]+", "unit": "pr", "since": "2026-11-17"}}`,
+		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	old := optionsFor(root)
+	old.Version = "0.5.11"
+	applyTwice(t, old)
+	due := func(made *Plan) int {
+		for step := 1; step <= 3; step++ {
+			if slices.ContainsFunc(made.Notes, func(note string) bool {
+				return strings.HasPrefix(note, "upgrade to the land section, step "+string(rune('0'+step))+" of 3 (due)")
+			}) {
+				return step
+			}
+		}
+		return 0
+	}
+	newer := landOptions(root, "")
+	// Step 1: the pin, in jackstay.json alone; the file stays schema 2 and gets no land section.
+	if made := plan(t, newer); due(made) != 1 || made.AsksAutonomy() || slices.Contains(changeIDs(made.Changes), "jackstay.json") {
+		t.Fatalf("before the pin: step %d, changes %v", due(made), changeIDs(made.Changes))
+	}
+	pin := newer
+	pin.Pin, pin.SettingsOnly = true, true
+	if got := changeIDs(apply(t, pin).Changes); !slices.Equal(got, []string{"jackstay.json"}) {
+		t.Fatalf("step 1 wrote %v", got)
+	}
+	text := read(t, root, "jackstay.json")
+	if !strings.Contains(text, `"pin": "v0.6.0"`) || !strings.Contains(text, `"jackstay_schema": 2`) || strings.Contains(text, `"land"`) {
+		t.Fatalf("after step 1:\n%s", text)
+	}
+	if _, err := config.Parse([]byte(text)); err != nil {
+		t.Fatal(err)
+	}
+	if problems := config.SectionProblems(mustParse(t, text)); len(problems.Sections()) != 0 {
+		t.Fatalf("0.6.0 refuses the schema-2 file without land: %v", problems.Sections())
+	}
+	// Step 2: the workflows that download 0.6.0; jackstay.json is left alone.
+	made := plan(t, newer)
+	if due(made) != 2 || slices.Contains(changeIDs(made.Changes), "jackstay.json") || !slices.Contains(changeIDs(made.Changes), "workflow:card-line") {
+		t.Fatalf("step 2: due %d, changes %v", due(made), changeIDs(made.Changes))
+	}
+	apply(t, newer)
+	if !strings.Contains(read(t, root, ".github/workflows/card-line.yml"), "v0.6.0") {
+		t.Fatal("step 2 did not write the workflows for the new pin")
+	}
+	// Step 3: schema 3 and the land section, in jackstay.json alone; then the block follows it.
+	made = plan(t, newer)
+	if due(made) != 3 || !made.AsksAutonomy() {
+		t.Fatalf("step 3: due %d, asks %v", due(made), made.AsksAutonomy())
+	}
+	settings := newer
+	settings.SettingsOnly, settings.Autonomy = true, config.AutonomyMergeWhenGreen
+	if got := changeIDs(apply(t, settings).Changes); !slices.Equal(got, []string{"jackstay.json"}) {
+		t.Fatalf("step 3 wrote %v", got)
+	}
+	land, ok, err := config.LandOf([]byte(read(t, root, "jackstay.json")))
+	if err != nil || !ok || land.Autonomy != config.AutonomyMergeWhenGreen || !strings.Contains(read(t, root, "jackstay.json"), `"jackstay_schema": 3`) {
+		t.Fatalf("after step 3: %+v %v %v", land, ok, err)
+	}
+	applyTwice(t, landOptions(root, ""))
+	if final := plan(t, landOptions(root, "")); due(final) != 0 || final.AsksAutonomy() {
+		t.Fatalf("after the upgrade: notes %v", final.Notes)
+	}
+}
+
+func mustParse(t *testing.T, text string) config.Config {
+	t.Helper()
+	parsed, err := config.Parse([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return parsed
+}
+
+// runIn is `jst adopt` at version 0.6.0 with the given terminal answer.
+func runIn(t *testing.T, terminal bool, stdin string, args ...string) (int, string, string) {
+	t.Helper()
+	savedVersion, savedTerminal := runningVersion, atTerminal
+	t.Cleanup(func() { runningVersion, atTerminal = savedVersion, savedTerminal })
+	runningVersion = "0.6.0"
+	atTerminal = func(io.Reader, io.Writer) bool { return terminal }
+	var stdout, stderr bytes.Buffer
+	code := Run(args, strings.NewReader(stdin), &stdout, &stderr)
+	return code, stdout.String(), stderr.String()
+}
+
+func TestApplyWithoutATerminalNeedsAutonomy(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	code, _, stderr := runIn(t, false, "", "--apply", root)
+	if code != 2 || !strings.Contains(stderr, "--autonomy merge-when-green or --autonomy prepare") {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if strings.Contains(read(t, root, "jackstay.json"), "land") {
+		t.Fatal("a refused apply wrote the file")
+	}
+	if code, _, stderr := runIn(t, false, "", "--plan", root); code != 3 || stderr != "" {
+		t.Fatalf("the plan without a terminal: exit %d: %s", code, stderr)
+	}
+	if code, _, stderr := runIn(t, false, "", "--apply", "--autonomy", "prepare", root); code != 0 {
+		t.Fatalf("--autonomy prepare: exit %d: %s", code, stderr)
+	}
+	// The file has its answer now: the next apply needs no flag.
+	if code, _, stderr := runIn(t, false, "", "--apply", root); code != 0 {
+		t.Fatalf("an existing land.autonomy: exit %d: %s", code, stderr)
+	}
+	if code, _, stderr := runIn(t, false, "", "--apply", "--autonomy", "always", root); code != 2 || !strings.Contains(stderr, "--autonomy is") {
+		t.Fatalf("a wrong --autonomy: exit %d: %s", code, stderr)
+	}
+}
+
+func TestApplyAtATerminalAsksOnceAndOffersTheMachinesAnswerFirst(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	if err := SaveMachineAutonomy(config.AutonomyPrepare); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout, stderr := runIn(t, true, "\n", "--apply", root)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if strings.Index(stdout, AnswerPrepare) > strings.Index(stdout, AnswerMergeWhenGreen) || strings.Count(stdout, "Answer [1]") != 1 {
+		t.Fatalf("the machine's answer is not offered first, or asked twice:\n%s", stdout)
+	}
+	if land, _, err := config.LandOf([]byte(read(t, root, "jackstay.json"))); err != nil || land.Autonomy != config.AutonomyPrepare {
+		t.Fatalf("the empty answer did not take the first offer: %+v %v", land, err)
+	}
+}
+
+func TestAskAutonomy(t *testing.T) {
+	for _, testCase := range []struct {
+		first, input, want string
+	}{
+		{"", "\n", config.AutonomyMergeWhenGreen},
+		{"", "2\n", config.AutonomyPrepare},
+		{config.AutonomyPrepare, "\n", config.AutonomyPrepare},
+		{config.AutonomyPrepare, "2\n", config.AutonomyMergeWhenGreen},
+		{"", "x\nprepare\n", config.AutonomyPrepare},
+	} {
+		var out bytes.Buffer
+		got, err := AskAutonomy(bufio.NewReader(strings.NewReader(testCase.input)), &out, testCase.first)
+		if err != nil || got != testCase.want {
+			t.Errorf("first %q, input %q: %q, %v", testCase.first, testCase.input, got, err)
+		}
+		if !strings.Contains(out.String(), "(recommended)") {
+			t.Errorf("the recommended answer is not named:\n%s", out.String())
+		}
+	}
+	if _, err := AskAutonomy(bufio.NewReader(strings.NewReader("")), io.Discard, ""); err == nil {
+		t.Fatal("an ended input was taken for an answer")
+	}
+}
+
+func TestTheMachinesAnswerIsKeptBesideOtherSettings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	if got, err := MachineAutonomy(); got != "" || err != nil {
+		t.Fatalf("no answer yet: %q, %v", got, err)
+	}
+	path := filepath.Join(home, ".all", machineFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"other": 1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveMachineAutonomy(config.AutonomyPrepare); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := MachineAutonomy(); got != config.AutonomyPrepare || err != nil {
+		t.Fatalf("kept: %q, %v", got, err)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `"other": 1`) {
+		t.Fatalf("another setting was lost: %s", data)
+	}
+	if err := SaveMachineAutonomy("always"); err == nil {
+		t.Fatal("a wrong value was kept")
+	}
+}
+
+// A pin no workflow uses now still moves with --pin, so the upgrade's first step can be taken.
+func TestAnUnusedOldPinMovesWithPin(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}}`,
+		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	options := landOptions(root, config.AutonomyPrepare)
+	options.Pin, options.SettingsOnly = true, true
+	apply(t, options)
+	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"pin": "v0.6.0"`) || strings.Contains(text, `"land"`) {
+		t.Fatalf("step 1:\n%s", text)
+	}
+	landsLast(t, landOptions(root, ""))
+}

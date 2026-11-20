@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 )
 
 const usage = `usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--autonomy MODE] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Works on the project around DIR (default: here) and changes nothing else; what it must not decide
@@ -27,13 +28,16 @@ is a conflict.
   --pin            with --apply: set adopt.pin, the jst release the workflows download, to this one
   --settings-only  plan or write jackstay.json alone; land it in its own pull request, then
                    --apply again on the merged base
+  --autonomy MODE  merge-when-green or prepare: who merges, for a new land section (at a
+                   terminal --apply asks; without one it needs this flag); an existing one is kept
   --profile PATH   an organisation's profile; --apply records it in jackstay.json
   --profile-sha256 DIGEST  the exact bundle bytes to accept; recorded by --apply
   --json           the plan as one JSON object
   --block          print the AGENTS block this project gets; writes nothing
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
-2 usage, or jackstay.json or the profile cannot be read; 3 (--plan) changes pending, no conflict.
+2 usage, or jackstay.json or the profile cannot be read, or --apply needs --autonomy; 3 (--plan)
+changes pending, no conflict.
 
 example: jst adopt --plan --json`
 
@@ -43,7 +47,7 @@ func init() {
 }
 
 // Run is `jst adopt`.
-func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	options, mode, asJSON, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "jst adopt: %v\n%s\n", err, strings.SplitN(usage, "\n\n", 2)[0])
@@ -58,10 +62,29 @@ func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		_, _ = io.WriteString(stdout, body)
 		return 0
 	}
+	if options.Autonomy == "" {
+		// The machine's answer only orders the offer; a failure to read it offers the recommended one.
+		options.Offered, _ = MachineAutonomy()
+	}
 	plan, err := Make(options)
 	if err != nil {
 		fmt.Fprintf(stderr, "jst adopt: %v\n", err)
 		return 2
+	}
+	if mode == "apply" && plan.AsksAutonomy() {
+		if !atTerminal(stdin, stdout) {
+			fmt.Fprintf(stderr, "jst adopt: this apply writes a `land` section, and who merges is a person's choice: "+
+				"give --autonomy %s or --autonomy %s (there is no terminal to ask at)\n", config.AutonomyMergeWhenGreen, config.AutonomyPrepare)
+			return 2
+		}
+		if options.Autonomy, err = AskAutonomy(bufio.NewReader(stdin), stdout, options.Offered); err != nil {
+			fmt.Fprintf(stderr, "jst adopt: %v\n", err)
+			return 2
+		}
+		if plan, err = Make(options); err != nil {
+			fmt.Fprintf(stderr, "jst adopt: %v\n", err)
+			return 2
+		}
 	}
 	if mode == "apply" {
 		if err := plan.Apply(); err != nil {
@@ -95,7 +118,7 @@ func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 func parseArgs(args []string) (Options, string, bool, error) {
 	working, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
-	options := Options{WorkingDir: working, Home: home, Has: cli.Has, Version: version.Version}
+	options := Options{WorkingDir: working, Home: home, Has: cli.Has, Version: runningVersion}
 	mode, asJSON := "plan", false
 	modes := 0
 	var positional []string
@@ -121,6 +144,15 @@ func parseArgs(args []string) (Options, string, bool, error) {
 			options.Pin = true
 		case "--settings-only":
 			options.SettingsOnly = true
+		case "--autonomy":
+			chosen, err := value()
+			if err != nil {
+				return options, "", false, err
+			}
+			if chosen != config.AutonomyMergeWhenGreen && chosen != config.AutonomyPrepare {
+				return options, "", false, fmt.Errorf("--autonomy is %s or %s: %q", config.AutonomyMergeWhenGreen, config.AutonomyPrepare, chosen)
+			}
+			options.Autonomy = chosen
 		case "--accept":
 			id, err := value()
 			if err != nil {
@@ -156,6 +188,8 @@ func parseArgs(args []string) (Options, string, bool, error) {
 		return options, "", false, errors.New("one DIR at most")
 	case mode != "apply" && (len(options.Accept) > 0 || options.Pin):
 		return options, "", false, errors.New("--accept and --pin go with --apply")
+	case mode == "block" && options.Autonomy != "":
+		return options, "", false, errors.New("--autonomy goes with --plan or --apply")
 	case mode == "block" && options.SettingsOnly:
 		return options, "", false, errors.New("--settings-only goes with --plan or --apply")
 	case mode != "plan" && asJSON:
@@ -165,6 +199,23 @@ func parseArgs(args []string) (Options, string, bool, error) {
 		options.Dir = positional[0]
 	}
 	return options, mode, asJSON, nil
+}
+
+// runningVersion is this jackstay's version, as Run plans with it; a test replaces it.
+var runningVersion = version.Version
+
+// atTerminal says whether a person types at stdin and reads stdout; a test replaces it.
+var atTerminal = func(stdin io.Reader, stdout io.Writer) bool {
+	return characterDevice(stdin) && characterDevice(stdout)
+}
+
+func characterDevice(stream any) bool {
+	file, ok := stream.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 // BlockOf is the block's text (between the markers) for the project.

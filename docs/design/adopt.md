@@ -35,6 +35,11 @@ Flags: `jst adopt --help`. The contract of each mode:
 - `--settings-only` plans or applies `jackstay.json` alone; the other files are planned again after
   it merges, and an `--accept` of one of theirs is refused
   ([W-085](../decisions/W-085-adopt-lands-settings-and-files-apart.md)).
+- `--autonomy merge-when-green|prepare` answers the one question adopt asks, who merges, for a new
+  `land` section (section 3.1). Without it `--apply` asks at a terminal, offering first the answer
+  `jst setup` kept for the machine (`<jackstay home>/.all/setup.json`), else the recommended one;
+  without a terminal it exits 2 naming the flag. `--plan` never asks: it shows the offered answer
+  and says the apply will ask.
 - `--json` prints the plan as one object `{"project", "profile", "changes": [...], "conflicts": [...],
   "exceptions": [...], "notes": [...]}`; each change `{"id", "path", "what"}`, each conflict
   `{"id", "path", "what", "settle"}`.
@@ -73,6 +78,14 @@ project's: `jst adopt` reads it to find conflicts and never changes it.
 - **`jackstay_schema` moved from 1 to 2** when the file would carry a section that needs 2 (`config`'s
   `Stage1Sections`, which gains `adopt`). Schema 1 to 2 is a number only (2 reads every schema-1
   file the same way).
+- **The `land` section** (docs/design/land.md section 5), by a jackstay of 0.6.0 or later, in full:
+  `host`, `autonomy`, `method`, `checks`, `human_paths`. An existing section gets the keys it lacks;
+  its `autonomy` is never changed (an `--autonomy` that differs is refused). A file that is or
+  becomes schema 3 gets the section with the answer to adopt's question. A schema-2 file pinned to
+  0.5.x gets it as the last of three pull requests a person merges, and the plan's notes name each
+  step and the one due: the pin (`--apply --pin --settings-only`, the file stays schema 2), the
+  workflows that download the new pin, then schema 3 with the section. Each plan holds only what is
+  due, so schema 3 is never planned before the workflows run a jackstay that reads it.
 - **The profile's defaults** (section 6, `jackstay_json.defaults`) added where the project has no value:
   a missing section is added whole; inside an existing object only missing keys are added,
   recursively; a value the project has (a list, a string, a different number) is never replaced.

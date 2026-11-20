@@ -60,6 +60,12 @@ type Options struct {
 	// GuardCommand is the hook command a new guard hook gets; "" is GuardCommand(), the launcher of
 	// the install this jst runs from.
 	GuardCommand string
+	// Autonomy is --autonomy: the `land.autonomy` a new `land` section gets ("": not given, so a
+	// person is asked before --apply writes one; the plan shows Offered).
+	Autonomy string
+	// Offered is the answer offered first when nobody chose (the machine's, from `jst setup`;
+	// "": merge-when-green, the recommended one).
+	Offered string
 }
 
 // SplitsSettings says whether the plan's changes touch jackstay.json and another file: one pull
@@ -130,6 +136,8 @@ type Plan struct {
 	writes  []write
 	inputs  map[string]fileInput
 	profile *profile.Profile
+	// asksAutonomy says the plan writes a new `land` section whose autonomy nobody chose.
+	asksAutonomy bool
 }
 
 type fileInput struct {
@@ -167,6 +175,8 @@ type planner struct {
 	plan     *Plan
 	document *jsondoc.Object // the prospective jackstay.json
 	plain    config.Config
+	// existed says the project had a jackstay.json before this plan.
+	existed bool
 }
 
 // newPlanner is the planner of the project at root: the one place base is set, so every path
@@ -187,6 +197,7 @@ func Make(options Options) (*Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	planner.existed = existed
 	exceptions := stringMap(original.Object("adopt"), "exceptions")
 	chosen, err := planner.readProfile(original)
 	if err != nil {
@@ -404,9 +415,23 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		}
 	}
 	planner.document = document
+	if err := planner.settle(original, chosen); err != nil {
+		return err
+	}
+	added, err := planner.landSection(original, chosen)
+	if err != nil || !added {
+		return err
+	}
+	return planner.settle(original, chosen)
+}
+
+// settle writes the pin a workflow needs and moves the schema the prospective file's keys need,
+// then sets plain from the document.
+func (planner *planner) settle(original *jsondoc.Object, chosen *profile.Profile) error {
+	document := planner.document
 	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
-	if planner.usesVersion(chosen) {
-		pin, _ := getString(document.Object("adopt"), "pin")
+	// --pin moves a pin the file has even when no workflow uses it now: a later one may.
+	if pin, _ := getString(document.Object("adopt"), "pin"); planner.usesVersion(chosen) || pin != "" && planner.options.Pin {
 		if pin == "" || planner.options.Pin {
 			pin = "v" + planner.options.Version
 		}

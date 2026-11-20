@@ -1,6 +1,7 @@
 # `jst land`: a thin landing behind a small hosting adapter; where tests run
 
-Status: for 0.6.0; sections 1 to 4 and 6 are built, 5 and 7 are not yet. It follows
+Status: for 0.6.0; sections 1 to 6 are built, 7 is not yet (so doctor does not yet report the
+CI-covered scopes of section 5). It follows
 [W-090](../decisions/W-090-landing.md) (one forge-neutral `jst land`, hosting adapters, two autonomy
 modes chosen explicitly) and [W-092](../decisions/W-092-thin-land-and-where-tests-run.md) (the
 landing stays thin; where tests run is the project's declared split between local and CI). It keeps
