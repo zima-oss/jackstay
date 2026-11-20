@@ -100,7 +100,9 @@ retention rule is checked as predicates (`NeedsMessage`, `MessageDone`) by unit 
 first review found that it let pressure remove an expired request's only notice, now fixed in
 section 7.4. A request that reaches its deadline while a push of it is under way may still be
 written (the lock is not held during a push); its answer is refused as `request_closed`, and the
-model does not count that as a fault. Time is two events (the
+model does not count that as a fault. Nor does it count a frozen question that a hook returns just
+after the freeze, or that a pass stalled past 60 s writes: the maintainer accepted both as they are
+(2026-11-20, chat.md section 16). Time is two events (the
 deadline passing, a `sending` record going stale), not a clock. The engine's line format and answers
 are what section 8.3 says they are; the pilot's captured fixtures check that part.
 

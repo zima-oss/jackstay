@@ -1400,8 +1400,10 @@ rounds.
    already reports as `unconfirmed`. The freeze applies the sweep's 60-s rule to its own questions
    itself, so its wait never passes 60 s, and while the store is stopped (section 7.3) the next round
    does not start: `jst review` answers `store_busy`. A hook announcement recorded before the freeze
-   may still be returned right after it; the snapshot shows that question as delivered. Then, all
-   under one exclusive lock:
+   may still be returned right after it; the snapshot shows that question as delivered. So a frozen
+   question can still reach the author in these two rare ways, and the author's answer to it is
+   refused as `request_closed`; the snapshot stays right. The maintainer accepted this as it is
+   (2026-11-20, section 16). Then, all under one exclusive lock:
    1. it creates `journal/freeze-<mailbox hash>` holding the mailbox's key, the task, the round it
       belongs to, and the absolute path of the snapshot it will write in the next round's attempt
       folder; and sets the mailbox `gone`, so later sends are refused as `recipient_gone`;
@@ -1792,6 +1794,7 @@ part of the body:
 | The delivery promise | At most once, no retry; a lost answer is reported as `unconfirmed` | sections 4.2, 8.3 |
 | Imitating `crossSessionInbound` on the hooks and poll routes | No; the frame's "not consent" line protects them | section 4.10 |
 | Proving the delivery state machine | A formal model before code | section 15.0 |
+| A frozen question shown late (a hook's text returned just after the freeze, or a pass stalled past 60 s) | Accepted as it is (the maintainer, 2026-11-20: "Accept as is"): the answer is refused as `request_closed` and the snapshot stays right | section 9.1 |
 
 ## 17. Sources
 
