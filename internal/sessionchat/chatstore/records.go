@@ -231,15 +231,17 @@ func (place layout) messages() string { return filepath.Join(place.root, "messag
 func (place layout) envelope(id string) string {
 	return filepath.Join(place.root, "messages", id+".json")
 }
-func (place layout) bodies() string              { return filepath.Join(place.root, "bodies") }
-func (place layout) body(id string) string       { return filepath.Join(place.root, "bodies", id+".txt") }
-func (place layout) deliveries(id string) string { return filepath.Join(place.root, "deliveries", id) }
-func (place layout) commits() string             { return filepath.Join(place.root, "commits") }
-func (place layout) commit(id string) string     { return filepath.Join(place.root, "commits", id+".json") }
-func (place layout) inbox(hash string) string    { return filepath.Join(place.root, "inbox", hash) }
-func (place layout) outbox(hash string) string   { return filepath.Join(place.root, "outbox", hash) }
-func (place layout) idempotency() string         { return filepath.Join(place.root, "idempotency") }
-func (place layout) usage() string               { return filepath.Join(place.root, "usage.json") }
+func (place layout) bodies() string                { return filepath.Join(place.root, "bodies") }
+func (place layout) body(id string) string         { return filepath.Join(place.root, "bodies", id+".txt") }
+func (place layout) deliveries(id string) string   { return filepath.Join(place.root, "deliveries", id) }
+func (place layout) commits() string               { return filepath.Join(place.root, "commits") }
+func (place layout) commit(id string) string       { return filepath.Join(place.root, "commits", id+".json") }
+func (place layout) inbox(hash string) string      { return filepath.Join(place.root, "inbox", hash) }
+func (place layout) outbox(hash string) string     { return filepath.Join(place.root, "outbox", hash) }
+func (place layout) idempotency() string           { return filepath.Join(place.root, "idempotency") }
+func (place layout) usage() string                 { return filepath.Join(place.root, "usage.json") }
+func (place layout) requests() string              { return filepath.Join(place.root, "requests") }
+func (place layout) requestIndex(id string) string { return filepath.Join(place.root, "requests", id) }
 func (place layout) delivery(id, hash string) string {
 	return filepath.Join(place.root, "deliveries", id, hash+".json")
 }

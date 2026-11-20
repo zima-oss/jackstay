@@ -110,8 +110,9 @@ func TestMessageIDsCarryTheirTimeAndMatchThePatterns(t *testing.T) {
 	if id, handle, ok := splitReference(id + "." + handle); !ok || handle == "" || !messageIDPattern.MatchString(id) {
 		t.Fatalf("split %q %q %v", id, handle, ok)
 	}
-	if message, ok := messageOfRequest(requestIDOf(id)); !ok || message != id {
-		t.Fatalf("request ID round trip: %q", message)
+	request, err := newRequestID(strings.NewReader(strings.Repeat("\xff", 16)))
+	if err != nil || !requestIDPattern.MatchString(request) {
+		t.Fatalf("request ID %q, %v", request, err)
 	}
 }
 
@@ -427,12 +428,19 @@ func TestTheLimitsOfSection48(t *testing.T) {
 		f.session("cc:late", "late", alpha, StateIdle)
 		_, err := f.store.Send(f.ctx, "cc:late", Scope{}, SendInput{To: "b", Message: "fifty-first"})
 		f.refused(err, ReasonRecipientFull)
-		channel := f.send("cc:late", SendInput{To: "#alpha", Message: "to the channel"})
-		for _, recipient := range channel.Recipients {
-			if recipient.Session == "b" {
-				t.Fatal("a full subscriber gets no delivery")
-			}
+		_, err = f.store.Send(f.ctx, "cc:late", Scope{}, SendInput{To: "#alpha", Message: "to the channel"})
+		f.refused(err, ReasonRecipientFull) // a channel send never leaves a subscriber out silently
+		// A response to a full requester is refused too, and so stays answerable later.
+		f.session("cc:asker", "asker", alpha, StateIdle)
+		f.clock.advance(time.Minute)
+		asked := f.send("cc:asker", SendInput{To: "late", Message: "decide", Request: &RequestInput{Expects: "decision"}})
+		for index := range queuePerRecipient {
+			key := "cc:t" + strings.Repeat("y", index)
+			f.session(key, "t"+strings.Repeat("y", index), beta, StateIdle)
+			f.send(key, SendInput{To: "asker", Message: "waiting"})
 		}
+		_, err = f.store.Respond(f.ctx, "cc:late", RespondInput{RequestID: asked.RequestID, Decision: "approve"})
+		f.refused(err, ReasonRecipientFull)
 	})
 	t.Run("loop", func(t *testing.T) {
 		f := newFixture(t)
@@ -536,7 +544,8 @@ func TestARequestIsAnsweredOnce(t *testing.T) {
 	f.session("cc:b", "b", alpha, StateIdle)
 	f.session("cc:c", "c", alpha, StateIdle)
 	asked := f.send("cc:a", SendInput{To: "b", Message: "run the tests?", Request: &RequestInput{Expects: "answer", Options: []string{"now", "later"}}})
-	if asked.RequestID != requestIDOf(asked.MessageID) || f.commit(asked.MessageID).RequestState != "open" {
+	if !requestIDPattern.MatchString(asked.RequestID) || asked.RequestID[4:] == asked.MessageID[4:] ||
+		f.commit(asked.MessageID).RequestState != "open" {
 		t.Fatalf("%+v", asked)
 	}
 	_, err := f.store.Respond(f.ctx, "cc:c", RespondInput{RequestID: asked.RequestID, Decision: "answer", Choice: "now"})
@@ -834,5 +843,94 @@ func TestCheckRelatedNamesEachProblem(t *testing.T) {
 	if len(problems) != 3 || !strings.Contains(problems[0], "several") || !strings.Contains(problems[1], "no channel") ||
 		!strings.Contains(problems[2], "not a channel") {
 		t.Fatalf("%v", problems)
+	}
+}
+
+func TestASessionNamedMainIsAlwaysListedWithItsRef(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:parent", "parent", alpha, StateIdle)
+	main := f.session("cc:main", "main", alpha, StateIdle)
+	if _, err := f.store.Register(f.ctx, Registration{Key: "cc:child", KeySource: SourceEngine, Engine: EngineClaudeCode,
+		Name: "child", Channel: alpha, Parent: "cc:parent", State: StateIdle}); err != nil {
+		t.Fatal(err)
+	}
+	result := f.send("cc:child", SendInput{To: "[" + main.Ref + "]", Message: "to the session named main"})
+	if result.Recipients[0].Session != "main ["+main.Ref+"]" {
+		t.Fatalf("a bare `main` would address the parent: %+v", result)
+	}
+	if parent := f.send("cc:child", SendInput{To: "main", Message: "to my parent"}); parent.Recipients[0].Session != "parent" {
+		t.Fatalf("%+v", parent)
+	}
+}
+
+func TestARequestIDCannotBeDerivedFromItsMessageID(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	asked := f.send("cc:a", SendInput{To: "b", Message: "decide", Request: &RequestInput{Expects: "decision"}})
+	_, err := f.store.Respond(f.ctx, "cc:b", RespondInput{RequestID: "req_" + asked.MessageID[4:], Decision: "approve"})
+	f.refused(err, ReasonUnknownMessage)
+}
+
+func TestAnswersToDifferentRequestsAreNotRepeats(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	first := f.send("cc:a", SendInput{To: "b", Message: "first?", Request: &RequestInput{Expects: "decision"}})
+	second := f.send("cc:a", SendInput{To: "b", Message: "second?", Request: &RequestInput{Expects: "decision"}})
+	for _, asked := range []SendResult{first, second} {
+		if _, err := f.store.Respond(f.ctx, "cc:b", RespondInput{RequestID: asked.RequestID, Decision: "approve"}); err != nil {
+			t.Fatalf("an answer without a message to %s: %v", asked.RequestID, err)
+		}
+	}
+}
+
+func TestAWatcherPastTheBoundIsRefusedBeforeTheSend(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:busy", "busy", alpha, StateBusy)
+	for index := range maxWatchers {
+		key := "cc:w" + strings.Repeat("x", index)
+		f.session(key, "w"+strings.Repeat("x", index), alpha, StateIdle)
+		f.send(key, SendInput{To: "busy", NotifyWhenIdle: true})
+	}
+	f.session("cc:late", "late", alpha, StateIdle)
+	_, err := f.store.Send(f.ctx, "cc:late", Scope{}, SendInput{To: "busy", Message: "and me", NotifyWhenIdle: true})
+	f.refused(err, ReasonCapacity)
+	if len(f.record("cc:busy").IdleWatchers) != maxWatchers {
+		t.Fatal("no other watcher is evicted")
+	}
+	// An existing watcher may replace its own subscription.
+	f.send("cc:w", SendInput{To: "busy", Message: "replace mine", NotifyWhenIdle: true})
+}
+
+func TestReplayRewritesAnIdempotencyEntryACrashLeftEmpty(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	id := "msg_" + strings.Repeat("3", 26)
+	name := filepath.Base(f.store.place.idempotencyEntry("cc:a", "empty-key"))
+	err := f.store.update(f.ctx, func(transaction *transaction) error {
+		entry := journalEntry{Op: opSend, ID: id, Sender: "cc:a", Idempotency: name}
+		if err := transaction.publishJournal(entry); err != nil {
+			return err
+		}
+		envelope := Envelope{V: 1, ID: id, ThreadID: id, Kind: "message", Recipients: []string{hashKey("cc:b")}}
+		data, _ := encodeRecord(envelope, envelopeBound)
+		delivery := Delivery{V: 1, ID: id, Key: "cc:b", Route: "hooks", State: "pending"}
+		if err := transaction.writeBeforeCommit("whole", data, envelope, []Delivery{delivery}); err != nil {
+			return err
+		}
+		if err := transaction.writeCommit(Commit{V: 1, ID: id, Committed: stamp(transaction.now)}); err != nil {
+			return err
+		}
+		// The process died while it wrote the entry: the name exists, its content does not.
+		return createExclusive(filepath.Join(transaction.place.idempotency(), name), nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "b", Message: "whole", IdempotencyKey: "empty-key"})
+	if err != nil || retry.Outcome != OutcomeDuplicate || retry.MessageID != id {
+		t.Fatalf("%+v %v", retry, err)
 	}
 }

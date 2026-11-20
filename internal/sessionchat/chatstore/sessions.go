@@ -356,8 +356,11 @@ func resolveChannel(parsed address, channels []Channel) (Channel, error) {
 }
 
 // sessionAddress is how a listing shows a session: its bare name when one addressable session
-// answers to it, `name [ref]` when several do (section 3.2).
+// answers to it, `name [ref]` when several do, or when the name is `main` (section 3.2).
 func sessionAddress(session Session, sessions []Session) string {
+	if session.Name == "main" {
+		return fullAddress(session) // bare `main` addresses the parent (section 3.2)
+	}
 	for _, other := range sessions {
 		if other.Key != session.Key && other.Name == session.Name && other.State != StateGone {
 			return session.Name + " [" + session.Ref + "]"

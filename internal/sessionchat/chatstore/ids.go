@@ -85,16 +85,15 @@ func indexOf(character byte) int {
 	return 0
 }
 
-// requestIDOf is the request ID of a request message: the message's own ID under `req_`.
-func requestIDOf(messageID string) string { return "req_" + messageID[4:] }
-
-// messageOfRequest is the message ID a request ID names, and whether it is one.
-func messageOfRequest(requestID string) (string, bool) {
-	match := requestIDPattern.FindStringSubmatch(requestID)
-	if match == nil {
-		return "", false
+// newRequestID is a request's own ID, 128 random bits: it cannot be derived from the message ID,
+// which other messages carry, so naming it is evidence that the request's own frame was shown
+// (section 4.10).
+func newRequestID(random io.Reader) (string, error) {
+	var bits [16]byte
+	if _, err := io.ReadFull(random, bits[:]); err != nil {
+		return "", fmt.Errorf("random request ID: %w", err)
 	}
-	return "msg_" + match[1], true
+	return "req_" + encode(bits[:], 26), nil
 }
 
 // splitReference splits a message reference (section 5.1) into the message ID and, for a native

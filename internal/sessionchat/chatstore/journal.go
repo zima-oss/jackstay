@@ -35,6 +35,8 @@ type journalEntry struct {
 	Request string `json:"request,omitempty"`
 	// Responder is the hash of the responding session: its delivery of the request becomes acted.
 	Responder string `json:"responder,omitempty"`
+	// Asks is the request ID a request message is given; its index entry is the operation's own file.
+	Asks string `json:"asks,omitempty"`
 }
 
 type subscriptionPlan struct {
@@ -52,7 +54,12 @@ func (transaction *transaction) publishJournal(entry journalEntry) error {
 	if err != nil {
 		return err
 	}
-	folder := transaction.place.journal()
+	return publishFile(transaction.place.journal(), entry.ID, data)
+}
+
+// publishFile gives a new name its whole content at once: a fsynced temporary file linked under the
+// name, then the folder fsynced (section 7.2). An existing name is os.ErrExist.
+func publishFile(folder, name string, data []byte) error {
 	if err := makeFolder(folder); err != nil {
 		return err
 	}
@@ -60,15 +67,15 @@ func (transaction *transaction) publishJournal(entry journalEntry) error {
 	if err != nil {
 		return err
 	}
-	name := temporary.Name()
-	defer func() { _ = os.Remove(name) }()
+	temporaryName := temporary.Name()
+	defer func() { _ = os.Remove(temporaryName) }()
 	_, writeErr := temporary.Write(data)
 	syncErr := temporary.Sync()
 	closeErr := temporary.Close()
 	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
 		return err
 	}
-	if err := os.Link(name, filepath.Join(folder, entry.ID)); err != nil {
+	if err := os.Link(temporaryName, filepath.Join(folder, name)); err != nil {
 		return err
 	}
 	return durable.SyncFolder(folder)
@@ -82,12 +89,13 @@ func (transaction *transaction) removeJournal(id string) error {
 	return durable.SyncFolder(transaction.place.journal())
 }
 
-// recover resolves every journal entry before the caller's own work: it returns how many it
-// resolved and how many it had to keep (the store is then stopped).
-func (transaction *transaction) recover() (resolved, kept int, err error) {
+// recover resolves every journal entry before the caller's own work: it returns the entries it
+// resolved, whose files the caller removes once usage is saved, and how many it had to keep (the
+// store is then stopped).
+func (transaction *transaction) recover() (resolved []string, kept int, err error) {
 	names, err := listNames(transaction.place.journal())
 	if err != nil {
-		return 0, 0, err
+		return nil, 0, err
 	}
 	sort.Strings(names)
 	for _, name := range names {
@@ -98,7 +106,6 @@ func (transaction *transaction) recover() (resolved, kept int, err error) {
 				continue
 			}
 			transaction.moveBroken(name)
-			resolved++
 			continue
 		}
 		decision, err := transaction.decide(entry)
@@ -112,12 +119,12 @@ func (transaction *transaction) recover() (resolved, kept int, err error) {
 			if err := transaction.rollBack(entry); err != nil {
 				return resolved, kept, err
 			}
-			resolved++
+			resolved = append(resolved, entry.ID)
 		case deliverystate.RollForward:
 			if err := transaction.rollForward(entry); err != nil {
 				return resolved, kept, err
 			}
-			resolved++
+			resolved = append(resolved, entry.ID)
 		}
 	}
 	return resolved, kept, nil
@@ -150,11 +157,16 @@ func (transaction *transaction) rollBack(entry journalEntry) error {
 	}
 	if entry.Idempotency != "" {
 		path := filepath.Join(transaction.place.idempotency(), entry.Idempotency)
-		if data, err := durable.ReadLimited(path, 64); err == nil && string(data) == entry.ID {
+		if data, err := durable.ReadLimited(path, 64); err == nil && (string(data) == entry.ID || len(data) == 0) {
 			_ = os.Remove(path)
 		}
 	}
-	return transaction.removeJournal(entry.ID)
+	if entry.Asks != "" {
+		if err := os.Remove(transaction.place.requestIndex(entry.Asks)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // removeMessageFiles removes everything of a message but its commit record, which it never has
@@ -172,8 +184,10 @@ func (transaction *transaction) removeMessageFiles(id string) error {
 	return nil
 }
 
-// rollForward applies what follows from a durable commit (the rest of step 3), writes the derived
-// files (step 4) and removes the entry (step 5). Every part is idempotent.
+// rollForward applies what follows from a durable commit (the rest of step 3) and writes the derived
+// files (step 4); the caller removes the entry (step 5) once usage is saved. Every part is
+// idempotent, and a part found done already has its folder fsynced again, since the write that did
+// it may have been renamed into place without its folder synced.
 func (transaction *transaction) rollForward(entry journalEntry) error {
 	var envelope Envelope
 	if err := readRecord(transaction.place.envelope(entry.ID), envelopeBound, &envelope); err != nil {
@@ -182,10 +196,7 @@ func (transaction *transaction) rollForward(entry journalEntry) error {
 	if err := transaction.applyCommitted(entry, envelope); err != nil {
 		return err
 	}
-	if err := transaction.writeDerived(entry, envelope); err != nil {
-		return err
-	}
-	return transaction.removeJournal(entry.ID)
+	return transaction.writeDerived(entry, envelope)
 }
 
 // applyCommitted is step 3 after the commit record: the subscription named in the entry, and for a
@@ -208,6 +219,8 @@ func (transaction *transaction) applyCommitted(entry journalEntry, envelope Enve
 		if err := writeRecord(transaction.place.commit(entry.Request), request, commitBound); err != nil {
 			return err
 		}
+	} else if err := transaction.store.syncFolder(transaction.place.commits()); err != nil {
+		return err
 	}
 	path := transaction.place.delivery(entry.Request, entry.Responder)
 	var delivery Delivery
@@ -216,7 +229,7 @@ func (transaction *transaction) applyCommitted(entry journalEntry, envelope Enve
 	}
 	next, err := deliverystate.Apply(delivery.table(true), deliverystate.Event{Kind: deliverystate.AckActed, Named: deliverystate.ByHandle})
 	if err != nil || string(next.State) == delivery.State {
-		return nil
+		return transaction.store.syncFolder(transaction.place.deliveries(entry.Request))
 	}
 	return transaction.writeDelivery(entry.Request, entry.Responder, delivery.withTable(next, stamp(transaction.now)))
 }
@@ -234,16 +247,20 @@ func (transaction *transaction) armSubscription(plan subscriptionPlan) error {
 			watchers = append(watchers, watcher)
 		}
 	}
-	watchers = append(watchers, IdleWatcher{Key: plan.Watcher, Until: plan.Until, MessageID: plan.MessageID})
-	if len(watchers) > maxWatchers {
-		watchers = watchers[len(watchers)-maxWatchers:]
+	if len(watchers) >= maxWatchers {
+		// Admission checked the bound; a recipient that filled up since gets no new subscription
+		// rather than losing another watcher's.
+		transaction.store.log("subscription-not-armed", plan.MessageID)
+		return nil
 	}
-	session.IdleWatchers = watchers
+	session.IdleWatchers = append(watchers, IdleWatcher{Key: plan.Watcher, Until: plan.Until, MessageID: plan.MessageID})
 	return transaction.writeSession(session)
 }
 
 // writeDerived is step 4: the inbox markers of unread deliveries, the outbox marker and the
-// idempotency entry. Each is created only when missing.
+// idempotency entry. Each is created only when missing, and an idempotency entry that does not name
+// this message (a crash cut its writing short) is written again. Every folder is fsynced before the
+// entry may be removed.
 func (transaction *transaction) writeDerived(entry journalEntry, envelope Envelope) error {
 	place := transaction.place
 	for _, recipient := range envelope.Recipients {
@@ -252,26 +269,37 @@ func (transaction *transaction) writeDerived(entry journalEntry, envelope Envelo
 			return err
 		}
 		if deliverystate.Unread(deliverystate.State(delivery.State)) {
-			if err := createIfMissing(filepath.Join(place.inbox(recipient), entry.ID), nil); err != nil {
+			if err := createSynced(filepath.Join(place.inbox(recipient), entry.ID)); err != nil {
 				return err
 			}
 		}
 	}
-	if err := createIfMissing(filepath.Join(place.outbox(hashKey(entry.Sender)), entry.ID), nil); err != nil {
+	if err := createSynced(filepath.Join(place.outbox(hashKey(entry.Sender)), entry.ID)); err != nil {
 		return err
 	}
-	if entry.Idempotency != "" {
-		if err := createIfMissing(filepath.Join(place.idempotency(), entry.Idempotency), []byte(entry.ID)); err != nil {
+	if entry.Idempotency == "" {
+		return nil
+	}
+	path := filepath.Join(place.idempotency(), entry.Idempotency)
+	data, err := durable.ReadLimited(path, 64)
+	switch {
+	case err == nil && string(data) == entry.ID:
+		return transaction.store.syncFolder(place.idempotency())
+	case err == nil:
+		return writeSynced(path, []byte(entry.ID), 64)
+	case errors.Is(err, os.ErrNotExist):
+		if err := publishFile(place.idempotency(), entry.Idempotency, []byte(entry.ID)); err != nil && !errors.Is(err, os.ErrExist) {
 			return err
 		}
+		return transaction.store.syncFolder(place.idempotency())
 	}
-	return nil
+	return err
 }
 
-// createIfMissing is createExclusive that takes an existing name as done.
-func createIfMissing(path string, data []byte) error {
-	if err := createExclusive(path, data); err != nil && !errors.Is(err, os.ErrExist) {
+// createSynced makes an empty marker when missing and fsyncs its folder either way.
+func createSynced(path string) error {
+	if err := createExclusive(path, nil); err != nil && !errors.Is(err, os.ErrExist) {
 		return err
 	}
-	return nil
+	return durable.SyncFolder(filepath.Dir(path))
 }

@@ -162,8 +162,14 @@ func (store *Store) update(ctx context.Context, change func(*transaction) error)
 	if err != nil {
 		return err
 	}
-	if !loaded || resolved > 0 {
+	if !loaded || len(resolved) > 0 {
 		if err := transaction.rebuildUsage(); err != nil {
+			return err
+		}
+	}
+	// An entry goes only once the usage that counts its files is saved (section 7.4).
+	for _, id := range resolved {
+		if err := transaction.removeJournal(id); err != nil {
 			return err
 		}
 	}
@@ -254,6 +260,9 @@ func (transaction *transaction) rebuildUsage() error {
 		return err
 	}
 	if err := nested(filepath.Join(place.root, "outbox"), deliverystate.MarkerCharge); err != nil {
+		return err
+	}
+	if _, err := charge(place.requests(), deliverystate.MarkerCharge); err != nil {
 		return err
 	}
 	bodies, err := listNames(place.bodies())

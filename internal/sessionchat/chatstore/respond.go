@@ -7,6 +7,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/sessionchat/deliverystate"
 )
 
@@ -29,8 +30,7 @@ func (store *Store) Respond(ctx context.Context, responderKey string, input Resp
 	if err := checkRespondInput(input); err != nil {
 		return SendResult{}, err
 	}
-	requestMessage, ok := messageOfRequest(input.RequestID)
-	if !ok {
+	if !requestIDPattern.MatchString(input.RequestID) {
 		return SendResult{}, refuse(ReasonInvalid, "request_id is req_ and 26 characters")
 	}
 	var result SendResult
@@ -43,7 +43,7 @@ func (store *Store) Respond(ctx context.Context, responderKey string, input Resp
 			result = duplicate
 			return err
 		}
-		envelope, commit, delivery, err := transaction.requestOf(responder, requestMessage)
+		envelope, commit, delivery, err := transaction.requestOf(responder, input.RequestID)
 		if err != nil {
 			return err
 		}
@@ -107,29 +107,42 @@ func checkRespondInput(input RespondInput) error {
 	return checkIdempotencyKey(input.IdempotencyKey)
 }
 
-// requestOf is a committed request and the responder's delivery of it. The request ID is evidence
-// of a shown frame (section 4.10), so it names a native delivery whose body is not yet visible.
-func (transaction *transaction) requestOf(responder Session, id string) (Envelope, Commit, Delivery, error) {
+// requestOf is a committed request, found by its own ID, and the responder's delivery of it. The
+// request ID is evidence of a shown frame (section 4.10), so it names a native delivery whose body
+// is not yet visible.
+func (transaction *transaction) requestOf(responder Session, requestID string) (Envelope, Commit, Delivery, error) {
 	var envelope Envelope
 	var commit Commit
 	var delivery Delivery
+	unknown := refuse(ReasonUnknownMessage, "no request %s", requestID)
+	data, err := durable.ReadLimited(transaction.place.requestIndex(requestID), 64)
+	if errors.Is(err, os.ErrNotExist) {
+		return envelope, commit, delivery, unknown
+	}
+	if err != nil {
+		return envelope, commit, delivery, err
+	}
+	id := string(data)
+	if !messageIDPattern.MatchString(id) {
+		return envelope, commit, delivery, unknown
+	}
 	if err := readRecord(transaction.place.commit(id), commitBound, &commit); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return envelope, commit, delivery, refuse(ReasonUnknownMessage, "no request %s", requestIDOf(id))
+			return envelope, commit, delivery, unknown
 		}
 		return envelope, commit, delivery, err
 	}
 	if err := readRecord(transaction.place.envelope(id), envelopeBound, &envelope); err != nil {
 		return envelope, commit, delivery, err
 	}
-	if envelope.Request == nil {
-		return envelope, commit, delivery, refuse(ReasonUnknownMessage, "no request %s", requestIDOf(id))
+	if envelope.Request == nil || envelope.Request.RequestID != requestID {
+		return envelope, commit, delivery, unknown
 	}
 	hash := hashKey(responder.Key)
 	if !slices.Contains(envelope.Recipients, hash) {
 		return envelope, commit, delivery, refuse(ReasonNotRecipient, "only the session the request was sent to may answer it")
 	}
-	err := readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery)
+	err = readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery)
 	return envelope, commit, delivery, err
 }
 

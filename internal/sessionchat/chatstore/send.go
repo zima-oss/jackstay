@@ -138,6 +138,10 @@ func (store *Store) Send(ctx context.Context, senderKey string, scope Scope, inp
 			plan.request = &Request{Expects: input.Request.Expects, Options: input.Request.Options}
 		}
 		plan.watch = input.NotifyWhenIdle
+		if plan.watch && !slices.ContainsFunc(destination.session.IdleWatchers, func(watcher IdleWatcher) bool { return watcher.Key == sender.Key }) &&
+			len(destination.session.IdleWatchers) >= maxWatchers {
+			return refuse(ReasonCapacity, "%s already has %d idle watchers", fullAddress(*destination.session), maxWatchers)
+		}
 		if err := transaction.checkLimits(plan, destination.session != nil); err != nil {
 			return err
 		}
@@ -273,8 +277,8 @@ func (transaction *transaction) recipientsOf(sender Session, destination target,
 			return nil, err
 		}
 		if full {
-			transaction.store.log("channel-subscriber-full", session.Ref)
-			continue
+			return nil, refuse(ReasonRecipientFull, "%s, subscribed to the channel, has %d messages waiting; send when it has read them",
+				fullAddress(session), queuePerRecipient)
 		}
 		recipients = append(recipients, session)
 		if len(recipients) == maxRecipients {
@@ -330,7 +334,8 @@ func (transaction *transaction) checkLimits(plan planned, direct bool) error {
 	for _, earlier := range recent {
 		sameTarget := (plan.toChannel != "" && earlier.ToChannelID == plan.toChannel) ||
 			(plan.toChannel == "" && earlier.ToChannelID == "" && slices.Equal(earlier.Recipients, hashes))
-		if sameTarget && earlier.BodySHA256 == bodyHex && earlier.Kind == plan.kind {
+		sameAnswer := plan.response == nil || (earlier.Response != nil && earlier.Response.RequestID == plan.response.RequestID)
+		if sameTarget && sameAnswer && earlier.BodySHA256 == bodyHex && earlier.Kind == plan.kind {
 			return refuse(ReasonRepeated, "the same message went to the same recipient within 60 seconds")
 		}
 	}
@@ -338,7 +343,7 @@ func (transaction *transaction) checkLimits(plan planned, direct bool) error {
 		return nil
 	}
 	recipient := plan.recipients[0]
-	if plan.response == nil {
+	if !plan.gone[hashKey(recipient.Key)] {
 		full, err := transaction.queueFull(hashKey(recipient.Key))
 		if err != nil {
 			return err
@@ -454,7 +459,9 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 	}
 	if plan.request != nil {
 		request := *plan.request
-		request.RequestID = requestIDOf(id)
+		if request.RequestID, err = newRequestID(transaction.store.random); err != nil {
+			return SendResult{}, err
+		}
 		envelope.Request = &request
 	}
 	if renderedSize(envelope) > renderedBound {
@@ -477,7 +484,11 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 		}
 		deliveries[index] = delivery
 	}
-	if err := transaction.makeRoom(plan, deliverystate.SendCharge(len(plan.body), len(deliveries), plan.idempotencyKey != "")); err != nil {
+	charge := deliverystate.SendCharge(len(plan.body), len(deliveries), plan.idempotencyKey != "")
+	if envelope.Request != nil {
+		charge += deliverystate.MarkerCharge // the request's index entry
+	}
+	if err := transaction.makeRoom(plan, charge); err != nil {
 		return SendResult{}, err
 	}
 	entry := journalEntry{Op: opSend, ID: id, Sender: plan.sender.Key, Request: plan.answers, Responder: plan.responder}
@@ -486,6 +497,9 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 	}
 	if plan.idempotencyKey != "" {
 		entry.Idempotency = filepath.Base(transaction.place.idempotencyEntry(plan.sender.Key, plan.idempotencyKey))
+	}
+	if envelope.Request != nil {
+		entry.Asks = envelope.Request.RequestID
 	}
 	if plan.watch {
 		entry.Subscription = &subscriptionPlan{
@@ -516,12 +530,16 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 		_ = transaction.rollBack(entry)
 		return SendResult{}, durableErr
 	}
-	transaction.usage.Messages++
-	transaction.usage.Bytes += deliverystate.SendCharge(len(plan.body), len(deliveries), plan.idempotencyKey != "")
 	if err := transaction.applyCommitted(entry, envelope); err != nil {
 		return SendResult{}, err
 	}
 	if err := transaction.writeDerived(entry, envelope); err != nil {
+		return SendResult{}, err
+	}
+	// Usage counts the send before its entry goes, so no exit between them undercounts it.
+	transaction.usage.Messages++
+	transaction.usage.Bytes += charge
+	if err := transaction.saveUsage(); err != nil {
 		return SendResult{}, err
 	}
 	if err := transaction.removeJournal(id); err != nil {
@@ -570,6 +588,11 @@ func (transaction *transaction) writeBeforeCommit(body string, envelopeData []by
 	}
 	if err := writeSynced(place.envelope(envelope.ID), envelopeData, envelopeBound); err != nil {
 		return err
+	}
+	if envelope.Request != nil {
+		if err := publishFile(place.requests(), envelope.Request.RequestID, []byte(envelope.ID)); err != nil {
+			return err
+		}
 	}
 	for index, delivery := range deliveries {
 		data, err := encodeRecord(delivery, deliveryBound)
