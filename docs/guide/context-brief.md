@@ -105,3 +105,5 @@ python3 tests/claude-compact-pilot.py "$PWD/.build/jst"
 The pilot uses a throwaway Git repository and a scripted loopback provider. With Claude Code
 2.1.328 it ran a real `/compact`: the `SessionStart` event had source `compact`, and the next model
 request held the saved brief, which was absent before the compaction.
+
+What a brief must and must not hold, and why: [the brief's design](../design/context-brief.md).
