@@ -2,12 +2,15 @@ package review
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/testrepo"
 )
 
@@ -31,7 +34,9 @@ func TestTheCommandLinesBackgroundRequestKnowsItsRepository(t *testing.T) {
 	original := launchDetached
 	launchDetached = func(argv []string, _, _ string) (int, int64, <-chan struct{}, error) {
 		launched = argv
-		return 0, 0, nil, nil
+		done := make(chan struct{})
+		close(done) // the run ended at once: nothing to wait for
+		return 0, 0, done, nil
 	}
 	t.Cleanup(func() { launchDetached = original })
 	var stdout, stderr bytes.Buffer
@@ -99,3 +104,36 @@ func TestAnEndWhoseFolderWasTakenByAnotherReviewShowsNoReport(t *testing.T) {
 		t.Fatalf("status: %+v, %v", status, err)
 	}
 }
+
+func TestAnEventOfAFolderTakenByAnotherReviewNamesNoReport(t *testing.T) {
+	h := newBackgroundHarness(t)
+	submitted, err := h.background.Submit(t.Context(), Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(h.background.Store.TaskPath("feature/x"), "round-1")
+	if err := writeJSON(filepath.Join(folder, AttemptName), AttemptRecord{Task: "feature/x", Attempt: 1, Request: submitted.Request.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.background.Store.Finish(t.Context(), "feature/x", submitted.Request.ID, Result{Status: ExitClear, Folder: folder,
+		Record: &RoundRecord{Round: 1}}, refusingPublisher{}); err == nil {
+		t.Fatal("refused publication not said")
+	}
+	// Pruned, then taken by another review before the event was delivered.
+	if err := writeJSON(filepath.Join(folder, AttemptName), AttemptRecord{Task: "feature/x", Attempt: 1, Request: "later"}); err != nil {
+		t.Fatal(err)
+	}
+	published := &recording{}
+	h.alive = false
+	if err := h.background.DeliverOwed(t.Context(), "s1", published); err != nil || len(published.events) != 1 {
+		t.Fatalf("delivery: %+v, %v", published.events, err)
+	}
+	event := published.events[0]
+	if strings.Contains(event.Body, folder) || len(event.Attachments) != 0 || event.Meta["round"] != "" || event.Meta["verdict"] != "clear" {
+		t.Fatalf("the event names another review's report: %+v", event)
+	}
+}
+
+type refusingPublisher struct{}
+
+func (refusingPublisher) Publish(context.Context, chatevent.Event) error { return errors.New("full") }
