@@ -45,7 +45,8 @@ type world struct {
 	alive           bool
 	deliveryNotices int
 	requestNotices  int
-	noticeShows     int // times a notice's line reached the sender (2 stands for more than once)
+	deliveryShows   int // times the delivery's notice reached the sender (2 stands for more than once)
+	requestShows    int // times the request's notice reached the sender
 }
 
 type step struct {
@@ -57,7 +58,7 @@ var passNames = [2]string{"pass-1", "pass-2"}
 
 // The distinct states TLC finds for the two modules (docs/design/chat-model/README.md).
 const (
-	deliveryStates = 21072
+	deliveryStates = 27056
 	sendStates     = 335
 )
 
@@ -282,13 +283,13 @@ func successors(w world, rules variant) []step {
 	// The sender's inbox returns an owed notice (section 8.5): marked shown only after its page is
 	// returned, so a stop between the two returns it again (at least once, W-096).
 	oneMore := func(shows int) int { return min(shows+1, 2) }
-	show := func(name string, notice Notice, mark func(*world)) {
+	show := func(name string, notice Notice, mark func(*world), shows func(*world) *int) {
 		if notice != NoticeOwed {
 			return
 		}
 		marked := w
 		mark(&marked)
-		marked.noticeShows = oneMore(w.noticeShows)
+		*shows(&marked) = oneMore(*shows(&w))
 		add(name+" is shown and marked", marked)
 		if rules.markBeforeShow {
 			lost := w
@@ -297,11 +298,13 @@ func successors(w world, rules variant) []step {
 			return
 		}
 		again := w
-		again.noticeShows = oneMore(w.noticeShows)
+		*shows(&again) = oneMore(*shows(&w))
 		add(name+" is shown, then the step stops before the mark", again)
 	}
-	show("the delivery's notice", w.delivery.Notice, func(next *world) { next.delivery.Notice = NoticeShown })
-	show("the request's notice", w.request.Notice, func(next *world) { next.request.Notice = NoticeShown })
+	show("the delivery's notice", w.delivery.Notice, func(next *world) { next.delivery.Notice = NoticeShown },
+		func(next *world) *int { return &next.deliveryShows })
+	show("the request's notice", w.request.Notice, func(next *world) { next.request.Notice = NoticeShown },
+		func(next *world) *int { return &next.requestShows })
 
 	if w.alive {
 		ended := w
@@ -338,7 +341,7 @@ func invariant(w world) string {
 	case (w.delivery.State == Refused || w.delivery.State == Dropped) && w.deliveryNotices != 1,
 		w.delivery.State == Expired && w.deliveryNotices+w.requestNotices < 1:
 		return "NoticeOwedOnce: a final delivery owes no notice"
-	case (w.delivery.Notice == NoticeShown || w.request.Notice == NoticeShown) && w.noticeShows < 1:
+	case w.delivery.Notice == NoticeShown && w.deliveryShows < 1, w.request.Notice == NoticeShown && w.requestShows < 1:
 		return "NoticeAtLeastOnce: a notice was marked shown and never reached the sender"
 	case w.request.State == Answered && !Final(w.delivery.State):
 		return "RequestAgrees: an answered request's delivery is not final"

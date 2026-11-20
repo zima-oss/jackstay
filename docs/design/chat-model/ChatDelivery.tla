@@ -48,7 +48,7 @@ VARIABLES
     writtenFrozen,\* a pass that still owned its claim wrote a question its mailbox had frozen
     overdue, alive,
     dNotices, rNotices,           \* times each record's notice became owed
-    noticeShows                   \* times a notice's line reached the sender (2 stands for more than once)
+    noticeShows                   \* per record ("d", "rq"), times its notice reached the sender (2: more than once)
 
 vars == <<d, rq, isRequest, fromMailbox, engine, pass, shown, requestKnown,
           pushedClosed, lateOpen, frozen, writtenFrozen, overdue, alive, dNotices, rNotices, noticeShows>>
@@ -195,7 +195,7 @@ Init ==
     /\ shown = 0 /\ requestKnown = FALSE /\ pushedClosed = FALSE
     /\ lateOpen = FALSE /\ frozen = FALSE /\ writtenFrozen = FALSE
     /\ overdue = FALSE /\ alive = TRUE
-    /\ dNotices = 0 /\ rNotices = 0 /\ noticeShows = 0
+    /\ dNotices = 0 /\ rNotices = 0 /\ noticeShows = [r \in {"d", "rq"} |-> 0]
 
 (* The bridge's passes (section 9.2): the one route that still carries a message's text. *)
 
@@ -355,18 +355,19 @@ Sweep == SweepStale \/ SweepExpiresRequest \/ SweepExpiresDelivery
 
 OneMore(n) == IF n < 2 THEN n + 1 ELSE 2
 
-Shows(record) ==
-    \/ /\ record' = [record EXCEPT !.notice = "shown"] /\ noticeShows' = OneMore(noticeShows)
-    \/ /\ ~MarkBeforeShow /\ UNCHANGED record /\ noticeShows' = OneMore(noticeShows)   \* stopped before the mark
+Shows(record, which) ==
+    LET counted == [noticeShows EXCEPT ![which] = OneMore(@)] IN
+    \/ /\ record' = [record EXCEPT !.notice = "shown"] /\ noticeShows' = counted
+    \/ /\ ~MarkBeforeShow /\ UNCHANGED record /\ noticeShows' = counted   \* stopped before the mark
     \/ /\ MarkBeforeShow /\ record' = [record EXCEPT !.notice = "shown"] /\ UNCHANGED noticeShows  \* stopped before the page
 
 ShowsDeliveryNotice ==
-    /\ d.notice = "owed" /\ Shows(d)
+    /\ d.notice = "owed" /\ Shows(d, "d")
     /\ UNCHANGED <<rq, dNotices, rNotices, lateOpen, frozen, writtenFrozen, isRequest, fromMailbox, engine, pass,
                    shown, requestKnown, pushedClosed, overdue, alive>>
 
 ShowsRequestNotice ==
-    /\ rq.notice = "owed" /\ Shows(rq)
+    /\ rq.notice = "owed" /\ Shows(rq, "rq")
     /\ UNCHANGED <<d, dNotices, rNotices, lateOpen, frozen, writtenFrozen, isRequest, fromMailbox, engine, pass,
                    shown, requestKnown, pushedClosed, overdue, alive>>
 
@@ -388,7 +389,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(SweepStale) /\ WF_vars(SweepExpiresRequ
 TypeOK ==
     /\ d.route \in Routes /\ d.state \in States /\ d.attempts \in 0..MaxAttempts
     /\ d.notice \in {"", "owed", "shown"} /\ rq.notice \in {"", "owed", "shown"}
-    /\ rq.state \in {"none", "open", "answered", "expired"} /\ noticeShows \in 0..2
+    /\ rq.state \in {"none", "open", "answered", "expired"} /\ noticeShows \in [{"d", "rq"} -> 0..2]
     /\ pass \in [Passes -> {"idle", "claimed", "written", "failed", "dead"}]
     /\ engine \in {"none", "accepted"}
 
@@ -421,8 +422,10 @@ NoticeOwedOnce ==
     /\ d.state \in {"refused", "dropped"} => dNotices = 1
     /\ d.state = "expired" => dNotices + rNotices >= 1
 
-\* A notice marked shown reached the sender at least once; it may have reached it more than once.
-NoticeAtLeastOnce == (d.notice = "shown" \/ rq.notice = "shown") => noticeShows >= 1
+\* Each notice marked shown reached the sender at least once; it may have reached it more than once.
+NoticeAtLeastOnce ==
+    /\ d.notice = "shown" => noticeShows["d"] >= 1
+    /\ rq.notice = "shown" => noticeShows["rq"] >= 1
 
 \* A request and its response agree: an answered request's delivery is final.
 RequestAgrees == rq.state = "answered" => d.state \in Final

@@ -1626,7 +1626,7 @@ narrower than the last, and review alone does not end that. The model is in
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  TLC and the tests reach the same states, 21,072 for a delivery and 335 for a send (7,104 before
+  TLC and the tests reach the same states, 27,056 for a delivery and 335 for a send (7,104 before
   notices were shown at least once, 30,736 before W-095), and the tests fail if either count changes.
 
 Checked: the bridge steers a message at most once, and every other route shows its text only
