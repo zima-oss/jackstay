@@ -812,3 +812,20 @@ func TestSettingsOnlyPinsAProfileWorkflowBeforeApplyingIt(t *testing.T) {
 		t.Fatalf("custom workflow did not use the pin:\n%s", got)
 	}
 }
+
+func TestNewerKeysAreRefusedForAProjectPinnedBefore060(t *testing.T) {
+	for pin, refused := range map[string]bool{"v0.5.11": true, "v0.6.0": false} {
+		root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"adopt":{"pin":"` + pin + `"}}`})
+		options := optionsFor(root)
+		options.Profile = exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, nil)
+		_, err := Make(options)
+		if refused != (err != nil && strings.Contains(err.Error(), "pinned to "+pin)) {
+			t.Errorf("pin %s: %v", pin, err)
+		}
+	}
+	// A key the file has already is not added by this apply: what reads the file reads it already.
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":3,"adopt":{"pin":"v0.5.11"},"brief":{"max_age_hours":24}}`})
+	if _, err := Make(optionsFor(root)); err != nil {
+		t.Fatalf("a key the file already has: %v", err)
+	}
+}

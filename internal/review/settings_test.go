@@ -43,19 +43,17 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
-func TestPoolAdmissionAndHistorySettings(t *testing.T) {
-	settings, problems := settingsFrom(t, `{"jackstay_schema":2,"review":{"pool":{"accepting":false,"history_days":90}}}`)
-	if len(problems) != 0 || settings.Pool.Accepting || settings.Pool.HistoryDays != 90 {
+func TestPoolAdmissionIsAKeyAndItsLimitsAreConstants(t *testing.T) {
+	settings, problems := settingsFrom(t, `{"jackstay_schema":3,"review":{"pool":{"accepting":false}}}`)
+	if len(problems) != 0 || settings.Pool.Accepting || settings.Pool.HistoryDays != PoolHistoryDays || settings.Pool.MaxAttempts != PoolMaxAttempts {
 		t.Fatalf("pool settings: %+v, problems %v", settings.Pool, problems)
 	}
-	for _, value := range []string{"0", "3651"} {
-		parsed, err := config.Parse([]byte(`{"jackstay_schema":2,"review":{"pool":{"history_days":` + value + `}}}`))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if problems := config.SectionProblems(parsed).Of("review"); len(problems) == 0 {
-			t.Fatalf("invalid history_days %s was accepted by configuration validation", value)
-		}
+	parsed, err := config.Parse([]byte(`{"jackstay_schema":3,"review":{"pool":{"history_days":7}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := config.SectionProblems(parsed).Of("review"); len(problems) == 0 {
+		t.Fatal("review.pool.history_days was accepted as a key")
 	}
 }
 

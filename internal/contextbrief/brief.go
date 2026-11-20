@@ -14,13 +14,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 )
 
 const maxBriefBytes = 4096
-const defaultMaxAge = 7 * 24 * time.Hour
-const maximumMaxAge = 30 * 24 * time.Hour
+const defaultMaxAge = config.BriefMaxAgeHours * time.Hour
+const maximumMaxAge = config.BriefMaxAgeHoursMaximum * time.Hour
 
 // Brief contains only short, explicitly supplied task facts. It never reads a transcript.
 type Brief struct {

@@ -164,11 +164,11 @@ func TestPoolPruneProtectsActiveAndUndeliveredJobs(t *testing.T) {
 func TestPoolAdmissionPausePreservesPinnedHistoryAndExistingWork(t *testing.T) {
 	ctx := context.Background()
 	pool, request, _ := fixture(t)
-	setPolicy := func(accepting bool, days int) {
+	setPolicy := func(accepting bool) {
 		t.Helper()
 		body, err := json.Marshal(map[string]any{
-			"jackstay_schema": 2, "project": "pool-policy",
-			"review": map[string]any{"pool": map[string]any{"accepting": accepting, "history_days": days}},
+			"jackstay_schema": 3, "project": "pool-policy",
+			"review": map[string]any{"pool": map[string]any{"accepting": accepting}},
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -177,14 +177,14 @@ func TestPoolAdmissionPausePreservesPinnedHistoryAndExistingWork(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	setPolicy(true, 7)
+	setPolicy(true)
 	job, created, err := pool.Enqueue(ctx, request)
-	if err != nil || !created || job.HistoryDays != 7 || job.Generation == "" {
+	if err != nil || !created || job.HistoryDays != review.PoolHistoryDays || job.Generation == "" {
 		t.Fatalf("initial enqueue: %+v, %v, %v", job, created, err)
 	}
-	setPolicy(false, 1)
+	setPolicy(false)
 	duplicate, created, err := pool.EnqueueForSession(ctx, request, strings.Repeat("a", 64), job.CommonDir)
-	if err != nil || created || duplicate.Generation != job.Generation || duplicate.HistoryDays != 7 {
+	if err != nil || created || duplicate.Generation != job.Generation || duplicate.HistoryDays != review.PoolHistoryDays {
 		t.Fatalf("paused duplicate: %+v, %v, %v", duplicate, created, err)
 	}
 	newRequest := request

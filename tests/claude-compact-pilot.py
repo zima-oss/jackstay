@@ -79,7 +79,7 @@ def claude_process(command, checkout, environment):
 def run_pilot(root, binary):
     checkout = root / "repo"
     subprocess.run(["git", "init", "-q", "-b", "main", checkout], check=True)
-    (checkout/"jackstay.json").write_text('{"jackstay_schema":2,"project":"compact-fixture"}\n')
+    (checkout/"jackstay.json").write_text('{"jackstay_schema":3,"project":"compact-fixture"}\n')
     subprocess.run(["git","add","jackstay.json"], cwd=checkout, check=True)
     subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c",
                     "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "Synthetic fixture"], cwd=checkout, check=True)

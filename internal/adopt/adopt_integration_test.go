@@ -28,8 +28,18 @@ func TestAGitProjectWithNoJackstayJSONGetsOne(t *testing.T) {
 	}
 	applyTwice(t, options)
 	text := read(t, root, "jackstay.json")
-	if !strings.Contains(text, `"$schema":`) || !strings.Contains(text, `"jackstay_schema": 2`) || !strings.Contains(text, `"project": "`+filepath.Base(root)+`"`) {
-		t.Fatalf("jackstay.json:\n%s", text)
+	if strings.Contains(text, `"$schema":`) || !strings.Contains(text, `"jackstay_schema": 2`) || !strings.Contains(text, `"project": "`+filepath.Base(root)+`"`) {
+		t.Fatalf("a jackstay before 0.6.0 wrote:\n%s", text)
+	}
+	if err := os.Remove(filepath.Join(root, "jackstay.json")); err != nil {
+		t.Fatal(err)
+	}
+	options.Version = "0.6.0"
+	applyTwice(t, options)
+	text = read(t, root, "jackstay.json")
+	if !strings.Contains(text, `"$schema": "https://raw.githubusercontent.com/zima-oss/jackstay/v0.6.0/schemas/jackstay.schema.json"`) ||
+		!strings.Contains(text, `"jackstay_schema": 3`) {
+		t.Fatalf("jackstay 0.6.0 wrote:\n%s", text)
 	}
 }
 

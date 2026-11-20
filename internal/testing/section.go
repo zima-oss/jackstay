@@ -501,15 +501,15 @@ func resolve(section map[string]any, name, kind string, entry map[string]any) le
 	if resume, present := entry["resume"].(bool); present {
 		resolved.resume = resume
 	}
-	resolved.requires = checksOf(section, entry)
+	resolved.requires = checksOf(entry)
 	return resolved
 }
 
-func checksOf(section, entry map[string]any) []check {
+func checksOf(entry map[string]any) []check {
 	var found []check
 	for _, raw := range items(entry["requires"]) {
 		member := objectOf(raw)
-		timeout := float64(config.TestRequiresTimeout(section))
+		timeout := float64(config.TestRequiresTimeoutSeconds)
 		if chosen, ok := numberOf(member["timeout"]); ok {
 			timeout = chosen
 		}

@@ -17,7 +17,7 @@ import (
 func TestPortableEvidenceAcrossSeparateStores(t *testing.T) {
 	producer := t.TempDir()
 	if err := os.WriteFile(filepath.Join(producer, "jackstay.json"),
-		[]byte(`{"jackstay_schema":2,"project":"producer"}`), 0o600); err != nil {
+		[]byte(`{"jackstay_schema":3,"project":"producer"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(producer)

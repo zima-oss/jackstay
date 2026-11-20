@@ -32,20 +32,72 @@ import (
 // Name is the project file's name.
 const Name = "jackstay.json"
 
-// EditorSchemaURL is the schema association written in newly adopted projects.
-func EditorSchemaURL() string {
+// EditorSchemaURL is the editor schema of jackstay release `release` (X.Y.Z), on that release's tag:
+// the keys a project pinned to it may use, which do not move when main does.
+func EditorSchemaURL(release string) string {
 	return (&url.URL{
 		Scheme: "https",
 		Host:   "raw.githubusercontent.com",
-		Path:   "/zima-oss/jackstay/main/schemas/jackstay.schema.json",
+		Path:   "/zima-oss/jackstay/v" + release + "/schemas/jackstay.schema.json",
 	}).String()
 }
 
 // Schema is the newest jackstay.json this jackstay reads.
-const Schema = 2
+const Schema = 3
+
+// Schema3Release is the first jackstay that reads "jackstay_schema": 3.
+const Schema3Release = "0.6.0"
 
 // Stage1Sections need "jackstay_schema": 2.
 var Stage1Sections = []string{"cards", "ids", "records", "changes", "procs", "release", "github", "review", "adopt"}
+
+// Stage3Sections need "jackstay_schema": 3, and so do the keys Schema3Keys names inside older sections.
+var Stage3Sections = []string{"$schema", "chat", "queue", "brief", "status"}
+
+// stage3RunKeys are the keys of a test scope or step, and of a receipts command, that need
+// "jackstay_schema": 3.
+var stage3RunKeys = []string{"selector", "report", "reports", "empty_exit", "xcresult_bundles"}
+
+// Schema3Keys are the keys of config that need "jackstay_schema": 3, by their path: what a
+// jackstay before 0.6.0 does not know.
+func Schema3Keys(config Config) []string {
+	var found []string
+	for _, key := range Stage3Sections {
+		if _, ok := config[key]; ok {
+			found = append(found, key)
+		}
+	}
+	if has(objectOf(config["review"]), "pool") {
+		found = append(found, "review.pool")
+	}
+	if has(objectOf(config["adopt"]), "profile_sha256") {
+		found = append(found, "adopt.profile_sha256")
+	}
+	test := objectOf(config["test"])
+	if has(test, "selection") {
+		found = append(found, "test.selection")
+	}
+	for _, kind := range []string{"scopes", "steps"} {
+		runs := objectOf(test[kind])
+		for _, name := range sortedKeys(runs) {
+			run := objectOf(runs[name])
+			for _, key := range stage3RunKeys {
+				if has(run, key) {
+					found = append(found, fmt.Sprintf("test.%s.%s.%s", kind, name, key))
+				}
+			}
+		}
+	}
+	for index, raw := range items(objectOf(config["receipts"])["commands"]) {
+		command := objectOf(raw)
+		for _, key := range append([]string{"judge"}, stage3RunKeys[1:]...) {
+			if has(command, key) {
+				found = append(found, fmt.Sprintf("receipts.commands[%d].%s", index, key))
+			}
+		}
+	}
+	return found
+}
 
 // Error says jackstay.json is there and cannot be used.
 type Error struct{ Message string }
@@ -278,28 +330,14 @@ var testRun = object(
 	"requires", list(object("run", texts(), "why", str(), "timeout", number())),
 )
 
-var codexBridgeSection = object(
-	"enabled", boolean(),
-	"poll_interval_ms", boundedInteger(100, 10000, 1000),
-	"ack_timeout_seconds", boundedInteger(5, 300, 30),
-)
-
-var claudeCodeSection = object("enabled", boolean())
-
 var chatSection = object(
 	"enabled", boolean(),
-	"max_message_bytes", boundedInteger(128, 16384, 4096),
-	"max_pending", boundedInteger(1, 512, 128),
-	"max_pending_per_session", boundedInteger(1, 512, 32),
-	"max_sessions", boundedInteger(2, 64, 32),
-	"retention_hours", boundedInteger(1, 168, 72),
-	"codex_bridge", codexBridgeSection,
-	"claude_code", claudeCodeSection,
+	"codex_bridge", object("enabled", boolean()),
+	"claude_code", object("enabled", boolean()),
 )
 
 var testSection = object(
 	"judge", str(), "timeout", number(), "expect", texts(),
-	"requires_timeout_seconds", boundedInteger(1, 3600, 60),
 	"selection", object("order", texts(), "rules", list(object("glob", str(), "scope", str()))),
 	"leftovers", list(object("glob", str(), "fail", boolean())),
 	"scopes", mapOf(testRun), "steps", mapOf(testRun),
@@ -315,35 +353,74 @@ func boundedValue(values map[string]any, shape *schemaType, name string) int {
 	return int(field.defaultInt)
 }
 
-// TestRequiresTimeout is the test section's default timeout for prerequisite commands.
-func TestRequiresTimeout(section map[string]any) int {
-	return boundedValue(section, testSection, "requires_timeout_seconds")
-}
+// TestRequiresTimeoutSeconds is the default timeout of a test scope's prerequisite command.
+const TestRequiresTimeoutSeconds = 60
 
-// ChatPolicy contains effective limits. The repository validator checks overrides against the table.
+// The chat's limits.
+const (
+	ChatMaxMessageBytes        = 4096
+	ChatMaxPending             = 128
+	ChatMaxPendingPerSession   = 32
+	ChatMaxSessions            = 32
+	ChatRetentionHours         = 72
+	ChatCodexPollIntervalMS    = 1000
+	ChatCodexAckTimeoutSeconds = 30
+)
+
+// ChatPolicy is the chat's switches and limits.
 type ChatPolicy struct {
 	Enabled, CodexBridgeEnabled, ClaudeCodeEnabled                                 bool
 	MaxMessageBytes, MaxPending, MaxPendingPerSession, MaxSessions, RetentionHours int
 	CodexPollIntervalMS, CodexAckTimeoutSeconds                                    int
 }
 
-// ChatSettings resolves the settings in a section already checked by Load.
+// ChatSettings is the chat's policy from a section already checked by Load: its switches, and the
+// limits that are constants.
 func ChatSettings(section map[string]any) ChatPolicy {
-	bridge := objectOf(section["codex_bridge"])
-	claude := objectOf(section["claude_code"])
-	pending := boundedValue(section, chatSection, "max_pending")
 	return ChatPolicy{
 		Enabled:                section["enabled"] == true,
-		MaxMessageBytes:        boundedValue(section, chatSection, "max_message_bytes"),
-		MaxPending:             pending,
-		MaxPendingPerSession:   min(pending, boundedValue(section, chatSection, "max_pending_per_session")),
-		MaxSessions:            boundedValue(section, chatSection, "max_sessions"),
-		RetentionHours:         boundedValue(section, chatSection, "retention_hours"),
-		CodexBridgeEnabled:     bridge["enabled"] == true,
-		ClaudeCodeEnabled:      claude["enabled"] == true,
-		CodexPollIntervalMS:    boundedValue(bridge, codexBridgeSection, "poll_interval_ms"),
-		CodexAckTimeoutSeconds: boundedValue(bridge, codexBridgeSection, "ack_timeout_seconds"),
+		MaxMessageBytes:        ChatMaxMessageBytes,
+		MaxPending:             ChatMaxPending,
+		MaxPendingPerSession:   ChatMaxPendingPerSession,
+		MaxSessions:            ChatMaxSessions,
+		RetentionHours:         ChatRetentionHours,
+		CodexBridgeEnabled:     objectOf(section["codex_bridge"])["enabled"] == true,
+		ClaudeCodeEnabled:      objectOf(section["claude_code"])["enabled"] == true,
+		CodexPollIntervalMS:    ChatCodexPollIntervalMS,
+		CodexAckTimeoutSeconds: ChatCodexAckTimeoutSeconds,
 	}
+}
+
+// Brief expiry, in hours: the default when `brief.max_age_hours` is not set, and its bounds.
+const (
+	BriefMaxAgeHours        = 168
+	BriefMaxAgeHoursMinimum = 1
+	BriefMaxAgeHoursMaximum = 720
+)
+
+// BriefMaxAge is how long a saved brief stays fresh by default: `brief.max_age_hours`, else
+// BriefMaxAgeHours.
+func BriefMaxAge(section map[string]any) time.Duration {
+	return time.Duration(boundedValue(section, briefSection, "max_age_hours")) * time.Hour
+}
+
+var briefSection = object("max_age_hours", boundedInteger(BriefMaxAgeHoursMinimum, BriefMaxAgeHoursMaximum, BriefMaxAgeHours))
+
+// StatusRepositories are the repositories the overview reads by default (`status.repos`), each
+// relative to the folder of the jackstay.json it is in, or absolute.
+func StatusRepositories(section map[string]any, folder string) []string {
+	var found []string
+	for _, raw := range items(section["repos"]) {
+		path, _ := raw.(string)
+		if path == "" {
+			continue
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(folder, path)
+		}
+		found = append(found, path)
+	}
+	return found
 }
 
 // Table is the keys jackstay.json takes; a new key comes with the command that reads it, and projects use
@@ -353,6 +430,10 @@ var Table = object(
 	"jackstay_schema", integer(),
 	"project", str(),
 	"chat", chatSection,
+	// The defaults of `jst brief`.
+	"brief", briefSection,
+	// The repositories the overview reads when none are named.
+	"status", object("repos", texts()),
 	"queue", object("enabled", boolean(), "base_ref", str(), "require_pull_request", boolean(), "review_task", str()),
 	"guard", object(
 		"regenerable", texts(),
@@ -387,9 +468,7 @@ var Table = object(
 		"use", texts(), "brief", text(), "template", text(), "cite", texts(), "severities", texts(), "blocking", texts(),
 		"triage", boolean(), "repeat_rounds", integer(), "repeat_severities", texts(), "round_limit", integer(),
 		"max_concurrent", integer(), "queue_minutes", integer(), "store", text(), "keep_days", integer(),
-		"pool", object("accepting", boolean(), "history_days", boundedInteger(1, 3650, 30),
-			"max_pending", boundedInteger(1, 256, 32), "max_attempts", boundedInteger(1, 20, 5),
-			"retry_initial_seconds", boundedInteger(1, 3600, 30), "retry_cap_seconds", boundedInteger(1, 86400, 900)),
+		"pool", object("accepting", boolean()),
 	),
 	// docs/design/implementation.md, section 8.1: the account jackstay acts as on GitHub; the meaning checks are
 	// githubProblems'.
@@ -535,21 +614,29 @@ func SectionProblems(config Config) Problems {
 	switch {
 	case !hasSchema:
 		top = append(top, fmt.Sprintf("`\"jackstay_schema\": %d` is missing (it says which jackstay the file was written for)", Schema))
-	case isInt(schema) && schemaNumber != 1 && schemaNumber != 2:
+	case isInt(schema) && (schemaNumber < 1 || schemaNumber > Schema):
 		advice := "bring the file up to date"
 		if schemaNumber > Schema {
-			advice = "upgrade jackstay (`bin/jst install` in its checkout)"
+			advice = "upgrade jackstay"
 		}
-		top = append(top, fmt.Sprintf("`jackstay_schema` is %v and this jackstay (%s) reads 1 and 2: %s", schema, version.Version, advice))
-	case isOne:
-		var newer []string
-		for _, key := range Stage1Sections {
-			if _, ok := config[key]; ok {
-				newer = append(newer, key)
+		top = append(top, fmt.Sprintf("`jackstay_schema` is %v and this jackstay (%s) reads 1 to %d: %s", schema, version.Version, Schema, advice))
+	default:
+		if isOne {
+			var newer []string
+			for _, key := range Stage1Sections {
+				if _, ok := config[key]; ok {
+					newer = append(newer, key)
+				}
+			}
+			if len(newer) > 0 {
+				top = append(top, fmt.Sprintf("`%s` need `\"jackstay_schema\": 2`", strings.Join(newer, "`, `")))
 			}
 		}
-		if len(newer) > 0 {
-			top = append(top, fmt.Sprintf("`%s` need `\"jackstay_schema\": 2`", strings.Join(newer, "`, `")))
+		if isInt(schema) && schemaNumber < 3 || isOne {
+			if newer := Schema3Keys(config); len(newer) > 0 {
+				top = append(top, fmt.Sprintf("`%s` need `\"jackstay_schema\": 3` (jackstay %s or later; older ones refuse the file)",
+					strings.Join(newer, "`, `"), Schema3Release))
+			}
 		}
 	}
 	for _, key := range sortedKeys(config) {
@@ -714,10 +801,6 @@ func sectionCheck(section string, config Config) []string {
 		}
 	case "chat":
 		chat := objectOf(config["chat"])
-		if has(chat, "max_pending_per_session") &&
-			boundedValue(chat, chatSection, "max_pending_per_session") > boundedValue(chat, chatSection, "max_pending") {
-			found = append(found, "`chat.max_pending_per_session` cannot exceed `chat.max_pending`")
-		}
 		if objectOf(chat["codex_bridge"])["enabled"] == true && chat["enabled"] != true {
 			found = append(found, "`chat.codex_bridge.enabled` requires `chat.enabled`")
 		}

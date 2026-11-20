@@ -21,7 +21,7 @@ func TestClaudeHookNoticesPendingAndWaitsForRecipientAcknowledgment(t *testing.T
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, output)
 	}
-	configFile := `{"jackstay_schema":2,"project":"chat-fixture","chat":{"enabled":true,"claude_code":{"enabled":true}}}`
+	configFile := `{"jackstay_schema":3,"project":"chat-fixture","chat":{"enabled":true,"claude_code":{"enabled":true}}}`
 	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(configFile), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestClaudeHookNoticesPendingAndWaitsForRecipientAcknowledgment(t *testing.T
 	if status := runClaudeHook([]string{"--name", "recipient", "--event", "PostToolUse"}, nil, &output, &diagnostics); status != 0 || output.Len() != 0 {
 		t.Fatalf("acknowledged message still announced: exit %d, %s, %s", status, output.String(), diagnostics.String())
 	}
-	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(`{"jackstay_schema":2,"project":"chat-fixture","chat":{"enabled":true}}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(`{"jackstay_schema":3,"project":"chat-fixture","chat":{"enabled":true}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	output.Reset()

@@ -11,13 +11,14 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/review"
 	"github.com/zima-oss/jackstay/internal/reviewpool"
 	"github.com/zima-oss/jackstay/internal/testrepo"
 )
 
 func TestMCPReviewSubmissionStatusAndAcknowledgedOutcome(t *testing.T) {
 	repository := testrepo.New(t, map[string]string{
-		"jackstay.json": `{"jackstay_schema":2,"project":"review-chat-test","chat":{"enabled":true,"max_pending":1,"claude_code":{"enabled":true}}}`,
+		"jackstay.json": `{"jackstay_schema":3,"project":"review-chat-test","chat":{"enabled":true,"claude_code":{"enabled":true}}}`,
 		"file.txt":      "first\n",
 	})
 	repository.Commit("change", map[string]string{"file.txt": "second\n"})
@@ -117,6 +118,13 @@ func TestMCPReviewSubmissionStatusAndAcknowledgedOutcome(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(previous) })
 	t.Setenv("JACKSTAY_CHAT_SESSION_TOKEN", strings.Repeat("s", 32))
+	original := localPolicy
+	localPolicy = func(section map[string]any) config.ChatPolicy {
+		policy := original(section)
+		policy.MaxPending = 1
+		return policy
+	}
+	t.Cleanup(func() { localPolicy = original })
 	var hookOutput, hookDiagnostics bytes.Buffer
 	if status := runClaudeHook([]string{"--name", "submitter", "--event", "PostToolBatch"}, nil, &hookOutput, &hookDiagnostics); status != 0 ||
 		!strings.Contains(hookOutput.String(), "Review notification sync failed") || !strings.Contains(hookDiagnostics.String(), "capacity") {
@@ -147,7 +155,7 @@ func TestMCPReviewSubmissionStatusAndAcknowledgedOutcome(t *testing.T) {
 func TestPrunedReviewCanNotifyAgainForTheSamePinnedRequest(t *testing.T) {
 	ctx := context.Background()
 	repository := testrepo.New(t, map[string]string{
-		"jackstay.json": `{"jackstay_schema":2,"project":"prune-chat-test","review":{"pool":{"history_days":1}}}`,
+		"jackstay.json": `{"jackstay_schema":3,"project":"prune-chat-test","review":{"pool":{"accepting":true}}}`,
 		"file.txt":      "first\n",
 	})
 	repository.Commit("change", map[string]string{"file.txt": "second\n"})
@@ -189,7 +197,7 @@ func TestPrunedReviewCanNotifyAgainForTheSamePinnedRequest(t *testing.T) {
 	if err := store.Acknowledge(session.ID, firstMessage.ID); err != nil {
 		t.Fatal(err)
 	}
-	pruned, err := pool.Prune(ctx, first.UpdatedAt.Add(24*time.Hour), true)
+	pruned, err := pool.Prune(ctx, first.UpdatedAt.Add(review.PoolHistoryDays*24*time.Hour), true)
 	if err != nil || pruned.Removed != 1 {
 		t.Fatalf("prune after handoff: %+v, %v", pruned, err)
 	}

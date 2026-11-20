@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/zima-oss/jackstay/internal/version"
 )
 
 // JSONSchema returns the editor-facing JSON Schema for jackstay.json. The keys
@@ -12,7 +14,7 @@ import (
 func JSONSchema() ([]byte, error) {
 	root := schemaNode(Table)
 	root["$schema"] = "https://json-schema.org/draft/2020-12/schema"
-	root["$id"] = EditorSchemaURL()
+	root["$id"] = EditorSchemaURL(version.Version)
 	root["title"] = "jackstay.json"
 	root["description"] = "Project configuration for jackstay. Run jst check for semantic and cross-field validation."
 	root["required"] = []string{"jackstay_schema"}
@@ -65,9 +67,12 @@ func setSchemaHints(root map[string]any) {
 	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
 	pool["accepting"].(map[string]any)["default"] = true
 	pool["accepting"].(map[string]any)["description"] = "Accept new review jobs from this repository. Existing jobs remain available for processing and retry."
-	pool["history_days"].(map[string]any)["description"] = "Days to retain terminal review jobs. The value is saved with each new job."
+	brief := properties["brief"].(map[string]any)["properties"].(map[string]any)["max_age_hours"].(map[string]any)
+	brief["description"] = "Hours a saved brief stays fresh when jst brief save is given no --max-age."
+	repos := properties["status"].(map[string]any)["properties"].(map[string]any)["repos"].(map[string]any)
+	repos["description"] = "Repositories the overview reads when none are named: paths relative to this file's folder, or absolute."
 	properties["adopt"].(map[string]any)["properties"].(map[string]any)["profile_sha256"].(map[string]any)["pattern"] = "^[0-9a-fA-F]{64}$"
-	properties["jackstay_schema"].(map[string]any)["enum"] = []int{1, Schema}
+	properties["jackstay_schema"].(map[string]any)["enum"] = []int{1, 2, Schema}
 	queue := properties["queue"].(map[string]any)
 	queue["if"] = map[string]any{"required": []string{"enabled"}, "properties": map[string]any{"enabled": map[string]any{"const": true}}}
 	queue["then"] = map[string]any{"required": []string{"base_ref"}}
@@ -83,8 +88,6 @@ func setSchemaHints(root map[string]any) {
 			"then": enabled,
 		},
 	}
-	chat["properties"].(map[string]any)["max_pending_per_session"].(map[string]any)["description"] =
-		"Pending messages per recipient. The default is min(32, max_pending); an explicit value must not exceed max_pending."
 	testJudges := []string{"swift-test", "steps", "exit", "go-json", "junit", "jest-json", "trx", "xcresult-json"}
 	for path, values := range map[string][]string{
 		"baseline.merge_unit":        {"pr", "commit"},

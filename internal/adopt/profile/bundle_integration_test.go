@@ -83,7 +83,7 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 		t.Fatalf("offline verify exit %d: %s", status, &errors)
 	}
 	options := adopt.Options{Dir: root, WorkingDir: root, Profile: "policy.bundle.json",
-		Version: "0.5.99", Has: cli.Has, SettingsOnly: true, ProfileSHA256: digest}
+		Version: "0.6.0", Has: cli.Has, SettingsOnly: true, ProfileSHA256: digest}
 	plan, err := adopt.Make(options)
 	if err != nil || len(plan.Changes) != 1 || plan.Changes[0].Path != "jackstay.json" {
 		t.Fatalf("settings preview: %+v %v", plan, err)
@@ -106,7 +106,7 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 		t.Fatal(err)
 	}
 	save(t, root, "policy.bundle.json", upgraded)
-	if _, err := adopt.Make(adopt.Options{Dir: root, WorkingDir: root, Version: "0.5.99", Has: cli.Has}); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+	if _, err := adopt.Make(adopt.Options{Dir: root, WorkingDir: root, Version: "0.6.0", Has: cli.Has}); err == nil || !strings.Contains(err.Error(), "SHA-256") {
 		t.Fatalf("recorded artifact pin accepted an unapproved upgrade: %v", err)
 	}
 	save(t, root, "policy.bundle.json", bundled)
@@ -126,12 +126,12 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 		}
 		files[name] = string(data)
 	}
-	if settings := files["jackstay.json"]; !strings.Contains(settings, `"pin": "v0.5.99"`) ||
+	if settings := files["jackstay.json"]; !strings.Contains(settings, `"pin": "v0.6.0"`) ||
 		!strings.Contains(settings, `"profile_sha256": "`+digest+`"`) ||
 		!strings.Contains(settings, `"max_minutes": 300`) || !strings.Contains(settings, `"default_minutes": 42`) {
 		t.Fatalf("pin or defaults were not applied: %s", settings)
 	}
-	if !strings.Contains(files[".github/workflows/team-gate.yml"], "name: team gate v0.5.99") {
+	if !strings.Contains(files[".github/workflows/team-gate.yml"], "name: team gate v0.6.0") {
 		t.Fatal("the offline template did not use the recorded pin")
 	}
 
@@ -186,17 +186,17 @@ func adoptIn(t *testing.T, bundled, upgraded []byte, digest string) map[string]s
 			t.Fatal(err)
 		}
 	}
-	change(newName, checksum(upgraded), "0.6.0", files["jackstay.json"])
+	change(newName, checksum(upgraded), "0.6.1", files["jackstay.json"])
 	updated, err := os.ReadFile(configPath)
-	if err != nil || !bytes.Contains(updated, []byte(`"pin": "v0.6.0"`)) ||
+	if err != nil || !bytes.Contains(updated, []byte(`"pin": "v0.6.1"`)) ||
 		!bytes.Contains(updated, []byte(`"max_minutes": 300`)) {
 		t.Fatalf("updated configuration did not preserve the local setting: %s %v", updated, err)
 	}
 	workflow, err := os.ReadFile(filepath.Join(root, ".github/workflows/team-gate.yml"))
-	if err != nil || !bytes.Contains(workflow, []byte("name: updated team gate v0.6.0")) {
+	if err != nil || !bytes.Contains(workflow, []byte("name: updated team gate v0.6.1")) {
 		t.Fatalf("the workflow was not updated: %s %v", workflow, err)
 	}
-	change("policy.bundle.json", digest, "0.5.99", string(updated))
+	change("policy.bundle.json", digest, "0.6.0", string(updated))
 	for name, expected := range files {
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil || string(data) != expected {

@@ -311,7 +311,7 @@ func TestLegacyEvidenceRequiresRetestingBeforeNewHandoff(t *testing.T) {
 
 func TestCommandRunsCountedGateAndRefusesStaleHandoff(t *testing.T) {
 	service, repository := fixture(t)
-	config := `{"jackstay_schema":2,"project":"queue-fixture","queue":{"enabled":true,"base_ref":"refs/heads/main"},"receipts":{"inputs":["."],"toolchain":[]},"test":{"scopes":{"gate":{"steps":["check"]}},"steps":{"check":{"run":["sh","-c","echo ran 1 tests"],"judge":"steps","evidence":"ran ([0-9]+) tests"}}}}`
+	config := `{"jackstay_schema":3,"project":"queue-fixture","queue":{"enabled":true,"base_ref":"refs/heads/main"},"receipts":{"inputs":["."],"toolchain":[]},"test":{"scopes":{"gate":{"steps":["check"]}},"steps":{"check":{"run":["sh","-c","echo ran 1 tests"],"judge":"steps","evidence":"ran ([0-9]+) tests"}}}}`
 	gitCommand(t, repository, "switch", "main")
 	if err := os.WriteFile(filepath.Join(repository, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)

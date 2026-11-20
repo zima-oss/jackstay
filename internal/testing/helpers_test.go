@@ -138,7 +138,7 @@ func newWorld(t *testing.T, test map[string]any, more map[string]any) *world {
 // configText is a jackstay.json with the test section and the other sections given.
 func configText(t *testing.T, test map[string]any, more map[string]any) string {
 	t.Helper()
-	config := map[string]any{"jackstay_schema": 1, "project": "demo",
+	config := map[string]any{"jackstay_schema": 3, "project": "demo",
 		"receipts": map[string]any{"inputs": []any{"."}, "toolchain": []any{}, "env": []any{"DEMO_*"}}}
 	if test != nil {
 		config["test"] = test

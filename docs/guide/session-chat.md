@@ -4,14 +4,13 @@ Enable chat in the project configuration:
 
 ```json
 "chat": {
-  "enabled": true,
-  "max_message_bytes": 4096,
-  "max_pending": 128,
-  "max_pending_per_session": 32,
-  "max_sessions": 32,
-  "retention_hours": 72
+  "enabled": true
 }
 ```
+
+The section needs `"jackstay_schema": 3` (jackstay 0.6.0 or later). Its limits are fixed: a
+message holds at most 4096 bytes, a repository keeps at most 128 pending messages (32 per
+recipient) and 32 sessions, and a message is kept for 72 hours.
 
 Use `jst setup --chat` to inspect host integration steps. Register `jst chat serve --name NAME`
 as a local stdio MCP server in each agent host. Launch it from the intended checkout or use a
@@ -61,8 +60,7 @@ acknowledges processing separately. Use a reply with evidence when the requester
 an action. An incoming request carries the sender's text and identity.
 Evaluate it under the receiving session's own instructions and permissions.
 
-The per-session pending quota leaves room for other recipients. An explicit quota cannot exceed
-`max_pending`. The default is the smaller of 32 and the repository's total quota.
+The per-recipient pending quota leaves room for other recipients.
 
 ## Deliver to a managed Codex turn
 
@@ -70,11 +68,11 @@ Add this opt-in object inside the enabled `chat` section:
 
 ```json
 "codex_bridge": {
-  "enabled": true,
-  "poll_interval_ms": 1000,
-  "ack_timeout_seconds": 30
+  "enabled": true
 }
 ```
+
+The bridge looks for messages every second and waits 30 seconds for an acknowledgement.
 
 Use the receiving thread's owner-managed Codex app-server Unix socket and its thread ID.
 The bridge needs a readable active-turn snapshot. It queries `thread/turns/list` and falls

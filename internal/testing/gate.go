@@ -632,7 +632,7 @@ func mergeKeys(first, second map[string]string) map[string]bool {
 // signalled is set when jackstay was asked to stop meanwhile: the status jackstay ends with.
 func (proj *project) compositeRequires(composite string) (string, *int) {
 	_, entry := find(proj.section, composite)
-	for _, each := range checksOf(proj.section, entry) {
+	for _, each := range checksOf(entry) {
 		result := proj.runCheck(each, proj.root, commandEnv(proj.environ))
 		if result.asked != 0 {
 			status := proj.ended(result.stoppedResult(), nil).status
