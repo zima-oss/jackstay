@@ -236,21 +236,23 @@ to the recipient (section 8.1), and a **state**, which is the receipt the sender
 | `dropped` | it can no longer reach the recipient: the recipient ended, its engine's queue was full, or its review mailbox closed |
 | `expired` | its `expires_at` passed while it was `pending` or `held` |
 
-A delivery starts `pending`, or `dropped` (`recipient_ended`) when it is a response to a requester
-that is already `gone` (section 4.4). Every allowed transition, and nothing else:
+A delivery starts `pending`, or `dropped` (`recipient_ended`, with its notice owed) when it is a
+response to a requester that is already `gone` (section 4.4). Every allowed transition, and nothing
+else (the table is the package `internal/sessionchat/deliverystate`, checked by the model of section
+15.0):
 
 | from | to | caused by |
 |---|---|---|
 | `pending` | `sending` | the route's pusher, before it pushes (section 8.1) |
 | `sending` | `delivered` | the engine's acceptance (native) or the app-server's acceptance of a steer (bridge); or, with the reason `unconfirmed`, a push whose answer never came, or a `sending` record older than 60 s (its pusher died) |
 | `sending` | `held`, `refused`, `dropped` | the engine's answer (`dropped`: `engine_queue_full`) |
-| `sending` | `pending` | a confirmed failure: nothing reached the engine (section 8.3) |
+| `sending` | `pending` | a confirmed failure: nothing reached the engine (section 8.3); for a request already closed (its mailbox froze), `expired` instead, so a closed question is never pushed |
 | `pending` | `delivered` | a hook's announcement, recorded in the same locked step that pushes it (section 8.4) |
 | `pending`, `sending`, `held` | `dropped` | `SessionEnd`, a dead process, or a closed mailbox (`recipient_ended`); from `sending` the pusher's later outcome is then dropped (compare-and-set) |
-| `pending`, `held` | `expired` | the sweep, at `expires_at` (reason `expired`, or `engine_held_unresolved` from `held`) |
+| `pending`, `held` | `expired` | the deadline, found by the sweep or by any step of section 4.10 (reason `expired`, or `engine_held_unresolved` from `held`); the closing of its request (section 4.4); a `held` answer recorded for a request already closed |
 | `pending`, `delivered` | `read` | `chat.inbox` emitting the whole body in one response, while the body is visible (section 4.10); `chat.ack` with `read`; or a review mailbox's freeze (section 9.1) |
-| `held` | `read` | `chat.ack` with `read` naming it (the recipient saw the copy its engine released) |
-| `held`, `delivered` (`unconfirmed`) | `delivered` (confirmed) | the recipient's `chat.inbox` naming it in `ids`: it knows the ID only from a frame its engine showed it, so this is evidence that the engine accepted or released it (section 4.10) |
+| `held` | `read` | `chat.ack` with `read` naming its handle (the recipient saw the copy its engine released) |
+| `held`, `delivered` (`unconfirmed`) | `delivered` (confirmed) | the recipient's `chat.inbox` naming its **handle** in `ids`: only a frame its engine showed carries the handle, so this is evidence that the engine accepted or released it (section 4.10) |
 | `pending`, `sending`, `delivered`, `held`, `read` | `acted` | `chat.ack` with `acted`, or `chat.respond` to this request (from `sending`: the engine showed the message before its pusher recorded the answer) |
 
 `refused`, `dropped`, `expired` and `acted` are final. A pusher records its outcome only if the
@@ -278,12 +280,14 @@ acknowledged it.
 **`held` is resolved only by the recipient.** Claude Code may later release a held message (after a
 settings or mode change) or drop it, and tells no one. While a delivery is `held`, its body is not
 visible (section 4.10), so the recipient's own policy decides whether its model sees it. The delivery leaves `held` only by the recipient's `chat.ack` or `chat.respond` naming it (the
-released copy carries its ID and request ID, section 5.3), by the recipient's end, or at expiry, as
+released copy carries its handle and request ID, section 5.3), by the recipient's end, or at expiry, as
 `expired` with the reason `engine_held_unresolved`. jackstay cannot withdraw the copy Claude Code
 holds; an answer to a request already closed is refused as `request_closed`.
 
 **Notices to the sender.** A transition to `refused`, `dropped` or `expired` sets the delivery's
-`notice` to `owed` in the same write. Owed notices are shown to the sender, not stored as new
+`notice` to `owed` in the same write, so each such delivery owes exactly one notice. The one
+exception is the expiry of a request's delivery: the request and its delivery expire in one step
+(section 4.4), and the notice is owed once, on the request's commit record. Owed notices are shown to the sender, not stored as new
 messages (section 8.5): they cost no capacity and cannot be lost to a full store. The outbox shows
 the same receipts whether or not a notice was shown.
 
@@ -314,15 +318,21 @@ A request is a direct message (never to a channel) with a `request` object:
   (section 7.3) the request becomes `answered` and the request's delivery becomes `acted`, unless
   that delivery is already final (for example `dropped` after the recipient ended and resumed);
 - an open request whose `expires_at` passes becomes `expired`, and the requester is owed one notice
-  (section 8.5), whatever its delivery's state; when the delivery expires at the same moment, the two
-  make one notice.
+  (section 8.5), on the request's commit record, whatever its delivery's state. The request and its
+  delivery share `expires_at` and expire **in one step**: whichever check finds the deadline (the
+  sweep, a pusher's claim, a hook, a read, an ack, a response, section 4.10) closes the request and,
+  when the delivery is `pending` or `held`, expires the delivery in the same write, without a notice
+  of its own. So the requester is told once, never twice and never not at all;
+- a request closed early (its review mailbox froze, section 9.1) closes the same way: its delivery,
+  if `pending` or `held`, expires with it; if it is `sending`, a confirmed failure or a `held` answer
+  recorded later expires it instead of making it pushable again.
 
 Request states are `open`, `answered` and `expired`, kept apart from the delivery state, so a
 request's deadline never erases a truthful `read` receipt. A second response is refused as
 `already_answered`, and a response after `expires_at` as `request_closed`, even when the sweep has
 not yet run (section 4.10). A response is stored
-even when the requester is `gone`; its delivery is then `dropped` (`recipient_ended`), and the
-responder sees that in its outbox.
+even when the requester is `gone`; its delivery is then `dropped` (`recipient_ended`), the responder
+is owed its notice like any other dropped delivery, and sees it in its outbox.
 
 An `approve` from a session is that session's answer, nothing more. It is never a person's approval,
 never grants a permission, and jackstay never acts on it by itself (section 13).
@@ -432,11 +442,20 @@ hooks and every push. A body is **visible to its recipient** only when the deliv
 - is on the `hooks`, `bridge`, `mailbox` or `poll` route and is not `held`, `refused`, `dropped` or
   `expired`; or
 - is on the `native` route and Claude Code has accepted it (`delivered` without `unconfirmed`), or
-  the recipient has itself acknowledged or answered it (`read`, `acted`), or the recipient names it in
-  `chat.inbox`'s `ids`. Message IDs are 128 random bits that only a frame shown by the engine carries
-  to the recipient, so naming one is evidence that Claude Code accepted, or later released, that frame;
-  it makes the delivery `delivered` (confirmed) and the rest of a cut body readable without claiming it
-  was read.
+  the recipient has itself acknowledged or answered it (`read`, `acted`), or the recipient names its
+  **handle** in `chat.inbox`'s `ids`.
+
+**The handle.** A message ID is not evidence: other messages carry it to the recipient (their
+`thread` and `reply_to`), whatever its engine did with the message itself. So each native delivery
+has its own **handle**, the message ID followed by 64 random bits (`msg_….` and 13 characters,
+section 5.1), stored in the delivery record and shown **only** in the native frame of that delivery
+(section 5.3). Naming the handle is evidence that Claude Code accepted, or later released, that
+frame; it makes the delivery `delivered` (confirmed) and the rest of a cut body readable without
+claiming it was read. A request ID is evidence in the same way, since only the request's own frame
+carries it to its one recipient. Every call that names a native delivery whose body is not yet
+visible (`chat.inbox` `ids`, `chat.ack`, `chat.respond`) needs the handle or the request ID; a bare
+message ID is then answered as `unknown_message`, so learning an ID from another message never
+makes a held or refused body readable (the model found this, section 15.0).
 
 So on the native route the recipient's engine decides first, as it would for any peer's message: a
 native delivery that is `pending`, `sending`, `held`, `refused`, or `delivered` with `unconfirmed`
@@ -444,16 +463,20 @@ shows the recipient only its count ("2 messages wait for your engine's decision"
 summary or body. The other routes have no engine policy to defer to, and jackstay does not imitate
 `crossSessionInbound` there: the frame's "not consent" line protects them (W-091).
 A channel message is visible through `chat.thread` to every session of the account that has **no
-delivery** of it (the related list limits only sending). A session that has a delivery of it, being
-a subscriber, sees it in `chat.thread` only as its own delivery allows: until the body is visible
-by the rule above, the thread shows that a message is there and nothing of it, not even its ID, so
-naming the ID stays evidence of a frame the engine showed.
+delivery** of it (the related list limits only sending). A session that has a delivery of a message,
+in a channel's history or in any thread, sees it in `chat.thread` only as its own delivery allows:
+until the body is visible by the rule above, the thread shows that a message is there and nothing of
+it, not its sender, summary, request ID or handle. The bare ID may still reach the session through
+other messages; that is why it is not evidence.
 
 **Deadlines are checked where they matter, not only by the sweep.** In the same locked step in which
 a pusher would set `sending` or `delivered`, in which `chat.inbox` or `chat.thread` would return a
 body, and in which a response or an ack would commit, the store compares `expires_at` with the clock; an overdue `pending` or `held` delivery, or
 an `open` request, is moved to `expired` right there (with its notice owed) and the action proceeds
-as if it had been expired already. The sweep (section 7.4) catches what nobody touched.
+as if it had been expired already. For a request this is always the request **and** its delivery
+together (section 4.4): a check that expired only the delivery would leave the request open and
+neither record owing the notice (the model found this). The sweep (section 7.4) catches what
+nobody touched.
 
 ## 5. MCP tools
 
@@ -468,6 +491,8 @@ change nothing carry `readOnlyHint: true`.
 {
   "$defs": {
     "message_id": { "type": "string", "pattern": "^msg_[0-9a-hjkmnp-tv-z]{26}$" },
+    "message_ref": { "type": "string", "pattern": "^msg_[0-9a-hjkmnp-tv-z]{26}(\\.[0-9a-hjkmnp-tv-z]{13})?$",
+                     "description": "A message ID, or a native delivery's handle (section 4.10)." },
     "request_id": { "type": "string", "pattern": "^req_[0-9a-hjkmnp-tv-z]{26}$" },
     "address": { "type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^\\r\\n]*$" },
     "channel": { "type": "string", "pattern": "^#[a-z0-9]([a-z0-9._-]{0,46}[a-z0-9])?( \\[[0-9a-f]{6,10}\\])?$" },
@@ -595,7 +620,7 @@ pure subscription (`fired_at` is added when `fired` is true), or `{ "outcome": "
 ```json
 { "type": "object", "additionalProperties": false,
   "properties": {
-    "ids": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/message_id" } },
+    "ids": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/message_ref" } },
     "unread_only": { "type": "boolean", "default": true },
     "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 },
     "cursor": { "type": "string", "maxLength": 512 },
@@ -637,7 +662,7 @@ recipient acknowledges it with `chat.ack`.
 ```json
 { "type": "object", "additionalProperties": false, "required": ["message_id"],
   "properties": {
-    "message_id": { "$ref": "#/$defs/message_id" },
+    "message_id": { "$ref": "#/$defs/message_ref" },
     "state": { "enum": ["read", "acted"], "default": "acted" },
     "note": { "type": "string", "maxLength": 200 } } }
 ```
@@ -645,6 +670,7 @@ recipient acknowledges it with `chat.ack`.
 States only move forward (section 4.2); an ack of a state already passed is accepted and changes
 nothing; an ack of a delivery that is `refused`, `dropped` or `expired` is accepted, changes nothing,
 and says so. Only the recipient may ack (a forged ack is refused as `not_recipient`, as in 0.5.x).
+A native delivery whose body is not yet visible is acked only by its handle (section 4.10).
 
 **`chat.respond`**: answer a request addressed to this session.
 
@@ -661,6 +687,7 @@ and says so. Only the recipient may ack (a forged ack is refused as `not_recipie
     "idempotency_key": { "$ref": "#/$defs/idempotency_key" } } }
 ```
 
+The request ID is the evidence for a native request whose body is not yet visible (section 4.10).
 `approve`/`reject` only for `expects: decision`; `answer` only for `expects: answer`; `choice` must
 be one of the request's `options` when it has them. A request may be answered while it is `open`,
 whatever its delivery's state; the response moves the delivery to `acted` unless it is already final.
@@ -712,7 +739,10 @@ continues from the next message.
 ### 5.3 Rendering for the model
 
 Every tool result, hook text and native message that carries another session's text wraps it in one
-fixed frame, so the model can tell whose words it reads:
+fixed frame, so the model can tell whose words it reads. In a native push the `id` attribute, the
+"read the rest" line and the "already handled" line carry the delivery's handle (section 4.10)
+instead of the bare ID; every other rendering, and the `thread` attribute everywhere, carries the
+bare ID:
 
 ```text
 <jackstay-message id="msg_…" from="web@fix-login [3fa9c1]" kind="request" priority="now" thread="msg_…" request="req_…" expires="2026-11-21T10:00:00Z">
@@ -878,6 +908,7 @@ Each recipient's **delivery** is its own small file:
     "at": { "type": "string" },
     "reason": { "enum": ["unconfirmed", "engine_refused", "engine_queue_full", "recipient_ended", "expired", "engine_held_unresolved"] },
     "pusher": { "type": "string", "maxLength": 64 },
+    "handle": { "type": "string", "pattern": "^[0-9a-hjkmnp-tv-z]{13}$" },
     "attempts": { "type": "integer", "minimum": 0, "maximum": 4 },
     "whole": { "type": "boolean" },
     "next_attempt": { "type": "string" },
@@ -886,10 +917,12 @@ Each recipient's **delivery** is its own small file:
 ```
 
 `route` is chosen when the delivery is created and changes only from `native` to `hooks` (section
-8.3). `pusher` names the process that set `sending`; `attempts` (confirmed failures, at most 4) and
+8.3). `pusher` names the process that set `sending`; `handle` is the 64 random bits of a native
+delivery's handle, made with the delivery (section 4.10); `attempts` (confirmed failures, at most 4) and
 `next_attempt` belong to the native route and the Codex bridge.
 `whole` is true when a push carried the whole body (not cut to 4,000 or 2,000 characters). `notice` is set to `owed` with a final `refused`, `dropped` or
-`expired` state, and to `shown` once the sender has seen it (section 8.5).
+`expired` state (except a request's expired delivery, whose notice is the request's, section 4.4),
+and to `shown` once the sender has seen it (section 8.5).
 
 The **commit** record makes a send (or a response) visible; until it exists, nothing else of that
 message is (section 7.3):
@@ -977,7 +1010,7 @@ to it:
 
 | chat needs | from `internal/durable` | chat adds |
 |---|---|---|
-| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | how it treats `ErrNotSynced`: the folder is fsynced again before the lock is released. If that works, the change is made (a send is `accepted`). If not, a crash could still undo it: the journal entry is kept, a send answers `uncertain`, and the sender retries with the same `idempotency_key`, which recovery resolves to `duplicate` or a fresh send; `jst doctor` reports the failure |
+| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | how it treats `ErrNotSynced`: the folder is fsynced again before the lock is released. If that works, the change is made (a send is `accepted`). If not, a crash of the machine could still undo it, so for a send or a response the operation **stops at its commit record** (section 7.3): nothing that follows from the commit is applied, no derived file is written, the journal entry is kept, and the send answers `uncertain`. The message is not served (section 7.3) until a later recovery has fsynced the folder. The sender retries with the same `idempotency_key`: while the kept entry carries that key the retry answers `uncertain` again, and once recovery has resolved the entry it answers `duplicate` (rolled forward) or makes a fresh send (rolled back); `jst doctor` reports the failure |
 | a bounded read: a file past its record's bound (section 6.4) is an error | `ReadLimited` (`ErrTooLarge`) | nothing |
 | one lock for the store, with a deadline | `LockFile` on `lock`, waited for with the caller's context | its deadlines: at most 2 s in a hook (then the hook does nothing, so a turn is never held up by chat), 5 s in a tool (then `store_busy`) |
 | a shared mode for readers | not offered: `LockFile` is exclusive | readers take the same exclusive lock for their short read. A shared mode, if it is added to `internal/durable` later, changes nothing else here: section 7.3 never relies on readers running together |
@@ -997,14 +1030,18 @@ that points at a read delivery, and every reader checks the delivery behind each
 
 **A send or a response** writes many files and is journalled:
 
-1. under the lock, publish `journal/<id>` naming the operation: the whole entry is written to a
-   temporary file and fsynced, then linked into `journal/` under its final name (a link never replaces
-   an existing name), and the folder is fsynced, so an entry is never seen empty or half written;
+1. under the lock, publish `journal/<id>` naming the operation, its `idempotency_key` and the charge
+   it was admitted with (section 7.4): the whole entry is written to a temporary file and fsynced,
+   then linked into `journal/` under its final name (a link never replaces an existing name), and the
+   folder is fsynced, so an entry is never seen empty or half written;
 2. write the body, the envelope and every delivery; a send with `notify_when_idle` names its
    subscription in the journal entry, and nothing else yet;
-3. write the **commit record**, then apply what follows from it: the subscription named in the
+3. write the **commit record** and make it durable (its folder fsynced; if that fails the operation
+   stops here, section 7.2), then apply what follows from it: the subscription named in the
    journal entry, on the recipient's session record; for a response, also rewrite the request's commit record to
-   `answered` with `response_id`, and set the request's delivery to `acted` unless it is final;
+   `answered` with `response_id`, and set the request's delivery to `acted` unless it is final. Nothing
+   is applied on another record before the commit is durable, since a rollback removes only the
+   operation's own files and could not undo it;
 4. write the derived files: the `inbox` markers of the deliveries created `pending`, the `outbox`
    marker, the idempotency entry; update `usage.json`;
 5. remove `journal/<id>`.
@@ -1013,8 +1050,12 @@ The commit record is the commit point: a message without one does not exist for 
 
 **Recovery runs before anything is served.** Every process, reader or writer, takes the store's one
 lock (section 7.2) and, under that same acquisition, first lists `journal/`. If it is not empty, it
-finishes each entry before its own work: an operation whose commit record exists is rolled forward (the rest of step 3, then step 4);
-one without it is rolled back by removing the files of that message ID, which no reader has seen.
+finishes each entry before its own work: an operation whose commit record exists is rolled forward
+(the folder fsynced first, then the rest of step 3, then step 4); one without it is rolled back by
+removing the files of that message ID and the idempotency entry the journal entry names, none of
+which any reader has seen. When the commit record exists but its folder still cannot be fsynced,
+the entry is **kept**: the operation is neither undone nor served, every other operation goes on,
+and the next recovery tries again.
 A review mailbox's freeze (`journal/freeze-<mailbox hash>`, section 9.1) and an idle subscription's
 firing (`journal/fire-<watcher hash>-<recipient hash>-<generation>`: the notice written on the watcher's
 record under that stable name, then the subscription removed from the recipient's) are always rolled
@@ -1023,6 +1064,12 @@ forward. An entry that cannot be parsed (only a fault of the disk can make one) 
 Only then does it read or write. So a reader never sees a half-made send, a request and its response
 always agree, and a client that retries with the same `idempotency_key` after a crash finds the entry
 and gets `duplicate`.
+
+**Nothing is served before it is durable.** A message is served (pushed, announced, returned by a
+read, counted in a listing) only when its commit record exists and no journal entry of it is left.
+A message pushed while a machine crash could still undo its commit could be pushed again after the
+sender's retry, and a `duplicate` could name a message that no longer exists (the model found
+both, section 15.0).
 
 **Readers trust records, not markers.** `chat.inbox` and the hooks read each delivery a marker points
 at and skip (and, holding the exclusive lock, remove) a marker whose delivery is not unread. Markers
@@ -1061,13 +1108,19 @@ when it is created, not its size on disk: a body its byte length, an envelope 48
 4 KiB, a commit record 1 KiB, a session 64 KiB, a binding 8 KiB. A record can then grow (a reason, a
 note, an owed notice) without ever passing what was charged, so such changes are never refused for
 room, and `usage.json` changes only when records are created or removed. It is therefore a function
-of which files exist, and recovery and the sweep rebuild it by listing the folders; a writer that
-finds it missing, or finds a journal entry, rebuilds it before admitting a growing write. A send is
-accepted only while the charges stay under 63 MiB and 4,096 messages after it; the last MiB is kept
-for journal and temporary files. Every other path that creates a record (a session, a binding, a channel, a marker, an idempotency
-entry, an event) passes the same check against its own charge (a marker or idempotency entry 512
-bytes, a channel 16 KiB); a session or binding that does not fit is refused, the hook logs it and
-does nothing, and the tool answers `capacity`. Sessions and bindings are also bounded by count (256
+of which files exist and of the journal entries, and recovery and the sweep rebuild it by listing
+the folders; a writer that finds it missing, or finds a journal entry, rebuilds it before admitting a
+growing write. A send (or a response) is admitted with the charge of **every** record it will
+create: body, envelope, deliveries, commit record, and the derived files of step 4 (an `inbox`
+marker per delivery, the `outbox` marker, the idempotency entry), so recovery never needs room to
+roll a committed send forward and never has to drop a marker. From step 1 until its journal entry
+is removed, that whole charge is counted from the entry, whatever files exist yet, so a session
+registering beside a kept entry cannot take the room it was admitted with (the model found both,
+section 15.0). A send is accepted only while the charges stay under 63 MiB and 4,096 messages after
+it; the last MiB is kept for journal and temporary files. Every other path that creates a record (a session, a binding, a channel, an idempotency
+entry, an event) passes the same check against the same 63 MiB with its own charge (a marker or
+idempotency entry 512 bytes, a channel 16 KiB); a session or binding that does not fit is refused,
+the hook logs it and does nothing, and the tool answers `capacity`. Sessions and bindings are also bounded by count (256
 each). When a send would pass a bound, the sweep runs first and,
 if room is still short, removes **done** messages oldest first before their 7 days are up. It never
 removes a message that is not done, so a body a recipient may still fetch, or an owed notice, is
@@ -1169,14 +1222,15 @@ the pass:
 2. outside the lock, checks that the socket path is a socket owned by the same user, connects,
    writes one message in Claude Code's line format, and reads the answer with a 2 s deadline. The text is the frame of
    section 5.3, cut to 4,000 characters: the body inlined whole when it fits, otherwise ending with
-   "read the rest with chat.inbox ids:[…]";
+   "read the rest with chat.inbox ids:[<handle>]";
 3. under the lock, records the outcome:
    - **an answer**: accepted → `delivered`; held → `held`; refused → `refused` (`engine_refused`);
      queue full → `dropped` (`engine_queue_full`);
    - **a confirmed failure**, when nothing was written (no socket, connection refused, the
      connection closed before the line was sent): back to `pending` with `attempts` + 1 and
      `next_attempt` 5 s, 30 s, then 2 min later. On the fourth confirmed failure the route becomes
-     `hooks` in the same write, so no native pass picks it up again. (A socket that cannot be reached
+     `hooks` in the same write, so no native pass picks it up again. A request closed while it was
+     `sending` (section 4.4) expires instead. (A socket that cannot be reached
      at all says the session has no usable inbox; the hooks route has no engine policy to apply,
      as section 4.10 says);
    - **an unknown outcome**, when the line was written but no answer came, or one jackstay cannot
@@ -1316,8 +1370,11 @@ rounds.
       folder; and sets the mailbox `gone`, so later sends are refused as `recipient_gone`;
    2. it writes the **snapshot** (the questions, the answers, and every message sent to the mailbox,
       whatever its state) atomically to that path; the snapshot is the freeze's commit point;
-   3. it sets the mailbox's `pending` deliveries `read` and its open requests `expired`, then removes
-      the journal entry.
+   3. it sets the mailbox's `pending` deliveries `read` and its open requests `expired`, each with
+      its delivery in the same write when that is `pending` or `held` (section 4.4: one notice, on the
+      request), then removes the journal entry. A question left pending after its round would
+      otherwise still be pushed to the author, who could only be told `request_closed` (the model
+      found this, section 15.0).
 
    Because the lock is held from step 1 to step 3, no answer can commit between the snapshot and the
    requests' closing.
@@ -1530,21 +1587,40 @@ is an injected clock, and waits are on store changes (`jst wait`), never sleeps.
 
 The implementation plan's first deliverable, before any code of sections 4.2, 4.10, 7.3 and 8, is a
 formal model of the delivery state machine (W-091). Four review rounds kept finding races there, each
-narrower than the last, and review alone does not end that. The model:
+narrower than the last, and review alone does not end that. The model is in
+[`chat-model/`](chat-model/README.md), in two forms that check the same rules:
 
-- covers one message to one recipient on each route, with the pusher, a concurrent reader, the
-  recipient's ack and response, the sweep and expiry, and a crash at every step of section 7.3;
-- checks at least these properties: a non-bridge route pushes a message at most once; a native body is
-  never visible to the recipient before Claude Code accepted it (section 4.10); final states are never
-  left; a crash never makes a delivery look not pushed when it may have been; every `refused`,
-  `dropped` or `expired` delivery owes exactly one notice; a request and its response always agree;
-- is either a TLA+ specification checked with TLC in CI, or a property-based Go test that drives the
-  transition table through random interleavings and crash points. Its results go into the pull request
-  that lands the store.
+- **TLA+, checked with TLC** (`just tla`, which runs when Java and the TLA+ tools are installed):
+  `ChatDelivery.tla` is one delivery on each of the five routes, with two passes of the pusher (or the
+  bridge) that may pause or crash at any step, the recipient's hook, reads, acks and answers, another
+  message carrying the bare ID, the sweep, the deadline, the recipient's end and a mailbox's freeze;
+  `ChatSend.tla` is one send and its retry with the same key, a process crash or a machine crash
+  (which loses a commit record whose folder was not fsynced) at every step of section 7.3,
+  recovery, the pusher, sessions registering near the limit, and the sweep of leftovers;
+- **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
+  package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
+  the store to import. The tests explore every reachable state breadth first (22,336 for a delivery,
+  152 for a send), and run in the gate.
 
-A first TLA+ sketch is in [`chat-model/`](chat-model/README.md). It models the native and hooks
-routes for one delivery, with a reader that honours section 4.10 only through its definition of
-visibility, and states the first four properties and the deadline rule; it has not been run through TLC yet.
+Checked: every route pushes a message at most once; a native body is never visible before Claude
+Code accepted it; a crash never makes a delivery look not pushed; final states are never left; the
+deadline is applied before an ack, a read or a push; every `refused`, `dropped` or `expired` delivery
+owes exactly one notice, and a request and its delivery that expire together owe one between them;
+a request and its response agree; a closed request is never pushed; a send retried with its key is
+pushed at most once; a `duplicate` names a message that exists; a subscription or an answer written
+by a send stands only for a message that exists (a rollback leaves the earlier subscription
+untouched); a committed send keeps every marker it was admitted with; the charges never pass 63 MiB;
+`accepted` is said only of a durable send. TLC also checks that a `sending` record is always resolved
+and an overdue delivery always expires.
+
+The model found seven faults in this document as it stood, each fixed in the section named and kept
+as a variant that must still fail (README.md lists their counterexamples): a bare message ID counted
+as evidence of a shown frame (4.10); a request and its delivery expired with two notices (4.4); a
+step's deadline check expired a request's delivery without the request, so no notice was owed
+(4.10); a freeze left its questions pushable (9.1); a confirmed failure reopened a closed request's
+delivery (8.3); recovery rolled forward a commit a machine crash could still undo, so a `duplicate`
+could name nothing and a retry could push twice (7.2, 7.3); and a send's derived files were charged
+after its commit, and a kept entry's room could be taken by sessions (7.4).
 
 ### 15.1 Unit tests (`go test ./internal/sessionchat/...`)
 

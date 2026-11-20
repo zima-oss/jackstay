@@ -109,6 +109,33 @@ site:
 site-serve:
     go run {{hugo}} server --source site --panicOnWarning --renderToMemory
 
+# The chat delivery model (docs/design/chat-model) checked by TLC, when Java (JAVA, default `java`)
+# and the TLA+ tools (TLA2TOOLS, default ~/.cache/tla/tla2tools.jar) are installed; otherwise it says
+# so and passes, since the gate runs the same model as Go tests (internal/sessionchat/deliverystate)
+tla:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    jar="${TLA2TOOLS:-$HOME/.cache/tla/tla2tools.jar}"
+    java="${JAVA:-java}"
+    if [ ! -f "$jar" ] || ! "$java" -version > /dev/null 2>&1; then
+      echo "tla: skipped: no Java, or no TLA+ tools at $jar (docs/design/chat-model/README.md)"
+      exit 0
+    fi
+    cd docs/design/chat-model
+    for model in ChatDelivery ChatSend; do
+      meta=$(mktemp -d); out=$(mktemp)
+      status=0
+      "$java" -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers auto -metadir "$meta" \
+        -config "$model.cfg" "$model.tla" > "$out" 2>&1 || status=$?
+      grep -E 'states generated|distinct states found|^Error|is violated|No error has been found' "$out" || true
+      rm -r "$meta"
+      if [ "$status" -ne 0 ] || ! grep -q 'No error has been found' "$out"; then
+        cat "$out"; rm -f "$out"; echo "FAILED: tla $model"; exit 1
+      fi
+      rm -f "$out"
+      echo "tla: $model holds"
+    done
+
 # What a push needs (W-040): the Go checks, the integration tests, the security checks and the
 # docs check.
 gate:
