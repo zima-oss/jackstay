@@ -233,7 +233,7 @@ pushes the text, once.
 | `pending` | stored, not yet read; its doorbell may have rung any number of times |
 | `sending` | the bridge recorded that it is about to steer it; the steer's result is not yet recorded |
 | `delivered` | steered by the bridge: the app-server accepted it, or, with the reason `unconfirmed`, a steer was made but its answer never came |
-| `read` | the recipient received the whole body from `chat.inbox` in one response, or acknowledged it as read |
+| `read` | the recipient received the whole body from `chat.inbox` in one response, or acknowledged it as read; or a review mailbox froze with it unread (section 9.1) |
 | `acted` | the recipient said it handled it (`chat.ack` with `acted`), or answered it with `chat.respond` |
 | `refused` | the recipient's engine refused the native doorbell (it closed the connection, section 8.3) |
 | `dropped` | it can no longer reach the recipient: the recipient ended, or its review mailbox closed |
@@ -709,7 +709,8 @@ Exactly one of `thread_id` and `channel` is given. With `thread_id`, the message
 oldest first; with `channel`, the channel's messages, newest first, so a new subscriber can find the
 threads it missed. Each message has the fields of an `inbox` message without `state`. Pages follow
 the size rules of `chat.inbox`, and `next_cursor` can continue inside a message's body. Reading a
-thread changes no receipt.
+thread never marks a message read or acted; like every read it applies the deadline first (section
+4.10).
 
 A cursor is opaque to the caller: it holds only the position and the offset inside a body, and
 the caller sends the same filters (and `ids`) with it; a cursor used with other filters is refused
@@ -1232,15 +1233,17 @@ notices, the session's `notices_rung_at`). For each due session the pass:
 
 1. checks that the socket path is a socket owned by the same user, connects, writes the doorbell
    line, and waits 2 s;
-2. under the lock, records what happened:
-   - **the connection stayed open, or the line was taken**: the deliveries it told of are marked
-     `rung`, and the session's `notices_rung_at` moves to the newest notice it told of; the notices
-     stay owed until an inbox read shows them, and nothing else changes;
+2. under the lock, records what happened. One rule decides what a ring leaves due: **a ring that
+   reached the socket told of everything in it**, whatever came back. So the deliveries it told of
+   are marked `rung` and the session's `notices_rung_at` moves to the newest notice it told of; the
+   notices stay owed until an inbox read shows them. Then:
+   - **the connection stayed open, or the line was taken**: nothing else changes;
    - **the connection was closed before the 2 s**: the recipient's engine refused the doorbell; each
      `pending` native delivery it told of becomes `refused` (`engine_refused`, its notice owed), after
      the deadline check of section 4.10;
-   - **a confirmed failure**, when nothing was written (no socket, connection refused): nothing is
-     recorded, and the next pass tries again after 5 s, 30 s, then 2 min. The hooks ring meanwhile.
+   - **a confirmed failure**, when nothing was written (no socket, connection refused): nothing
+     reached the socket, so nothing is marked, and the next pass tries again after 5 s, 30 s, then
+     2 min. The hooks ring meanwhile.
 
 A ring is never retried for the same deliveries once taken, but ringing again is harmless: a
 recipient that ignored a doorbell is told again by its hooks, and by the next doorbell once a newer

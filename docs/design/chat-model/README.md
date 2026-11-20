@@ -109,8 +109,8 @@ retention rule is checked as predicates (`NeedsMessage`, `MessageDone`) by unit 
 first review found that it let pressure remove an expired request's only notice, now fixed in
 section 7.4. A request that reaches its deadline while a steer of it is under way may still be
 written (the lock is not held during a steer); its answer is refused as `request_closed`, and the
-model does not count that as a fault. Nor does it count a frozen question that a hook returns just
-after the freeze, or that a pass stalled past 60 s writes: the maintainer accepted both as they are
+model does not count that as a fault. Nor does it count a frozen question that a bridge pass
+stalled past 60 s writes: the maintainer accepted that as it is
 (2026-11-20, chat.md section 16). Time is two events (the
 deadline passing, a `sending` record going stale), not a clock. The doorbell's line format is the one
 captured from Claude Code 2.1.328 (section 8.3), and its golden files check that part.
