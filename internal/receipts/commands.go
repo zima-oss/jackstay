@@ -3,8 +3,10 @@ package receipts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -23,20 +25,18 @@ import (
 const (
 	TestUsage     = "usage: jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]"
 	lastUsage     = "usage: jst test last [--project NAME] [--scope S] [--json]"
-	receiptsUsage = `usage: jst receipts key -- COMMAND [ARG ...]   the key and what went into it; nothing is run
-       jst receipts stats [--project NAME] [--json]   runs, reuses and seconds saved, from the log
+	receiptsUsage = `usage: jst receipts key -- COMMAND [ARG ...]
+       jst receipts stats [--project NAME] [--json]
        jst receipts list [--project NAME]
        jst receipts export KEY
-       jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE
-       jst receipts attest-ci --trust-root NAME --issuer ID --workflow ID --run ID --signing-key KEY RECEIPT
-       jst receipts verify-ci --trust-root NAME --public-key KEY --issuer ID --workflow ID --run ID --head SHA --key KEY --manifest SHA RECEIPT ATTESTATION`
+       jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE`
 )
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "test", Summary: "run a test command, judged, recorded and keyed by the tree (`jst test -- COMMAND`)", Usage: testHelp, Run: TestCommand},
+		cli.Command{Name: "test", Summary: "run a test scope or command, judged, recorded and keyed by the tree", Usage: testHelp, Run: TestCommand},
 		cli.Command{Name: "test last", Summary: "the last run of this project: outcome, what went wrong, where its output is", Usage: lastHelp, Run: LastCommand},
-		cli.Command{Name: "receipts", Summary: "the receipts: key, stats, list, export, verify and CI provenance", Usage: receiptsHelp, Run: receiptsCommand},
+		cli.Command{Name: "receipts", Summary: "the receipts: key, stats, list, export and verify", Usage: receiptsHelp, Run: receiptsCommand},
 		cli.Command{Name: "receipts key", Summary: "the key of a command here and what went into it; nothing is run", Usage: keyHelp, Run: keyCommand},
 		cli.Command{Name: "receipts stats", Summary: "runs, reuses and seconds saved, from the run log", Usage: statsHelp, Run: statsCommand},
 		cli.Command{Name: "receipts list", Summary: "the stored receipts", Usage: listHelp, Run: listCommand},
@@ -107,6 +107,11 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, TestUsage)
 		return 0
 	}
+	if path := UnwritableEvidence(""); path != "" {
+		Say(stderr, "%s", EvidenceRefusal(path))
+		Say(stderr, "outcome=not-started (nothing was run)")
+		return StatusUnusable
+	}
 	if scopeCommand != nil && !IsRaw(args) {
 		return scopeCommand(args, stdin, stdout, stderr)
 	}
@@ -122,6 +127,76 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return StatusUnusable
 	}
 	return runner.raw(asked)
+}
+
+// UnwritableEvidence is the first piece of a project's evidence this process cannot write, "" when
+// it can write them all: the run log (opened for appending, nothing written), and the project's
+// receipts, gate marks and bars (a file made and removed in each, or where it would be made).
+// Claude Code's sandbox refuses them once setup has left evidence read-only there (#59), and so may
+// an owner's deny rule; a run that cannot write them could neither be found again nor, failing, undo
+// an earlier pass, so every jst test that runs something checks them first. project "" checks the
+// run log alone.
+func UnwritableEvidence(project string) string {
+	path, err := RunLogPath()
+	if err != nil {
+		return "the run log"
+	}
+	if _, statErr := os.Stat(path); statErr == nil {
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0) // #nosec G304 -- jackstay's own run log
+		if err != nil {
+			return path
+		}
+		if err := file.Close(); err != nil {
+			return path
+		}
+	} else if !canCreateIn(filepath.Dir(path)) {
+		return path
+	}
+	if project == "" {
+		return ""
+	}
+	for _, name := range []string{"receipts", "gate-marks", "gate-bars"} {
+		folder, err := StateFolder(project, name)
+		if err != nil || !canCreateIn(folder) {
+			return folder
+		}
+	}
+	return ""
+}
+
+// canCreateIn says a file can be made and removed in folder or, while it does not exist, in the
+// nearest folder above it that does (where it would be made): nothing is left behind.
+func canCreateIn(folder string) bool {
+	for {
+		info, err := os.Stat(folder)
+		if err == nil {
+			if !info.IsDir() {
+				return false
+			}
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+		parent := filepath.Dir(folder)
+		if parent == folder {
+			return false
+		}
+		folder = parent
+	}
+	probe, err := os.CreateTemp(folder, ".jackstay-write-probe-*")
+	if err != nil {
+		return false
+	}
+	name := probe.Name()
+	closeErr := probe.Close()
+	return os.Remove(name) == nil && closeErr == nil
+}
+
+// EvidenceRefusal is what a run that cannot write its evidence says.
+func EvidenceRefusal(path string) string {
+	return fmt.Sprintf("jst test records evidence (the run log, receipts, gate marks) and cannot write %s here: inside Claude "+
+		"Code's sandbox it is read-only, so a run could neither be found again nor undo an earlier pass. Run it outside the sandbox.", path)
 }
 
 func receiptsCommand(_ []string, _ io.Reader, _, stderr io.Writer) int {

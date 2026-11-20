@@ -1,31 +1,25 @@
 # The guard, discard and trash
 
-The guard reads each shell command an agent is about to run and refuses the ones that destroy work
-that cannot be got back: uncommitted edits, branches whose commits are nowhere else, folders. Each
-refusal names a command that does the job safely, and two of those commands are jackstay's own:
-`jst discard` (drop uncommitted changes, keeping them in a trash) and `jst trash` (an undoable
-delete).
+The guard stops an agent's shell command before it destroys work that cannot be got back:
+uncommitted edits, branches whose commits are nowhere else, folders. Each refusal names a command
+that does the job safely, often one of jackstay's own: `jst discard` drops uncommitted changes but
+keeps a copy, and `jst trash` is a delete you can undo.
 
-The guard runs as a hook ([Claude Code](claude-code.md), or [Codex](codex.md)). Without a hook, you
-can still ask it about any command with `jst guard check`.
+The guard runs as a hook in [Claude Code](claude-code.md#the-guard-hook) (written by `jst adopt`)
+or [Codex](codex.md#the-guard-as-a-codex-hook). Without a hook, ask it about any command yourself.
 
-## `jst guard`
-
-```sh
-jst guard                                   # the hook: a tool call as JSON on standard input
-jst guard check [--cwd DIR] -- 'COMMAND'    # judge COMMAND as the hook would
-```
-
-`jst-guard`, installed beside `jst`, is the same as `jst guard`.
-
-`check` exits 0 when the command is allowed (a warning, if any, on standard error), 2 when it is
-refused (the reason on standard error), 64 when its own words are wrong.
+## Ask the guard about a command
 
 ```sh
 jst guard check -- 'git push --force origin main'
 jst guard check -- 'rm -rf build'
 jst guard check --cwd ../other-repo -- 'git branch -D old-feature'
 ```
+
+`check` judges the command as the hook would, in the folder `--cwd` names (default: here). It
+exits 0 when the command is allowed (a warning, if any, on standard error) and 2 when it is refused
+(the reason on standard error). `jst-guard`, installed beside `jst`, is the hook's name for
+`jst guard`. Every flag and exit status: `jst guard --help`.
 
 ### What it refuses
 
@@ -51,6 +45,7 @@ The built-in rules, by id:
 | `git-read-tree-reset`, `git-checkout-index-force` | `git read-tree -u --reset`, `git checkout-index -f` | `jst discard <path>` |
 | `git-config-alias`, `git-config-worktree` | git configuration on the line the guard cannot read (aliases, includes, config files), moving the work tree | the git command written out |
 | `cards-push`, `card-push-unreadable-config` | a push to the cards branch without valid `Card:` lines ([records](records.md)) | `jst lint range` |
+| `gh-pr-merge`, `glab-mr-merge` | `gh pr merge`, `glab mr merge`: a merge on the host outside `jst land`, past the project's landing policy | `jst land` |
 | `rm-recursive` | `rm -r` of anything but temporary and regenerable folders | `jst trash <path>` |
 | `find-delete` | `find … -delete` | `find … -print`, then `jst trash` |
 | `env-split-string` | `env -S STRING` it cannot split | the command without `env -S` |
@@ -111,52 +106,44 @@ should be zero.
 
 The full table, with every allowance: [the guard's design](../design/guard.md).
 
-## `jst discard`
+## Drop uncommitted changes: `jst discard`
 
-```sh
-jst discard [--] PATH...
-```
-
-Puts each path (a file or a folder) back to its committed state, HEAD. Whatever that throws away
-(the file on disk, a staged version that differs from both) is first kept in jackstay's trash. An
-untracked file is left alone (`jst trash PATH` moves it). Every path is checked before anything
-changes: one bad path, and nothing is done.
+`jst discard` puts each path (a file or a folder) back to HEAD. Whatever that throws away, the file
+on disk or a staged version that differs from both, is first kept in jackstay's trash:
 
 ```sh
 jst discard src/parser.go docs/draft.md
-# jst discard: src/parser.go: what was on disk kept as 20261117-224808-1 (`jst trash restore 20261117-224808-1`)
-# jst discard: 2 path(s) back to HEAD; 1 kept in jackstay's trash for 7 days (`jst trash list`)
 ```
 
-Exit: 0 done; 1 a path could not be put back (the message says which, and where its copy is);
-2 refused, nothing changed (outside a work tree, a path in a merge conflict, a submodule).
-
-## `jst trash`
-
-```sh
-jst trash PATH...                     # move each into jackstay's trash
-jst trash list [--json]               # the entries, newest first
-jst trash restore ENTRY [--to PATH]   # put an item back (refused when something is there)
-jst trash prune                       # remove entries older than trash.keep_days
+```text
+jst discard: src/parser.go: what was on disk kept as 20261117-224808-1 (`jst trash restore 20261117-224808-1`)
+jst discard: 2 path(s) back to HEAD; 1 kept in jackstay's trash for 7 days (`jst trash list`)
 ```
 
-Entries live in `~/.jackstay/.trash/`, which the agent sandbox can write (the system's Trash cannot
-be written from inside it). Each entry keeps the `trash.keep_days` (default 7) of the project it came
-from; once older, the next `jst trash` or `jst discard` removes it.
+An untracked file is left alone (`jst trash PATH` moves it). Every path is checked before anything
+changes: with one bad path (outside a work tree, in a merge conflict, a submodule) nothing is done.
+Every flag and exit status: `jst discard --help`.
+
+## Delete undoably: `jst trash`
 
 ```sh
 jst trash build/old-output
 jst trash list
 jst trash restore 20261117-224808-2
-jst trash restore 20261117-224808-2 --to /tmp/old-output    # elsewhere
-jst trash -- list                                           # a path named "list"
+jst trash restore 20261117-224808-2 --to /tmp/old-output
+jst trash -- list
 ```
 
-Exit: 0 done; 1 a path could not be moved, or no such entry; 2 a bad request.
+The last two put an entry back somewhere else, and move a path named `list` into the trash. Entries
+live in `~/.jackstay/.trash/`, which Claude Code's sandbox can write once `~/.jackstay` is allowed
+([Claude Code](claude-code.md#the-sandbox)); the system's Trash cannot be written from inside it.
+Each entry is kept for the `trash.keep_days` (default 7) of the project it came from; once older,
+the next `jst trash` or `jst discard` removes it, and `jst trash prune` removes it now. Every flag
+and exit status: `jst trash --help`.
 
 ## What can go wrong
 
-- **A refusal for a command you meant**: read its `Instead`. If you really mean it, run it in your
+- **A refusal for a command you meant**: read its `Instead`. If you mean it, run it in your
   own terminal. To loosen a rule for a whole project, set its level in `guard.rules`.
 - **A `zsh-glob` warning on a pattern that will match later** (a folder that is empty now): quote
   the word; the warning is about the shell, not about danger.

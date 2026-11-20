@@ -25,9 +25,9 @@ const setupHelp = setupUsage + `
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
 POSIX shell profile, and let Claude Code's enabled sandbox write only the folders of the jackstay
-home jst writes from it (logs, locks, chat, jobs, the brief, ids, the trash), replacing an entry
-that names the whole home. Evidence (receipts, gate marks, review rounds, the run log) stays
-read-only to the sandbox; run jst test gate and jst review outside it.
+home jst writes from it (the journal, the lock, chat, jobs, the brief, ids, the trash), replacing
+an entry that names the whole home. Evidence (receipts, gate marks, review rounds, the run log)
+stays read-only to the sandbox; jst test and jst review run outside it.
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
   --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
@@ -198,7 +198,7 @@ func planSandbox(report Report, finding Finding) SetupItem {
 		return item
 	}
 	grants := SandboxGrants(stateHome, projects)
-	original, replacement, mode, change, err := prepareSandbox(item.Path, stateHome, grants)
+	original, replacement, mode, change, err := prepareSandbox(item.Path, stateHome, projects)
 	switch {
 	case errors.Is(err, errNothingToChange):
 		item.Fix = finding.Fix
@@ -207,9 +207,9 @@ func planSandbox(report Report, finding Finding) SetupItem {
 		return item
 	default:
 		item.Status = "ready"
-		item.Text = "let Claude Code's sandbox write only the jackstay folders jst writes from it (logs, locks, chat, jobs, " +
-			"brief, ids, trash); receipts, gate marks, review rounds and the run log stay read-only there, so a command " +
-			"that records them (`jst test gate`, `jst review`) runs outside the sandbox"
+		item.Text = "let Claude Code's sandbox write only the jackstay folders jst writes from it (the journal, the lock, chat, " +
+			"jobs, the brief, ids, the trash); receipts, gate marks, review rounds and the run log stay read-only there, so " +
+			"`jst test` and `jst review`, which record them, run outside the sandbox"
 		item.Fix = "change sandbox.filesystem.allowWrite in " + item.Path
 		item.Add = strings.Join(change.Added, "\n")
 		item.Diff = sandboxDiff(item.Path, change)

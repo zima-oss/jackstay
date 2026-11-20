@@ -157,6 +157,10 @@ func Dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	args = withCommandWords(args)
+	if replacement, gone := removedCommand(args); gone {
+		fmt.Fprintf(stderr, "jst: %s\n", replacement)
+		return 2
+	}
 	entry, words, found := Find(args)
 	if !found {
 		if len(args) == 2 && isHelpWord(args[1]) && writeGroup(stdout, args[0]) {
@@ -172,6 +176,32 @@ func Dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	return entry.Run(args[words:], stdin, stdout, stderr)
+}
+
+// removed are the commands 0.6.0 took out, with what replaces each (docs/design/land.md section
+// 6). A removed command is unknown: the error names its replacement and nothing runs.
+var removed = map[string]string{
+	"gh":                 "use `jst checks` (wait, status, run-wait) and `jst land` (status, find)",
+	"gh pr-land":         "use `jst land` (`--pr` is `--change`, `--dry-run` is `--plan`, `--no-merge` is `--prepare`)",
+	"gh pr-status":       "use `jst land status`",
+	"gh pr-find":         "use `jst land find`",
+	"gh ci-wait":         "use `jst checks wait`",
+	"gh ci-status":       "use `jst checks status`",
+	"gh run-wait":        "use `jst checks run-wait`",
+	"queue":              "use `jst land`; on a base that requires the host's merge queue, it hands the change to a person, who queues it",
+	"receipts attest-ci": "provenance is verified by `jst release` and the install only",
+	"receipts verify-ci": "provenance is verified by `jst release` and the install only",
+}
+
+// removedCommand is the message for a removed command's words, longest match first.
+func removedCommand(args []string) (string, bool) {
+	for words := min(2, len(args)); words > 0; words-- {
+		name := strings.Join(args[:words], " ")
+		if replacement, gone := removed[name]; gone {
+			return fmt.Sprintf("`jst %s` was removed in 0.6.0: %s", name, replacement), true
+		}
+	}
+	return "", false
 }
 
 func isHelpWord(word string) bool { return word == "--help" || word == "-h" }
@@ -261,16 +291,78 @@ func helpCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	return 2
 }
 
+// group is a heading of `jst help`: the commands of one kind of work, by their first word.
+type group struct {
+	title string
+	first []string
+}
+
+// groups are the headings of `jst help`, in the order work happens. A command whose first word is
+// in none of them is listed last, under "Other" (cmd/jst's tests keep that list empty).
+var groups = []group{
+	{"Tests and processes", []string{"test", "receipts", "baseline", "lock", "bg", "procs", "wait"}},
+	{"Branches and landing", []string{"start", "sync", "tidy", "discard", "trash", "land", "checks"}},
+	{"Review", []string{"review"}},
+	{"Chat and agents", []string{"chat", "brief", "guard", "inventory", "timeline", "workspace", "owner", "log", "stats"}},
+	{"Setup and health", []string{"install", "uninstall", "setup", "doctor", "adopt", "check", "profile", "patterns", "version", "help"}},
+	{"Maintenance", []string{"changes", "release", "cards", "lint", "id", "new", "view"}},
+}
+
+// startHere is the last line of `jst help`.
+const startHere = "Start here: `jst doctor` checks this machine, `jst adopt --plan` shows what jackstay would\n" +
+	"write in a project, and `jst COMMAND --help` explains any command.\n"
+
+// Grouped are the table's command names under the headings of `jst help`, in its order; the last
+// heading, "Other", holds the commands no group names and is left out when there are none.
+func Grouped() []Heading {
+	var headings []Heading
+	placed := map[string]bool{}
+	for _, entry := range groups {
+		heading := Heading{Title: entry.title}
+		for _, first := range entry.first {
+			for _, name := range Names() {
+				if word, _, _ := strings.Cut(name, " "); word == first {
+					heading.Names = append(heading.Names, name)
+					placed[name] = true
+				}
+			}
+		}
+		headings = append(headings, heading)
+	}
+	other := Heading{Title: "Other"}
+	for _, name := range Names() {
+		if !placed[name] {
+			other.Names = append(other.Names, name)
+		}
+	}
+	if len(other.Names) > 0 {
+		headings = append(headings, other)
+	}
+	return headings
+}
+
+// Heading is one heading of `jst help` and the commands under it.
+type Heading struct {
+	Title string
+	Names []string
+}
+
 func writeUsage(out io.Writer) {
-	names := Names()
 	width := 0
-	for _, name := range names {
+	for _, name := range Names() {
 		width = max(width, len(name))
 	}
 	var text strings.Builder
-	text.WriteString("usage: jst COMMAND [ARGS...]\n\n")
-	for _, name := range names {
-		fmt.Fprintf(&text, "  jst %-*s  %s\n", width, name, commands[name].Summary)
+	text.WriteString("usage: jst COMMAND [ARGS...]\n")
+	for _, heading := range Grouped() {
+		if len(heading.Names) == 0 {
+			continue
+		}
+		text.WriteString("\n" + heading.Title + "\n")
+		for _, name := range heading.Names {
+			fmt.Fprintf(&text, "  jst %-*s  %s\n", width, name, commands[name].Summary)
+		}
 	}
+	text.WriteString("\n" + startHere)
 	_, _ = io.WriteString(out, text.String())
 }

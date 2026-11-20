@@ -32,7 +32,7 @@ is added in a pull request.
 | [W-042](W-042-recoverable-trash.md) | `jst trash`: a recoverable delete inside the sandbox, named by the guard's advice |
 | [W-043](W-043-guard-go-design-approved-trash-seven-days.md) | `jst trash` keeps entries 7 days by default |
 | [W-047](W-047-release-redesign-fixed-settings-no-one-off-imports.md) | Release simplified: no one-off imports; the settings file changes alone; prepare only prints; a GitHub release created once |
-| [W-048](W-048-review-findings-triaged-by-realism.md) | Review findings rated by likelihood and consequence; rare ones go to a later-findings card |
+| [W-048](W-048-review-findings-triaged-by-realism.md) | Review findings rated by likelihood and consequence; rare ones go to a later-findings card (amended by W-094) |
 | [W-050](W-050-go-part3-design-github-account-all-steps-here.md) | GitHub through go-github with a project's own `github.account` |
 | [W-051](W-051-jst-review-codex-rounds.md) | `jst review`: Codex review rounds; its defaults, effort medium |
 | [W-052](W-052-guard-dead-end-and-clean-copy-gate.md) | `jst discard` ends the guard's keep-a-copy dead end; the gate runs on a clean copy it removes |
@@ -50,11 +50,16 @@ is added in a pull request.
 | [W-073](W-073-public-repository-shape.md) | The public tree: decisions in force as short records, backlog in GitHub Issues, `docs/guide` and `docs/design` |
 | [W-075](W-075-release-through-public-ci.md) | jackstay is released by the public repository's CI with GoReleaser (sign and notarise, keys in a protected `release` environment); no release harness in the code |
 | [W-076](W-076-quick-install-and-docs-site.md) | A quick install script and a documentation site on GitHub Pages built from the same Markdown; no unfilled placeholders |
-| [W-077](W-077-docs-site-for-users-only.md) | The documentation site carries only what a user needs; design documents and decision records stay in the repository |
+| [W-077](W-077-docs-site-for-users-only.md) | The documentation site carries only what a user needs; design documents and decision records stay in the repository (amended by W-093) |
 | [W-078](W-078-setup-after-install.md) | After an install, `install.sh` prints the remaining steps and every `jst doctor` problem names its fix |
 | [W-083](W-083-no-macos-job-in-ci.md) | CI runs the gate on Linux only; the macOS-only code is checked by `just gate` on a Mac before an install and a release |
 | [W-085](W-085-adopt-lands-settings-and-files-apart.md) | `jst adopt --settings-only`: a change of `jackstay.json` and other files lands in two pull requests, settings first (rule D0) |
 | [W-087](W-087-review-pinned-source.md) | Reviewers navigate pinned Git snapshots and read patches on demand |
 | [W-090](W-090-compatibility-of-0-6-0.md) | 0.6.0 compatibility: newer keys need `"jackstay_schema": 3` and an older pin is never handed one; internal limits are constants; Codex is the default reviewer again |
 | [W-090](W-090-agent-chat.md) | 0.6.0 chat: the agent chat follows Claude Code's messaging model and extends it: one store per account, repositories as channels, the engine's session ID, delivery over Claude Code's socket with hooks as the fallback |
+| [W-090](W-090-landing.md) | 0.6.0 landing: one `jst land` behind hosting adapters; two autonomy modes chosen at adopt and setup; `jst gh` and the queue removed |
+| [W-092](W-092-thin-land-and-where-tests-run.md) | `jst land` stays thin: push, open, required checks, merge; where tests run is each project's declared split between local and CI |
 | [W-090](W-090-sandbox-writes-only-what-jst-needs.md) | 0.6.0 sandbox: `jst setup` lets the agent sandbox write only the folders jst needs from it; receipts, gate marks, review rounds and the run log stay read-only there |
+| [W-093](W-093-docs-for-people-and-agents.md) | The documentation: a checked style guide; flags, exit codes and keys in one home, references generated from it; the site by task, with `llms.txt` for agents and the contributors' pages (amends W-077) |
+| [W-094](W-094-unusual-severe-findings-need-an-ordinary-path.md) | A review finding rated unusual and severe blocks only when it names the ordinary-work path to its setup; otherwise it is rare (amends W-048) |
+| [W-095](W-095-the-socket-is-a-doorbell.md) | Claude Code's messaging socket is only a doorbell; a chat message is delivered when the recipient reads it from its inbox |

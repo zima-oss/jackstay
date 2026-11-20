@@ -1,43 +1,40 @@
 package gh
 
-// help is `jst gh --help`: the usage lines, then each option.
+// help is `jst checks --help`: the usage lines, then each option.
 const help = usage + `
-  ci-wait [PR|URL]   wait until a pull request's checks settle (default: this branch's)
+  wait [PR|URL]      wait until a pull request's checks settle (default: this branch's)
     --timeout S      seconds to wait for every check
     --interval S     seconds between looks
     --lines N        log lines shown per failed check
     --any-head       follow the head when it moves, instead of ending with 4
-  ci-status [PR|URL] the checks as they are now; nothing is waited for
+  status [PR|URL]    the checks as they are now; nothing is waited for
   run-wait WORKFLOW  wait for a workflow run to complete
     --ref BRANCH|SHA the run's branch or commit (a SHA prefix of 7 or more); default the newest
     --repo URL       https://github.com/OWNER/REPO (default: this checkout's)
-    --timeout S, --interval S  as for ci-wait
+    --timeout S, --interval S  as for wait
     --appear S       seconds the run may take to be scheduled (default 120)
-  pr-find            one pull request; none found is exit 1
-    --head BRANCH    by its head branch
-    --search TEXT    by GitHub search text
-    --repo URL       as for run-wait
-    --wait S         seconds to wait for it to appear (default 0)
-    --state STATE    open (default), closed, merged or all
-  pr-status          where this branch and its pull request stand
-    --pr PR|URL      select an open pull request from this branch
-  pr-land            push, open the pull request, wait for its checks, squash-merge the head that
-                     was checked, delete the remote branch; the plan is printed first. It waits
-                     for the checks the base's rules require (every check when they require
-                     none); another check that fails stops it, one still pending does not
-    --pr PR|URL      select an existing open pull request from this branch
-    --title T        the new pull request's title
-    --body-file F    its description, from a file
-    --card ID        the card the change is for (repeatable), or none with --reason
-    --reason TEXT    why the change is no card's work (with --card none)
-    --no-push, --no-create, --no-wait, --no-merge  stop before that step
-    --dry-run        print the plan and stop
-    --timeout S, --interval S, --lines N  as for ci-wait
 
 exit: 0 fine; 1 not fine, the reason printed; 2 a bad request (also no account, a wrong login, a
-host that is not github.com); 3 still pending at the deadline (for ci-status: pending, or no check
+host that is not github.com); 3 still pending at the deadline (for status: pending, or no check
 registered yet, at once); 4 the head moved while waiting or while the checks were read; 5 an
 external format is not what jackstay assumes.
 
-example: jst gh pr-land --title 'Fix the parser' --card W-012
+example: jst checks wait --timeout 1200
+`
+
+// StatusUsage is `jst land status`'s usage and options, for `jst land --help`.
+const StatusUsage = `  jst land status [--change N|URL]
+    where this branch and its pull request stand, then the pull request's checks once
+    (exit as for jst checks status; 0 when no pull request is open)
+    --change N|URL   select an open pull request from this branch
+`
+
+// FindUsage is `jst land find`'s usage and options, for `jst land --help`.
+const FindUsage = `  jst land find (--head BRANCH | --search TEXT) [--repo URL] [--state STATE] [--wait S]
+    one pull request, printed as NUMBER HEAD URL; none found is exit 1
+    --head BRANCH    by its head branch
+    --search TEXT    by GitHub search text
+    --repo URL       https://github.com/OWNER/REPO (default: this checkout's)
+    --state STATE    open (default), closed, merged or all
+    --wait S         seconds to wait for it to appear (default 0)
 `

@@ -46,7 +46,8 @@ func (run *leafRun) command(asked time.Time, held *flock.Held) result {
 		// The command is about to run for this key: its receipt stops speaking for the tree now.
 		removed, err := run.store.Remove(run.key.Value)
 		if err != nil {
-			run.say("%v", err)
+			// A failure could not undo this receipt: the run does not start.
+			return run.notStarted(err.Error())
 		}
 		did.setAside = removed
 	}
@@ -387,9 +388,13 @@ func (did *ran) finish(outcome string, status int, more map[string]any, words st
 			lines, extra := receipts.NotableLines(did.kept.Path, did.veto)
 			receipts.WriteNotable(did.stderr, "jst test: ", lines, extra)
 		}
-		if whole {
+		switch {
+		case whole && written:
 			did.say("the whole output: %s  (`jst test last` shows this again)", did.kept.Path)
-		} else {
+		case whole:
+			// Without its run-log line (inside the agent sandbox, say) `jst test last` cannot find it.
+			did.say("the whole output: %s", did.kept.Path)
+		default:
 			did.say("the kept output is not whole (writing it failed): %s", did.kept.Path)
 		}
 	}

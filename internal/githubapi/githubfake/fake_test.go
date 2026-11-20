@@ -8,7 +8,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/githubapi"
 )
 
-// The calls `jst gh` and `jst tidy` make; the client and the fake both answer them.
+// The calls `jst checks`, `jst land` and `jst tidy` make; the client and the fake both answer them.
 type gitHub interface {
 	PullRequestsByHead(ctx context.Context, head, state string) ([]githubapi.PullRequest, error)
 	PullRequest(ctx context.Context, number int) (githubapi.PullRequest, error)
@@ -16,7 +16,8 @@ type gitHub interface {
 	Checks(ctx context.Context, sha string) ([]githubapi.Check, error)
 	CreatePullRequest(ctx context.Context, request githubapi.NewPullRequest) (githubapi.PullRequest, error)
 	EditPullRequestBody(ctx context.Context, number int, body string) error
-	Merge(ctx context.Context, number int, headSHA, title, body string) (githubapi.MergeResult, error)
+	Merge(ctx context.Context, number int, method, headSHA, title, body string) (githubapi.MergeResult, error)
+	Enqueue(ctx context.Context, pullRequestID, expectedHead string) error
 	WorkflowRuns(ctx context.Context, filter githubapi.RunFilter) ([]githubapi.WorkflowRun, error)
 	Jobs(ctx context.Context, runID int64) ([]githubapi.Job, error)
 	JobLog(ctx context.Context, jobID int64) (string, error)
@@ -65,10 +66,10 @@ func TestWritesAreRecorded(t *testing.T) {
 	if err := fake.EditPullRequestBody(ctx, 7, "B"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fake.Merge(ctx, 7, "h1", "T (#7)", "B"); err == nil {
+	if _, err := fake.Merge(ctx, 7, "squash", "h1", "T (#7)", "B"); err == nil {
 		t.Fatal("the first merge answer is an error")
 	}
-	if merged, err := fake.Merge(ctx, 7, "h2", "T (#7)", "B"); err != nil || !merged.Merged {
+	if merged, err := fake.Merge(ctx, 7, "rebase", "h2", "T (#7)", "B"); err != nil || !merged.Merged {
 		t.Fatalf("%+v %v", merged, err)
 	}
 	if created := fake.Created(); len(created) != 1 || created[0].Title != "T" {
@@ -77,7 +78,7 @@ func TestWritesAreRecorded(t *testing.T) {
 	if edits := fake.BodyEdits(); len(edits) != 1 || edits[0] != (BodyEdit{Number: 7, Body: "B"}) {
 		t.Fatalf("edits %v", edits)
 	}
-	if merges := fake.Merges(); len(merges) != 2 || merges[1] != (MergeCall{Number: 7, HeadSHA: "h2", Title: "T (#7)", Message: "B"}) {
+	if merges := fake.Merges(); len(merges) != 2 || merges[1] != (MergeCall{Number: 7, Method: "rebase", HeadSHA: "h2", Title: "T (#7)", Message: "B"}) {
 		t.Fatalf("merges %v", merges)
 	}
 }

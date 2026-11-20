@@ -30,7 +30,7 @@ type Template struct {
 // Embedded are jackstay's own templates, by name.
 func Embedded() []Template {
 	return []Template{
-		{Name: "card-line", Text: embedded("card-line"), When: []string{"cards", "changes"}},
+		{Name: "card-line", Text: embedded("card-line"), When: []string{"cards", "changes", "land"}},
 		{Name: "release", Text: embedded("release"), When: []string{"release"}},
 	}
 }

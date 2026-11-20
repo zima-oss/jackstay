@@ -88,11 +88,15 @@ func verdictForm(data PromptData) string {
 	}
 	form.WriteString(".\n")
 	form.WriteString("- `likelihood`: `ordinary` if it happens in ordinary work by accident, `unusual` if it needs a\n")
-	form.WriteString("  deliberate or unusual setup. `consequence`: `severe` for lost work or data or a wrong decision\n")
-	form.WriteString("  that passes unnoticed, `mild` for an inconvenience or a wrong output seen at once. Rate honestly.\n")
+	form.WriteString("  hand-built setup or deliberate misuse (the tool guards against accidents, not an adversary).\n")
+	form.WriteString("  `consequence`: `severe` for lost work or data or a wrong decision that passes unnoticed, `mild`\n")
+	form.WriteString("  for an inconvenience or a wrong output seen at once. Rate honestly.\n")
 	if data.Triage {
+		form.WriteString("  An `unusual` finding with an empty `ordinary_path` is rare too, however `severe` (W-094).\n")
 		form.WriteString("  An `unusual` and `mild` finding is rare: it is recorded for later, not fixed now.\n")
 	}
+	form.WriteString("- `ordinary_path`: for an `unusual` finding, the ordinary work by which that setup arises by\n")
+	form.WriteString("  accident; empty when no ordinary work leads there, and for an `ordinary` finding.\n")
 	form.WriteString("- `id`: a short id of your own for each new finding (`F1`, `F2`, ...); jackstay gives it its ledger id.\n")
 	form.WriteString("- `place`: `path: function or section`. When a finding is about the same place as an open finding\n")
 	form.WriteString("  above, write that finding's place exactly and name its id in `repeats`.\n")

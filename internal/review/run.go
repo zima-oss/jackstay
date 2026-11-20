@@ -41,17 +41,16 @@ const MaxSlots = 16
 
 // Options are one call's words (section 7).
 type Options struct {
-	Revision    string // REV or BASE..REV; "" is HEAD
-	PoolAttempt string // internal correlation for a queued review
-	Task        string
-	Reviewers   []string
-	BriefFile   string
-	Focus       string
-	Fresh       bool
-	PastLimit   bool
-	Model       string
-	Effort      string
-	Timeout     int // minutes; 0 keeps the configuration
+	Revision  string // REV or BASE..REV; "" is HEAD
+	Task      string
+	Reviewers []string
+	BriefFile string
+	Focus     string
+	Fresh     bool
+	PastLimit bool
+	Model     string
+	Effort    string
+	Timeout   int // minutes; 0 keeps the configuration
 }
 
 // Machine is what a round needs of the machine; Real gives the real one, tests their own.
@@ -131,6 +130,7 @@ type Round struct {
 	Machine        Machine
 	Out            io.Writer // the three lines, and the budget first
 	Errors         io.Writer // warnings and waiting
+	Request        string    // the background request this run serves (background.go), "" in the foreground
 }
 
 // Result of a call: the exit status, the folder written, and the record when it became a round.
@@ -214,6 +214,11 @@ func (round Round) Run(ctx context.Context, options Options) Result {
 		return usage("the task's lock: %v", err)
 	}
 	defer releaseTask()
+	if round.Request != "" {
+		if err := round.Store.markRunning(ctx, task, round.Request); err != nil {
+			return usage("the background request: %v", err)
+		}
+	}
 	if err := round.Store.removeAbandonedSources(task); err != nil {
 		return Result{Status: ExitReviewer, Next: fmt.Sprintf("removing an abandoned source view: %v", err)}
 	}
@@ -238,6 +243,9 @@ type plan struct {
 	follows                      int
 	ledger                       []LedgerFinding
 	streaks                      map[string]int
+	// limitCleared: the newest round reached the limit and nothing of it blocks by today's rule,
+	// so the rounds after it need no owner's word.
+	limitCleared bool
 }
 
 func (round Round) plan(ctx context.Context, task, commit, givenBase string, settings Settings, options Options) (plan, *Result) {
@@ -260,7 +268,12 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, set
 		planned.number = record.Round + 1
 		planned.chain = record.Chain
 	}
-	if newest != nil && newest.Round >= round.Settings.RoundLimit && newest.Outcome.Blocks && !options.PastLimit {
+	// Whether the newest round still blocks is read from its ledger by today's predicate, not from
+	// the flag it saved: a rule that changed since (W-094) applies to it as `jst review check` does.
+	if newest != nil && newest.Round >= round.Settings.RoundLimit && !ledgerBlocks(round.Settings, newest.Outcome.Ledger) {
+		planned.limitCleared = true
+	}
+	if newest != nil && newest.Round >= round.Settings.RoundLimit && ledgerBlocks(round.Settings, newest.Outcome.Ledger) && !options.PastLimit {
 		result := Result{Status: ExitOwner, Next: fmt.Sprintf(
 			"round %d reached the limit of %d and still blocks: the owner decides; a further round needs --past-limit after the owner's word",
 			newest.Round, round.Settings.RoundLimit)}
@@ -326,7 +339,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	ctx, span := startAttempt(ctx, planned, folder)
 	defer func() { endAttempt(span, result.Record, result.Next, result.Status, result.Folder) }()
 	if err := writeJSON(filepath.Join(folder, AttemptName), AttemptRecord{Task: planned.task, Attempt: planned.attempt,
-		Commit: planned.commit, Base: planned.base, PoolAttempt: options.PoolAttempt}); err != nil {
+		Commit: planned.commit, Base: planned.base, Request: round.Request}); err != nil {
 		return usage("the attempt's folder: %v", err)
 	}
 	data, brief, refusal := round.promptData(ctx, settings, planned, options, folder)
@@ -387,7 +400,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	}
 	tree = ""
 
-	record := RoundRecord{Task: planned.task, PoolAttempt: options.PoolAttempt, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
+	record := RoundRecord{Task: planned.task, Request: round.Request, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
 		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus, Policy: settings.policyID(), ContentPolicy: planned.contentPolicy,
 		PastLimit: options.PastLimit, Made: round.Machine.Now().Format(time.RFC3339), Runs: runs,
 		Summaries: map[string]string{}}
@@ -418,11 +431,8 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		record.Summaries[name] = answers[position].Summary
 	}
 	record.Outcome = Advance(settings, planned.ledger, planned.streaks, answered, planned.number, planned.commit)
-	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit
+	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit && !planned.limitCleared
 	status, next := Disposition(settings, record)
-	if options.PoolAttempt != "" {
-		record.PoolExit = &status
-	}
 	if err := writeJSON(filepath.Join(folder, RecordName), record); err != nil {
 		return Result{Status: ExitReviewer, Folder: folder, Next: "the round's record could not be written: " + err.Error()}
 	}
@@ -447,13 +457,17 @@ func (round Round) sourceFailure(planned plan, folder, reason string) Result {
 
 // Disposition is a round's exit status and next step (section 7: redesign before the owner).
 func Disposition(settings Settings, record RoundRecord) (int, string) {
+	recheck := ""
+	if settings.Triage {
+		recheck = "re-check each blocking rating (an unusual and severe finding blocks only with an ordinary-work path, W-094), "
+	}
 	switch {
 	case len(record.Outcome.RedesignDue) > 0:
 		return ExitRedesign, "redesign, do not patch (W-019): " + strings.Join(record.Outcome.RedesignDue, "; ")
 	case record.Round >= settings.RoundLimit && record.Outcome.Blocks:
-		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: ask the owner", record.Round, settings.RoundLimit)
+		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: %sthen ask the owner", record.Round, settings.RoundLimit, recheck)
 	case record.Outcome.Blocks:
-		return ExitBlocks, "fix the open blocking findings, then run the next round"
+		return ExitBlocks, recheck + "fix the blocking findings that stand, then run the next round"
 	}
 	return ExitClear, "nothing blocks"
 }
