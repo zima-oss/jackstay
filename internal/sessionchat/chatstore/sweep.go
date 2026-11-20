@@ -142,8 +142,11 @@ func (transaction *transaction) sweepMessage(found message) error {
 		request = found.commit.request()
 	}
 	expires, expiresKnown := parseStamp(found.envelope.ExpiresAt)
+	if transaction.heldByMailbox(found.envelope) {
+		return nil // what the next round must read stays until its mailbox is frozen (section 7.4)
+	}
 	switch {
-	case deliverystate.MessageDone(deliveries, whole, request) && !transaction.heldByMailbox(found.envelope):
+	case deliverystate.MessageDone(deliveries, whole, request):
 		keep := keepDone
 		if found.envelope.Kind == "event" {
 			keep = keepDoneEvent

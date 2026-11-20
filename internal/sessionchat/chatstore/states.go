@@ -59,6 +59,7 @@ func (transaction *transaction) observe(session Session, observed string, person
 			session.State, session.Since = StateIdle, moment
 		}
 		session.IdleGeneration++
+		session.IdleAt = moment
 		session.StopBlocks = 0
 	case ObserveGone:
 		if session.State != StateGone {
@@ -79,7 +80,7 @@ func (transaction *transaction) observe(session Session, observed string, person
 	// recovery, before any later observation can overwrite the state.
 	entry := journalEntry{Op: opObserve, ID: "observe-" + hashKey(session.Key)[:32],
 		Observed: &observation{Session: hashKey(session.Key), State: session.State, Since: session.Since,
-			Generation: session.IdleGeneration}}
+			Generation: session.IdleGeneration, IdleAt: session.IdleAt}}
 	if err := transaction.publishJournal(entry); err != nil && !errors.Is(err, os.ErrExist) {
 		return session, err
 	}
@@ -99,6 +100,7 @@ type observation struct {
 	State      string `json:"state"`
 	Since      string `json:"since"`
 	Generation int    `json:"generation"`
+	IdleAt     string `json:"idle_at,omitempty"`
 }
 
 // applyObservation finishes an idle or an end: the state is on the session's record (a replay that
@@ -114,6 +116,9 @@ func (transaction *transaction) applyObservation(observed observation) (Session,
 	}
 	if session.IdleGeneration < observed.Generation || (observed.State == StateGone && session.State != StateGone) {
 		session.State, session.Since = observed.State, observed.Since
+		if observed.Generation > session.IdleGeneration {
+			session.IdleAt = observed.IdleAt
+		}
 		session.IdleGeneration = max(session.IdleGeneration, observed.Generation)
 		if err := transaction.writeSession(session); err != nil {
 			return session, err
@@ -164,28 +169,35 @@ func (transaction *transaction) reconcileWatchers(hash string) (Session, error) 
 	armedAny := false
 	var firings []firing
 	for index, watcher := range session.IdleWatchers {
+		until, ok := parseStamp(watcher.Until)
+		// Each outcome is judged by when its own event happened, never by when this runs: the idle
+		// that advanced the generation (idle_at), the end (since, while gone), the delivery's final
+		// state (its at). An event at or after until counts for nothing: the subscription expired.
+		before := func(moment time.Time, known bool) bool { return ok && known && moment.Before(until) }
 		kind := ""
 		if !watcher.Armed && watcher.MessageID != "" {
-			switch transaction.arrival(watcher.MessageID, hash, session.State == StateGone) {
-			case arrived:
+			outcome, when, err := transaction.arrival(watcher.MessageID, hash, session)
+			if err != nil {
+				return session, err // a delivery it cannot read leaves the subscription waiting
+			}
+			switch {
+			case outcome == arrived:
 				session.IdleWatchers[index].Armed, session.IdleWatchers[index].ArmedGeneration = true, session.IdleGeneration
 				watcher, armedAny = session.IdleWatchers[index], true
-			case notArrived:
+			case outcome == notArrived && before(when, true):
 				kind = NoticeNotDelivered
+			case outcome == notArrived:
+				kind = NoticeSubscriptionExpired
 			}
 		}
-		until, ok := parseStamp(watcher.Until)
 		armed := watcher.Armed || watcher.MessageID == ""
-		// The outcome is decided by when things happened, not by when this runs: an idle or an end
-		// counts only if the session entered it (`since`, kept on its record and in an observation's
-		// journal entry) before the subscription's until.
-		entered, enteredOK := parseStamp(session.Since)
-		inTime := ok && enteredOK && entered.Before(until)
+		idleAt, idleKnown := parseStamp(session.IdleAt)
+		endedAt, endedKnown := parseStamp(session.Since)
 		switch {
 		case kind != "":
-		case armed && session.State == StateGone && inTime:
+		case armed && session.State == StateGone && before(endedAt, endedKnown):
 			kind = NoticeEnded
-		case armed && session.State == StateIdle && session.IdleGeneration > watcher.ArmedGeneration && inTime:
+		case armed && session.IdleGeneration > watcher.ArmedGeneration && before(idleAt, idleKnown):
 			kind = NoticeIdle
 		case !ok || !transaction.now.Before(until) || session.State == StateGone:
 			kind = NoticeSubscriptionExpired
@@ -268,27 +280,39 @@ const (
 	notArrived
 )
 
-// arrival reads what the watched message's delivery says. A recipient that ended with the message
-// still waiting has not received it.
-func (transaction *transaction) arrival(id, hash string, gone bool) int {
+// arrival reads what the watched message's delivery says, and when it came to say it. A recipient
+// that ended with the message still waiting has not received it, as of its end. A record that cannot
+// be read is an error, never an outcome.
+func (transaction *transaction) arrival(id, hash string, session Session) (int, time.Time, error) {
 	var delivery Delivery
-	if err := readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery); err != nil {
-		return notArrived
+	err := readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery)
+	if errors.Is(err, os.ErrNotExist) {
+		return notArrived, transaction.now, nil // its message was removed: it never arrived
+	}
+	if err != nil {
+		return waiting, time.Time{}, err
 	}
 	var commit Commit
-	closed := readRecord(transaction.place.commit(id), commitBound, &commit) == nil &&
-		commit.RequestState == string(deliverystate.Closed)
-	switch state := deliverystate.State(delivery.State); {
-	case closed && deliverystate.Expirable(state):
-		return notArrived // a closure cut short before its delivery's write: the repair rule of 4.4
-	case delivery.Reason == string(deliverystate.Unconfirmed):
-		return notArrived
-	case state == deliverystate.Delivered || state == deliverystate.Read || state == deliverystate.Acted:
-		return arrived
-	case deliverystate.Final(state) || gone:
-		return notArrived
+	if err := readRecord(transaction.place.commit(id), commitBound, &commit); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return waiting, time.Time{}, err
 	}
-	return waiting
+	at, _ := parseStamp(delivery.At)
+	state := deliverystate.State(delivery.State)
+	switch {
+	case commit.RequestState == string(deliverystate.Closed) && deliverystate.Expirable(state):
+		closed, _ := parseStamp(commit.Closed)
+		return notArrived, closed, nil // a closure cut short before its delivery's write (section 4.4)
+	case delivery.Reason == string(deliverystate.Unconfirmed):
+		return notArrived, at, nil
+	case state == deliverystate.Delivered || state == deliverystate.Read || state == deliverystate.Acted:
+		return arrived, at, nil
+	case deliverystate.Final(state):
+		return notArrived, at, nil
+	case session.State == StateGone:
+		ended, _ := parseStamp(session.Since)
+		return notArrived, ended, nil
+	}
+	return waiting, time.Time{}, nil
 }
 
 // owe writes a notice on a session's record, once per ID.

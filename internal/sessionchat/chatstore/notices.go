@@ -1,6 +1,8 @@
 package chatstore
 
 import (
+	"errors"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/sessionchat/deliverystate"
@@ -110,12 +112,9 @@ func sessionNoticeWords(notice SessionNotice) string {
 
 // markShown marks the given notices shown, in the step that returns them, and returns those it
 // marked: a notice whose record could not be read or written again is left owed and not returned.
-func (transaction *transaction) markShown(session Session, notices []OwedNotice) ([]OwedNotice, error) {
+// current is the session's record as read before anything was marked.
+func (transaction *transaction) markShown(current Session, notices []OwedNotice) ([]OwedNotice, error) {
 	var shown []OwedNotice
-	current, err := transaction.readSession(hashKey(session.Key))
-	if err != nil {
-		return nil, err
-	}
 	sessionChanged := false
 	for _, notice := range notices {
 		switch notice.source {
@@ -129,7 +128,10 @@ func (transaction *transaction) markShown(session Session, notices []OwedNotice)
 				continue
 			}
 			delivery.Notice = string(next)
-			if err := transaction.writeDelivery(notice.messageID, notice.hash, delivery); err != nil {
+			// Only the notice changes, so the delivery's marker is untouched; a record renamed into
+			// place whose folder did not sync is shown already for every later reader.
+			if err := writeRecord(transaction.place.delivery(notice.messageID, notice.hash), delivery, deliveryBound); err != nil &&
+				!errors.Is(err, durable.ErrNotSynced) {
 				continue
 			}
 		case onRequest:
@@ -142,7 +144,8 @@ func (transaction *transaction) markShown(session Session, notices []OwedNotice)
 				continue
 			}
 			commit.Notice = string(next)
-			if err := writeRecord(transaction.place.commit(notice.messageID), commit, commitBound); err != nil {
+			if err := writeRecord(transaction.place.commit(notice.messageID), commit, commitBound); err != nil &&
+				!errors.Is(err, durable.ErrNotSynced) {
 				continue
 			}
 		case onSession:
@@ -159,7 +162,7 @@ func (transaction *transaction) markShown(session Session, notices []OwedNotice)
 		shown = append(shown, notice)
 	}
 	if sessionChanged {
-		if err := transaction.writeSession(current); err != nil {
+		if err := transaction.writeSession(current); err != nil && !errors.Is(err, durable.ErrNotSynced) {
 			// The session's own notices stay owed; the others were marked and are returned.
 			kept := shown[:0]
 			for _, notice := range shown {
