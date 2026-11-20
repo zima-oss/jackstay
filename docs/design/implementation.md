@@ -1232,24 +1232,25 @@ The lock is advisory: a test command typed without it is not stopped.
   platform's archive, an unsupported system or processor and a missing tool (nothing downloaded).
 - **The documentation site** ([W-076](../decisions/W-076-quick-install-and-docs-site.md)) is built
   with Hugo and the Hextra theme from `site/`, published to GitHub Pages by
-  `.github/workflows/pages.yml`. It carries only what a user needs
-  ([W-077](../decisions/W-077-docs-site-for-users-only.md)): the home page, which opens with the
-  one-line install; the guide, its getting-started page first and its pages in the order of
-  `docs/guide/README.md`, with the integrations (Claude Code, Codex) as a group of their own,
-  `guide/integrations`; and one page pointing to the design, the decision records and
-  CONTRIBUTING on GitHub, the guide's last page (`site/content/guide/more-on-github.md`). The design and the decision records
-  are not published. The guide's pages are not copied: `site/hugo.yaml` mounts `docs/` (and
-  `CONTRIBUTING.md`) as assets, and one content adapter (`site/content/_content.gotmpl`, with
-  `site/layouts/_partials/jackstay/pages-from-docs.html`) adds a page for each Markdown file of
-  `docs/guide`. A file's first line `# Title` is its title; the guide's `README.md` is its
-  section's page and orders its sidebar. The links stay as the repository writes them: the link
+  `.github/workflows/pages.yml`. It carries what a user needs
+  ([W-077](../decisions/W-077-docs-site-for-users-only.md), amended by
+  [W-093](../decisions/W-093-docs-for-people-and-agents.md)): the home page, which opens with what
+  jackstay does and the one-line install; the guide by task, in the groups and order of
+  `docs/guide/README.md` (its `## ` headings are the groups); the generated reference
+  (`docs/reference`); and the contributors' pages (CONTRIBUTING, `docs/STYLE.md`). The design and
+  the decision records are not published. For agents it also writes `/llms.txt`, `/llms-full.txt`
+  and each page's Markdown, with links made absolute. The pages are not copied: `site/hugo.yaml`
+  mounts `docs/` (and the root's Markdown files) as assets, and one content adapter
+  (`site/content/_content.gotmpl`, with `site/layouts/_partials/jackstay/pages-from-docs.html`)
+  adds a page for each Markdown file of `docs/guide` and `docs/reference`; a page moved into a
+  group keeps its old address as a redirect. A file's first line `# Title` is its title; the
+  guide's `README.md` is its section's page and orders the sidebar. The links stay as the repository writes them: the link
   render hook (`site/layouts/_markup/render-link.html`) turns a relative link to a guide file into
   a link to its page, checking the heading a `#fragment` names; a link to any other file the site
   mounts (a design document, a decision record, `docs/profiles`, `CONTRIBUTING.md`) into a link to
   the file on GitHub, checking a `#fragment` against the headings of that Markdown file as GitHub
   names them (the text without its links' and code's Markdown, through `anchorize`); and stops the
-  build on a link that leads nowhere. The site's own pages (the home page, the integrations
-  group's page, the page pointing to GitHub) write their links as the repository does too. What
+  build on a link that leads nowhere. The site's own pages (the home page) write their links as the repository does too. What
   the theme and those pages write besides
   (menus, the sidebar, the home page's buttons and cards) is checked on the built site:
   `cmd/jst-sitelinks` (`internal/sitelinks`, not installed) reads every page the build wrote as a

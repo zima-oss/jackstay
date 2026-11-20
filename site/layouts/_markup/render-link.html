@@ -23,7 +23,7 @@
     {{- errorf "%s: the link %q leads nowhere (%s is no file the site mounts)" $source .Destination $target -}}
   {{- end -}}
   {{- with where site.Pages "Params.jackstay_source" $target -}}
-    {{- $page := index . 0 -}}
+    {{- $page := index (sort . "RelPermalink") 0 -}}
     {{- $href = $page.RelPermalink -}}
     {{- with $url.Fragment -}}
       {{- if not ($page.Fragments.Identifiers.Contains .) -}}
@@ -55,6 +55,12 @@
     {{- errorf "%s: the link %q leads to no heading on its own page" $source .Destination -}}
   {{- end -}}
 {{- end -}}
+{{- /* The Markdown served to agents takes the same addresses (_partials/jackstay/markdown-links.html):
+  a relative link made absolute, an in-page fragment given its page. */ -}}
+{{- $absolute := $href -}}
+{{- if hasPrefix $href "#" }}{{ $absolute = printf "%s%s" .Page.Permalink $href -}}
+{{- else if hasPrefix $href "/" }}{{ $absolute = printf "%s%s" (strings.TrimSuffix "/" (urls.AbsURL "/")) $href }}{{ end -}}
+{{- if ne $absolute .Destination }}{{ .Page.Store.SetInMap "jackstay_links" .Destination $absolute }}{{ end -}}
 <a href="{{ $href | safeURL }}"
   {{- with .Title }} title="{{ . }}"{{ end -}}
   {{- if $url.IsAbs }} target="_blank" rel="noopener"{{ end -}}

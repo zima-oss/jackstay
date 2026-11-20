@@ -23,8 +23,8 @@ import (
 const (
 	TestUsage     = "usage: jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]"
 	lastUsage     = "usage: jst test last [--project NAME] [--scope S] [--json]"
-	receiptsUsage = `usage: jst receipts key -- COMMAND [ARG ...]   the key and what went into it; nothing is run
-       jst receipts stats [--project NAME] [--json]   runs, reuses and seconds saved, from the log
+	receiptsUsage = `usage: jst receipts key -- COMMAND [ARG ...]
+       jst receipts stats [--project NAME] [--json]
        jst receipts list [--project NAME]
        jst receipts export KEY
        jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE`
@@ -32,7 +32,7 @@ const (
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "test", Summary: "run a test command, judged, recorded and keyed by the tree (`jst test -- COMMAND`)", Usage: testHelp, Run: TestCommand},
+		cli.Command{Name: "test", Summary: "run a test scope or command, judged, recorded and keyed by the tree", Usage: testHelp, Run: TestCommand},
 		cli.Command{Name: "test last", Summary: "the last run of this project: outcome, what went wrong, where its output is", Usage: lastHelp, Run: LastCommand},
 		cli.Command{Name: "receipts", Summary: "the receipts: key, stats, list, export and verify", Usage: receiptsHelp, Run: receiptsCommand},
 		cli.Command{Name: "receipts key", Summary: "the key of a command here and what went into it; nothing is run", Usage: keyHelp, Run: keyCommand},
