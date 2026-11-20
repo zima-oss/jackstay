@@ -23,7 +23,8 @@ CONSTANTS
     SeparateRequestExpiry,  \* section 4.4 before: a request and its delivery expire apart
     FreezeLeavesDelivery,   \* section 9.1 before: a freeze closes requests, not their deliveries
     DeadlineSkipsRequest,   \* section 4.10 before: a step's deadline check expires the delivery only
-    FailureReopens          \* section 8.3 before: a confirmed failure reopens a closed request's delivery
+    FailureReopens,         \* section 8.3 before: a confirmed failure reopens a closed request's delivery
+    DeadlineNeedsPending    \* review round 1: a deadline closed a request only if its delivery could expire
 
 Routes    == {"native", "hooks", "bridge", "mailbox", "poll"}
 States    == {"pending", "sending", "delivered", "held", "read", "acted",
@@ -43,12 +44,13 @@ VARIABLES
     handleKnown,  \* a frame the engine showed carried the handle and the request ID
     idKnown,      \* the bare ID reached the recipient through another message
     exposed,      \* a read returned a native body the engine never accepted
-    pushedClosed, \* a request was pushed after it closed
+    pushedClosed, \* a push of a request began (claim, announce) after it closed
+    lateOpen,     \* a step that checks the deadline found it passed and left the request open
     overdue, alive,
     dNotices, rNotices            \* times each record's notice became owed
 
 vars == <<d, rq, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
-          exposed, pushedClosed, overdue, alive, dNotices, rNotices>>
+          exposed, pushedClosed, lateOpen, overdue, alive, dNotices, rNotices>>
 
 ----------------------------------------------------------------------------
 (* The table (deliverystate.Apply). *)
@@ -145,7 +147,7 @@ ExpireRequest(r, dl) ==
     [ok |-> TRUE, rq |-> ClosedRq, d |-> IF dl.state \in Expirable THEN Expire(dl) ELSE dl]
 
 ApplyMessage(r, dl, ev) ==
-    IF dl.request /\ r.state = "open" /\ DeadlineFires(dl, ev)
+    IF dl.request /\ r.state = "open" /\ ev.overdue /\ ChecksDeadline(ev.kind)
     THEN LET closed == ExpireRequest(r, dl)
              after  == Apply(closed.d, ev)
          IN [ok |-> TRUE, rq |-> ClosedRq, d |-> IF after.ok THEN after.d ELSE closed.d]
@@ -167,16 +169,20 @@ Step(ev) ==
     IF /\ isRequest /\ ~SeparateRequestExpiry
        /\ ~(DeadlineSkipsRequest /\ ChecksDeadline(ev.kind))
        /\ ~(FailureReopens /\ ev.kind \in {"answer", "failure"})
+       /\ ~(DeadlineNeedsPending /\ ~(d.state \in Expirable /\ (d.state = "pending" \/ NamesIt(ev.kind))))
     THEN ApplyMessage(rq, d, ev)
-    ELSE LET after == Apply(d, ev) IN [ok |-> after.ok, rq |-> rq, d |-> after.d]
+    ELSE LET after == Apply(d, ev)
+         IN [ok |-> after.ok, rq |-> rq, d |-> after.d,
+             late |-> isRequest /\ ev.overdue /\ ChecksDeadline(ev.kind) /\ rq.state = "open"]
 
 \* Write a result back, counting each record's notice the moment it becomes owed.
 SetMsg(r) ==
     /\ d' = r.d /\ rq' = r.rq
     /\ dNotices' = dNotices + (IF d.notice = "" /\ r.d.notice = "owed" THEN 1 ELSE 0)
     /\ rNotices' = rNotices + (IF rq.notice = "" /\ r.rq.notice = "owed" THEN 1 ELSE 0)
+    /\ lateOpen' = (lateOpen \/ ("late" \in DOMAIN r /\ r.late))
 
-KeepMsg == UNCHANGED <<d, rq, dNotices, rNotices>>
+KeepMsg == UNCHANGED <<d, rq, dNotices, rNotices, lateOpen>>
 
 Naming ==
     IF handleKnown THEN "handle"
@@ -199,6 +205,7 @@ Init ==
     /\ pass = [p \in Passes |-> [pc |-> "idle", reply |-> "none"]]
     /\ hook = "idle" /\ shown = 0
     /\ handleKnown = FALSE /\ idKnown = FALSE /\ exposed = FALSE /\ pushedClosed = FALSE
+    /\ lateOpen = FALSE
     /\ overdue = FALSE /\ alive = TRUE
     /\ dNotices = 0 /\ rNotices = 0
 
@@ -208,8 +215,9 @@ Claim(p) ==
     /\ pass[p].pc = "idle" /\ d.route \in {"native", "bridge"}
     /\ LET r == Step(Ev("claim", p, "none", overdue, "nothing")) IN
        /\ r.ok /\ SetMsg(r)
-       /\ pass' = IF r.d.state = "sending" THEN [pass EXCEPT ![p].pc = "claimed"] ELSE pass
-       /\ pushedClosed' = (pushedClosed \/ (r.d.state = "sending" /\ isRequest /\ rq.state # "open"))
+       /\ LET owns == r.d.state = "sending" /\ r.d.pusher = p /\ d.state = "pending" IN
+          /\ pass' = IF owns THEN [pass EXCEPT ![p].pc = "claimed"] ELSE pass
+          /\ pushedClosed' = (pushedClosed \/ (owns /\ isRequest /\ rq.state # "open"))
     /\ UNCHANGED <<isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed, overdue, alive>>
 
 WriteFails(p) ==
@@ -275,8 +283,9 @@ HookAnnounces ==
     /\ alive /\ hook = "idle"
     /\ LET r == Step(Ev("announce", "", "none", overdue, "nothing")) IN
        /\ r.ok /\ SetMsg(r)
-       /\ hook' = IF r.d.state = "delivered" THEN "announced" ELSE hook
-       /\ pushedClosed' = (pushedClosed \/ (r.d.state = "delivered" /\ isRequest /\ rq.state # "open"))
+       /\ LET took == r.d.state = "delivered" /\ d.state = "pending" IN
+          /\ hook' = IF took THEN "announced" ELSE hook
+          /\ pushedClosed' = (pushedClosed \/ (took /\ isRequest /\ rq.state # "open"))
     /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, shown, handleKnown, idKnown, exposed, overdue, alive>>
 
 HookReturns ==
@@ -299,7 +308,7 @@ InboxReads ==
     /\ Calls
     /\ LET r == Step(Ev("read-whole", "", "none", overdue, "nothing")) IN
        /\ r.ok /\ SetMsg(r)
-       /\ exposed' = (exposed \/ (r.d.state = "read" /\ ShowsNative(d)))
+       /\ exposed' = (exposed \/ (r.d.state = "read" /\ d.state # "read" /\ ShowsNative(d)))
     /\ UNCHANGED <<isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
                    pushedClosed, overdue, alive>>
 
@@ -421,8 +430,12 @@ NoEarlyExposure == ~exposed
 \* A line that may have reached the engine, or a hook's announcement, is never recorded as not pushed.
 NeverLooksUnpushed == (engine # "none" \/ hook = "announced") => d.state # "pending"
 
-\* A request closed before its deadline is never pushed afterwards.
-NoPushAfterClose == ~pushedClosed
+\* No push of a request begins (a claim, an announcement) once it is closed. A push already claimed
+\* when its request closes may still arrive; the answer to it is refused as request_closed.
+NoPushStartsAfterClose == ~pushedClosed
+
+\* A step that finds the deadline passed closes an open request, whatever its delivery's state.
+DeadlineClosesRequest == ~lateOpen
 
 \* Every refused, dropped or expired delivery owes exactly one notice; a request and its delivery
 \* that expire together owe one between them.

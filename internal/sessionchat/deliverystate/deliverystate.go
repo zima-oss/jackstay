@@ -473,12 +473,13 @@ func ExpireRequest(request Request, delivery Delivery) (Request, Delivery, error
 }
 
 // ApplyMessage is Apply for a delivery together with its message's request (the zero Request for a
-// message that is not one). A deadline found by any step closes an open request and its delivery
-// together (ExpireRequest) before the event applies, so a pusher's or a reader's deadline check
-// never expires one without the other.
+// message that is not one). A deadline found by any step closes an open request, whatever its
+// delivery's state, and expires the delivery with it when that is pending or held
+// (ExpireRequest), before the event applies; so a pusher's or a reader's deadline check never
+// expires one without the other, and a read past the deadline of a delivered request still closes
+// the request.
 func ApplyMessage(request Request, delivery Delivery, event Event) (Request, Delivery, error) {
-	if delivery.Request && request.State == Open && event.Overdue && checksDeadline(event.Kind) &&
-		Expirable(delivery.State) && (delivery.State == Pending || namesTheDelivery(event.Kind)) {
+	if delivery.Request && request.State == Open && event.Overdue && checksDeadline(event.Kind) {
 		closedRequest, closedDelivery, err := ExpireRequest(request, delivery)
 		if err != nil {
 			return request, delivery, err
@@ -567,6 +568,21 @@ func SettleNotice(notice Notice, confirmedFailure bool) (Notice, error) {
 		return NoticeOwed, nil
 	}
 	return NoticeShown, nil
+}
+
+// MessageDone reports whether retention and pressure may remove a message (section 7.4): none of its
+// deliveries needs it, its request is not open, and no notice is owed on the request's commit
+// record (the only notice of a request that expired).
+func MessageDone(deliveries []Delivery, whole []bool, request Request) bool {
+	if request.State == Open || request.Notice == NoticeOwed || request.Notice == NoticeSending {
+		return false
+	}
+	for index, delivery := range deliveries {
+		if NeedsMessage(delivery, index < len(whole) && whole[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 // NeedsMessage reports whether a delivery keeps its message from retention and pressure

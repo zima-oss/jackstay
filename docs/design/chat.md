@@ -325,7 +325,10 @@ A request is a direct message (never to a channel) with a `request` object:
   of its own. So the requester is told once, never twice and never not at all;
 - a request closed early (its review mailbox froze, section 9.1) closes the same way: its delivery,
   if `pending` or `held`, expires with it; if it is `sending`, a confirmed failure or a `held` answer
-  recorded later expires it instead of making it pushable again.
+  recorded later expires it instead of making it pushable again. A push already under way (claimed
+  under the lock, written after it) cannot be called back, since the lock is not held during a push
+  (section 7.3): it may still arrive after the close, and the recipient's answer to it is refused as
+  `request_closed`. What never happens is a push **begun** after the close.
 
 Request states are `open`, `answered` and `expired`, kept apart from the delivery state, so a
 request's deadline never erases a truthful `read` receipt. A second response is refused as
@@ -474,8 +477,11 @@ a pusher would set `sending` or `delivered`, in which `chat.inbox` or `chat.thre
 body, and in which a response or an ack would commit, the store compares `expires_at` with the clock; an overdue `pending` or `held` delivery, or
 an `open` request, is moved to `expired` right there (with its notice owed) and the action proceeds
 as if it had been expired already. For a request this is always the request **and** its delivery
-together (section 4.4): a check that expired only the delivery would leave the request open and
-neither record owing the notice (the model found this). The sweep (section 7.4) catches what
+together (section 4.4): a check that finds the deadline passed closes the open request whatever its
+delivery's state, and expires the delivery with it when that is `pending` or `held`. A check that
+expired only the delivery would leave the request open and neither record owing the notice; one
+that closed the request only when its delivery could expire would let a read of a `delivered`
+request leave it open past its deadline (the model and its first review found these). The sweep (section 7.4) catches what
 nobody touched.
 
 ## 5. MCP tools
@@ -1055,7 +1061,10 @@ finishes each entry before its own work: an operation whose commit record exists
 removing the files of that message ID and the idempotency entry the journal entry names, none of
 which any reader has seen. When the commit record exists but its folder still cannot be fsynced,
 the entry is **kept**: the operation is neither undone nor served, every other operation goes on,
-and the next recovery tries again.
+and the next recovery tries again. A kept **response** still holds its request: until recovery
+resolves the entry, another response to that request is refused as `store_busy` (retry), and the
+request's deadline waits, since rolling the kept response forward would otherwise overwrite an
+answer or a closure made meanwhile (found in the model's first review, section 15.0).
 A review mailbox's freeze (`journal/freeze-<mailbox hash>`, section 9.1) and an idle subscription's
 firing (`journal/fire-<watcher hash>-<recipient hash>-<generation>`: the notice written on the watcher's
 record under that stable name, then the subscription removed from the recipient's) are always rolled
@@ -1093,8 +1102,9 @@ The sweep runs at most every 10 minutes, started by any writer, under the exclus
 - a delivery **still needs its message** while it is `pending`, `sending` or `held`; or `delivered`
   with `unconfirmed` (the recipient may still ack it); or `delivered` without `whole` (the recipient
   was told to read the rest); or `delivered` through the hooks or the bridge (nothing confirms that
-  Claude Code or Codex kept the text); or while a notice is owed on it. A message is **done** when none of its
-  deliveries still needs it and its request is not `open`. A message sent to or from a review
+  Claude Code or Codex kept the text); or while a notice is owed or `sending` on it. A message is **done** when none of its
+  deliveries still needs it, its request is not `open`, and no notice is owed or `sending` on its
+  request's commit record (an expired request's only notice lives there, section 4.4). A message sent to or from a review
   mailbox (a question, an answer, a note) also needs to stay until that mailbox is frozen (section
   9.1), so neither retention nor pressure removes what the next round must read. A done message is kept 7 days after its
   last change (24 h for an event), then removed with everything it has;
@@ -1600,13 +1610,15 @@ narrower than the last, and review alone does not end that. The model is in
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  TLC and the tests reach the same states: 22,336 for a delivery, 152 for a send.
+  TLC and the tests reach the same states, 22,336 for a delivery and 218 for a send, and the tests
+  fail if either count changes.
 
 Checked: every route pushes a message at most once; a native body is never visible before Claude
 Code accepted it; a crash never makes a delivery look not pushed; final states are never left; the
 deadline is applied before an ack, a read or a push; every `refused`, `dropped` or `expired` delivery
 owes exactly one notice, and a request and its delivery that expire together owe one between them;
-a request and its response agree; a closed request is never pushed; a send retried with its key is
+a request and its response agree, and a kept response is never overwritten nor overwrites; no push
+of a closed request begins; a deadline found by any step closes the request; a send retried with its key is
 pushed at most once; a `duplicate` names a message that exists; a subscription or an answer written
 by a send stands only for a message that exists (a rollback leaves the earlier subscription
 untouched); a committed send keeps every marker it was admitted with; the charges never pass 63 MiB;
@@ -1620,7 +1632,10 @@ step's deadline check expired a request's delivery without the request, so no no
 (4.10); a freeze left its questions pushable (9.1); a confirmed failure reopened a closed request's
 delivery (8.3); recovery rolled forward a commit a machine crash could still undo, so a `duplicate`
 could name nothing and a retry could push twice (7.2, 7.3); and a send's derived files were charged
-after its commit, and a kept entry's room could be taken by sessions (7.4).
+after its commit, and a kept entry's room could be taken by sessions (7.4). Its first review found
+three more, now fixed and modelled the same way: a read past the deadline left a delivered request
+open (4.10), a kept response could be overwritten by a rival answer (7.3), and pressure could remove
+an expired request's only notice (7.4, a unit test).
 
 ### 15.1 Unit tests (`go test ./internal/sessionchat/...`)
 

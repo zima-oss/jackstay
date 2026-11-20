@@ -18,7 +18,8 @@ CONSTANTS
     RecoveryIgnoresSync,   \* section 7.2 before: recovery rolls a written commit forward unsynced
     DerivedChargedLate,    \* section 7.4 before: markers and the idempotency entry charged at step 4
     RetryIgnoresEntry,     \* section 7.2 before: a retry with no idempotency entry is a fresh send
-    ChargeNotReserved      \* section 7.4 before: a kept entry holds only the charges of its files
+    ChargeNotReserved,     \* section 7.4 before: a kept entry holds only the charges of its files
+    RivalIgnoresEntry      \* review round 1: another response or the deadline closes a request a kept response names
 
 Messages == {1, 2}   \* 1: the send; 2: its retry, if it became a fresh send
 None == 0
@@ -29,9 +30,12 @@ VARIABLES
     attempt,      \* the attempt in progress or last made
     phase,        \* where the attempt in progress is; "idle" when no process holds the lock
     answer,       \* what each attempt was answered
-    sessions
+    sessions,
+    request,         \* the request this send answers: "open", "answered", "expired"
+    requestChanges   \* times the request left open, or was answered again
 
-vars == <<msg, idempotency, attempt, phase, answer, sessions>>
+vars == <<msg, idempotency, attempt, phase, answer, sessions, request, requestChanges>>
+RequestVars == <<request, requestChanges>>
 
 Used ==
     LET charge(m) ==
@@ -64,6 +68,7 @@ Init ==
     /\ idempotency = None /\ attempt = 0 /\ phase = "idle"
     /\ answer = [m \in Messages |-> "none"]
     /\ sessions = 0
+    /\ request = "open" /\ requestChanges = 0
 
 \* A send, or its retry with the same key after an uncertain or lost answer.
 SendAttempt ==
@@ -79,6 +84,9 @@ SendAttempt ==
             [] kept ->
                  /\ answer' = [answer EXCEPT ![1] = "uncertain"]
                  /\ UNCHANGED <<msg, phase, attempt>>
+            [] request # "open" ->
+                 /\ attempt' = slot /\ answer' = [answer EXCEPT ![slot] = "closed"]
+                 /\ UNCHANGED <<msg, phase>>
             [] ~Admit(charge) ->
                  /\ attempt' = slot /\ answer' = [answer EXCEPT ![slot] = "capacity"]
                  /\ UNCHANGED <<msg, phase>>
@@ -86,7 +94,7 @@ SendAttempt ==
                  /\ attempt' = slot /\ phase' = "journalled"
                  /\ msg' = [msg EXCEPT ![slot].journal = TRUE]
                  /\ UNCHANGED answer
-    /\ UNCHANGED <<idempotency, sessions>>
+    /\ UNCHANGED <<idempotency, sessions>> /\ UNCHANGED RequestVars
 
 \* The steps of section 7.3 under the lock.
 Proceed ==
@@ -118,11 +126,13 @@ Proceed ==
                  ELSE UNCHANGED msg /\ answer' = [answer EXCEPT ![m] = "uncertain"]
               /\ phase' = "idle" /\ UNCHANGED idempotency
     /\ UNCHANGED <<attempt, sessions>>
+    /\ IF phase = "follow" THEN request' = "answered" /\ requestChanges' = requestChanges + 1
+       ELSE UNCHANGED RequestVars
 
 ProcessCrashes ==
     /\ phase # "idle"
     /\ phase' = "idle" /\ answer' = [answer EXCEPT ![attempt] = "crashed"]
-    /\ UNCHANGED <<msg, idempotency, attempt, sessions>>
+    /\ UNCHANGED <<msg, idempotency, attempt, sessions>> /\ UNCHANGED RequestVars
 
 \* Recovery, under the lock, before anything else.
 Recovers ==
@@ -135,6 +145,7 @@ Recovers ==
             IN CASE decision = "roll-back" ->
                       /\ msg' = [msg EXCEPT ![m].files = FALSE, ![m].journal = FALSE]
                       /\ idempotency' = IF ~RecoveryIgnoresSync /\ idempotency = m THEN None ELSE idempotency
+                      /\ UNCHANGED RequestVars
                  [] decision = "roll-forward" ->
                       /\ msg' = [msg EXCEPT
                                    ![m].commit = IF synced /\ ~RecoveryIgnoresSync THEN "durable" ELSE @,
@@ -143,25 +154,27 @@ Recovers ==
                                    ![m].derived = TRUE,
                                    ![m].journal = FALSE]
                       /\ idempotency' = IF ~msg[m].derived /\ fits THEN m ELSE idempotency
+                      /\ IF msg[m].followOn THEN UNCHANGED RequestVars
+                         ELSE request' = "answered" /\ requestChanges' = requestChanges + 1
                  [] OTHER -> FALSE
     /\ UNCHANGED <<attempt, phase, answer, sessions>>
 
 Pushes ==
     /\ LockFree
     /\ \E m \in Messages : Served(m) /\ msg[m].pushed = 0 /\ msg' = [msg EXCEPT ![m].pushed = 1]
-    /\ UNCHANGED <<idempotency, attempt, phase, answer, sessions>>
+    /\ UNCHANGED <<idempotency, attempt, phase, answer, sessions>> /\ UNCHANGED RequestVars
 
 SweepsLeftovers ==
     /\ LockFree
     /\ \E m \in Messages :
          /\ ~msg[m].journal /\ msg[m].commit = "none" /\ msg[m].files
          /\ msg' = [msg EXCEPT ![m].files = FALSE, ![m].derived = FALSE]
-    /\ UNCHANGED <<idempotency, attempt, phase, answer, sessions>>
+    /\ UNCHANGED <<idempotency, attempt, phase, answer, sessions>> /\ UNCHANGED RequestVars
 
 SessionRegisters ==
     /\ LockFree /\ sessions < MaxSessions /\ Admit(SessionCharge)
     /\ sessions' = sessions + 1
-    /\ UNCHANGED <<msg, idempotency, attempt, phase, answer>>
+    /\ UNCHANGED <<msg, idempotency, attempt, phase, answer>> /\ UNCHANGED RequestVars
 
 \* A machine crash: what was never fsynced is gone, and so is the process holding the lock.
 MachineCrashes ==
@@ -171,11 +184,19 @@ MachineCrashes ==
                                   ELSE msg[m]]
     /\ IF phase # "idle" THEN phase' = "idle" /\ answer' = [answer EXCEPT ![attempt] = "crashed"]
        ELSE UNCHANGED <<phase, answer>>
-    /\ UNCHANGED <<idempotency, attempt, sessions>>
+    /\ UNCHANGED <<idempotency, attempt, sessions>> /\ UNCHANGED RequestVars
+
+\* Another response (with another key), or the request's deadline, closes the request: refused
+\* (store_busy, or waiting) while a kept journal entry may still answer it (ResponseAdmitted).
+RequestClosesElsewhere ==
+    /\ LockFree /\ request = "open"
+    /\ RivalIgnoresEntry \/ ~\E m \in Messages : msg[m].journal
+    /\ request' \in {"answered", "expired"} /\ requestChanges' = requestChanges + 1
+    /\ UNCHANGED <<msg, idempotency, attempt, phase, answer, sessions>>
 
 Next ==
     \/ SendAttempt \/ Proceed \/ ProcessCrashes \/ Recovers \/ Pushes \/ SweepsLeftovers
-    \/ SessionRegisters \/ MachineCrashes
+    \/ SessionRegisters \/ MachineCrashes \/ RequestClosesElsewhere
 
 Spec == Init /\ [][Next]_vars
 
@@ -201,6 +222,9 @@ FollowOnAgrees == \A m \in Messages : msg[m].followOn => (msg[m].commit # "none"
 
 \* A committed send keeps every marker it was admitted with.
 MarkersComplete == \A m \in Messages : msg[m].derived => msg[m].markers
+
+\* A request and its response agree: the request is answered or closed once, never overwritten.
+RequestAgrees == requestChanges <= 1
 
 \* `accepted` is said only of a send no crash can undo.
 AcceptedIsDurable == \A m \in Messages : answer[m] = "accepted" => msg[m].commit = "durable"

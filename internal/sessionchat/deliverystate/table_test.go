@@ -204,3 +204,56 @@ func TestAResponseToAGoneRequesterOwesItsNotice(t *testing.T) {
 		t.Fatalf("got %+v", fresh)
 	}
 }
+
+// Review round 1: a push claimed before its mailbox froze may still arrive; it cannot be answered.
+func TestAPushUnderWayWhenTheRequestClosesCannotBeAnswered(t *testing.T) {
+	request := Request{State: Open}
+	delivery, _ := Apply(New(Native, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+	request, delivery, _ = ExpireRequest(request, delivery)
+	_, delivery, err := ApplyMessage(request, delivery, Event{Kind: Answer, Pusher: "pass-1", Answer: Accepted})
+	if err != nil || delivery.State != Delivered {
+		t.Fatalf("the write after the freeze: %+v %v", delivery, err)
+	}
+	if _, _, err := Respond(request, delivery, false, ByHandle); err != ErrRequestClosed {
+		t.Fatalf("an answer to it: %v", err)
+	}
+}
+
+// Review round 1: an overdue read of a delivered request closes the request and still reads.
+func TestAReadPastTheDeadlineClosesADeliveredRequest(t *testing.T) {
+	request, delivery, err := ApplyMessage(Request{State: Open}, Delivery{Route: Hooks, State: Delivered, Request: true},
+		Event{Kind: ReadWhole, Overdue: true})
+	if err != nil || request.State != Closed || request.Notice != NoticeOwed || delivery.State != Read {
+		t.Fatalf("got %+v %+v %v", request, delivery, err)
+	}
+}
+
+// Review round 1: a request's only expiry notice keeps its message from pressure.
+func TestARequestsOwedNoticeKeepsItsMessage(t *testing.T) {
+	read := []Delivery{{Route: Poll, State: Read}}
+	if MessageDone(read, []bool{true}, Request{State: Closed, Notice: NoticeOwed}) {
+		t.Fatal("done while the request's notice is owed")
+	}
+	if !MessageDone(read, []bool{true}, Request{State: Closed, Notice: NoticeShown}) {
+		t.Fatal("not done once the notice was shown")
+	}
+	if MessageDone(read, []bool{true}, Request{State: Open}) {
+		t.Fatal("done while the request is open")
+	}
+}
+
+// Review round 1: a kept response holds its request.
+func TestAKeptResponseHoldsItsRequest(t *testing.T) {
+	if err := ResponseAdmitted(Open, true); err != ErrStoreBusy {
+		t.Fatalf("beside a kept response: %v", err)
+	}
+	if err := ResponseAdmitted(Answered, false); err != ErrAlreadyAnswered {
+		t.Fatalf("answered: %v", err)
+	}
+	if err := ResponseAdmitted(Closed, false); err != ErrRequestClosed {
+		t.Fatalf("closed: %v", err)
+	}
+	if err := ResponseAdmitted(Open, false); err != nil {
+		t.Fatalf("open: %v", err)
+	}
+}

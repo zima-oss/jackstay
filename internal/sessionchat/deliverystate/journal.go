@@ -1,5 +1,7 @@
 package deliverystate
 
+import "errors"
+
 // The journalled writes of a send or a response (section 7.3): what recovery does with an entry,
 // when a message may be served, and how a write is admitted against the store's charges (section 7.4).
 
@@ -114,3 +116,23 @@ func ResolveRetry(idempotencyEntry, keptEntryWithKey bool) RetryAnswer {
 	}
 	return FreshSend
 }
+
+// ResponseAdmitted decides whether a response may begin: the request must be open, and no kept
+// journal entry may name it. A kept response could still roll forward and answer the request, so
+// while one waits a second response is refused as store_busy (the caller retries), and the
+// request's deadline waits with it; otherwise the later recovery would overwrite an answer
+// already given.
+func ResponseAdmitted(request RequestState, keptResponse bool) error {
+	switch {
+	case request == Answered:
+		return ErrAlreadyAnswered
+	case request != Open:
+		return ErrRequestClosed
+	case keptResponse:
+		return ErrStoreBusy
+	}
+	return nil
+}
+
+// ErrStoreBusy means the operation waits for recovery; the caller retries.
+var ErrStoreBusy = errors.New("deliverystate: store_busy")

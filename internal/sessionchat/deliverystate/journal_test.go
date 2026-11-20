@@ -15,6 +15,7 @@ type sendRules struct {
 	derivedChargedLate  bool // as written: the derived files are charged when step 4 makes them
 	retryIgnoresEntry   bool // as written: a retry that finds no idempotency entry is a fresh send
 	chargeNotReserved   bool // as written: a kept entry holds only the charges of the files it wrote
+	rivalIgnoresEntry   bool // round 1: another response, or the deadline, may close a request a kept response names
 }
 
 // Small charges with the shape of the real ones: a send's own records, its derived files, a session.
@@ -41,8 +42,11 @@ type sendWorld struct {
 	idempotency int // 0: none; otherwise the message (1 or 2) the entry names
 	attempt     int // the attempt in progress or last made: 1 the send, 2 its retry
 	phase       string
-	answers     [2]string // none, accepted, uncertain, duplicate, capacity, crashed
+	answers     [2]string // none, accepted, uncertain, duplicate, capacity, crashed, closed
 	sessions    int
+	// The send is a response to one request, which another response or its deadline may also close.
+	request        RequestState
+	requestChanges int // times the request left open, or was answered again
 }
 
 func (w sendWorld) used(rules sendRules) int {
@@ -99,6 +103,8 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 		}
 		switch {
 		case next.answers[slot] != "none" || next.attempt == w.attempt:
+		case ResponseAdmitted(w.request, false) != nil:
+			next.answers[slot] = "closed"
 		case !Admit(int64(w.used(rules)), int64(charge), modelLimit):
 			next.answers[slot] = "capacity"
 		default:
@@ -133,6 +139,7 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 			add("the commit folder cannot be fsynced", unsynced)
 		case "follow":
 			message.followOn = true
+			next.answerRequest()
 			next.phase = "derived"
 			add("apply the follow-ons", next)
 		case "derived":
@@ -182,6 +189,9 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 					if synced && !rules.recoveryIgnoresSync {
 						recovered.commit = CommitDurable
 					}
+					if !recovered.followOn {
+						next.answerRequest()
+					}
 					recovered.followOn = true
 					if !recovered.derived {
 						recovered.derived = true
@@ -217,6 +227,21 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 				add("the sweep removes leftovers", next)
 			}
 		}
+		kept := false
+		for _, message := range w.messages {
+			kept = kept || message.journal
+		}
+		if rules.rivalIgnoresEntry {
+			kept = false
+		}
+		if ResponseAdmitted(w.request, kept) == nil {
+			rival := w
+			rival.request, rival.requestChanges = Answered, w.requestChanges+1
+			add("another response answers the request", rival)
+			late := w
+			late.request, late.requestChanges = Closed, w.requestChanges+1
+			add("the request's deadline closes it", late)
+		}
 		if w.sessions < modelMaxSessions && Admit(int64(w.used(rules)), modelSession, modelLimit) {
 			next := w
 			next.sessions++
@@ -238,6 +263,13 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 	return steps
 }
 
+// answerRequest applies a response's follow-on: it answers the request, which the response was
+// admitted for while it was open.
+func (w *sendWorld) answerRequest() {
+	w.requestChanges++
+	w.request = Answered
+}
+
 type step2 struct {
 	name string
 	next sendWorld
@@ -246,6 +278,9 @@ type step2 struct {
 func sendInvariant(w sendWorld, rules sendRules) string {
 	if w.used(rules) > modelLimit {
 		return "Capacity: the charges passed the write limit"
+	}
+	if w.requestChanges > 1 {
+		return "RequestAgrees: a request was answered or closed twice"
 	}
 	if w.messages[0].pushed+w.messages[1].pushed > 1 {
 		return "AtMostOncePerKey: one send was pushed twice"
@@ -273,7 +308,7 @@ func exploreSend(rules sendRules) exploration {
 		name   string
 		root   bool
 	}
-	start := sendWorld{phase: "idle", answers: [2]string{"none", "none"}}
+	start := sendWorld{phase: "idle", answers: [2]string{"none", "none"}, request: Open}
 	for slot := range start.messages {
 		start.messages[slot].commit = NoCommit
 	}
@@ -311,8 +346,8 @@ func TestTheSendModelHoldsEveryProperty(t *testing.T) {
 		t.Fatalf("%s after:\n  %s", result.violation, strings.Join(result.trace, "\n  "))
 	}
 	t.Logf("send model: %d distinct states, every property holds", result.states)
-	if result.states < 100 {
-		t.Fatalf("only %d states: the model no longer explores what it did", result.states)
+	if result.states != sendStates {
+		t.Fatalf("%d states, not the %d TLC finds: the Go and TLA+ models no longer agree", result.states, sendStates)
 	}
 }
 
@@ -323,8 +358,9 @@ func TestTheSendBeforeTheModelBreaksAProperty(t *testing.T) {
 		want  string
 	}{
 		{"recovery rolling forward an unsynced commit (section 7.2)", sendRules{recoveryIgnoresSync: true}, "DuplicateIsReal"},
-		{"a retry beside a kept entry (section 7.2)", sendRules{retryIgnoresEntry: true}, "AtMostOncePerKey"},
+		{"a retry beside a kept entry (section 7.2)", sendRules{retryIgnoresEntry: true}, "RequestAgrees"},
 		{"a kept entry's charge left unreserved (section 7.4)", sendRules{chargeNotReserved: true}, "Capacity"},
+		{"a rival answer beside a kept response (section 7.3, review round 1)", sendRules{rivalIgnoresEntry: true}, "RequestAgrees"},
 		{"derived files charged after the commit (section 7.4)", sendRules{derivedChargedLate: true}, "MarkersComplete"},
 	}
 	for _, test := range cases {

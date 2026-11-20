@@ -39,7 +39,8 @@ sweep of leftovers.
 | `AtMostOnce` | delivery | the text reaches the model at most once, on every route |
 | `NoEarlyExposure` | delivery | a read never returns a native body the engine did not accept |
 | `NeverLooksUnpushed` | delivery | a line that may have reached the engine is never recorded `pending` |
-| `NoPushAfterClose` | delivery | a request closed early is never pushed |
+| `NoPushStartsAfterClose` | delivery | no push of a closed request begins (a push already claimed when the request closes may arrive; its answer is refused `request_closed`) |
+| `DeadlineClosesRequest` | delivery | a step that finds the deadline passed closes an open request, whatever its delivery's state |
 | `NoticeOnce` | delivery | each `refused`, `dropped` or `expired` delivery owes exactly one notice; a request and its delivery that expire together owe one between them |
 | `RequestAgrees` | delivery | an answered request's delivery is final |
 | `FinalStable` | delivery | final states are never left (a step property) |
@@ -51,11 +52,12 @@ sweep of leftovers.
 | `MarkersComplete` | send | a committed send keeps every marker it was admitted with |
 | `Capacity` | send | the charges never pass the write limit |
 | `AcceptedIsDurable` | send | `accepted` is said only of a send no crash can undo |
+| `RequestAgrees` | send | the request a response answers is answered or closed once, never overwritten by a kept response's recovery |
 
 TLC (2026.11 tools, Java 21) finds **22,336** distinct states for a delivery (102,123 generated,
-depth 20, the temporal properties checked over the whole graph) and **152** for a send (302
-generated, depth 16), with no error. The Go exploration reaches the same 22,336 and 152 states;
-`go test -v ./internal/sessionchat/deliverystate` prints its counts. With each constant below set
+depth 20, the temporal properties checked over the whole graph) and **218** for a send (408
+generated) with no error. The Go exploration reaches the same 22,336 and 218 states, and its tests
+fail if either count changes, so the two forms cannot drift apart unnoticed. With each constant below set
 TRUE, TLC and the Go test both report the same broken property.
 
 ## What the model found
@@ -69,17 +71,21 @@ gives this counterexample, and the Go test fails if it ever stops doing so.
 | `BareIdIsEvidence` | 4.10 | another message carries the ID; the recipient names it in `ids`; a body its engine held is returned. Fix: the native frame carries a per-delivery **handle**, the only evidence |
 | `SeparateRequestExpiry` | 4.4 | the request and its delivery expire apart and the requester gets two notices. Fix: one step, one notice, on the request |
 | `DeadlineSkipsRequest` | 4.10 | the deadline passes; a pass's claim expires the request's delivery but not the request, and nobody owes the notice. Fix: every deadline check closes both |
+| `DeadlineNeedsPending` | 4.10 | (found by the first review) the deadline passes; a read of a `delivered` request reads it and leaves the request open. Fix: a deadline check closes the request whatever its delivery's state |
 | `FreezeLeavesDelivery` | 9.1 | the requesting mailbox freezes; the closed question is still pushed to the author. Fix: the freeze expires the pending or held delivery with its request |
 | `FailureReopens` | 8.3 | a pass claims; the mailbox freezes; the pass records a confirmed failure; the closed question is pending and pushed again. Fix: it expires instead |
 | `RecoveryIgnoresSync` | 7.2, 7.3 | the commit folder cannot be fsynced; recovery rolls forward anyway; a machine crash loses the commit; the idempotency entry names nothing, and the retry is told `duplicate`. Fix: an unsynced commit stops the operation; recovery fsyncs before it rolls forward, or keeps the entry; nothing is served while an entry is kept |
-| `RetryIgnoresEntry` | 7.2 | the send is `uncertain` with its entry kept; the retry becomes a fresh send; both become durable and are pushed. Fix: a retry whose key is in a kept entry answers `uncertain` again |
+| `RetryIgnoresEntry` | 7.2 | the send is `uncertain` with its entry kept; the retry becomes a fresh send; both become durable, answer the request twice and are pushed twice. Fix: a retry whose key is in a kept entry answers `uncertain` again |
+| `RivalIgnoresEntry` | 7.3 | (found by the first review) a response is kept unsynced; another response answers the request; recovery rolls the first forward and overwrites the answer. Fix: a kept response holds its request (`store_busy`, and the deadline waits) |
 | `DerivedChargedLate`, `ChargeNotReserved` | 7.4 | the send is admitted for its own records; sessions register beside its kept entry; rolling forward passes the limit or drops markers. Fix: a send is charged for every record it creates, from its journal entry on |
 
 ## What it leaves out
 
 The model has one message and one recipient: the 50-per-recipient queue, rate, repeat and loop
 limits, idle subscriptions' arming, paging and the 48 KiB result budget are not in it, and the
-retention rule is checked as a predicate (`NeedsMessage`) by unit tests only. Time is two events (the
+retention rule is checked as predicates (`NeedsMessage`, `MessageDone`) by unit tests only; the
+first review found that it let pressure remove an expired request's only notice, now fixed in
+section 7.4. Time is two events (the
 deadline passing, a `sending` record going stale), not a clock. The engine's line format and answers
 are what section 8.3 says they are; the pilot's captured fixtures check that part.
 
