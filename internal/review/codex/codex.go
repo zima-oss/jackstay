@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/access"
 	"github.com/zima-oss/jackstay/internal/review/runner"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 	"github.com/zima-oss/jackstay/internal/supervise"
@@ -59,9 +60,6 @@ const startHold = 120 * time.Second
 // Named permission profiles have only been verified for the pinned reviewer with this CLI or newer.
 const minimumPinnedVersion = "0.169.0"
 
-// keptVariables are the only variables Codex gets from jackstay's environment.
-var keptVariables = []string{"PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CODEX_HOME"}
-
 // Request is the shared request used by the Codex runner.
 type Request = runner.Request
 
@@ -81,69 +79,98 @@ func Argv(request Request, answerPath string) []string {
 	if request.Effort != "" {
 		argv = append(argv, "-c", fmt.Sprintf("model_reasoning_effort=%q", request.Effort))
 	}
-	argv = append(argv, request.Isolation...)
 	if request.PinnedSource {
-		// Permission profiles and --sandbox do not compose. Keep shell navigation in the
-		// projected tree while denying reads elsewhere and every filesystem write.
+		// A default the project's isolation flags may override: they come after it.
+		argv = append(argv, "-c", `shell_environment_policy.inherit="all"`)
+	}
+	argv = append(argv, request.Isolation...)
+	for _, name := range sortedNames(request.MCPServers) {
+		server := request.MCPServers[name]
+		argv = append(argv, "-c", fmt.Sprintf("mcp_servers.%s={command=%s,args=%s}", name, strconv.Quote(server.Command), tomlList(server.Args)))
+	}
+	if request.PinnedSource {
+		// Permission profiles and --sandbox do not compose. The reviewer's access profile (W-090):
+		// it reads everything but the account's secrets, writes only its own temporary folder, and
+		// has the network.
 		if !slices.Contains(argv, "--skip-git-repo-check") {
 			argv = append(argv, "--skip-git-repo-check")
 		}
-		runtimeDirectory := pinnedRuntimeDirectory(request)
-		sourceDirectory, _ := canonicalPath(request.Tree)
-		toolPath := "/usr/bin:/bin"
-		if runtimeDirectory != "" {
-			toolPath += ":" + runtimeDirectory
-		}
 		argv = append(argv, "--strict-config", "-c", `default_permissions="jackstay_review"`,
-			"-c", pinnedFilesystem(sourceDirectory, runtimeDirectory),
-			"-c", "permissions.jackstay_review.network.enabled=false",
-			"-c", "project_doc_max_bytes=0",
-			"-c", "shell_environment_policy.inherit=none",
-			"-c", "shell_environment_policy.set.PATH="+strconv.Quote(toolPath))
+			"-c", Filesystem(request, homedir.AccountHome()),
+			"-c", "permissions.jackstay_review.network.enabled=true",
+			"-c", "project_doc_max_bytes=0")
 	}
 	return append(argv, "-")
 }
 
-func pinnedFilesystem(sourceDirectory, runtimeDirectory string) string {
-	filesystem := `permissions.jackstay_review.filesystem={":root"="deny",":minimal"="read",":slash_tmp"="deny",":tmpdir"="deny"`
-	if sourceDirectory != "" {
-		filesystem += "," + strconv.Quote(sourceDirectory) + `="read"`
-	}
-	// Codex starts its shell through the CLI binary. The minimal runtime roots do
-	// not necessarily include its installation directory (for example Homebrew).
-	if runtimeDirectory != "" {
-		filesystem += "," + strconv.Quote(runtimeDirectory) + `="read"`
-	}
-	return filesystem + "}"
-}
+// Temporary is the reviewer's own folder for temporary files: the only place it may write.
+func Temporary(request Request) string { return filepath.Join(request.Folder, "tmp") }
 
-func pinnedRuntimeDirectory(request Request) string {
-	if request.RepositoryRoot == "" || request.Tree == "" || request.Folder == "" {
-		return ""
+// Filesystem is the permission profile's filesystem table: read everything; never the account's
+// secrets nor a `.env` file — glob rules under envGlobRoots, which Codex checks at every read on
+// macOS and expands when the run starts on Linux, globScanDepth folders deep; write only Temporary.
+func Filesystem(request Request, home string) string {
+	environ := request.Environ
+	if environ == nil {
+		environ = os.Environ()
 	}
-	path, err := exec.LookPath(request.Command)
-	if err != nil {
-		return ""
-	}
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return ""
-	}
-	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return ""
-	}
-	directory, err := canonicalPath(filepath.Dir(absolute))
-	if err != nil {
-		return ""
-	}
-	for _, restricted := range []string{request.RepositoryRoot, request.Tree, request.Folder} {
-		root, err := canonicalPath(restricted)
-		if err != nil || pathsOverlap(directory, root) || pathsOverlap(filepath.Dir(resolved), root) {
-			return ""
+	entries := []string{`":root"="read"`}
+	seen := map[string]bool{}
+	deny := func(path string) {
+		if !seen[path] { // a TOML table takes each key once
+			seen[path] = true
+			entries = append(entries, strconv.Quote(path)+`="none"`)
 		}
 	}
-	return directory
+	for _, path := range access.SecretPaths(home, access.Codex, environ) {
+		if resolved, err := canonicalPath(path); err == nil {
+			path = resolved
+		}
+		deny(path)
+	}
+	for _, path := range envLinks(request) {
+		deny(path) // a link by its own path, as well as its target's
+		if folder, err := canonicalPath(filepath.Dir(path)); err == nil {
+			deny(filepath.Join(folder, filepath.Base(path)))
+		}
+	}
+	for _, root := range envGlobRoots(request, home) {
+		if resolved, err := canonicalPath(root); err == nil {
+			root = resolved
+		}
+		for _, name := range access.SecretFileNames {
+			if key := strings.TrimSuffix(root, "/") + "/**/" + name; !seen[key] {
+				seen[key] = true
+				entries = append(entries, strconv.Quote(key)+`="none"`)
+			}
+		}
+	}
+	if temporary, err := canonicalPath(Temporary(request)); err == nil {
+		entries = append(entries, strconv.Quote(temporary)+`="write"`)
+	}
+	entries = append(entries, fmt.Sprintf("glob_scan_max_depth=%d", globScanDepth))
+	return "permissions.jackstay_review.filesystem={" + strings.Join(entries, ",") + "}"
+}
+
+// globScanDepth is how deep Codex looks for files matching a glob rule where it must find them
+// before the run (Linux); on macOS the rule is checked at every read.
+const globScanDepth = 12
+
+func sortedNames(servers map[string]access.MCPServer) []string {
+	names := make([]string, 0, len(servers))
+	for name := range servers {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func tomlList(words []string) string {
+	quoted := make([]string, 0, len(words))
+	for _, word := range words {
+		quoted = append(quoted, strconv.Quote(word))
+	}
+	return "[" + strings.Join(quoted, ",") + "]"
 }
 
 func canonicalPath(path string) (string, error) {
@@ -170,29 +197,6 @@ func canonicalPath(path string) (string, error) {
 		missing = append(missing, filepath.Base(absolute))
 		absolute = parent
 	}
-}
-
-func pathsOverlap(first, second string) bool {
-	return within(first, second) || within(second, first)
-}
-
-func within(path, parent string) bool {
-	relative, err := filepath.Rel(parent, path)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
-}
-
-// Environment is the environment Codex runs with: the kept variables only.
-func Environment(environ []string) []string {
-	var out []string
-	for _, pair := range environ {
-		name, _, _ := strings.Cut(pair, "=")
-		for _, kept := range keptVariables {
-			if name == kept {
-				out = append(out, pair)
-			}
-		}
-	}
-	return out
 }
 
 // Home is Codex's folder: CODEX_HOME, else ~/.codex of the account.
@@ -243,7 +247,7 @@ func Probe(ctx context.Context, command string) (string, error) {
 	defer cancel()
 	var stdout bytes.Buffer
 	probe := GroupSpec([]string{path, "--version"})
-	probe.Env, probe.Context, probe.StdoutTo, probe.StderrTo = Environment(os.Environ()), probeContext, &stdout, io.Discard
+	probe.Env, probe.Context, probe.StdoutTo, probe.StderrTo = access.Environment(os.Environ(), access.Codex, ""), probeContext, &stdout, io.Discard
 	outcome, err := supervise.Run(nil, probe)
 	switch {
 	case err != nil:
@@ -316,8 +320,13 @@ func Run(ctx context.Context, request Request) Result {
 	if environ == nil {
 		environ = os.Environ()
 	}
+	temporary := Temporary(request)
+	if err := os.MkdirAll(temporary, 0o700); err != nil {
+		return finish(OutcomeFailed, err.Error())
+	}
 	spec := GroupSpec(append([]string{path}, argv[1:]...))
-	spec.Dir, spec.Env, spec.Input = request.Tree, Environment(environ), request.Prompt
+	spec.TraceArgv = access.RedactedArgv(spec.Argv)
+	spec.Dir, spec.Env, spec.Input = request.Tree, access.Environment(environ, access.Codex, temporary), request.Prompt
 	spec.Trace = ctx
 	stderrTail := &tailBuffer{limit: 64 << 10}
 	spec.StderrTo = io.MultiWriter(&cappedWriter{target: errorsFile, room: OutputCap}, stderrTail)

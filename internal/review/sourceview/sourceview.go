@@ -403,11 +403,13 @@ func readField(reader *bufio.Reader) (string, error) {
 	return string(value[:len(value)-1]), nil
 }
 
+// diffToFile writes the patch from from to head, less the contents of `.env` files: a reviewer
+// may not read them (docs/design/review.md section 3.4); the change index still names them.
 func (git gitReader) diffToFile(ctx context.Context, destination, from, head string) error {
 	file, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o400)
 	if err != nil {
 		return err
 	}
-	runErr := git.stream(ctx, nil, file, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=none", "--find-renames", "--submodule=short", "--full-index", "--binary", from, head, "--")
+	runErr := git.stream(ctx, nil, file, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--ignore-submodules=none", "--find-renames", "--submodule=short", "--full-index", "--binary", from, head, "--", ".", ":(exclude,glob)**/.env", ":(exclude,glob)**/.env.*")
 	return errors.Join(runErr, file.Close())
 }
