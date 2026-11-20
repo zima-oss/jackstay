@@ -107,35 +107,3 @@ func writeFiles(t *testing.T, root string, files map[string]string) {
 		}
 	}
 }
-
-func TestAWorkflowRewrittenHereButNotLandedHoldsNewerKeysBack(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}, ` +
-		`"changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
-	git := func(args ...string) {
-		t.Helper()
-		command := exec.Command("git", append([]string{"-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
-		if output, err := command.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, output)
-		}
-	}
-	options := optionsFor(root)
-	options.Version = "0.5.11"
-	apply(t, options)
-	git("init", "-q", "-b", "main")
-	git("add", "-A")
-	git("commit", "-qm", "base")
-	// The pin and the workflows move here, and nothing of it lands on main.
-	options.Version, options.Pin = "0.6.0", true
-	apply(t, options)
-	options.Pin, options.SettingsOnly = false, true
-	options.Profile = exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, nil)
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "on main: card-line.yml downloads") {
-		t.Fatalf("a workflow rewritten here but not landed: %v", err)
-	}
-	git("add", "-A")
-	git("commit", "-qm", "the pin and the workflows land")
-	apply(t, options)
-	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) {
-		t.Fatalf("after the workflows landed:\n%s", text)
-	}
-}

@@ -813,45 +813,13 @@ func TestSettingsOnlyPinsAProfileWorkflowBeforeApplyingIt(t *testing.T) {
 	}
 }
 
-func TestNewerKeysWaitUntilThePinBefore060HasMoved(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}, ` +
-		`"changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
-	options := optionsFor(root)
-	options.Version = "0.5.11"
-	apply(t, options)
-	brief := filepath.Join(root, "profiles", "profile.json")
-	options.Version, options.Pin = "0.6.0", true
-	options.Profile = exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, nil)
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "the pinned jackstay v0.5.11") {
-		t.Fatalf("moving the pin and adding a schema-3 key at once: %v", err)
-	}
-	// The settings land before the workflows (W-085): the pin moves alone.
-	options.Profile, options.SettingsOnly = "", true
-	apply(t, options)
-	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"pin": "v0.6.0"`) || !strings.Contains(text, `"jackstay_schema": 2`) {
-		t.Fatalf("the pin alone:\n%s", text)
-	}
-	// While card-line.yml still downloads v0.5.11, a schema-3 key waits.
-	options.Pin, options.Profile = false, brief
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "v0.5.11 that .github/workflows/card-line.yml downloads") {
-		t.Fatalf("a schema-3 key before the workflows landed: %v", err)
-	}
-	options.Profile, options.SettingsOnly = "", false
-	apply(t, options)
-	options.Profile, options.SettingsOnly = brief, true
-	apply(t, options)
-	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) || !strings.Contains(text, `"max_age_hours": 24`) {
-		t.Fatalf("after the workflows landed:\n%s", text)
-	}
-}
-
 func TestNewerKeysAreRefusedForAProjectPinnedBefore060(t *testing.T) {
 	for pin, refused := range map[string]bool{"v0.5.11": true, "v0.6.0": false} {
 		root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"adopt":{"pin":"` + pin + `"}}`})
 		options := optionsFor(root)
 		options.Profile = exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, nil)
 		_, err := Make(options)
-		if refused != (err != nil && strings.Contains(err.Error(), "the pinned jackstay "+pin)) {
+		if refused != (err != nil && strings.Contains(err.Error(), "pinned to "+pin)) {
 			t.Errorf("pin %s: %v", pin, err)
 		}
 	}
@@ -859,83 +827,5 @@ func TestNewerKeysAreRefusedForAProjectPinnedBefore060(t *testing.T) {
 	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":3,"adopt":{"pin":"v0.5.11"},"brief":{"max_age_hours":24}}`})
 	if _, err := Make(optionsFor(root)); err != nil {
 		t.Fatalf("a key the file already has: %v", err)
-	}
-}
-
-func TestAProfileWorkflowNamesTheReleaseItDownloads(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p","adopt":{"pin":"v0.5.11"}}`})
-	options := optionsFor(root)
-	options.Version = "0.5.11"
-	workflow := map[string]string{"custom": "name: custom\nenv:\n  VERSION: '@@jackstay_version@@'\n"}
-	options.Profile = exampleProfile(t, root, `{}`, workflow)
-	apply(t, options)
-	// The pin moves alone, settings first (W-085); custom.yml still downloads v0.5.11.
-	options.Version, options.Pin, options.SettingsOnly = "0.6.0", true, true
-	apply(t, options)
-	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, workflow)
-	options.Pin = false
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "v0.5.11 that .github/workflows/custom.yml downloads") {
-		t.Fatalf("a schema-3 key while a profile workflow downloads v0.5.11: %v", err)
-	}
-	exampleProfile(t, root, `{}`, workflow)
-	options.SettingsOnly = false
-	apply(t, options)
-	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, workflow)
-	options.SettingsOnly = true
-	apply(t, options)
-	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) {
-		t.Fatalf("after the workflows landed:\n%s", text)
-	}
-}
-
-func TestAWorkflowWhoseReleaseCannotBeToldHoldsNewerKeysBack(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p","adopt":{"pin":"v0.6.0"}}`})
-	options := optionsFor(root)
-	options.Version = "0.6.0"
-	old := map[string]string{"custom": "name: custom\nenv:\n  VERSION: '@@jackstay_version@@-@@channel_2@@'\n"}
-	options.Profile = exampleProfile(t, root, `{}`, old)
-	setValue := func(name, value string) {
-		t.Helper()
-		path := filepath.Join(root, "profiles", "profile.json")
-		text := strings.Replace(read(t, root, "profiles/profile.json"), `"agents"`, `"values": {"`+name+`": "`+value+`"}, "agents"`, 1)
-		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	setValue("channel_2", "stable")
-	apply(t, options)
-	stale := strings.Replace(read(t, root, ".github/workflows/custom.yml"), "v0.6.0", "v0.5.11", 1)
-	if err := os.WriteFile(filepath.Join(root, ".github/workflows/custom.yml"), []byte(stale), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// Its own template's line, other placeholder and all, tells the release: v0.5.11.
-	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, old)
-	setValue("channel_2", "stable")
-	options.SettingsOnly = true
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "v0.5.11 that .github/workflows/custom.yml downloads") {
-		t.Fatalf("an old release behind another placeholder: %v", err)
-	}
-	// The profile renames the variable in the same apply: the release on disk cannot be told.
-	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, map[string]string{"custom": "name: custom\nenv:\n  JST: '@@jackstay_version@@'\n"})
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "cannot be told") {
-		t.Fatalf("a release that cannot be told: %v", err)
-	}
-	// The profile drops the template in the same apply: the workflow still runs, release unknown.
-	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, map[string]string{"tool": "name: tool\n"})
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "update or removal") {
-		t.Fatalf("a dropped template's workflow: %v", err)
-	}
-	// Another managed workflow's VERSION for another tool is not jackstay's.
-	other := map[string]string{"custom": "name: custom\nenv:\n  JST: '@@jackstay_version@@'\n", "tool": "name: tool\nenv:\n  VERSION: 'v0.5.11'\n"}
-	exampleProfile(t, root, `{}`, other)
-	options.SettingsOnly = false
-	options.Accept = []string{"workflow:custom:edited"}
-	apply(t, options)
-	options.Accept = nil
-	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, other)
-	options.SettingsOnly = true
-	apply(t, options)
-	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) {
-		t.Fatalf("after the workflows landed:\n%s", text)
 	}
 }

@@ -35,7 +35,6 @@ import (
 	"github.com/zima-oss/jackstay/internal/install"
 	"github.com/zima-oss/jackstay/internal/layout"
 	"github.com/zima-oss/jackstay/internal/release"
-	"github.com/zima-oss/jackstay/internal/remote"
 )
 
 // Options are what a plan is made from besides the project's files.
@@ -391,8 +390,8 @@ func mainFolder(root string) string {
 
 // prospective is the jackstay.json the apply would write (spec section 4): defaults merged, the
 // profile and pin recorded, the schema moved; plain is the same for the checks and the block. Keys
-// that need "jackstay_schema": 3 are refused when the project is pinned to a jackstay before 0.6.0,
-// which would refuse the file; with them, the schema becomes 3.
+// that need "jackstay_schema": 3, when this apply adds them, are refused while the project is pinned
+// to a jackstay before 0.6.0, which would refuse the file; with them, the schema becomes 3.
 func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Profile) error {
 	document := jsondoc.Clone(original).(*jsondoc.Object)
 	if chosen != nil {
@@ -429,17 +428,12 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 				added = append(added, key)
 			}
 		}
-		if len(added) > 0 {
-			reader, err := planner.oldestReader(original, chosen)
-			if err != nil {
-				return err
-			}
-			if reader != "" {
-				return &UsageError{fmt.Sprintf("`%s` need jackstay %s or later, and %s would still read %s: "+
-					"leave them out until the pin is %s or later and the workflows that download it have landed "+
-					"(`jst adopt --apply --pin` with a newer jackstay, landed first)",
-					strings.Join(added, "`, `"), config.Schema3Release, reader, config.Name, config.Schema3Release)}
-			}
+		// W-090: a pinned project is read by its pinned jackstay too (its workflows download it).
+		if pin, _ := getString(document.Object("adopt"), "pin"); len(added) > 0 && pin != "" &&
+			install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0 {
+			return &UsageError{fmt.Sprintf("`%s` need jackstay %s or later, and this project is pinned to %s, which would refuse %s: "+
+				"leave them out until the pin is %s or later (`jst adopt --apply --pin` with a newer jackstay)",
+				strings.Join(added, "`, `"), config.Schema3Release, pin, config.Name, config.Schema3Release)}
 		}
 		if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
 			document.Set("jackstay_schema", json.Number(fmt.Sprint(config.Schema)))
@@ -448,164 +442,6 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
 	return nil
 }
-
-// oldestReader names a jackstay before 0.6.0 that reads the project's file while this apply rolls
-// out, or "" when there is none. A pinned project is read by the jackstay its managed workflows
-// download: the one pinned before the apply until the workflows that move the pin have landed (the
-// settings land before the workflows, W-085). So the pin before and the pin after count, and so
-// does each managed workflow on disk that downloads a jackstay (workflowRelease): one whose release
-// cannot be told counts as old until it is rewritten for the pin. An unpinned project is read only
-// by the jackstay at hand, which reads schema 3.
-func (planner *planner) oldestReader(original *jsondoc.Object, chosen *profile.Profile) (string, error) {
-	before, _ := getString(original.Object("adopt"), "pin")
-	after, _ := getString(planner.document.Object("adopt"), "pin")
-	for _, pin := range []string{before, after} {
-		if pin != "" && tooOld(pin) {
-			return "the pinned jackstay " + pin, nil
-		}
-	}
-	if after == "" {
-		return "", nil
-	}
-	existing, err := planner.existingWorkflows()
-	if err != nil {
-		return "", err
-	}
-	byName := map[string]templates.Template{}
-	for _, template := range wantedTemplates(chosen, planner.plain) {
-		byName[template.Name+".yml"] = template
-	}
-	// The working copy, and the default branch a pull request of it goes to: a workflow rewritten
-	// here has not landed there, and CI runs what landed.
-	sources := []struct {
-		where string
-		files map[string]string
-	}{{workflowsDir + "/", existing}}
-	if ref, files := planner.baseWorkflows(); ref != "" {
-		sources = append(sources, struct {
-			where string
-			files map[string]string
-		}{workflowsDir + "/ on " + ref + ": ", files})
-	}
-	for _, source := range sources {
-		for _, name := range sortedFiles(source.files) {
-			text := source.files[name]
-			if marked, _, _ := templates.Header(text); !marked {
-				continue
-			}
-			template, wanted := byName[name]
-			if wanted && slices.Contains(templates.Placeholders(template.Text), "jackstay_version") {
-				body, err := templates.Render(template.Text, planner.workflowValues(chosen, after))
-				if err != nil {
-					return "", &UsageError{fmt.Sprintf("the template %s: %v", template.Name, err)}
-				}
-				if text == templates.Marked(template.Name, body) {
-					continue // already rewritten for the pin
-				}
-			}
-			release, known := workflowRelease(text, template, wanted)
-			switch {
-			case !known:
-				return "the jackstay that " + source.where + name + " downloads (its release cannot be told; land its update or removal first)", nil
-			case release != "" && tooOld(release):
-				return "the jackstay " + release + " that " + source.where + name + " downloads", nil
-			}
-		}
-	}
-	return "", nil
-}
-
-// baseWorkflows are the managed workflows' files on the default branch a pull request goes to (the
-// remote's, as fetched, else the local main or master), by file name, and that branch's ref; ""
-// outside a repository or without such a branch.
-func (planner *planner) baseWorkflows() (string, map[string]string) {
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
-	defer cancel()
-	git := gitcli.Git{Dir: planner.root}
-	name, err := remote.Name(ctx, git, remote.ConfiguredRemote(planner.plain.Section("github")))
-	if err != nil {
-		name = ""
-	}
-	base, err := remote.DefaultBranch(ctx, git, name)
-	if err != nil {
-		return "", nil
-	}
-	listed, err := git.Run(ctx, "ls-tree", "--name-only", base.Ref, "--", workflowsDir+"/")
-	if err != nil {
-		return "", nil
-	}
-	files := map[string]string{}
-	for _, path := range strings.Split(strings.TrimSpace(string(listed)), "\n") {
-		file := strings.TrimPrefix(path, workflowsDir+"/")
-		if file == path || !strings.HasSuffix(file, ".yml") && !strings.HasSuffix(file, ".yaml") {
-			continue
-		}
-		text, err := git.Run(ctx, "show", base.Ref+":./"+path)
-		if err == nil {
-			files[file] = string(text)
-		}
-	}
-	return base.Short, files
-}
-
-// tooOld says a release (vX.Y.Z or X.Y.Z) reads no schema 3.
-func tooOld(release string) bool {
-	return install.Compare(strings.TrimPrefix(release, "v"), config.Schema3Release) < 0
-}
-
-// workflowJackstayVersion is the jackstay release a managed workflow downloads, as jackstay's own
-// templates name it.
-var workflowJackstayVersion = regexp.MustCompile(`(?m)^\s*JACKSTAY_VERSION:\s*["']?(v?[0-9][^"'\s]*)`)
-
-// workflowRelease is the oldest jackstay release a managed workflow's text downloads: its
-// JACKSTAY_VERSION, and what stands at @@jackstay_version@@ in the lines of its own template
-// (wanted), whatever that line's other placeholders were. "" and true: it downloads none. false:
-// its template has the placeholder, and its text does not show what stands there; or no template
-// wants it now (wanted false) and it names no JACKSTAY_VERSION, so whether it downloads one cannot
-// be told.
-func workflowRelease(text string, template templates.Template, wanted bool) (string, bool) {
-	var found []string
-	for _, match := range workflowJackstayVersion.FindAllStringSubmatch(text, -1) {
-		found = append(found, match[1])
-	}
-	versioned := false
-	if wanted {
-		for _, line := range strings.Split(template.Text, "\n") {
-			if !strings.Contains(line, "@@jackstay_version@@") {
-				continue
-			}
-			versioned = true
-			pattern := regexp.QuoteMeta(strings.TrimSpace(line))
-			pattern = strings.ReplaceAll(pattern, "@@jackstay_version@@", `(v?[0-9][0-9A-Za-z.+-]*)`)
-			pattern = placeholderInPattern.ReplaceAllString(pattern, `.*?`)
-			compiled, err := regexp.Compile(`(?m)^\s*` + pattern + `\s*$`)
-			if err != nil {
-				return "", false
-			}
-			matches := compiled.FindAllStringSubmatch(text, -1)
-			if len(matches) == 0 {
-				return "", false
-			}
-			for _, match := range matches {
-				found = append(found, match[1:]...)
-			}
-		}
-	}
-	if (versioned || !wanted) && len(found) == 0 {
-		return "", false
-	}
-	oldest := ""
-	for _, release := range found {
-		if oldest == "" || install.Compare(strings.TrimPrefix(release, "v"), strings.TrimPrefix(oldest, "v")) < 0 {
-			oldest = release
-		}
-	}
-	return oldest, true
-}
-
-// placeholderInPattern is a template placeholder other than the version, once quoted for a pattern
-// (the names templates.Render takes).
-var placeholderInPattern = regexp.MustCompile(`@@[A-Za-z0-9_]+@@`)
 
 // workflowValues are the values a managed workflow is rendered with, for the pin given.
 func (planner *planner) workflowValues(chosen *profile.Profile, pin string) map[string]string {

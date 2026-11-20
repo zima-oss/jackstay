@@ -75,12 +75,8 @@ project's: `jst adopt` reads it to find conflicts and never changes it.
 - **Created** with `{"jackstay_schema": 2, "project": "<the folder's name>"}` when the project has none;
   a jackstay of 0.6.0 or later writes `{"$schema": "<its schema on its tag>", "jackstay_schema": 3, …}`.
 - **`jackstay_schema` moved to 3** when the file would carry a key that needs 3 (`config.Schema3Keys`).
-  A key the apply adds is refused instead while a jackstay before 0.6.0 still reads the file: the pin
-  before the apply, the pin after it, or the release a managed workflow downloads, in the working
-  copy or on the default branch a pull request goes to (CI runs what landed there), read from its
-  `JACKSTAY_VERSION` and from its own template's `@@jackstay_version@@` lines (the settings land
-  before the workflows, W-085); a workflow whose release cannot be told, or whose template is no
-  longer wanted, counts as old until its update or removal lands. That jackstay would refuse the file.
+  A key the apply adds is refused instead while the project is pinned (`adopt.pin`) to a jackstay
+  before 0.6.0 (W-090), which would refuse the file.
 - **`jackstay_schema` moved from 1 to 2** when the file would carry a section that needs 2 (`config`'s
   `Stage1Sections`, which gains `adopt`). Schema 1 to 2 is a number only (2 reads every schema-1
   file the same way).

@@ -15,8 +15,7 @@ Codex, while the AGENTS block of 0.5.10 and 0.5.11 tells agents to run plain `js
 - The keys added since 0.5.11 and `$schema` need `"jackstay_schema": 3`. With 1 or 2 the file is
   refused naming them, so an older jackstay says it needs a newer one.
 - `$schema` and the schema's `$id` point at the release's tag, not `main`. `jst adopt` writes
-  `$schema` and other schema-3 keys only when no jackstay before 0.6.0 still reads the file: not
-  the pin before the apply, not the pin after it, not a managed workflow on disk.
+  `$schema` and other schema-3 keys only when the pin is 0.6.0 or later.
 - Internal limits are constants: the chat's sizes, quotas, retention, poll and acknowledgement
   timing, the review pool's retry and retention limits, and the timeout of a test's `requires`
   command. What users touch gets keys: `brief.max_age_hours` and `status.repos`.
