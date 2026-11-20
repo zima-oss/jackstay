@@ -157,7 +157,7 @@ newer file with "upgrade jackstay" rather than half-reading it:
 |---|---|
 | 1 | `guard`, `test`, `receipts`, `lock`, `baseline`, `trash`, `telemetry` |
 | 2 | `cards`, `ids`, `records`, `changes`, `procs`, `release`, `github`, `review`, `adopt` |
-| 3 (jackstay 0.6.0 and later) | `$schema`, `land`, `chat`, `brief`, `status`, `review.pool`, `adopt.profile_sha256`, `test.selection`, and a scope's, step's or receipts command's `selector`, `report`, `reports`, `empty_exit`, `xcresult_bundles` (and a receipts command's `judge`) |
+| 3 (jackstay 0.6.0 and later) | `$schema`, `land`, `chat`, `brief`, `status`, `adopt.profile_sha256`, `test.selection`, and a scope's, step's or receipts command's `selector`, `report`, `reports`, `empty_exit`, `xcresult_bundles` (and a receipts command's `judge`) |
 
 A project whose workflows download a pinned jackstay (`adopt.pin`) must keep to what that release
 reads. **Do not add `$schema` or another schema-3 key while the pin is older than 0.6.0**: the

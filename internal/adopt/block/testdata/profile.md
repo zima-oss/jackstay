@@ -32,9 +32,6 @@
   checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,
   `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
   (`gh pr merge` is refused), never run `--confirm`.
-- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
-  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
-  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/trunk..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a

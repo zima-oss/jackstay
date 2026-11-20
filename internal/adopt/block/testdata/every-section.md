@@ -33,11 +33,9 @@
   `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
   (`gh pr merge` is refused), never run `--confirm`.
 - **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`
-  or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.
+  or `codex,claude-code` for others); `--background` returns at once and the result comes as a chat
+  event; `jst review check BASE..REV --task NAME` says if it is clear.
   Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.
-- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
-  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
-  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/trunk..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a

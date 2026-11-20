@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/project"
@@ -99,6 +100,10 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	flags.StringVar(&options.Effort, "effort", "", "the reasoning effort, for this call")
 	flags.IntVar(&options.Timeout, "timeout", 0, "minutes per run, for this call")
 	flags.BoolVar(&asJSON, "json", false, "the result as one JSON object")
+	background := false
+	request := ""
+	flags.BoolVar(&background, "background", false, "start the round under `jst bg` and return; the result comes as a chat event")
+	flags.StringVar(&request, "request", "", "internal: the background request this run serves")
 	positional, err := parseInterspersed(flags, args)
 	if err != nil {
 		return ExitUsage
@@ -119,34 +124,47 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if reviewers != "" {
 		options.Reviewers = strings.Split(reviewers, ",")
 	}
-	options.PoolAttempt = os.Getenv("JACKSTAY_REVIEW_POOL_ATTEMPT")
 	found, ok := openProject(stderr, "review")
 	if !ok {
 		return ExitUsage
 	}
-	if expected := os.Getenv(PoolPolicyIDVariable); expected != "" && expected != found.settings.PoolPolicyID(options.Reviewers, found.store.Root) {
-		fmt.Fprintln(stderr, PoolPolicyStaleMarker)
-		return ExitUsage
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	if background {
+		if request != "" || asJSON {
+			fmt.Fprintln(stderr, "jst review: --background takes neither --request nor --json")
+			return ExitUsage
+		}
+		return submitBackground(ctx, found, options, stdout, stderr)
 	}
 	machine, err := RealMachine(homedir.SharedPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "jst review: %v\n", err)
 		return ExitUsage
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 	summary := stdout
 	if asJSON {
 		summary = stderr
 	}
+	if request != "" && options.Task == "" {
+		fmt.Fprintln(stderr, "jst review: --request needs --task")
+		return ExitUsage
+	}
 	result := Round{RepositoryRoot: found.project.Root, Settings: found.settings, Repo: RepositoryAt(found.project.Root), Store: found.store,
-		Machine: machine, Out: summary, Errors: stderr}.Run(ctx, options)
+		Machine: machine, Out: summary, Errors: stderr, Request: request}.Run(ctx, options)
+	if request != "" {
+		// The result is told even when the call was stopped: a fresh, bounded context.
+		finishing, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := found.store.Finish(finishing, options.Task, request, result, chatevent.Default()); err != nil {
+			fmt.Fprintf(stderr, "jst review: the result is kept for the chat, not yet told: %v\n", err)
+		}
+		cancel()
+	}
 	if asJSON {
 		writeResultJSON(stdout, result)
 		return result.Status
 	}
-	outcome := map[int]string{ExitClear: "clear", ExitBlocks: "blocks", ExitUsage: "refused", ExitRedesign: "redesign due",
-		ExitOwner: "the owner decides", ExitReviewer: "no usable answer", ExitEnvironment: "the environment refuses"}[result.Status]
+	outcome := OutcomeWord(result.Status)
 	if result.Record != nil {
 		fmt.Fprintf(stdout, "jst review: round %d of %s: %s\n", result.Record.Round, result.Record.Task, outcome)
 	} else {
@@ -157,6 +175,51 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "jst review: next: %s\n", result.Next)
 	return result.Status
+}
+
+func submitBackground(ctx context.Context, found opened, options Options, stdout, stderr io.Writer) int {
+	if options.BriefFile != "" || options.Model != "" || options.Effort != "" || options.Timeout != 0 {
+		fmt.Fprintln(stderr, "jst review: --brief, --model, --effort and --timeout are for a review in the foreground; one in the background uses the configuration")
+		return ExitUsage
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(stderr, "jst review: %v\n", err)
+		return ExitUsage
+	}
+	subscriber, err := chatevent.Identify(ctx, found.project.Root)
+	if err != nil {
+		fmt.Fprintf(stderr, "jst review: no chat event will tell this session the result: %v\n", err)
+	}
+	background, err := BackgroundAt(found.project.Root, executable)
+	if err != nil {
+		fmt.Fprintf(stderr, "jst review: %v\n", err)
+		return ExitUsage
+	}
+	submitted, err := background.Submit(ctx, Submission{
+		Revision: options.Revision, Task: options.Task, Reviewers: options.Reviewers, Fresh: options.Fresh,
+		PastLimit: options.PastLimit, Focus: options.Focus, Subscriber: subscriber})
+	if err != nil {
+		fmt.Fprintf(stderr, "jst review: %v\n", err)
+		return ExitUsage
+	}
+	request := submitted.Request
+	word := "started"
+	if submitted.Joined {
+		word = "joined the running review"
+	}
+	fmt.Fprintf(stdout, "jst review: %s in the background: %s of task %s (request %s, `jst procs` lists it as review-%s)\n",
+		word, request.rangeText(), request.Task, request.ID, request.Task)
+	fmt.Fprintf(stdout, "jst review: log %s\n", request.Log)
+	if subscriber != "" {
+		fmt.Fprintln(stdout, "jst review: next: the result comes to this session as a chat event (review.finished)")
+	} else {
+		// The log ends with the run's own outcome lines; `jst review last` alone could show an older
+		// round when this run ended before it made an attempt (a refused environment, say).
+		fmt.Fprintf(stdout, "jst review: next: once `jst procs` no longer lists it, read the end of the log above: it says the outcome of this request (%s..%s) and its report\n",
+			short(request.Base), short(request.Head))
+	}
+	return 0
 }
 
 func writeResultJSON(stdout io.Writer, result Result) {

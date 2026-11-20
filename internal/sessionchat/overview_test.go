@@ -86,7 +86,7 @@ func TestOverviewCountsRetainedReviewNotification(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	message, _, err := store.notifyReview(recipient.ID, "Review completed", "review-key")
+	message, _, err := store.send(systemSender, recipient.ID, "message", "Review completed", "review-key", "", true)
 	if err != nil {
 		t.Fatal(err)
 	}

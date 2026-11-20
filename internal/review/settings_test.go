@@ -35,55 +35,18 @@ func TestDefaults(t *testing.T) {
 		s.QueueMinutes != 15 || s.KeepDays != 30 || !s.Triage || s.Cite != nil {
 		t.Fatalf("defaults: %+v", s)
 	}
-	if !s.Pool.Accepting || s.Pool.HistoryDays != 30 {
-		t.Fatalf("pool defaults: %+v", s.Pool)
-	}
 	if s.Budget([]string{"codex"}) != 37 {
 		t.Fatalf("budget %d", s.Budget([]string{"codex"}))
 	}
 }
 
-func TestPoolAdmissionIsAKeyAndItsLimitsAreConstants(t *testing.T) {
-	settings, problems := settingsFrom(t, `{"jackstay_schema":3,"review":{"pool":{"accepting":false}}}`)
-	if len(problems) != 0 || settings.Pool.Accepting || settings.Pool.HistoryDays != PoolHistoryDays || settings.Pool.MaxAttempts != PoolMaxAttempts {
-		t.Fatalf("pool settings: %+v, problems %v", settings.Pool, problems)
-	}
-	parsed, err := config.Parse([]byte(`{"jackstay_schema":3,"review":{"pool":{"history_days":7}}}`))
+func TestTheReviewPoolKeyIsGone(t *testing.T) {
+	parsed, err := config.Parse([]byte(`{"jackstay_schema":3,"review":{"pool":{"accepting":false}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if problems := config.SectionProblems(parsed).Of("review"); len(problems) == 0 {
-		t.Fatal("review.pool.history_days was accepted as a key")
-	}
-}
-
-func TestPoolPolicyIDTracksSelectedReviewAndExecutionSettings(t *testing.T) {
-	settings := Defaults()
-	settings.RepeatSeverities = allButLast(settings.Severities)
-	selected := []string{"codex"}
-	before := settings.PoolPolicyID(selected, "/private/reviews")
-	settings.Pool.Accepting = false
-	settings.Pool.HistoryDays = 90
-	other := settings.Reviewers["claude-code"]
-	other.Model = "another-model"
-	settings.Reviewers["claude-code"] = other
-	if changed := settings.PoolPolicyID(selected, "/private/reviews"); changed != before {
-		t.Fatal("unselected provider or queue operations changed the review policy")
-	}
-	selectedReviewer := settings.Reviewers["codex"]
-	selectedReviewer.Model = "new-model"
-	settings.Reviewers["codex"] = selectedReviewer
-	if changed := settings.PoolPolicyID(selected, "/private/reviews"); changed == before {
-		t.Fatal("selected reviewer model was omitted from the review policy")
-	}
-	settings.Reviewers["codex"] = defaultReviewer("codex")
-	settings.Blocking = []string{"major"}
-	if changed := settings.PoolPolicyID(selected, "/private/reviews"); changed == before {
-		t.Fatal("blocking rules were omitted from the review policy")
-	}
-	settings.Blocking = []string{"blocker"}
-	if changed := settings.PoolPolicyID(selected, "/another/reviews"); changed == before {
-		t.Fatal("resolved review store was omitted from the review policy")
+		t.Fatal("review.pool was accepted as a key; the pool is folded into jst review")
 	}
 }
 

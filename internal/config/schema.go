@@ -65,9 +65,6 @@ func schemaNode(wanted *schemaType) map[string]any {
 
 func setSchemaHints(root map[string]any) {
 	properties := root["properties"].(map[string]any)
-	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
-	pool["accepting"].(map[string]any)["default"] = true
-	pool["accepting"].(map[string]any)["description"] = "Accept new review jobs from this repository. Existing jobs remain available for processing and retry."
 	brief := properties["brief"].(map[string]any)["properties"].(map[string]any)["max_age_hours"].(map[string]any)
 	brief["description"] = "Hours a saved brief stays fresh when jst brief save is given no --max-age."
 	repos := properties["status"].(map[string]any)["properties"].(map[string]any)["repos"].(map[string]any)

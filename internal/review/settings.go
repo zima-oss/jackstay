@@ -6,7 +6,6 @@ package review
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -30,7 +29,6 @@ type ReviewerSettings struct {
 
 // Settings are a project's `review` section with every default filled in.
 type Settings struct {
-	Pool             PoolSettings
 	Reviewers        map[string]ReviewerSettings
 	Use              []string
 	Brief            string
@@ -48,26 +46,6 @@ type Settings struct {
 	KeepDays         int
 }
 
-// The reviewer queue's limits for a repository's requests.
-const (
-	PoolHistoryDays         = 30
-	PoolMaxPending          = 32
-	PoolMaxAttempts         = 5
-	PoolRetryInitialSeconds = 30
-	PoolRetryCapSeconds     = 900
-)
-
-// PoolSettings bounds a repository's optional reviewer queue requests: `review.pool.accepting`,
-// and the limits that are constants.
-type PoolSettings struct {
-	Accepting           bool
-	HistoryDays         int
-	MaxPending          int
-	MaxAttempts         int
-	RetryInitialSeconds int
-	RetryCapSeconds     int
-}
-
 // DefaultIsolation is the default set of isolation flags (docs/design/review.md section 1).
 var DefaultIsolation = []string{
 	"--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
@@ -76,16 +54,6 @@ var DefaultIsolation = []string{
 
 // KnownReviewers are the reviewers jackstay knows how to run.
 var KnownReviewers = []string{"codex", claude.Name}
-
-// PoolPolicyIDVariable carries the queued job's policy into the review child.
-const PoolPolicyIDVariable = "JACKSTAY_REVIEW_POOL_POLICY_ID"
-
-// PoolPolicyStaleMarker identifies a child refusal after the worker's last
-// policy check, so the worker can preserve the stale classification.
-const PoolPolicyStaleMarker = "jst review: queued review policy changed before reviewer launch"
-
-// ErrPoolPolicyStale means the selected review policy changed after enqueue.
-var ErrPoolPolicyStale = errors.New("review policy changed since enqueue; submit a new request")
 
 var efforts = []string{"minimal", "low", "medium", "high", "xhigh"}
 
@@ -117,8 +85,6 @@ func Defaults() Settings {
 		reviewers[name] = defaultReviewer(name)
 	}
 	return Settings{
-		Pool: PoolSettings{Accepting: true, HistoryDays: PoolHistoryDays, MaxPending: PoolMaxPending,
-			MaxAttempts: PoolMaxAttempts, RetryInitialSeconds: PoolRetryInitialSeconds, RetryCapSeconds: PoolRetryCapSeconds},
 		Use:              []string{DefaultReviewer},
 		Reviewers:        reviewers,
 		Severities:       []string{"blocker", "major", "minor"},
@@ -220,11 +186,6 @@ func SettingsOf(loaded config.Config) (Settings, []string) {
 	}
 	if value, ok := section["store"].(string); ok {
 		settings.Store = value
-	}
-	if pool, ok := section["pool"].(map[string]any); ok {
-		if accepting, ok := pool["accepting"].(bool); ok {
-			settings.Pool.Accepting = accepting
-		}
 	}
 	problems = append(problems, settings.problems()...)
 	return settings, problems
@@ -350,26 +311,6 @@ func (settings Settings) policyID() string {
 		Triage: settings.Triage, RepeatRounds: settings.RepeatRounds, RoundLimit: settings.RoundLimit,
 	}
 	data, _ := json.Marshal(policy) // This value has only scalar and string slice fields.
-	return fmt.Sprintf("v1:%x", sha256.Sum256(data))
-}
-
-// PoolPolicyID identifies the effective policy for a queued review. It includes
-// the verdict rules and the selected providers' execution settings. Pool
-// scheduling, default reviewer choice, and retention do not affect a review
-// submitted with an explicit provider set.
-func (settings Settings) PoolPolicyID(names []string, storeRoot string) string {
-	reviewers := make([]ReviewerSettings, 0, len(names))
-	for _, name := range names {
-		reviewers = append(reviewers, settings.Reviewers[name])
-	}
-	policy := struct {
-		Verdict       string
-		Reviewers     []ReviewerSettings
-		MaxConcurrent int
-		QueueMinutes  int
-		StoreRoot     string
-	}{settings.policyID(), reviewers, settings.MaxConcurrent, settings.QueueMinutes, storeRoot}
-	data, _ := json.Marshal(policy)
 	return fmt.Sprintf("v1:%x", sha256.Sum256(data))
 }
 

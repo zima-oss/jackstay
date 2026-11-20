@@ -77,12 +77,9 @@ var items = []item{
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
 		"- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`\n" +
-			"  or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.\n" +
+			"  or `codex,claude-code` for others); `--background` returns at once and the result comes as a chat\n" +
+			"  event; `jst review check BASE..REV --task NAME` says if it is clear.\n" +
 			"  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.")},
-	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
-		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
-			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
-			"  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(

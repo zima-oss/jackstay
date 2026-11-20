@@ -118,6 +118,15 @@ func (repo gitRepository) Branch(ctx context.Context) (string, error) {
 	return name, err
 }
 
+// CommonDir is the repository's Git common folder, resolved: the same for all its worktrees.
+func (repo gitRepository) CommonDir(ctx context.Context) (string, error) {
+	folder, err := repo.line(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(folder)
+}
+
 func (repo gitRepository) ValidBranchName(ctx context.Context, name string) bool {
 	_, err := repo.run(ctx, "check-ref-format", "--branch", name)
 	return err == nil
