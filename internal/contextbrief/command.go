@@ -17,13 +17,14 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
+	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/project"
 )
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "brief save", Summary: "save a task brief for this worktree", Usage: "usage: jst brief save --expect REV [--max-age DURATION] < brief.json\n\nSave explicit JSON with task_id, task, next (1–12 strings), optional decisions (up to 12 strings). REV is the current revision from `brief show`, initially 0. Max age defaults to 168h and must be 1h–720h. No transcript is read.\n\nexit: 0 saved; 2 invalid input, conflict or unavailable state.\n\nexample: jst brief save --expect 0 < brief.json\n", PrivateArgs: true, Run: runSave},
+		cli.Command{Name: "brief save", Summary: "save a task brief for this worktree", Usage: "usage: jst brief save --expect REV [--max-age DURATION] < brief.json\n\nSave explicit JSON with task_id, task, next (1–12 strings), optional decisions (up to 12 strings). REV is the current revision from `brief show`, initially 0. Max age defaults to `brief.max_age_hours` in jackstay.json, else 168h, and must be 1h–720h. No transcript is read.\n\nexit: 0 saved; 2 invalid input, conflict or unavailable state.\n\nexample: jst brief save --expect 0 < brief.json\n", PrivateArgs: true, Run: runSave},
 		cli.Command{Name: "brief show", Summary: "show this worktree's saved task brief", Usage: "usage: jst brief show\n\nPrint JSON with revision, freshness and brief (null after clear).\n\nexit: 0 printed; 2 invalid arguments or unavailable state.\n\nexample: jst brief show\n", PrivateArgs: true, Run: runShow},
 		cli.Command{Name: "brief clear", Summary: "clear this worktree's brief while preserving its revision", Usage: "usage: jst brief clear --expect REV\n\nLeave a revision tombstone, so stale writers cannot overwrite a later task.\n\nexit: 0 cleared; 2 invalid arguments, conflict or unavailable state.\n\nexample: jst brief clear --expect 1\n", PrivateArgs: true, Run: runClear},
 		cli.Command{Name: "brief claude-hook", Summary: "restore a brief after Claude Code compaction", Usage: "usage: jst brief claude-hook\n\nUse in an opt-in Claude Code SessionStart hook with matcher compact. Emits context only for this exact worktree and a fresh brief.\n\nexit: 0 context or no context; 2 invalid arguments.\n\nexample: jst brief claude-hook\n", PrivateArgs: true, Run: runClaudeHook},
@@ -91,7 +92,7 @@ func runSave(args []string, input io.Reader, output, diagnostics io.Writer) int 
 		fmt.Fprintf(diagnostics, "brief: %v\n", err)
 		return 2
 	}
-	maxAge := defaultMaxAge
+	var maxAge time.Duration
 	if ageOption != "" {
 		maxAge, err = time.ParseDuration(ageOption)
 		if err != nil {
@@ -100,6 +101,11 @@ func runSave(args []string, input io.Reader, output, diagnostics io.Writer) int 
 		}
 	}
 	store, root, err := currentStore()
+	if err == nil && ageOption == "" {
+		var loaded config.Config
+		_, loaded, err = config.Load(root, []string{"brief"})
+		maxAge = config.BriefMaxAge(loaded.Section("brief"))
+	}
 	if err == nil {
 		var encoded []byte
 		encoded, err = io.ReadAll(io.LimitReader(input, maxBriefBytes+1))

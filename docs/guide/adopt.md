@@ -17,7 +17,7 @@ places and nothing else:
 
 | Place | What jackstay writes |
 |---|---|
-| `jackstay.json` | created with an editor schema association, `jackstay_schema` and `project` when missing; a profile's defaults added where the project has no value; never a value you set |
+| `jackstay.json` | created with `jackstay_schema` and `project` (and, from jackstay 0.6.0, an editor schema association) when missing; a profile's defaults added where the project has no value; never a value you set |
 | `AGENTS.md` | the tools block, between two `jackstay-adopt` markers; `CLAUDE.md` holding `@AGENTS.md` when there is no `CLAUDE.md` |
 | `.claude/settings.json` | the guard hook (`PreToolUse`, matcher `Bash`, `jst-guard`), every other key kept |
 | `.github/workflows/` | `card-line.yml` when the project has `cards` or `changes`; `release.yml` when it has `release` |
@@ -118,27 +118,36 @@ jst patterns         # the patterns that are not RE2 (Go's dialect: no lookaroun
 
 Put `jst check` in your project's own gate.
 
-Newly adopted projects get a `$schema` field for editor completion. Add the same field to an existing `jackstay.json`:
+### Versions of the file
 
-```json
-{
-  "$schema": "https://raw.githubusercontent.com/zima-oss/jackstay/main/schemas/jackstay.schema.json",
-  "jackstay_schema": 2,
-  "project": "your-project"
-}
-```
+`jackstay_schema` says which jackstay a file was written for, so an older jackstay refuses a
+newer file with "upgrade jackstay" rather than half-reading it:
 
-The [published JSON Schema](https://raw.githubusercontent.com/zima-oss/jackstay/main/schemas/jackstay.schema.json)
-describes the keys, types and selected value choices accepted by `jst check`. It is generated
-from jackstay's runtime configuration table and checked for drift in tests. Editors that support
-JSON Schema can use the URL for completion and early diagnostics. A project pinned to an older
-jackstay release can replace `main` in the URL with that release tag. The schema cannot express
-every rule involving paths, other fields or Go regular expressions; `jst check` remains the
-authoritative validator.
+| `jackstay_schema` | Needed for |
+|---|---|
+| 1 | `guard`, `test`, `receipts`, `lock`, `baseline`, `trash`, `telemetry` |
+| 2 | `cards`, `ids`, `records`, `changes`, `procs`, `release`, `github`, `review`, `adopt` |
+| 3 (jackstay 0.6.0 and later) | `$schema`, `chat`, `queue`, `brief`, `status`, `review.pool`, `adopt.profile_sha256`, `test.selection`, and a scope's, step's or receipts command's `selector`, `report`, `reports`, `empty_exit`, `xcresult_bundles` (and a receipts command's `judge`) |
+
+A project whose workflows download a pinned jackstay (`adopt.pin`) must keep to what that release
+reads. **Do not add `$schema` or another schema-3 key while the pin is older than 0.6.0**: the
+pinned jackstay would refuse the whole file. `jst adopt` keeps to this: it writes `$schema` and
+schema 3 only for jackstay 0.6.0 or later, and refuses to add a schema-3 key while the project is
+pinned to an older release. When you move the pin, land the workflows that download it before a
+change that adds schema-3 keys: until then, CI still runs the older release.
+
+From 0.6.0, `$schema` names the [JSON Schema](https://github.com/zima-oss/jackstay/tree/main/schemas)
+of one release, on its tag, for example
+`https://raw.githubusercontent.com/zima-oss/jackstay/v0.6.0/schemas/jackstay.schema.json`. It
+describes the keys, types and selected value choices accepted by `jst check`, is generated from
+jackstay's runtime configuration table, and is checked for drift in tests. Editors that support
+JSON Schema use it for completion and early diagnostics. When you move the pin, move the tag in
+the URL with it. The schema cannot express every rule involving paths, other fields or Go regular
+expressions; `jst check` remains the authoritative validator.
 
 | Section | What it configures | Guide page |
 |---|---|---|
-| `$schema`, `jackstay_schema` (required), `project` | the file's version (1 or 2; most sections need 2) and the project's name | here |
+| `$schema`, `jackstay_schema` (required), `project` | the editor schema, the file's version (1 to 3, see above) and the project's name | here |
 | `guard` | `regenerable` folder names, your own `deny` rules, each rule's level | [guard](guard.md) |
 | `test` | scopes, steps, judges, timeouts, leftovers | [tests](tests.md) |
 | `receipts` | what goes into a tree's key, which commands may reuse a receipt | [tests](tests.md#receipts) |
@@ -151,6 +160,9 @@ authoritative validator.
 | `cards`, `ids`, `records` | the `Card:` line, number series, one-file records | [records](records.md) |
 | `changes`, `release` | changelog entries, versions and the release workflow | [releases](releases.md) |
 | `adopt` | the workflows' pin, the profile, kept exceptions | here |
+| `brief` | `max_age_hours`: how long a saved brief stays fresh (default 168, 1 to 720) | `jst brief save --help` |
+| `status` | `repos`: the repositories the overview reads when none are named | `jst workspace board --help` |
+| `chat`, `queue` | session chat and the local merge queue | [session chat](session-chat.md) |
 | `telemetry` | the journal's retention and how command text is recorded | [observability](observability.md) |
 
 ### A real example

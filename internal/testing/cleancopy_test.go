@@ -192,7 +192,7 @@ func TestCleanTestUsesCommittedConfigWhenLiveConfigIsUnavailable(t *testing.T) {
 		name, live, project, want string
 	}{
 		{name: "invalid JSON", live: "{", want: "demo"},
-		{name: "invalid test section", live: `{"jackstay_schema":2,"project":"live-name","test":true}`, want: "live-name"},
+		{name: "invalid test section", live: `{"jackstay_schema":3,"project":"live-name","test":true}`, want: "live-name"},
 		{name: "missing config", want: "demo"},
 		{name: "explicit project overrides invalid JSON", live: "{", project: "asked", want: "asked"},
 	} {
@@ -228,7 +228,7 @@ func TestCleanTestUsesCommittedConfigWhenLiveConfigIsUnavailable(t *testing.T) {
 func TestCleanCopyFindsTheNearestCommittedProject(t *testing.T) {
 	w := newCleanWorld(t)
 	w.repo.Commit("add a project below the root", map[string]string{
-		"..nested/jackstay.json": `{"jackstay_schema":2,"project":"nested"}`,
+		"..nested/jackstay.json": `{"jackstay_schema":3,"project":"nested"}`,
 		"..nested/deep/marker":   "checked-in",
 	})
 	w.repo.Write(map[string]string{"jackstay.json": "{", "..nested/jackstay.json": "{"})

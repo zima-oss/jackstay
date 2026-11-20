@@ -24,7 +24,7 @@ func repository(t *testing.T, parent, name string) string {
 	if err := os.MkdirAll(filepath.Join(root, "cards"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	settings := `{"jackstay_schema":2,"project":"shared","cards":{"dir":"cards","id":"T-[0-9]+","unit":"pr","since":"2026-01-01"},"queue":{"enabled":true,"base_ref":"refs/heads/main"},"chat":{"enabled":true}}`
+	settings := `{"jackstay_schema":3,"project":"shared","cards":{"dir":"cards","id":"T-[0-9]+","unit":"pr","since":"2026-01-01"},"queue":{"enabled":true,"base_ref":"refs/heads/main"},"chat":{"enabled":true}}`
 	write(t, filepath.Join(root, "jackstay.json"), settings)
 	write(t, filepath.Join(root, "cards", "T-1-ready.md"), "---\n{\"state\":\"ready\"}\n---\nPrivate card body\n")
 	write(t, filepath.Join(root, "cards", "T-2-done.md"), "---\n{\"state\":\"done\"}\n---\n")

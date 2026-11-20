@@ -106,11 +106,10 @@ the actual reviewer invocation. No pool job starts when its explicit `next`
 worker is absent.
 
 The machine-wide queue caps pending or running jobs at 256, including jobs
-returned to pending by `retry`. `review.pool` in each
-repository can lower its own `max_pending` (default 32), set `max_attempts`
-(default 5), `retry_initial_seconds` (default 30), and `retry_cap_seconds`
-(default 900). These values are saved with each job at enqueue, so later config
-edits do not silently alter its retry schedule. An explicit `retry` after a
+returned to pending by `retry`. Each repository may have 32 jobs pending or
+running; a job gets 5 launches, and its retry delay starts at 30 seconds and is
+capped at 900. These limits are constants, saved with each job at enqueue, so a
+later jackstay does not silently alter its retry schedule. An explicit `retry` after a
 reviewer failure (exit 5) records a durable exponential delay; `next` skips a
 job until its deadline. Configuration and environment refusals require an
 operator retry and receive no automatic delay. No retries launch themselves.
@@ -126,10 +125,8 @@ existing job and allowing `list`, `inspect`, `next`, `retry`, and status reads.
 The value is checked at submission. This is an admission control for a local
 queue, not an agent host permission boundary.
 
-`review.pool.history_days` defaults to 30 and accepts 1 through 3650. It is
-saved with each new job, including jobs that later fail. Existing version 1
-jobs receive the default on migration. An operator changes retention for future
-requests by editing `jackstay.json`; old jobs keep their saved value. A terminal
+A job's history is kept for 30 days. The value is saved with each new job,
+including jobs that later fail; old jobs keep their saved value. A terminal
 job becomes eligible for pruning when its most recent update is older than that
 period. An active job remains regardless of its age.
 

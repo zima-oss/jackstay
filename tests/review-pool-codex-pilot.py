@@ -113,9 +113,9 @@ printf '%s\\n' '{"type":"turn.completed"}'
     git("config", "user.name", "Jackstay pilot")
     git("config", "user.email", "pilot@example.invalid")
     (checkout / "jackstay.json").write_text(json.dumps({
-        "jackstay_schema": 2,
+        "jackstay_schema": 3,
         "project": "review-pilot",
-        "chat": {"enabled": True, "codex_bridge": {"enabled": True, "poll_interval_ms": 100}},
+        "chat": {"enabled": True, "codex_bridge": {"enabled": True}},
         "review": {"reviewers": {"codex": {"command": str(reviewer)}}},
     }))
     git("add", "jackstay.json")

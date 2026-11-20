@@ -38,7 +38,7 @@ def fixture(root, env):
         return run(["git", *args], repo, env)
 
     git("init", "-q", "-b", "main")
-    config = {"jackstay_schema": 2, "project": "source-pool-pilot", "review": {
+    config = {"jackstay_schema": 3, "project": "source-pool-pilot", "review": {
         "reviewers": {
             "codex": {"command": shutil.which("codex"), "isolation": [
                 "--ephemeral", "--ignore-rules", "--skip-git-repo-check",

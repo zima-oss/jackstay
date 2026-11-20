@@ -94,7 +94,7 @@ type world struct {
 }
 
 // configFile opts `make test` out of reuse, so a test runs it each time; reuseConfig opts it in.
-const configFile = `{"jackstay_schema": 2, "project": "demo", "receipts": {"inputs": ["src"], "env": [], "toolchain": [],
+const configFile = `{"jackstay_schema": 3, "project": "demo", "receipts": {"inputs": ["src"], "env": [], "toolchain": [],
   "commands": [{"argv": ["make", "test"], "reuse": false, "evidence": "Executed ([0-9]+) tests?", "veto": "FAILED"},
                {"argv_prefix": ["make", "check"], "reuse": false, "evidence": "Executed ([0-9]+) tests?"}]}}`
 

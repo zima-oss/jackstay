@@ -27,7 +27,7 @@ func TestPolicyChangeFailsClosedAndCreatesNewRequest(t *testing.T) {
 	// Changing a selected reviewer's model changes the result of the requested
 	// review even though its base, head, and task remain pinned.
 	config := map[string]any{
-		"jackstay_schema": 2, "project": "pool-test",
+		"jackstay_schema": 3, "project": "pool-test",
 		"review": map[string]any{"reviewers": map[string]any{"codex": map[string]any{"model": "new-model"}}},
 	}
 	data, err := json.Marshal(config)

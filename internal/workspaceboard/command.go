@@ -5,17 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/cli"
+	"github.com/zima-oss/jackstay/internal/config"
 )
 
-const usage = `usage: jst workspace board [--json] REPO [REPO...]
+const usage = `usage: jst workspace board [--json] [REPO...]
 
 Read a summary of each explicitly supplied Git checkout. Linked worktrees share queue and chat
 state; gate and receipt summaries are for the named checkout. No remote service is contacted.
 No message bodies, receipt contents, or card bodies are printed.
-At most 32 repositories may be supplied in one call.
+At most 32 repositories may be supplied in one call. With none named, the repositories are the
+current project's status.repos in jackstay.json (relative to its folder).
 
 exit: 0 every requested source read; 1 at least one source is unknown or partial; 2 invalid use.
 
@@ -40,6 +43,19 @@ func runBoard(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 		paths = append(paths, word)
+	}
+	if len(paths) == 0 {
+		working, err := os.Getwd()
+		if err == nil {
+			var root string
+			var loaded config.Config
+			root, loaded, err = config.Load(working, []string{"status"})
+			paths = config.StatusRepositories(loaded.Section("status"), root)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "jst workspace board: %v\n", err)
+			return 2
+		}
 	}
 	if len(paths) == 0 || len(paths) > 32 {
 		fmt.Fprint(stderr, usage)

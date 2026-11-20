@@ -152,7 +152,7 @@ class Pilot:
                             "\"structured_output\":{\"verdict\":\"approve\",\"summary\":\"synthetic local review\","
                             "\"findings\":[],\"prior\":[]}}'\n")
         reviewer.chmod(0o700)
-        config = {"jackstay_schema": 2, "project": "claude-pool-pilot",
+        config = {"jackstay_schema": 3, "project": "claude-pool-pilot",
                   "chat": {"enabled": True, "claude_code": {"enabled": True}},
                   "review": {"reviewers": {"claude-code": {"command": str(reviewer)}}}}
         (self.repo / "jackstay.json").write_text(json.dumps(config))

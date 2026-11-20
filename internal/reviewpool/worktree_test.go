@@ -14,7 +14,7 @@ import (
 func TestLinkedMCPWorktreesShareOnlyEquivalentPinnedReviews(t *testing.T) {
 	ctx := context.Background()
 	repo := testrepo.New(t, map[string]string{
-		"jackstay.json": `{"jackstay_schema":2,"project":"linked-pool"}`,
+		"jackstay.json": `{"jackstay_schema":3,"project":"linked-pool"}`,
 		"sample.txt":    "first\n",
 	})
 	repo.Commit("second", map[string]string{"sample.txt": "second\n"})
@@ -37,7 +37,7 @@ func TestLinkedMCPWorktreesShareOnlyEquivalentPinnedReviews(t *testing.T) {
 		t.Fatalf("linked enqueue did not share the original worker checkout: %+v, %t, %v", shared, created, err)
 	}
 	if err := os.WriteFile(filepath.Join(linked, "jackstay.json"),
-		[]byte(`{"jackstay_schema":2,"project":"linked-pool","review":{"reviewers":{"codex":{"model":"different"}}}}`), 0o600); err != nil {
+		[]byte(`{"jackstay_schema":3,"project":"linked-pool","review":{"reviewers":{"codex":{"model":"different"}}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	different, created, err := pool.EnqueueForSession(ctx, request, secondSession, common)

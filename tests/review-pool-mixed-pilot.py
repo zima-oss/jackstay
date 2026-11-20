@@ -184,12 +184,11 @@ class Pilot:
         self.base, self.head = codex_pilot["fixture"](self.root, self.repo, self.environment)
         config_path = self.repo / "jackstay.json"
         configuration = json.loads(config_path.read_text())
-        configuration["chat"]["codex_bridge"]["ack_timeout_seconds"] = 5
         configuration["chat"]["claude_code"] = {"enabled": True}
         config_path.write_text(json.dumps(configuration))
         subprocess.run(["git", "add", "jackstay.json"], cwd=self.repo, env=self.environment, check=True)
         subprocess.run(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid",
-                        "-c", "commit.gpgsign=false", "commit", "-qm", "Bound pilot ACK timeout"],
+                        "-c", "commit.gpgsign=false", "commit", "-qm", "Enable the Claude Code chat hook"],
                        cwd=self.repo, env=self.environment, check=True)
         self.base = self.head
         self.head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=self.repo,

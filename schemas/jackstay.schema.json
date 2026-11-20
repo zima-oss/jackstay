@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/zima-oss/jackstay/main/schemas/jackstay.schema.json",
+  "$id": "https://raw.githubusercontent.com/zima-oss/jackstay/v0.5.11/schemas/jackstay.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Project configuration for jackstay. Run jst check for semantic and cross-field validation.",
@@ -75,6 +75,19 @@
             "type": "string"
           },
           "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "brief": {
+      "additionalProperties": false,
+      "properties": {
+        "max_age_hours": {
+          "default": 168,
+          "description": "Hours a saved brief stays fresh when jst brief save is given no --max-age.",
+          "maximum": 720,
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -222,57 +235,14 @@
         "codex_bridge": {
           "additionalProperties": false,
           "properties": {
-            "ack_timeout_seconds": {
-              "default": 30,
-              "maximum": 300,
-              "minimum": 5,
-              "type": "integer"
-            },
             "enabled": {
               "type": "boolean"
-            },
-            "poll_interval_ms": {
-              "default": 1000,
-              "maximum": 10000,
-              "minimum": 100,
-              "type": "integer"
             }
           },
           "type": "object"
         },
         "enabled": {
           "type": "boolean"
-        },
-        "max_message_bytes": {
-          "default": 4096,
-          "maximum": 16384,
-          "minimum": 128,
-          "type": "integer"
-        },
-        "max_pending": {
-          "default": 128,
-          "maximum": 512,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "max_pending_per_session": {
-          "default": 32,
-          "description": "Pending messages per recipient. The default is min(32, max_pending); an explicit value must not exceed max_pending.",
-          "maximum": 512,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "max_sessions": {
-          "default": 32,
-          "maximum": 64,
-          "minimum": 2,
-          "type": "integer"
-        },
-        "retention_hours": {
-          "default": 72,
-          "maximum": 168,
-          "minimum": 1,
-          "type": "integer"
         }
       },
       "then": {
@@ -425,7 +395,8 @@
     "jackstay_schema": {
       "enum": [
         1,
-        2
+        2,
+        3
       ],
       "type": "integer"
     },
@@ -782,37 +753,6 @@
               "default": true,
               "description": "Accept new review jobs from this repository. Existing jobs remain available for processing and retry.",
               "type": "boolean"
-            },
-            "history_days": {
-              "default": 30,
-              "description": "Days to retain terminal review jobs. The value is saved with each new job.",
-              "maximum": 3650,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "max_attempts": {
-              "default": 5,
-              "maximum": 20,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "max_pending": {
-              "default": 32,
-              "maximum": 256,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "retry_cap_seconds": {
-              "default": 900,
-              "maximum": 86400,
-              "minimum": 1,
-              "type": "integer"
-            },
-            "retry_initial_seconds": {
-              "default": 30,
-              "maximum": 3600,
-              "minimum": 1,
-              "type": "integer"
             }
           },
           "type": "object"
@@ -888,6 +828,20 @@
       },
       "type": "object"
     },
+    "status": {
+      "additionalProperties": false,
+      "properties": {
+        "repos": {
+          "description": "Repositories the overview reads when none are named: paths relative to this file's folder, or absolute.",
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "telemetry": {
       "additionalProperties": false,
       "properties": {
@@ -947,12 +901,6 @@
             "type": "object"
           },
           "type": "array"
-        },
-        "requires_timeout_seconds": {
-          "default": 60,
-          "maximum": 3600,
-          "minimum": 1,
-          "type": "integer"
         },
         "scopes": {
           "additionalProperties": {

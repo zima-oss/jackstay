@@ -28,7 +28,7 @@ func TestTheKeyCommandRunsNothing(t *testing.T) {
 	if material["schema"] != 3.0 {
 		t.Fatalf("material %v", material)
 	}
-	broken := newWorld(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["nowhere"]}}`)
+	broken := newWorld(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["nowhere"]}}`)
 	runner = broken.tester()
 	runner.stdout, runner.stderr = &out, &errs
 	if status := runner.showKey([]string{"make"}); status != 1 || !strings.Contains(errs.String(), "jst receipts: no key:") {
