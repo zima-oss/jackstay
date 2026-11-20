@@ -3,9 +3,9 @@ package scopes
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
 	"math"
 	"os"
@@ -14,8 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
-
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 )
 
@@ -109,14 +108,11 @@ func recordDurations(project, runID, scope, head string, cases map[string]map[st
 	if err := os.MkdirAll(filepath.Dir(place), 0o700); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(place+".lock", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	held, err := durable.Lock(context.Background(), place)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = lock.Close() }()
-	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil { // #nosec G115 -- a descriptor fits an int
-		return err
-	}
+	defer held.Release()
 	kept, err := readDurations(project)
 	if err != nil {
 		kept = nil
@@ -134,16 +130,7 @@ func recordDurations(project, runID, scope, head string, cases map[string]map[st
 		text.Write(line)
 		text.WriteByte('\n')
 	}
-	partial := fmt.Sprintf("%s.%d.partial", place, os.Getpid())
-	if err := os.WriteFile(partial, text.Bytes(), 0o600); err != nil {
-		_ = os.Remove(partial)
-		return err
-	}
-	if err := os.Rename(partial, place); err != nil {
-		_ = os.Remove(partial)
-		return err
-	}
-	return nil
+	return durable.WriteAtomic(place, text.Bytes(), 0o600, 0)
 }
 
 // classMedian is a class's median total and slowest case over its whole runs.

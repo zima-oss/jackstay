@@ -25,6 +25,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 )
 
@@ -305,11 +306,7 @@ func writeRecord(place string, entry Entry) error {
 	if err != nil {
 		return err
 	}
-	temporary := filepath.Join(place, "entry.json.new")
-	if err := os.WriteFile(temporary, append(record, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, filepath.Join(place, "entry.json"))
+	return durable.WriteAtomic(filepath.Join(place, "entry.json"), append(record, '\n'), 0o600, 0)
 }
 
 // Keep makes an entry from bytes: an item that is not on disk (the staged version of a file, kept

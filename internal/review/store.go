@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/strictjson"
@@ -370,23 +371,7 @@ func writeFileWhole(target string, data []byte) error {
 	if err := os.MkdirAll(folder, 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(folder, ".jackstay-review-")
-	if err != nil {
-		return err
-	}
-	name := temporary.Name()
-	_, writeErr := temporary.Write(data)
-	syncErr := temporary.Sync()
-	closeErr := temporary.Close()
-	if err := errors.Join(writeErr, syncErr, closeErr); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, target); err != nil {
-		_ = os.Remove(name)
-		return err
-	}
-	return nil
+	return durable.WriteAtomic(target, data, 0o600, 0)
 }
 
 func writeJSON(target string, value any) error {

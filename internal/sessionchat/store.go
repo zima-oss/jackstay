@@ -2,13 +2,13 @@ package sessionchat
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,9 +16,8 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 )
 
@@ -380,117 +379,59 @@ func (store Store) Reply(sessionID, messageID, body, key string) (Message, bool,
 	}
 	return store.Send(sessionID, original.From, "message", body, key, messageID)
 }
+
+// stateLimit bounds the chat state file.
+const stateLimit = 12 << 20
+
 func (store Store) update(change func(*snapshot) (bool, error)) error {
-	folder := filepath.Dir(store.path)
-	if err := os.MkdirAll(folder, 0o700); err != nil {
-		return err
-	}
-	lock, err := os.OpenFile(filepath.Join(folder, "state.lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lock.Close() }()
-	if err = unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
-		return err
-	}
-	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
-	var state snapshot
-	file, err := os.OpenFile(store.path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if errors.Is(err, os.ErrNotExist) {
-		file = nil
-	} else if err != nil {
-		return err
-	}
-	if file != nil {
-		info, statErr := file.Stat()
-		if statErr != nil || !info.Mode().IsRegular() {
-			_ = file.Close()
-			return errors.New("chat state is not a regular file")
-		}
-		data, readErr := io.ReadAll(io.LimitReader(file, 12<<20+1))
-		closeErr := file.Close()
-		if readErr != nil {
-			return readErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if len(data) > 12<<20 {
-			return errors.New("chat state exceeds limit")
-		}
-		if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
-			return errors.New("chat state: expected an object")
-		}
-		if err = json.Unmarshal(data, &state); err != nil {
-			return fmt.Errorf("chat state: %w", err)
-		}
-	}
-	previousMessages, previousSessions := len(state.Messages), len(state.Sessions)
-	cutoff := store.now().Add(-time.Duration(store.policy.RetentionHours) * time.Hour)
-	kept := state.Messages[:0]
-	for _, message := range state.Messages {
-		when, err := time.Parse(time.RFC3339Nano, message.Created)
-		if err == nil && retainedMessage(message, when, cutoff) {
-			kept = append(kept, message)
-		}
-	}
-	state.Messages = kept
-	sessions := state.Sessions[:0]
-	for _, session := range state.Sessions {
-		when, err := time.Parse(time.RFC3339Nano, session.LastSeen)
-		pendingRecipient := false
-		for _, message := range state.Messages {
-			if !message.Acknowledged && message.To == session.ID {
-				pendingRecipient = true
-				break
+	err := durable.Update(context.Background(), store.path, 0o600, stateLimit, func(data []byte) ([]byte, error) {
+		var state snapshot
+		if data != nil {
+			if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+				return nil, errors.New("chat state: expected an object")
+			}
+			if err := json.Unmarshal(data, &state); err != nil {
+				return nil, fmt.Errorf("chat state: %w", err)
 			}
 		}
-		if err == nil && (when.After(cutoff) || pendingRecipient) {
-			sessions = append(sessions, session)
+		previousMessages, previousSessions := len(state.Messages), len(state.Sessions)
+		cutoff := store.now().Add(-time.Duration(store.policy.RetentionHours) * time.Hour)
+		kept := state.Messages[:0]
+		for _, message := range state.Messages {
+			when, err := time.Parse(time.RFC3339Nano, message.Created)
+			if err == nil && retainedMessage(message, when, cutoff) {
+				kept = append(kept, message)
+			}
 		}
-	}
-	state.Sessions = sessions
-	changed, err := change(&state)
-	if err != nil {
-		return err
-	}
-	if !changed && previousMessages == len(state.Messages) && previousSessions == len(state.Sessions) {
-		return nil
-	}
-	encoded, err := json.Marshal(state)
-	if err != nil {
-		return err
-	}
-	if len(encoded) > 12<<20 {
+		state.Messages = kept
+		sessions := state.Sessions[:0]
+		for _, session := range state.Sessions {
+			when, err := time.Parse(time.RFC3339Nano, session.LastSeen)
+			pendingRecipient := false
+			for _, message := range state.Messages {
+				if !message.Acknowledged && message.To == session.ID {
+					pendingRecipient = true
+					break
+				}
+			}
+			if err == nil && (when.After(cutoff) || pendingRecipient) {
+				sessions = append(sessions, session)
+			}
+		}
+		state.Sessions = sessions
+		changed, err := change(&state)
+		if err != nil {
+			return nil, err
+		}
+		if !changed && previousMessages == len(state.Messages) && previousSessions == len(state.Sessions) {
+			return nil, nil
+		}
+		return json.Marshal(state)
+	})
+	if errors.Is(err, durable.ErrTooLarge) {
 		return errors.New("chat state exceeds limit")
 	}
-	temporary, err := os.CreateTemp(folder, "state-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(temporary.Name()) }()
-	defer func() { _ = temporary.Close() }()
-	if err = temporary.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err = temporary.Write(encoded); err != nil {
-		return err
-	}
-	if err = temporary.Sync(); err != nil {
-		return err
-	}
-	if err = temporary.Close(); err != nil {
-		return err
-	}
-	if err = os.Rename(temporary.Name(), store.path); err != nil {
-		return err
-	}
-	directory, err := os.Open(folder)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = directory.Close() }()
-	return directory.Sync()
+	return err
 }
 
 func retainedMessage(message Message, created, cutoff time.Time) bool {
