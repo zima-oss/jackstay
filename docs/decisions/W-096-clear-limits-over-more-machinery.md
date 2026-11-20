@@ -15,7 +15,9 @@ commit.
   written down. Coverage is not taken to extremes.
 - A place that keeps drawing corner cases is narrowed, or an existing solution is taken, rather than
   growing more machinery. Before inventing something, look at how others have already solved it.
-- CI does not run the same test twice on one commit, and jobs and steps are not duplicated.
+- CI does not run the same test twice on one commit, within written limits (concurrent jobs,
+  cache eviction), and jobs and steps are not duplicated; see the
+  [task-graph record](W-096-task-graph-and-input-cache.md).
 - A review finding that only asks to cover more exotic cases (rated `unusual`, with no ordinary-work
   path, W-094) never takes a blocking severity. The reviewer's prompt says so.
 
