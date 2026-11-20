@@ -1,7 +1,7 @@
 name: pages
 
-# The documentation site (W-076): built with Hugo and the Hextra theme from docs/guide, the only part
-# of the documents it carries (W-077) (`just site`, site/hugo.yaml; the same build `just docs` checks
+# The documentation site (W-076): built with Hugo and the Hextra theme from docs/guide,
+# docs/reference, CONTRIBUTING.md and docs/STYLE.md, the documents it carries (W-077, W-093) (`just site`, site/hugo.yaml; the same build `just docs` checks
 # in the gate), and published to GitHub Pages. The repository's Pages take their site from GitHub
 # Actions; this workflow builds on a change to what the site is made of and deploys from the
 # `github-pages` environment.
@@ -11,6 +11,8 @@ on:
     branches: [main]
     paths:
       - "docs/guide/**"
+      - "docs/reference/**"
+      - "docs/STYLE.md"
       - "site/**"
       - "CONTRIBUTING.md"
       - "install.sh"

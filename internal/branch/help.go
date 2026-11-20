@@ -3,8 +3,7 @@ package branch
 // syncHelp is `jst sync --help`.
 const syncHelp = syncUsage + `
 
-Brings this branch (of DIR's checkout, default the working folder) up to date with the default
-branch: a fast-forward or a merge, never a rebase.
+A fast-forward or a merge, never a rebase. DIR defaults to the working folder.
   --no-fetch   use the remote-tracking branch as it is; do not fetch first
   --push       push the branch after the merge
   --rebase     refused: jst sync merges only
@@ -18,7 +17,6 @@ example: jst sync --push
 // startHelp is `jst start --help`.
 const startHelp = startUsage + `
 
-A new branch NAME and its worktree, on the default branch as fetched.
   --from REF    start from REF instead of the default branch
   --path DIR    the worktree's folder (default .claude/worktrees/NAME when git ignores it there,
                 else a folder beside the checkout, CHECKOUT-worktrees/NAME)

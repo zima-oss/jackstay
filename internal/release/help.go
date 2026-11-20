@@ -4,7 +4,7 @@ package release
 
 const prepareHelp = `usage: jst release prepare [--json]
 
-The next release as the release workflow would make it: version, notes, files; writes nothing.
+Shows version, notes and files.
   --json   the plan as one JSON object
 
 exit: 0 the plan; 1 nothing to release (no entry bumps the version, no override), or an entry is
@@ -16,7 +16,6 @@ example: jst release prepare
 
 const overrideHelp = `usage: jst release override --version V --reason TEXT
 
-A version given by hand for the next release, written as a file for a pull request.
   --version V      the version the next release gets (required)
   --reason TEXT    why; recorded in the release (required)
 
@@ -29,7 +28,7 @@ example: jst release override --version 2.0.0 --reason 'the new file format'
 
 const notesHelp = `usage: jst release notes [VERSION] [--format FORMAT] [--audience AUDIENCE]
 
-A released version's notes, or without VERSION the next release's.
+Without VERSION, the next release's.
   --format FORMAT     markdown (default), text, testflight or sparkle-html
   --audience WHO      consumer (default), internal or all; testflight and sparkle-html are for
                       consumers only
@@ -42,7 +41,6 @@ example: jst release notes 1.3.0 --format text
 
 const yankHelp = `usage: jst release yank X.Y.Z --reason TEXT
 
-Marks release X.Y.Z yanked, as an entry for a pull request.
   --reason TEXT   why the release is yanked (required)
 
 exit: 0 written (or already there, the same), its path printed; 1 X.Y.Z is not a release on this
@@ -54,8 +52,7 @@ example: jst release yank 1.3.1 --reason 'it loses the settings file'
 
 const pullRequestHelp = `usage: jst release pr [--dry-run]
 
-The release workflow's step: create, refresh or close the release pull request. Outside GitHub
-Actions it is always a dry run.
+Outside GitHub Actions it is always a dry run.
   --dry-run   say what would be done; write nothing
 
 exit: 0 done, or nothing to do; 1 a problem reported, the rest done (the base's entries cannot be
@@ -67,7 +64,6 @@ example: jst release pr --dry-run
 
 const publishHelp = `usage: jst release publish [--dry-run]
 
-The release workflow's step: make, tag and publish what a landed release pull request asks.
 Outside GitHub Actions it is always a dry run.
   --dry-run   say what would be done; write nothing
 
