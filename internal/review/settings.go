@@ -318,7 +318,7 @@ func isolationProblems(name string, words []string) []string {
 		word := words[index]
 		flag, _, _ := strings.Cut(word, "=")
 		switch {
-		case slices.Contains(ownedWords, flag):
+		case slices.Contains(ownedWords, flag), attachedShortOption(word):
 			found = append(found, fmt.Sprintf("`review.reviewers.%s.isolation` has %q, which jackstay sets itself or which would undo read-only", name, word))
 		case !strings.HasPrefix(word, "-"):
 			found = append(found, fmt.Sprintf("`review.reviewers.%s.isolation` has %q, which is not an option (a prompt?)", name, word))
@@ -338,6 +338,12 @@ func isolationProblems(name string, words []string) []string {
 		}
 	}
 	return found
+}
+
+// attachedShortOption reports a short owned flag written with its value attached (`-sVALUE`,
+// `-pPROFILE`, `-mMODEL`), which the cut at `=` above does not see.
+func attachedShortOption(word string) bool {
+	return len(word) > 2 && word[0] == '-' && word[1] != '-' && slices.Contains(ownedWords, word[:2])
 }
 
 // policyID records the configuration that decides what a round reviews and what blocks.
