@@ -264,16 +264,16 @@ response, the sweep's `unconfirmed`), the late outcome is dropped and logged. Ex
 **What the receipts promise.**
 - A message's text reaches the recipient's model only through the recipient's own reads
   (`chat.inbox`, `chat.thread`, `jst chat inbox`); on the bridge, also through one steer, **at most
-  once** (W-091). A thread read shows the text of a visible delivery, `pending` included, and
-  changes no receipt. A steer whose result is unknown is
+  once** (W-091). A thread read shows the text of a visible delivery, `pending` included, and never
+  marks it read or acted (it applies the deadline like every read, section 4.10). A steer whose result is unknown is
   never repeated, because Codex cannot recognise a repeat; it is `delivered` with `unconfirmed`, and the sender sees
   the reason in its outbox and decides whether to send it again.
 - A doorbell carries no text, so a repeated doorbell is harmless, and its silence means nothing: the
   receipt that counts is the recipient's read (W-095).
 - `read` means the server returned the whole body to one of the recipient's tool calls, or the
   recipient acknowledged it; it is what the server emitted, not proof that the model took it in.
-  `read` and `acted` come only from the recipient's own tool calls. They are its declaration, not
-  proof of work; a sender that needs proof asks for it in a request (section 4.4).
+  `read` and `acted` come from the recipient's own tool calls (and `read` also from a review
+  mailbox's freeze, section 9.1). They are its declaration, not proof of work; a sender that needs proof asks for it in a request (section 4.4).
 - An explicit `chat.inbox` call returns what the recipient asks for among the visible messages
   (section 4.10). So a model that both reads the inbox and is steered by the bridge may see a message
   twice; that is its own choice.
@@ -1234,7 +1234,8 @@ notices, the session's `notices_rung_at`). For each due session the pass:
    line, and waits 2 s;
 2. under the lock, records what happened:
    - **the connection stayed open, or the line was taken**: the deliveries it told of are marked
-     `rung`, and nothing else changes;
+     `rung`, and the session's `notices_rung_at` moves to the newest notice it told of; the notices
+     stay owed until an inbox read shows them, and nothing else changes;
    - **the connection was closed before the 2 s**: the recipient's engine refused the doorbell; each
      `pending` native delivery it told of becomes `refused` (`engine_refused`, its notice owed), after
      the deadline check of section 4.10;

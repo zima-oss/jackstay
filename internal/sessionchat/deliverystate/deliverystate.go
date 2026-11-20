@@ -110,6 +110,10 @@ const (
 	End Kind = "end"
 	// ReadWhole is chat.inbox emitting the whole body in one response.
 	ReadWhole Kind = "read-whole"
+	// Peek is a read that marks nothing (chat.inbox with mark_read false, a body cut into pieces,
+	// chat.thread): it repairs and checks the deadline like any read, and shows the body only while
+	// the delivery is still visible.
+	Peek Kind = "peek"
 	// AckRead is chat.ack with `read`.
 	AckRead Kind = "ack-read"
 	// AckActed is chat.ack with `acted`, or chat.respond to this request.
@@ -286,6 +290,11 @@ func apply(delivery Delivery, event Event) (Delivery, error) {
 			return delivery, ErrNotVisible
 		}
 		return confirmedRead(delivery), nil
+	case Peek:
+		if !Visible(delivery) {
+			return delivery, ErrNotVisible
+		}
+		return delivery, nil
 	case AckRead, AckActed:
 		if Final(delivery.State) {
 			// Accepted, changes nothing, and says so (section 5.2, chat.ack).
@@ -330,7 +339,7 @@ func expire(delivery Delivery) Delivery {
 
 func checksDeadline(kind Kind) bool {
 	switch kind {
-	case Claim, RingRefused, ReadWhole, AckRead, AckActed:
+	case Claim, RingRefused, ReadWhole, Peek, AckRead, AckActed:
 		return true
 	}
 	return false
@@ -358,6 +367,7 @@ var Table = []Edge{
 	{Pending, Read, ReadWhole},
 	{Delivered, Read, ReadWhole},
 	{Pending, Expired, ReadWhole},
+	{Pending, Expired, Peek},
 	{Pending, Read, AckRead},
 	{Delivered, Read, AckRead},
 	{Pending, Expired, AckRead},
@@ -492,10 +502,11 @@ var (
 	ErrRequestClosed   = errors.New("deliverystate: request_closed")
 )
 
-// Notice transitions (section 8.5): owed → shown when chat.inbox or a hook includes it. A doorbell
-// says only that notices wait; it shows none.
+// Notice transitions (section 8.5): owed → shown when a chat.inbox result includes it, in the step that
+// returns it, and in no other way. A doorbell, the socket's or a hook's, says only that notices wait;
+// it shows none and marks none.
 
-// ShowNotice marks an owed notice shown by a hook or chat.inbox, in the step that returns it.
+// ShowNotice marks an owed notice shown, in the chat.inbox step that returns it.
 func ShowNotice(notice Notice) (Notice, error) {
 	if notice != NoticeOwed {
 		return notice, ErrNotAllowed

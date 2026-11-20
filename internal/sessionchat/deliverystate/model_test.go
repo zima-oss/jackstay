@@ -196,11 +196,11 @@ func successors(w world, rules variant) []step {
 			}
 			add("chat.inbox reads it whole", read)
 		}
-		closedPending := w.isRequest && w.request.State == Closed && Expirable(w.delivery.State)
-		if Visible(w.delivery) && !w.overdue && !closedPending && !w.requestKnown {
-			again := w
-			again.requestKnown = true
-			add("chat.inbox returns it again", again)
+		if peeked, ok := w.apply(Event{Kind: Peek, Overdue: w.overdue}, rules); ok {
+			if Visible(peeked.delivery) {
+				peeked.requestKnown = true
+			}
+			add("a read that marks nothing", peeked)
 		}
 		for _, kind := range []Kind{AckRead, AckActed} {
 			if acked, ok := w.apply(Event{Kind: kind, Overdue: w.overdue}, rules); ok {

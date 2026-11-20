@@ -69,7 +69,7 @@ Confirmed(dl, st) ==
     [dl EXCEPT !.state = st, !.pusher = "",
                !.reason = IF dl.reason = "unconfirmed" THEN "" ELSE dl.reason]
 
-ChecksDeadline(kind) == kind \in {"claim", "ring-refused", "read-whole", "ack-read", "ack-acted"}
+ChecksDeadline(kind) == kind \in {"claim", "ring-refused", "read-whole", "peek", "ack-read", "ack-acted"}
 
 DeadlineFires(dl, ev) == ev.overdue /\ dl.state \in Expirable /\ ChecksDeadline(ev.kind)
 
@@ -112,6 +112,8 @@ Apply(dl, ev) ==
                 ELSE No(dl)
            [] ev.kind = "read-whole" ->
                 IF dl.state \in {"pending", "delivered"} THEN Ok(Confirmed(dl, "read")) ELSE No(dl)
+           [] ev.kind = "peek" ->
+                IF Visible(dl) THEN Ok(dl) ELSE No(dl)
            [] ev.kind = "ack-read" ->
                 IF dl.state \in Final THEN Ok(dl)
                 ELSE IF dl.state \in {"pending", "delivered"} THEN Ok(Confirmed(dl, "read")) ELSE Ok(dl)
@@ -263,13 +265,14 @@ InboxReads ==
     /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown,
                    pushedClosed, overdue, alive>>
 
-\* A read that marks nothing still repairs a closure cut short first (section 4.4): a closed request's
-\* pending delivery is expired, never shown.
-InboxReadsAgain ==
-    /\ Calls /\ ~overdue /\ Visible(d) /\ ~requestKnown
-    /\ ~(isRequest /\ rq.state = "expired" /\ d.state \in Expirable)
-    /\ requestKnown' = TRUE
-    /\ KeepMsg
+\* A read that marks nothing (mark_read false, a body in pieces, chat.thread) is a step of its own: it
+\* repairs a closure cut short and applies the deadline like any read, and shows the body only if the
+\* delivery is still visible after that.
+InboxPeeks ==
+    /\ Calls
+    /\ LET r == Step(Ev("peek", "", "none", overdue)) IN
+       /\ r.ok /\ SetMsg(r)
+       /\ requestKnown' = (requestKnown \/ Visible(r.d))
     /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown,
                    pushedClosed, overdue, alive>>
 
@@ -345,7 +348,7 @@ Sweep == SweepStale \/ SweepExpiresRequest \/ SweepExpiresDelivery
 Next ==
     \/ \E p \in Passes : Claim(p) \/ WriteFails(p) \/ Steer(p) \/ Record(p) \/ RecordFailure(p) \/ Crash(p)
     \/ DoorbellRefused
-    \/ InboxReads \/ InboxReadsAgain \/ Acks \/ Responds
+    \/ InboxReads \/ InboxPeeks \/ Acks \/ Responds
     \/ Sweep
     \/ RecipientMailboxFreezes \/ RequestingMailboxFreezes \/ RecipientEnds \/ DeadlinePasses
 

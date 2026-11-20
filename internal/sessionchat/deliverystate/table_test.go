@@ -10,7 +10,7 @@ import (
 // reached by some input.
 func TestApplyFollowsTheTableExactly(t *testing.T) {
 	reasons := []Reason{NoReason, Unconfirmed}
-	kinds := []Kind{Claim, Answer, Failure, Stale, RingRefused, Expire, End, ReadWhole, AckRead, AckActed, Freeze, CloseRequest}
+	kinds := []Kind{Claim, Answer, Failure, Stale, RingRefused, Expire, End, ReadWhole, Peek, AckRead, AckActed, Freeze, CloseRequest}
 	answers := []EngineAnswer{Accepted, Lost}
 	reached := map[Edge]bool{}
 	inputs := 0
@@ -285,5 +285,45 @@ func TestAClosureCutShortIsRepairedBeforeAnySteer(t *testing.T) {
 	_, delivery, err := ApplyMessage(closed, New(Bridge, true, false), Event{Kind: Claim, Pusher: "pass-1"})
 	if err != nil || delivery.State != Expired || delivery.Notice != NoNotice {
 		t.Fatalf("got %+v %v", delivery, err)
+	}
+}
+
+// Round 2 of the doorbell review: an event of one route, overdue, still changes nothing on another.
+func TestAnOverdueEventOfAnotherRouteChangesNothing(t *testing.T) {
+	cases := []struct {
+		kind  Kind
+		route Route
+	}{
+		{Claim, Native}, {Claim, Hooks}, {RingRefused, Hooks}, {RingRefused, Bridge}, {Freeze, Poll},
+	}
+	for _, test := range cases {
+		delivery := Delivery{Route: test.route, State: Pending, Request: true}
+		event := Event{Kind: test.kind, Pusher: "pass-1", Overdue: true}
+		if after, err := Apply(delivery, event); err != ErrNotAllowed || after != delivery {
+			t.Errorf("%s on %s: Apply %+v %v", test.kind, test.route, after, err)
+		}
+		request := Request{State: Open}
+		gotRequest, after, err := ApplyMessage(request, delivery, event)
+		if err != ErrNotAllowed || after != delivery || gotRequest != request {
+			t.Errorf("%s on %s: ApplyMessage %+v %+v %v", test.kind, test.route, gotRequest, after, err)
+		}
+	}
+}
+
+// Round 3: a read that marks nothing repairs a closure cut short and applies the deadline.
+func TestAReadThatMarksNothingRepairsAndChecksTheDeadline(t *testing.T) {
+	closed := Request{State: Closed, Notice: NoticeOwed}
+	_, repaired, err := ApplyMessage(closed, New(Native, true, false), Event{Kind: Peek})
+	if err != nil || repaired.State != Expired || Visible(repaired) {
+		t.Fatalf("a cut-short closure: %+v %v", repaired, err)
+	}
+	request, expired, err := ApplyMessage(Request{State: Open}, New(Hooks, true, false), Event{Kind: Peek, Overdue: true})
+	if err != nil || request.State != Closed || expired.State != Expired || Visible(expired) {
+		t.Fatalf("an overdue peek: %+v %+v %v", request, expired, err)
+	}
+	request, delivered, err := ApplyMessage(Request{State: Open}, Delivery{Route: Bridge, State: Delivered, Request: true},
+		Event{Kind: Peek, Overdue: true})
+	if err != nil || request.State != Closed || delivered.State != Delivered || !Visible(delivered) {
+		t.Fatalf("an overdue peek of a delivered request closes it and still shows it: %+v %+v %v", request, delivered, err)
 	}
 }

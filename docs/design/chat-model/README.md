@@ -23,7 +23,7 @@ through one steer. Concurrently, in every order:
   at any step;
 - the native doorbell refused by the recipient's engine (a ring it takes or ignores changes nothing,
   and a hook's ring changes nothing at all, so neither is a step of the model);
-- the recipient's reads, acks and answers;
+- the recipient's reads (one that marks it read, one that marks nothing), acks and answers;
 - the sweep (a stale `sending`, deadlines nobody touched), the deadline itself, the recipient's end,
   and the freeze of a mailbox, as recipient or as requester (waiting for a steer of its questions),
   with a crash between a closure's two writes.
@@ -64,7 +64,7 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | `CommitHasFiles` | send | a commit record never stands for files that are gone |
 | `RequestAgrees` | send | the request a response answers is answered or closed once, never overwritten |
 
-TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **7,104** distinct states for a delivery (31,458
+TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **7,104** distinct states for a delivery (34,358
 generated, the temporal properties checked over the whole graph) and **335** for a send (607
 generated) with no error. The Go exploration reaches the same 7,104 and 335 states, and its tests
 fail if either count changes, so the two forms cannot drift apart unnoticed. Before W-095, when the
