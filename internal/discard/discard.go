@@ -336,13 +336,10 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 	if len(entries) > 0 {
 		err = repo.recheck(ctx, each, expected)
 	}
-	if err == nil {
-		switch {
-		case each.head == nil:
-			_, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path)
-		default:
-			err = repo.restoreStaged(ctx, each, staged, place, expected)
-		}
+	if err == nil && each.head == nil {
+		_, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path)
+	} else if err == nil {
+		err = repo.restoreStaged(ctx, each, staged, place, expected)
 	}
 	if err != nil {
 		if each.keepDisk {
