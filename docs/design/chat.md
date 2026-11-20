@@ -1283,12 +1283,16 @@ notices, the session's `notices_rung_at`). For each due session the pass:
    notices stay owed until an inbox read shows them. Then:
    - **the connection stayed open, or the line was taken**: nothing else changes;
    - **the connection was closed before the 2 s**: the recipient's engine refused the doorbell; each
-     `pending` native delivery it told of becomes `refused` (`engine_refused`, its notice owed), after
-     the deadline check of section 4.10;
-   - **a confirmed failure**, when nothing was written (no socket, connection refused): nothing
+     `pending` native delivery it told of (every one it counted, also one an earlier ring told of)
+     becomes `refused` (`engine_refused`, its notice owed), after the deadline check of section 4.10;
+   - **a confirmed failure**, when nothing was written (no socket, connection refused, or a line
+     that could not be written whole): nothing
      reached the socket, so nothing is marked, and the next pass tries again after 5 s, 30 s, then
      2 min. The hooks ring meanwhile.
 
+A pass rings from what it found due when it started; a session that turns busy or rebinds during the
+pass may still be rung once, which is harmless. A binding is rung only when its own Claude Code
+version is verified. An error reading the store stops the pass; it is never taken as a failed ring.
 A ring is never retried for the same deliveries once taken, but ringing again is harmless: a
 recipient that ignored a doorbell is told again by its hooks, and by the next doorbell once a newer
 message arrives.
@@ -1309,14 +1313,15 @@ on the native route, whose socket rings only when it is idle (W-095).
   of the session on the `native` and `hooks` routes and every owed notice, and returns the doorbell
   line as `additionalContext`: a socket's ring is silent and proves nothing, so each new prompt is
   reminded of what is still unread until it is read or expires. At `PostToolBatch` it counts only the
-  `now` and `next` ones no hook has told it of yet (`hook_rung` on the delivery), marks them, and
-  rings the same way, so a busy turn hears of each new message once. Nothing of a message's text is
-  in either.
+  `now` and `next` ones no hook has told it of yet (`hook_rung` on the delivery) and rings the same
+  way, so a busy turn hears of each new message once. The hook marks them `hook_rung` only after its
+  answer is handed over (`MarkHookRung`), as notices are marked (section 8.5): a hook stopped before
+  that told nothing, and its deliveries ring again. Nothing of a message's text is in either.
 - **Hold the turn.** At `Stop`, when the session has `pending` `now` deliveries no hook has told it
   of, the dispatcher answers `{"decision": "block", "reason": …}` with the doorbell line, so the
   model reads its inbox before the turn ends. When `stop_hook_active` is true (the turn already
   continues because of a `Stop` hook), it blocks again only for `now` deliveries that arrived since,
-  and at most 3 times in a row, well inside Claude Code's cap of 8 consecutive continuations. It
+  and at most 3 times in a row (a `Stop` that is not a continuation starts the count again), well inside Claude Code's cap of 8 consecutive continuations. It
   never holds a turn for `next` or `later`. While it holds, the session stays `busy`.
 - **Waking an idle session** is what the hooks cannot do: on this route an idle session hears its
   doorbell at its next prompt. A background `asyncRewake` hook (one that wakes Claude when it exits

@@ -19,6 +19,8 @@ type Ringer interface {
 type Pass struct {
 	Store  *chatstore.Store
 	Ringer Ringer
+	// Verified reports whether a binding's Claude Code version may be rung on its socket.
+	Verified func(version string) bool
 	// Alive reports whether a binding's process still runs (process ID and start).
 	Alive func(chatstore.Binding) bool
 }
@@ -31,11 +33,11 @@ func (pass Pass) Run(ctx context.Context) (int, error) {
 	}
 	bindings, err := pass.Store.Bindings(ctx)
 	if err != nil {
-		bindings = nil // every ring then fails, confirmed: nothing was written
+		return 0, err // an error is never taken as a failed ring
 	}
 	for _, ring := range due {
 		outcome := chatstore.RingFailed
-		if binding, found := socketOf(ring.Recipient, bindings, pass.Alive); found {
+		if binding, found := socketOf(ring.Recipient, bindings, pass.Alive, pass.Verified); found {
 			outcome = pass.Ringer.Ring(ctx, binding.Socket, ring.Text)
 		}
 		if err := pass.Store.RecordRing(ctx, ring, outcome); err != nil {
@@ -46,11 +48,13 @@ func (pass Pass) Run(ctx context.Context) (int, error) {
 }
 
 // socketOf is the live binding with a socket of the session's key; the newest when several.
-func socketOf(key string, bindings []chatstore.Binding, alive func(chatstore.Binding) bool) (chatstore.Binding, bool) {
+func socketOf(key string, bindings []chatstore.Binding, alive func(chatstore.Binding) bool,
+	verified func(string) bool) (chatstore.Binding, bool) {
 	var best chatstore.Binding
 	found := false
 	for _, binding := range bindings {
-		if binding.Key != key || binding.Socket == "" || (alive != nil && !alive(binding)) {
+		if binding.Key != key || binding.Socket == "" || (alive != nil && !alive(binding)) ||
+			(verified != nil && !verified(binding.ClaudeVersion)) {
 			continue
 		}
 		if !found || binding.Written > best.Written {

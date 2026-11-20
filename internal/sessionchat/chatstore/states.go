@@ -127,6 +127,7 @@ func (transaction *transaction) applyObservation(observed observation) (Session,
 		session.State, session.Since = observed.State, observed.Since
 		if observed.Generation > session.IdleGeneration {
 			session.IdleAt = observed.IdleAt
+			session.StopBlocks = 0 // an idle ends the turn the Stop count belongs to
 		}
 		session.IdleGeneration = max(session.IdleGeneration, observed.Generation)
 		if err := transaction.writeSession(session); err != nil {

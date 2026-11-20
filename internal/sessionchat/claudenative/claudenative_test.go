@@ -117,6 +117,20 @@ func TestAClosedConnectionRefusedTheRing(t *testing.T) {
 	}
 }
 
+// A line that could not be written told nothing: a failure, never the engine's refusal (review
+// round 1).
+func TestAFailedWriteIsAFailureNotARefusal(t *testing.T) {
+	path, _ := listen(t, false)
+	writer := Writer{dial: func(context.Context, string) (net.Conn, error) {
+		local, remote := net.Pipe()
+		_ = remote.Close() // the session went away between the connect and the write
+		return local, nil
+	}}
+	if outcome := writer.Ring(context.Background(), path, DoorbellText()); outcome != chatstore.RingFailed {
+		t.Fatalf("got %s", outcome)
+	}
+}
+
 func TestNoSocketIsAConfirmedFailure(t *testing.T) {
 	folder := shortFolder(t)
 	if outcome := (Writer{}).Ring(context.Background(), filepath.Join(folder, "none"), "x"); outcome != chatstore.RingFailed {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -52,6 +54,9 @@ func DoorbellLine(messages, urgent, notices int) string {
 type Ring struct {
 	Text  string // additionalContext, or the reason of a Stop block; "" when nothing waits
 	Block bool
+	// Told are the deliveries the ring told of, for MarkHookRung once the hook's answer is handed
+	// over (an interrupted hook told nothing, so its deliveries ring again).
+	Told []string
 }
 
 // waitingDelivery is one unread delivery a doorbell may count.
@@ -151,10 +156,7 @@ func (store *Store) HookRing(ctx context.Context, key, hook string, stopHookActi
 		}
 		for _, item := range told {
 			if !item.delivery.HookRung {
-				item.delivery.HookRung = true
-				if err := transaction.writeDelivery(item.found.envelope.ID, item.hash, item.delivery); err != nil {
-					return err
-				}
+				result.Told = append(result.Told, item.found.envelope.ID)
 			}
 		}
 		result.Text = DoorbellLine(len(told), urgent, notices)
@@ -166,6 +168,9 @@ func (store *Store) HookRing(ctx context.Context, key, hook string, stopHookActi
 		if err != nil {
 			return err
 		}
+		if !stopHookActive {
+			current.StopBlocks = 0 // a Stop that is not a continuation starts a fresh count
+		}
 		current.StopBlocks++
 		if current.State != StateBusy {
 			current.State, current.Since = StateBusy, stamp(transaction.now)
@@ -174,6 +179,40 @@ func (store *Store) HookRing(ctx context.Context, key, hook string, stopHookActi
 		return transaction.writeSession(current)
 	})
 	return result, err
+}
+
+// MarkHookRung marks the deliveries a hook's ring told of, once the hook's answer is handed over
+// (section 8.4): a hook stopped before that told nothing, and its deliveries ring again. A delivery
+// already marked, or gone, is skipped.
+func (store *Store) MarkHookRung(ctx context.Context, key string, told []string) error {
+	if len(told) == 0 {
+		return nil
+	}
+	return store.update(ctx, func(transaction *transaction) error {
+		session, err := transaction.sessionOf(key)
+		if err != nil {
+			return err
+		}
+		hash := hashKey(session.Key)
+		for _, id := range told {
+			if !messageIDPattern.MatchString(id) {
+				continue
+			}
+			var delivery Delivery
+			err := readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery)
+			if errors.Is(err, os.ErrNotExist) || (err == nil && delivery.HookRung) {
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			delivery.HookRung = true
+			if err := transaction.writeDelivery(id, hash, delivery); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // DueRing is a native doorbell a pass may ring now: the session, the line, and what the ring tells
@@ -219,7 +258,7 @@ func (store *Store) DueRings(ctx context.Context) ([]DueRing, error) {
 				return err
 			}
 			ring := DueRing{Recipient: session.Key}
-			messages, urgent := 0, 0
+			messages, urgent, unrung := 0, 0, false
 			for _, item := range waiting {
 				if item.delivery.Route != string(deliverystate.Native) {
 					continue
@@ -228,11 +267,13 @@ func (store *Store) DueRings(ctx context.Context) ([]DueRing, error) {
 				if item.found.envelope.Priority == PriorityNow {
 					urgent++
 				}
-				if !item.delivery.Rung {
-					ring.Deliveries = append(ring.Deliveries, item.found.envelope.ID)
-				}
+				// The ring tells of every pending native delivery, so it carries them all; one not rung
+				// yet is what makes it due.
+				ring.Deliveries = append(ring.Deliveries, item.found.envelope.ID)
+				unrung = unrung || !item.delivery.Rung
 			}
-			owed, more, err := transaction.collectNotices(session, sessions, 50)
+			// Every owed notice, not only an inbox page's 50, so a new one past them still rings.
+			owed, more, err := transaction.collectNotices(session, sessions, math.MaxInt)
 			if err != nil {
 				return err
 			}
@@ -245,7 +286,7 @@ func (store *Store) DueRings(ctx context.Context) ([]DueRing, error) {
 					ring.NoticesAt = notice.At
 				}
 			}
-			if len(ring.Deliveries) == 0 && !newNotices {
+			if !unrung && !newNotices {
 				continue
 			}
 			ring.Text = DoorbellLine(messages, urgent, len(owed)+more)
@@ -264,8 +305,11 @@ func (store *Store) RecordRing(ctx context.Context, ring DueRing, outcome RingOu
 	return store.update(ctx, func(transaction *transaction) error {
 		hash := hashKey(ring.Recipient)
 		session, err := transaction.readSession(hash)
-		if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil // the session is gone: nothing to record
+		}
+		if err != nil {
+			return err
 		}
 		if outcome == RingFailed {
 			session.RingNext = stamp(transaction.now.Add(ringRetry[min(session.RingFailures, len(ringRetry)-1)]))
@@ -274,17 +318,27 @@ func (store *Store) RecordRing(ctx context.Context, ring DueRing, outcome RingOu
 		}
 		for _, id := range ring.Deliveries {
 			found, err := transaction.message(id)
+			if errors.Is(err, errNoDelivery) {
+				continue // removed since the ring
+			}
 			if err != nil {
-				continue
+				return err
 			}
 			var delivery Delivery
-			if err := readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery); err != nil {
+			err = readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery)
+			if errors.Is(err, os.ErrNotExist) {
 				continue
+			}
+			if err != nil {
+				return err
 			}
 			if outcome == RingClosed {
 				refused, stepErr := transaction.stepLoaded(found, hash, delivery, deliverystate.Event{Kind: deliverystate.RingRefused})
-				if stepErr == nil {
+				switch {
+				case stepErr == nil:
 					delivery = refused
+				case !errors.Is(stepErr, deliverystate.ErrNotAllowed):
+					return stepErr // an error is never taken as an outcome
 				}
 			}
 			if !delivery.Rung {

@@ -59,6 +59,7 @@ func Line(id, text string) ([]byte, error) {
 type Writer struct {
 	Wait   time.Duration
 	Random io.Reader
+	dial   func(ctx context.Context, socket string) (net.Conn, error) // a test's connection
 }
 
 // Ring writes the doorbell to the socket and says what became of it: taken (the connection stayed
@@ -77,14 +78,20 @@ func (writer Writer) Ring(ctx context.Context, socket, text string) chatstore.Ri
 	if err != nil {
 		return chatstore.RingFailed
 	}
-	dialer := net.Dialer{Timeout: answerWait}
-	connection, err := dialer.DialContext(ctx, "unix", socket)
+	dial := writer.dial
+	if dial == nil {
+		dialer := net.Dialer{Timeout: answerWait}
+		dial = func(ctx context.Context, socket string) (net.Conn, error) {
+			return dialer.DialContext(ctx, "unix", socket)
+		}
+	}
+	connection, err := dial(ctx, socket)
 	if err != nil {
 		return chatstore.RingFailed
 	}
 	defer func() { _ = connection.Close() }()
 	if _, err := connection.Write(data); err != nil {
-		return chatstore.RingClosed
+		return chatstore.RingFailed // a line that did not reach the socket whole told nothing
 	}
 	wait := writer.Wait
 	if wait <= 0 {

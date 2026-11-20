@@ -60,3 +60,34 @@ func TestAPassRingsEachDueSessionOnceAndNeverCarriesText(t *testing.T) {
 		t.Fatalf("nothing is rung twice; a session with no socket waits for its next try: %d %v", count, err)
 	}
 }
+
+// A binding of a version outside the verified range is never rung on its socket (review round 1).
+func TestAPassRingsOnlyAVerifiedVersion(t *testing.T) {
+	ctx := context.Background()
+	moment := time.Date(2026, 11, 20, 10, 0, 0, 0, time.UTC)
+	store := chatstore.Open(filepath.Join(t.TempDir(), "v1"), chatstore.Options{Now: func() time.Time { return moment }})
+	channel := chatstore.Channel{ID: strings.Repeat("a", 64), Name: "alpha"}
+	for _, registration := range []chatstore.Registration{
+		{Key: "cc:a", Name: "a", Delivery: chatstore.DeliveryHooks},
+		{Key: "cc:n", Name: "n", Delivery: chatstore.DeliveryNative},
+	} {
+		registration.KeySource, registration.Engine, registration.Channel, registration.State =
+			chatstore.SourceEngine, chatstore.EngineClaudeCode, channel, chatstore.StateIdle
+		if _, err := store.Register(ctx, registration); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.Bind(ctx, chatstore.Binding{ProcessID: 42, ProcessStart: "1", Key: "cc:n", Cwd: "/work",
+		Socket: "/sockets/n.sock", ClaudeVersion: "9.9.9"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Send(ctx, "cc:a", chatstore.Scope{}, chatstore.SendInput{To: "n", Message: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	ringer := &recorder{outcome: chatstore.RingTaken}
+	pass := Pass{Store: store, Ringer: ringer, Alive: func(chatstore.Binding) bool { return true },
+		Verified: func(version string) bool { return version == "2.1.328" }}
+	if _, err := pass.Run(ctx); err != nil || len(ringer.sockets) != 0 {
+		t.Fatalf("an unverified version is not rung: %v %+v", err, ringer)
+	}
+}
