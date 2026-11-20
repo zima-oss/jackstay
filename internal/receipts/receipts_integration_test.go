@@ -41,7 +41,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-const shJSON = `{"jackstay_schema": 2, "project": "demo", "receipts": {"inputs": ["src"], "env": [], "toolchain": [],
+const shJSON = `{"jackstay_schema": 3, "project": "demo", "receipts": {"inputs": ["src"], "env": [], "toolchain": [],
   "commands": [{"argv_prefix": ["sh"], "reuse": false, "evidence": "Executed ([0-9]+) tests?", "veto": "FAILED"}]}}`
 
 // realWorld is a world whose command really runs, under supervise.

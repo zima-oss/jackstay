@@ -186,7 +186,9 @@ func BlockOf(options Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	planner.prospective(original, chosen)
+	if err := planner.prospective(original, chosen); err != nil {
+		return "", err
+	}
 	inputs := block.Inputs{Config: planner.plain, Has: options.Has}
 	if chosen != nil {
 		inputs.Rules, inputs.LeaveOut = chosen.Rules, chosen.LeaveOut

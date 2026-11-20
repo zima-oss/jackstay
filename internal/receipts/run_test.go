@@ -369,7 +369,7 @@ func TestReceiptRulesAfterThePass(t *testing.T) {
 }
 
 func TestWithoutAKeyThePassStoresNothingAndSaysWhy(t *testing.T) {
-	w := newWorld(t, `{"jackstay_schema": 2, "project": "demo", "receipts": {"commands": [{"argv": ["make", "test"], "evidence": "Executed ([0-9]+) tests?"}]}}`)
+	w := newWorld(t, `{"jackstay_schema": 3, "project": "demo", "receipts": {"commands": [{"argv": ["make", "test"], "evidence": "Executed ([0-9]+) tests?"}]}}`)
 	w.fake = passing("3")
 	if status := w.test("--", "make", "test"); status != 0 {
 		t.Fatalf("status %d", status)
@@ -409,14 +409,14 @@ func TestACommandThatCannotStart(t *testing.T) {
 }
 
 func TestAnUnusableProjectFileRunsNothing(t *testing.T) {
-	w := newWorld(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "commands": [{"argv": ["make", "test"], "evidence": "Executed [0-9]+ tests"}]}}`)
+	w := newWorld(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "commands": [{"argv": ["make", "test"], "evidence": "Executed [0-9]+ tests"}]}}`)
 	if status := w.test("--", "make", "test"); status != StatusUnusable || w.fake.calls != 0 {
 		t.Fatalf("status %d calls %d", status, w.fake.calls)
 	}
 	if w.lastLine() != "jst test: outcome=not-started (jackstay.json cannot be used; nothing was run)" {
 		t.Fatalf("last %q", w.lastLine())
 	}
-	w2 := newWorld(t, `{"jackstay_schema": 2, "receipts": {"commands": [{"argv_prefix": ["make"], "reuse": true, "evidence": "E ([0-9]+)"}]}}`)
+	w2 := newWorld(t, `{"jackstay_schema": 3, "receipts": {"commands": [{"argv_prefix": ["make"], "reuse": true, "evidence": "E ([0-9]+)"}]}}`)
 	if status := w2.test("--", "make", "test"); status != StatusUnusable || w2.fake.calls != 0 {
 		t.Fatalf("reuse with argv_prefix: status %d", status)
 	}

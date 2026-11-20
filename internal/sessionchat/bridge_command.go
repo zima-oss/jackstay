@@ -41,6 +41,9 @@ func init() {
 	})
 }
 
+// localPolicy is the chat policy of jackstay.json's `chat` section; a test lowers its limits.
+var localPolicy = config.ChatSettings
+
 func loadLocalChat(ctx context.Context) (Store, config.ChatPolicy, error) {
 	here, err := os.Getwd()
 	if err != nil {
@@ -50,7 +53,7 @@ func loadLocalChat(ctx context.Context) (Store, config.ChatPolicy, error) {
 	if err != nil {
 		return Store{}, config.ChatPolicy{}, err
 	}
-	policy := config.ChatSettings(loaded.Section("chat"))
+	policy := localPolicy(loaded.Section("chat"))
 	if !policy.Enabled {
 		return Store{}, config.ChatPolicy{}, errors.New("chat is not enabled in jackstay.json")
 	}

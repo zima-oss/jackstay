@@ -18,7 +18,7 @@ func sectionProblems(t *testing.T, test, receiptsSection map[string]any) []strin
 	if receiptsSection == nil {
 		receiptsSection = map[string]any{"toolchain": []any{}}
 	}
-	data, err := json.Marshal(map[string]any{"jackstay_schema": 1, "test": test, "receipts": receiptsSection})
+	data, err := json.Marshal(map[string]any{"jackstay_schema": 3, "test": test, "receipts": receiptsSection})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,14 +398,13 @@ func TestAScopeNotOptedInLogsNoWouldHit(t *testing.T) {
 	}
 }
 
-func TestProjectPrerequisiteTimeoutIsAResolutionDefault(t *testing.T) {
-	section := map[string]any{"requires_timeout_seconds": json.Number("120")}
+func TestPrerequisiteTimeoutDefaultsToAConstant(t *testing.T) {
 	entry := map[string]any{"requires": []any{
 		map[string]any{"run": []any{"true"}, "why": "default"},
 		map[string]any{"run": []any{"true"}, "why": "override", "timeout": json.Number("7")},
 	}}
-	checks := checksOf(section, entry)
-	if len(checks) != 2 || checks[0].timeout != 120 || checks[1].timeout != 7 {
+	checks := checksOf(entry)
+	if len(checks) != 2 || checks[0].timeout != config.TestRequiresTimeoutSeconds || checks[1].timeout != 7 {
 		t.Fatalf("unexpected timeouts: %+v", checks)
 	}
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
-const keyJSON = `{"jackstay_schema": 2, "project": "demo", "receipts": {"inputs": ["src"], "env": ["STOREFRONT_*", "PLAIN"]}}`
+const keyJSON = `{"jackstay_schema": 3, "project": "demo", "receipts": {"inputs": ["src"], "env": ["STOREFRONT_*", "PLAIN"]}}`
 
 type keyFixture struct {
 	t       *testing.T
@@ -212,80 +212,80 @@ func TestEveryCaseWithoutAKey(t *testing.T) {
 		}
 	})
 	t.Run("no inputs", func(t *testing.T) {
-		newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {}}`, nil).noKey("names no receipts.inputs")
+		newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {}}`, nil).noKey("names no receipts.inputs")
 	})
 	t.Run("an input that names nothing", func(t *testing.T) {
-		newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src", "nowhere"]}}`, nil).noKey(`the input "nowhere" names no file`)
+		newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src", "nowhere"]}}`, nil).noKey(`the input "nowhere" names no file`)
 	})
 	t.Run("an input outside the checkout", func(t *testing.T) {
-		newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["../x"]}}`, nil).noKey("a plain path inside the checkout")
+		newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["../x"]}}`, nil).noKey("a plain path inside the checkout")
 	})
 	t.Run("everything excluded", func(t *testing.T) {
-		newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "exclude": ["**"]}}`, nil).noKey("no file at all")
+		newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "exclude": ["**"]}}`, nil).noKey("no file at all")
 	})
 	t.Run("a folder among the inputs", func(t *testing.T) {
-		f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "extra_files": ["vendor"]}}`, nil)
+		f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "extra_files": ["vendor"]}}`, nil)
 		if err := os.MkdirAll(filepath.Join(f.repo.Root, "vendor"), 0o750); err != nil {
 			t.Fatal(err)
 		}
 		f.noKey("is a folder, not a file")
 	})
 	t.Run("a nested repository git lists as one entry", func(t *testing.T) {
-		f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"]}}`, nil)
+		f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"]}}`, nil)
 		inner := filepath.Join(f.repo.Root, "src", "inner")
 		f.repo.Write(map[string]string{"src/inner/x.txt": "x"})
 		f.repo.GitIn(inner, "init", "-q")
 		f.noKey("is a folder, not a file")
 	})
 	t.Run("a link to a folder", func(t *testing.T) {
-		f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"]}}`, map[string]string{"real/x.txt": "x"})
+		f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"]}}`, map[string]string{"real/x.txt": "x"})
 		if err := os.Symlink("../real", filepath.Join(f.repo.Root, "src", "dir")); err != nil {
 			t.Fatal(err)
 		}
 		f.noKey("is a link to a folder")
 	})
 	t.Run("an untracked .gitignore", func(t *testing.T) {
-		f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"]}}`, nil)
+		f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"]}}`, nil)
 		f.repo.Write(map[string]string{"src/.gitignore": "*.swift\n"})
 		f.noKey("is not committed and no committed rule ignores its folder")
 	})
 	t.Run("an untracked .gitignore inside an ignored folder is the exception", func(t *testing.T) {
-		f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"]}}`, nil)
+		f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"]}}`, nil)
 		f.repo.Write(map[string]string{"build/.gitignore": "*\n"})
 		f.must()
 	})
 	t.Run("a .gitignore that differs from HEAD", func(t *testing.T) {
-		f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"]}}`, nil)
+		f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"]}}`, nil)
 		f.repo.Write(map[string]string{".gitignore": "build/\n*.swift\n"})
 		f.noKey(".gitignore differs from the commit (HEAD)")
 	})
 	t.Run("a .gitignore hidden by assume-unchanged", func(t *testing.T) {
-		f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"]}}`, nil)
+		f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"]}}`, nil)
 		f.repo.Git("update-index", "--assume-unchanged", ".gitignore")
 		f.noKey("git is told not to look at this ignore file")
 	})
 	t.Run("a .gitignore hidden by skip-worktree", func(t *testing.T) {
-		f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"]}}`, nil)
+		f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"]}}`, nil)
 		f.repo.Git("update-index", "--skip-worktree", ".gitignore")
 		f.noKey("git is told not to look at this ignore file")
 	})
 	t.Run("a ref that cannot be resolved", func(t *testing.T) {
-		newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "refs": ["origin/nowhere"]}}`, nil).noKey("git rev-parse --verify failed")
+		newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "refs": ["origin/nowhere"]}}`, nil).noKey("git rev-parse --verify failed")
 	})
 	t.Run("a command's own merge base that cannot be resolved", func(t *testing.T) {
-		newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "commands": [{"argv": ["make", "test"], "merge_bases": ["origin/nowhere"]}]}}`,
+		newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "commands": [{"argv": ["make", "test"], "merge_bases": ["origin/nowhere"]}]}}`,
 			nil).noKey("git merge-base HEAD failed")
 	})
 	t.Run("a toolchain command that fails", func(t *testing.T) {
-		newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "toolchain": [["false"]]}}`, nil).noKey("the toolchain command false failed (1)")
+		newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "toolchain": [["false"]]}}`, nil).noKey("the toolchain command false failed (1)")
 	})
 	t.Run("a toolchain command that cannot run", func(t *testing.T) {
-		newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "toolchain": [["/nonexistent/tool"]]}}`, nil).noKey("could not be run")
+		newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "toolchain": [["/nonexistent/tool"]]}}`, nil).noKey("could not be run")
 	})
 }
 
 func TestRefsAndMergeBasesAreInTheKey(t *testing.T) {
-	f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "refs": ["main"], "commands": [{"argv": ["make", "test"], "merge_bases": ["main"]}]}}`, nil)
+	f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "refs": ["main"], "commands": [{"argv": ["make", "test"], "merge_bases": ["main"]}]}}`, nil)
 	f.repo.Git("checkout", "-q", "-b", "feature")
 	before := f.must()
 	if before.Material.Refs["main"] == "" || before.Material.MergeBases["main"] == "" {
@@ -302,7 +302,7 @@ func TestRefsAndMergeBasesAreInTheKey(t *testing.T) {
 }
 
 func TestCommandEntry(t *testing.T) {
-	loaded, err := config.Parse([]byte(`{"jackstay_schema": 2, "receipts": {"commands": [{"argv_prefix": ["make"]}, {"argv_prefix": ["make", "test"], "veto": "v"},
+	loaded, err := config.Parse([]byte(`{"jackstay_schema": 3, "receipts": {"commands": [{"argv_prefix": ["make"]}, {"argv_prefix": ["make", "test"], "veto": "v"},
 		{"argv": ["make", "test", "X"], "evidence": "E ([0-9]+)"}]}}`))
 	if err != nil {
 		t.Fatal(err)
@@ -320,7 +320,7 @@ func TestCommandEntry(t *testing.T) {
 }
 
 func TestToolchainKeyUsesTheCommandsDirectoryAndEnvironment(t *testing.T) {
-	f := newKeyFixture(t, `{"jackstay_schema": 2, "receipts": {"inputs": ["src"], "toolchain": [["audit-toolchain"]]}}`,
+	f := newKeyFixture(t, `{"jackstay_schema": 3, "receipts": {"inputs": ["src"], "toolchain": [["audit-toolchain"]]}}`,
 		map[string]string{"src/marker": "selected checkout"})
 	f.dir = filepath.Join(f.repo.Root, "src")
 	tools := t.TempDir()

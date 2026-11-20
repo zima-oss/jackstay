@@ -51,7 +51,7 @@ events from jackstay itself.
 | `kind: message\|request`, `reply_to` | Threads, structured requests and responses, priority, attachments, `meta`, channels with subscription, events |
 | One JSON state file up to 12 MiB; bounds (512 × 4 × 16 KiB) can exceed it | Small files per record on `internal/durable`, every write checked against encoded-size bounds and the store's capacity |
 | `chat.self` always reports poll-only | `chat.whoami` reports how the session is reached |
-| Six `chat.*` keys of limits in `jackstay.json` | Limits are constants; `jackstay.json` keeps `enabled` and `related` |
+| Seven `chat.*` keys of limits in `jackstay.json` (already constants on `main`) | Limits are constants; `jackstay.json` keeps `enabled` and adds `related` |
 | Engine steps printed by `jst setup --chat` | `jst setup --chat` writes them, with a diff and a backup; `jst doctor` checks them |
 
 State written by 0.5.x stays where it is (`~/.jackstay/.all/session-chat/`) and is not imported; the
@@ -1421,11 +1421,14 @@ Under `jackstay_schema: 3` the `chat` section of `jackstay.json` has two keys:
   store), a separate choice from registering the server, and setup names it as such.
 - `related` (default absent: unrestricted): the list of section 2, at most 32 channel addresses.
 
-The 0.5.x keys (`max_message_bytes`, `max_pending`, `max_pending_per_session`, `max_sessions`,
-`retention_hours`, `codex_bridge.*`, `claude_code.enabled`) become constants or move to setup. In a
-`jackstay_schema: 2` file they are still accepted, ignored, and reported by `jst check` and
-`jst doctor` as having no effect since 0.6.0; in a schema 3 file they are unknown keys, refused like
-any other.
+The `chat` section needs `"jackstay_schema": 3` (the compatibility part of W-090, already on
+`main`), which also made the 0.5.x limit keys (`max_message_bytes`, `max_pending`,
+`max_pending_per_session`, `max_sessions`, `retention_hours`, `codex_bridge.poll_interval_ms`,
+`codex_bridge.ack_timeout_seconds`) constants. This redesign removes the two keys left beside
+`enabled`: `claude_code.enabled` (the hooks are registered by setup, section 12) and
+`codex_bridge.enabled` (the bridge runs when it is launched, section 9.2), and adds `related`. A file
+that still has either key gets the usual unknown-key refusal, which names it; `jst doctor` says what
+replaced it.
 
 ## 12. Setup in one step, and doctor
 

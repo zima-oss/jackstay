@@ -15,7 +15,7 @@ cp "$fixtures/trx.csproj" "$fixtures/Cases.cs" "$fixtures/RetryCases.cs" .
 dotnet restore trx.csproj --verbosity quiet
 
 cat > jackstay.json <<'JSON'
-{"jackstay_schema":1,"project":"trx-partitions","test":{"scopes":{
+{"jackstay_schema":3,"project":"trx-partitions","test":{"scopes":{
   "x-retry":{"judge":"trx","report":"run.trx","run":["dotnet","test","trx.csproj","--no-restore","--disable-build-servers","-p:UseSharedCompilation=false","--filter","Name=PassesOnRetry","--logger","trx;LogFileName={report}"]},
   "x-success":{"judge":"trx","report":"run.trx","run":["dotnet","test","trx.csproj","--no-restore","--disable-build-servers","-p:UseSharedCompilation=false","--filter","Name=Success","--logger","trx;LogFileName={report}"]}
 }}}

@@ -31,7 +31,7 @@ case $runner in
     cp "$fixtures/jest/"*.test.js .
     printf '%s\n' '{}' > jest.config.json
     cat > jackstay.json <<'JSON'
-{"jackstay_schema":1,"project":"jest-producer","test":{"scopes":{
+{"jackstay_schema":3,"project":"jest-producer","test":{"scopes":{
   "x-pass":{"judge":"jest-json","report":"jest.json","run":["jest","--runInBand","--no-watchman","--json","--outputFile={report}","--runTestsByPath","sample.test.js"]},
   "x-fail":{"judge":"jest-json","report":"jest.json","run":["jest","--runInBand","--no-watchman","--json","--outputFile={report}","--runTestsByPath","fail.test.js"]},
   "x-empty":{"judge":"jest-json","report":"jest.json","run":["jest","--runInBand","--no-watchman","--json","--outputFile={report}","--runTestsByPath","sample.test.js","--testNamePattern=absent"]},
@@ -57,7 +57,7 @@ JSON
     cp "$fixtures/trx/trx.csproj" "$fixtures/trx/Cases.cs" .
     dotnet restore trx.csproj --verbosity quiet
     cat > jackstay.json <<'JSON'
-{"jackstay_schema":1,"project":"trx-producer","test":{"scopes":{
+{"jackstay_schema":3,"project":"trx-producer","test":{"scopes":{
   "x-pass":{"judge":"trx","report":"run.trx","run":["dotnet","test","trx.csproj","--no-restore","--disable-build-servers","-p:UseSharedCompilation=false","--filter","Name!=Failure","--logger","trx;LogFileName={report}"]},
   "x-fail":{"judge":"trx","report":"run.trx","run":["dotnet","test","trx.csproj","--no-restore","--disable-build-servers","-p:UseSharedCompilation=false","--filter","Name=Failure","--logger","trx;LogFileName={report}"]},
   "x-empty":{"judge":"trx","report":"run.trx","run":["dotnet","test","trx.csproj","--no-restore","--disable-build-servers","-p:UseSharedCompilation=false","--filter","Name=Missing","--logger","trx;LogFileName={report}"]}
