@@ -123,13 +123,14 @@ judges the command as the hook would, whether or not any session has loaded the 
 guard refuses, and how to change a rule's level: [The guard](guard.md). Claude Code's sandbox
 needs `~/.jackstay` writable: [Claude Code](claude-code.md#the-sandbox).
 
-Codex reviews by default. Claude Code can also review: choose it in a call with `--reviewer`,
-or for the project in `review.use`:
+Codex reviews by default:
 
 ```sh
 jst review origin/main..HEAD --task my-change
-jst review origin/main..HEAD --task my-change --reviewer claude-code
 ```
+
+Claude Code can review instead: choose it for a task with `--reviewer claude-code` (a task keeps
+its reviewers from round to round), or for the project in `review.use`.
 
 See [Reviews](review.md) for the result and the check that ties it to a revision.
 
