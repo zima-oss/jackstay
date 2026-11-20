@@ -5,7 +5,7 @@
 
 - **Run tests**: `jst test <scope>`; `jst test list` shows the scopes and when each is required.
   Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
-  a rerun. No scope fits: `jst test -- COMMAND`.
+  a rerun (a run that says it was not logged names its output file instead). No scope fits: `jst test -- COMMAND`.
   `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
 - **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or

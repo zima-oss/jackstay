@@ -562,3 +562,28 @@ func TestWithoutAProjectFileTheCommandJustRuns(t *testing.T) {
 		t.Fatal("an inherited holder was not passed on")
 	}
 }
+
+// A forced rerun that cannot remove the receipt it would replace runs nothing: a failure could not
+// undo that receipt (#59).
+func TestARerunThatCannotRemoveItsReceiptDoesNotStart(t *testing.T) {
+	w := newWorld(t, reuseConfig)
+	w.fake = passing("3")
+	w.test("--", "make", "test")
+	if len(w.receipts()) != 1 {
+		t.Fatalf("no receipt to start from: %v", w.receipts())
+	}
+	removeFailed := errors.New("operation not permitted")
+	RemoveFile = func(string) error { return removeFailed }
+	truncateFile = func(string, int64) error { return removeFailed }
+	t.Cleanup(func() { RemoveFile, truncateFile = os.Remove, os.Truncate })
+	w.fake = passing("3")
+	if status := w.test("--no-reuse", "--", "make", "test"); status != StatusUnusable || w.fake.calls != 0 {
+		t.Fatalf("status %d calls %d: %s", status, w.fake.calls, w.stderr.String())
+	}
+	if !strings.Contains(w.stderr.String(), "can be neither removed nor emptied") || !strings.HasPrefix(w.lastLine(), "jst test: outcome=not-started") {
+		t.Fatalf("said %s", w.stderr.String())
+	}
+	if len(w.receipts()) != 1 {
+		t.Fatalf("the receipt is gone: %v", w.receipts())
+	}
+}

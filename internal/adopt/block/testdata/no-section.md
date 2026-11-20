@@ -4,7 +4,8 @@
 `jst <command> --help` gives a command's details, `jst help` lists every command.
 
 - **Run tests**: `jst test -- COMMAND` runs any test command, judged and recorded; only `passed`
-  is a pass — read the last `jst test:` line. After a failure, `jst test last`, not a rerun.
+  is a pass — read the last `jst test:` line. After a failure, `jst test last`, not a rerun (a run
+  that says it was not logged names its output file instead).
   `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
 - **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or

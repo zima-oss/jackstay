@@ -139,11 +139,12 @@ func testText(config map[string]any) string {
 	scopes := section(section(config, "test"), "scopes")
 	if len(scopes) == 0 {
 		return "- **Run tests**: `jst test -- COMMAND` runs any test command, judged and recorded; only `passed`\n" +
-			"  is a pass — read the last `jst test:` line. After a failure, `jst test last`, not a rerun.\n" + evidenceText
+			"  is a pass — read the last `jst test:` line. After a failure, `jst test last`, not a rerun (a run\n" +
+			"  that says it was not logged names its output file instead).\n" + evidenceText
 	}
 	text := "- **Run tests**: `jst test <scope>`; `jst test list` shows the scopes and when each is required.\n" +
 		"  Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not\n" +
-		"  a rerun."
+		"  a rerun (a run that says it was not logged names its output file instead)."
 	if _, gate := scopes["gate"]; gate {
 		text += " Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and\n" +
 			"  removes)."

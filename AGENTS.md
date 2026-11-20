@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:0fb2523ec0dd — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:8317ecc099c3 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed on this machine. Reach for it before a hand-written shell loop:
@@ -39,7 +39,7 @@ the same rules hold.
 
 - **Run tests**: `jst test <scope>`; `jst test list` shows the scopes and when each is required.
   Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
-  a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
+  a rerun (a run that says it was not logged names its output file instead). Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
   removes). No scope fits: `jst test -- COMMAND`.
   `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Share a counted pass** with `jst receipts export KEY`. Verify it with `jst receipts verify`

@@ -5,7 +5,7 @@
 
 - **Run tests**: `jst test <scope>`; `jst test list` shows the scopes and when each is required.
   Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not
-  a rerun. Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
+  a rerun (a run that says it was not logged names its output file instead). Before a pull request, `jst test gate` (`--commit HEAD`: on a clean copy jackstay makes and
   removes).
   Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
   `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.

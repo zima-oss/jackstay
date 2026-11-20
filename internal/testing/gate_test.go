@@ -467,3 +467,28 @@ func TestStepsThatCannotStartEndTheGate(t *testing.T) {
 	w.expectSaid("needs a base")
 	w.expectLast("outcome=not-started (gate x-base failed at based")
 }
+
+// A gate step or a resumable scope that cannot remove the mark it would replace runs nothing: a
+// failure could not undo that mark, and a later --resume would stand on it (#59).
+func TestARunThatCannotRemoveItsMarkDoesNotStart(t *testing.T) {
+	w := newGateWorld(t)
+	w.commit()
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectCounters("cheap middle full", 1, 1, 1)
+	marks, _ := receipts.StateFolder("demo", "gate-marks")
+	before, _ := os.ReadDir(marks)
+	if len(before) == 0 {
+		t.Fatal("the gate left no marks to start from")
+	}
+	receipts.RemoveFile = func(string) error { return errors.New("operation not permitted") }
+	t.Cleanup(func() { receipts.RemoveFile = os.Remove })
+
+	w.expectStatus(w.jst("full"), statusRefused) // a resumable scope on a clean checkout
+	w.expectSaid("cannot be removed")
+	w.expectLast("outcome=not-started")
+	w.expectStatus(w.jst("gate"), statusRefused) // its first step
+	w.expectCounters("cheap middle full", 1, 1, 1)
+	if after, _ := os.ReadDir(marks); len(after) != len(before) {
+		t.Fatalf("marks %d, then %d", len(before), len(after))
+	}
+}

@@ -340,7 +340,7 @@ func (proj *project) writeMark(key, step string, ended result, head string, adap
 // removeMark takes a key's mark away: a run of the step on it ended with no verdict, or runs now.
 // removeMark takes a key's mark away; an error when one stays (a missing mark is none).
 func (proj *project) removeMark(key string) error {
-	err := os.Remove(proj.markPath(key))
+	err := receipts.RemoveFile(proj.markPath(key))
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
