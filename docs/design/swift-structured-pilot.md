@@ -19,47 +19,26 @@ failure probe changes only the temporary copy's two assertions.
 | Select a nonexistent test | Exit 0 with a no-match warning. | The Swift Testing XML contains zero cases. |
 | Isolate XCTest with `--enable-xctest --disable-swift-testing --parallel` | Exit 0. XCTest executes three methods, including one skipped method. A controlled failure exits 1. | `--xunit-output` writes three XCTest cases and marks the controlled failure, but emits the skipped method as an ordinary case without a `<skipped>` element. Its pass and failure totals cannot establish the true skip count. |
 
-The strict JUnit reader in jackstay correctly refuses the complete SwiftPM XML because the
-declared total disagrees with the testcase count. Even a looser XML reader could not prove the
-XCTest portion because SwiftPM does not put it in this output. The current `swift-test` text
-judge remains the usable mixed-package contract for this toolchain. A SwiftPM structured adapter
-needs a complete source of evidence for both engines and a producer-specific rule for
-parameterized cases before it can confirm a counted mixed pass. The fixture's stable test list
-includes `LegacyTests.LegacyTests/testPass` and `ModernTests.modernPass()`. Filtering with either
-name runs the expected engine in the captured probe.
+jackstay's strict JUnit reader refuses this XML (the declared total disagrees with the cases), and
+it holds no XCTest cases at all, so the `swift-test` text judge stays the mixed-package contract.
+A fresh `jst` run over the captured XML returned `unjudged` (77); the text judge returned `passed`
+with `counted=5`, `xctest=2`, `swift-testing=3`, `skipped=2`, and `failed` (1) for the controlled
+failure. Filtering with `LegacyTests.LegacyTests/testPass` or `ModernTests.modernPass()` runs the
+expected engine.
 
-A fresh `jst` run over the captured complete XML returned `unjudged` with exit 77 and a suite
-count mismatch. A fresh `jst` run using the legacy `swift-test` judge returned `passed` with
-`counted=5`, `xctest=2`, `swift-testing=3`, `skipped=2` and one completed XCTest bundle. The
-controlled failure returned `failed` with exit 1 and the same test counts. This comparison
-checks the current migration boundary on the actual producer output.
+The hidden `--event-stream-output-path` (version 0) writes Swift Testing JSON Lines: a mixed run had
+19 records, with a `runStarted`/`runEnded` pair per test product and per-argument
+`testCaseStarted`/`testCaseEnded` records, but no XCTest events. A reader must bind every product,
+recognise empty ones, require terminal events, pair the stream with an XCTest source, and follow
+the upstream [JSON schema](https://github.com/swiftlang/swift-testing/blob/main/Documentation/ABI/JSON.md).
 
-`swift test --help-hidden` on this toolchain exposes `--event-stream-output-path` and
-`--event-stream-version`. Version 0 produced JSON Lines for Swift Testing. A complete mixed run
-had 19 records, including two `runStarted` and two `runEnded` events because the two test
-products each start a Swift Testing process. The events include a test identity with source
-location and separate `testCaseStarted`/`testCaseEnded` records for parameterized arguments.
-The argument records carry `_testCase.id` and a display name. This stream contains no XCTest
-case events. A future reader must bind every expected test product, recognize empty Swift
-Testing products, require terminal events, and pair the stream with a separate XCTest source.
-The upstream versioned JSON schema should be used for that reader. [Swift Testing JSON
-schema](https://github.com/swiftlang/swift-testing/blob/main/Documentation/ABI/JSON.md),
-[Swift Testing JSON ABI proposal](https://github.com/swiftlang/swift-evolution/blob/main/proposals/testing/0002-json-abi.md)
-
-Xcode's `.xcresult` from `xcodebuild test` covers both targets. `xcresulttool get test-results
-summary` reported a passed result with `totalTestCount: 7`, `passedTests: 5` and
-`skippedTests: 2`. Its device/configuration subtotal reported six passes and two skips because
-it also reflects the two parameterized arguments. The `tests` tree gives XCTest case nodes and
-Swift Testing case nodes, with two argument children under `parameterized(_:)`. The children
-have their own outcomes, numeric `durationInSeconds` and argument-qualified URLs. The adapter
-must choose one counting level and reconcile it against the summary. The script's forced Xcode
-failure variant returned exit 65. Its summary reported `result: Failed`, `totalTestCount: 7`,
-three passes, two skips and two failures. The tree identified one failed XCTest method and one
-failed Swift Testing test.
-Raw xcresult JSON also contains local device identifiers and paths, so only the bounded fields
-needed for judging should enter receipts or diagnostics. [Apple test results
-documentation](https://developer.apple.com/documentation/xcode/running-tests-and-interpreting-results),
-[Xcode 16 structured test-results commands](https://developer.apple.com/documentation/xcode-release-notes/xcode-16_3-release-notes)
+Xcode's `.xcresult` covers both engines. `xcresulttool get test-results summary` reported
+`totalTestCount: 7`, 5 passed, 2 skipped; the device subtotal counted the two parameterized
+arguments separately, and the `tests` tree gives them child nodes with their own outcomes and
+durations, so an adapter must pick one counting level and reconcile it. The forced Xcode failure
+exited 65 with 3 passed, 2 skipped, 2 failed. Raw xcresult JSON holds device identifiers and
+paths, so only bounded judging fields may enter receipts or diagnostics
+([Apple test results](https://developer.apple.com/documentation/xcode/running-tests-and-interpreting-results)).
 
 ## Opt-in Xcode adapter
 
@@ -82,18 +61,13 @@ completed case nodes; device identities, source paths and raw JSON do not enter 
 
 ## Remaining migration contract
 
-1. Find a complete XCTest source for direct SwiftPM execution, including skips and selected
-   tests. Its existing `--xunit-output` has now been tested both in mixed and isolated modes and
-   does not meet that contract. Pair it with Swift Testing's versioned event stream only after
-   both producers can prove product completion and selected coverage.
-2. Capture additional Xcode and Swift versions, selected runs, zero-match runs and interrupted
-   runs. Expand the supported schema only after fixtures prove the corresponding count and
-   completion semantics. Keep the existing Swift text judge available.
-3. Compare counted, skipped, failed and selected cases against the text judge on each supported
-   version before changing a default. The Xcode adapter remains an opt-in path for verified
-   artifacts.
+1. Find a complete XCTest source for direct SwiftPM runs, with skips and selections:
+   `--xunit-output` does not meet it, mixed or isolated. Pair it with Swift Testing's event stream
+   only once both prove product completion and selected coverage.
+2. Capture more Xcode and Swift versions, selected, zero-match and interrupted runs, and widen the
+   schema only where fixtures prove the counts.
+3. Compare against the text judge on each version before changing a default; the Xcode adapter
+   stays opt-in.
 
-The current probe establishes a mixed pass, mixed failure and both engine selections. It has
-not established a reliable SwiftPM XCTest structured source, a cancellation record, or a
-cross-version schema range. Those cases remain prerequisites for enabling a structured SwiftPM
-judge or broadening the Xcode adapter's version range.
+Not yet established: a reliable SwiftPM XCTest source, a cancellation record, a cross-version
+schema range.

@@ -52,6 +52,9 @@ func TestEveryCommandHelp(t *testing.T) {
 		if cli.Has(name) && !hasUsageLine(stdout) {
 			t.Errorf("jst %s --help has no line starting with usage:\n%s", name, stdout)
 		}
+		if cli.Has(name) && (linesStarting(stdout, "exit:") != 1 || linesStarting(stdout, "example:") != 1) {
+			t.Errorf("jst %s --help needs one exit: line and one example: line (docs/STYLE.md rule 7):\n%s", name, stdout)
+		}
 		golden.WriteString("==> jst " + name + " --help\n" + stdout + "\n")
 	}
 	if *update {
@@ -66,6 +69,17 @@ func TestEveryCommandHelp(t *testing.T) {
 	if string(want) != golden.String() {
 		t.Errorf("the help differs from %s; run go test ./cmd/jst -run TestEveryCommandHelp -update and read the diff", path)
 	}
+}
+
+// linesStarting counts the lines of text that start with prefix.
+func linesStarting(text, prefix string) int {
+	count := 0
+	for line := range strings.Lines(text) {
+		if strings.HasPrefix(line, prefix) {
+			count++
+		}
+	}
+	return count
 }
 
 func hasUsageLine(text string) bool {
@@ -107,5 +121,15 @@ func TestGroupHelpListsItsCommands(t *testing.T) {
 	}
 	if code, _, stderr := runJst("changes"); code != 2 || !strings.Contains(stderr, "no command") {
 		t.Fatalf("jst changes: exit %d, stderr %q", code, stderr)
+	}
+}
+
+// TestEveryCommandHasAHeading: `jst help` lists every command under one of its headings, none under
+// "Other".
+func TestEveryCommandHasAHeading(t *testing.T) {
+	for _, heading := range cli.Grouped() {
+		if heading.Title == "Other" {
+			t.Errorf("no heading of jst help names these commands' first word (internal/cli groups): %v", heading.Names)
+		}
 	}
 }
