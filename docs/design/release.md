@@ -494,7 +494,8 @@ A second GitHub App, made by the organisation's owner:
   releases), **pull requests write**, metadata read; nothing else — no `workflows` permission;
 - installed only on the repositories that release with jackstay;
 - the variable `JACKSTAY_RELEASE_APP_CLIENT_ID` and secret `JACKSTAY_RELEASE_APP_PRIVATE_KEY` are
-  organisation settings visible to those repositories only (any workflow there can make a token);
+  organisation settings visible to those repositories only. Any workflow in a repository that
+  sees the secret can make a token that writes to all of them;
 - its private key goes straight into the secret, never seen by a session.
 
 The queue, if built, does not use this App to push its landings.

@@ -88,8 +88,8 @@ again", not "ask the owner".
   path is known only at run time, it is refused.
 - **A branch that adds nothing** may be deleted with `-D`: merging it into the default branch
   (`origin/HEAD`, else `origin/main`, `origin/master`, else `main`, `master`; never the branch
-  itself) would change no file, as after a squash merge. A branch whose files equal the merge
-  base's (work done and undone) is "no". Git answers with `git merge-tree --write-tree` in memory,
+  itself) would change no file, as after a squash merge. A branch with commits of its own whose
+  files equal the merge base's (work done and undone) is "no". Git answers with `git merge-tree --write-tree` in memory,
   its objects in a throwaway folder; a conflict, a missing ref or an older git is "no". `jst tidy`
   uses the same test.
 - **A throwaway checkout** (under a temporary folder of the session's own that the command went

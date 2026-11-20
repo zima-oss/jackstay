@@ -299,7 +299,8 @@ removed after the run unless it holds leftovers) in its environment. `leftovers`
 - A glob holding `{run_id}` or `{run_tmp}` is **attributed**: whatever matches after the run is this
   run's; with `"fail": true` the outcome is `failed`.
 - A glob without the token lists entries new **and** born inside the run. With no overlapping
-  recorded run (`runs.jsonl`), they are this run's. With one, they are `unattributed`: under
+  recorded run (`runs.jsonl`), they are this run's, and under `"fail": true` the outcome is
+  `failed`. With one, they are `unattributed`: under
   `"fail": true` the outcome is `unjudged` (77) and the line names them; under `"fail": false` they
   are listed. The remedy is the token.
 - A glob whose folder or entry times cannot be read is no answer: `unjudged` under `"fail": true`
