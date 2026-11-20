@@ -22,11 +22,11 @@ import (
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "review", Summary: "[REV | BASE..REV]: a cold review in rounds (docs/design/review.md)", Usage: reviewHelp, Run: runReview},
-		cli.Command{Name: "review last", Summary: "[--task NAME] [--json]: the newest round's report, or the newest attempt's failure", Usage: lastHelp, Run: runLast},
-		cli.Command{Name: "review check", Summary: "[--task NAME] BASE..REV: is this change reviewed and clear?", Usage: checkHelp, Run: runCheck},
-		cli.Command{Name: "review list", Summary: "[--task NAME] [--rebuild] [--json]: the reviews kept", Usage: listHelp, Run: runList},
-		cli.Command{Name: "review show", Summary: "TASK ROUND [--json]: one round's report", Usage: showHelp, Run: runShow},
+		cli.Command{Name: "review", Summary: "a cold review of a commit or a range, in rounds", Usage: reviewHelp, Run: runReview},
+		cli.Command{Name: "review last", Summary: "the newest round's report, or the newest attempt's failure", Usage: lastHelp, Run: runLast},
+		cli.Command{Name: "review check", Summary: "is this change reviewed and clear?", Usage: checkHelp, Run: runCheck},
+		cli.Command{Name: "review list", Summary: "the reviews kept", Usage: listHelp, Run: runList},
+		cli.Command{Name: "review show", Summary: "one round's report", Usage: showHelp, Run: runShow},
 		cli.Command{Name: "review prune", Summary: "remove tasks past review.keep_days, now", Usage: pruneHelp, Run: runPrune},
 	)
 }

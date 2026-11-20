@@ -52,7 +52,7 @@ repository's running review and how its latest one ended. When the round ends, e
 `review.finished` message from `jackstay` through `chat.inbox` or its configured active-turn host
 integration; call `chat.ack` with its message ID once read. A result the chat could not take is kept
 by the review store and delivered when the recipient next reads its inbox. See
-[Run a review in the background](review.md#run-a-review-in-the-background).
+[Run a review in the background](review.md#run-it-in-the-background).
 
 A successful send means the local service accepted and persisted the message. The recipient
 acknowledges processing separately. Use a reply with evidence when the requester needs to verify
