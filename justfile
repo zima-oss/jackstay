@@ -127,7 +127,7 @@ tla:
       status=0
       "$java" -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers auto -metadir "$meta" \
         -config "$model.cfg" "$model.tla" > "$out" 2>&1 || status=$?
-      grep -E 'states generated|distinct states found|^Error|is violated|No error has been found' "$out" || true
+      grep -E '^[0-9]+ states generated|^Error|is violated|No error has been found' "$out" || true
       rm -r "$meta"
       if [ "$status" -ne 0 ] || ! grep -q 'No error has been found' "$out"; then
         cat "$out"; rm -f "$out"; echo "FAILED: tla $model"; exit 1

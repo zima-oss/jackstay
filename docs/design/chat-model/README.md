@@ -52,8 +52,11 @@ sweep of leftovers.
 | `Capacity` | send | the charges never pass the write limit |
 | `AcceptedIsDurable` | send | `accepted` is said only of a send no crash can undo |
 
-The Go exploration reaches **22,336** distinct states for a delivery and **152** for a send, with
-every property holding; `go test -v ./internal/sessionchat/deliverystate` prints the counts.
+TLC (2026.11 tools, Java 21) finds **22,336** distinct states for a delivery (102,123 generated,
+depth 20, the temporal properties checked over the whole graph) and **152** for a send (302
+generated, depth 16), with no error. The Go exploration reaches the same 22,336 and 152 states;
+`go test -v ./internal/sessionchat/deliverystate` prints its counts. With each constant below set
+TRUE, TLC and the Go test both report the same broken property.
 
 ## What the model found
 

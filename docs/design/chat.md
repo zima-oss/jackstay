@@ -1599,8 +1599,8 @@ narrower than the last, and review alone does not end that. The model is in
   recovery, the pusher, sessions registering near the limit, and the sweep of leftovers;
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
-  the store to import. The tests explore every reachable state breadth first (22,336 for a delivery,
-  152 for a send), and run in the gate.
+  the store to import. The tests explore every reachable state breadth first, and run in the gate.
+  TLC and the tests reach the same states: 22,336 for a delivery, 152 for a send.
 
 Checked: every route pushes a message at most once; a native body is never visible before Claude
 Code accepted it; a crash never makes a delivery look not pushed; final states are never left; the
