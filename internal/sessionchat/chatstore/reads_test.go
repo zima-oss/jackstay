@@ -826,3 +826,121 @@ func TestARepeatedAckKeepsTheNote(t *testing.T) {
 		t.Fatalf("note %q", note)
 	}
 }
+
+func TestAnIdleBeforeTheDeadlineFiresEvenWhenRecoveredAfterIt(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateBusy)
+	f.send("cc:a", SendInput{To: "b", NotifyWhenIdle: true})
+	f.clock.advance(12*time.Hour - time.Minute)
+	if err := f.store.update(f.ctx, func(transaction *transaction) error {
+		session, err := transaction.readSession(hashKey("cc:b"))
+		if err != nil {
+			return err
+		}
+		session.State, session.Since, session.IdleGeneration = StateIdle, stamp(transaction.now), session.IdleGeneration+1
+		entry := journalEntry{Op: opObserve, ID: "observe-test", Observed: &observation{Session: hashKey("cc:b"),
+			State: StateIdle, Since: session.Since, Generation: session.IdleGeneration}}
+		if err := transaction.publishJournal(entry); err != nil {
+			return err
+		}
+		return transaction.writeSession(session)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(2 * time.Minute) // recovery runs past the subscription's until
+	if _, err := f.store.Sessions(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if notices := f.record("cc:a").Notices; len(notices) != 1 || notices[0].Kind != NoticeIdle {
+		t.Fatalf("the idle came first: %+v", notices)
+	}
+}
+
+func TestAWatcherRecordThatCannotBeReadKeepsTheFiring(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateBusy)
+	f.send("cc:a", SendInput{To: "b", NotifyWhenIdle: true})
+	watcher := f.store.place.session(hashKey("cc:a"))
+	if err := os.Chmod(watcher, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	_, observeErr := f.store.Observe(f.ctx, "cc:b", ObserveIdle, false)
+	if err := os.Chmod(watcher, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if observeErr == nil {
+		t.Skip("this account reads a file without permission (root)")
+	}
+	if _, err := f.store.Sessions(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if notices := f.record("cc:a").Notices; len(notices) != 1 || notices[0].Kind != NoticeIdle {
+		t.Fatalf("recovery wrote the notice it owed: %+v", notices)
+	}
+}
+
+func TestABodyThatFailsToLoadMarksNothingRead(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:b", "b", alpha, StateIdle)
+	f.session("cc:s1", "s1", alpha, StateIdle)
+	f.session("cc:s2", "s2", alpha, StateIdle)
+	first := f.send("cc:s1", SendInput{To: "b", Message: "first"})
+	f.clock.advance(time.Second)
+	second := f.send("cc:s2", SendInput{To: "b", Message: "second"})
+	body := f.store.place.body(second.MessageID)
+	if err := os.Chmod(body, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	_, inboxErr := f.store.Inbox(f.ctx, "cc:b", unread())
+	if err := os.Chmod(body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if inboxErr == nil {
+		t.Skip("this account reads a file without permission (root)")
+	}
+	if f.delivery(first.MessageID, "cc:b").State != "pending" {
+		t.Fatal("a failed page marked an earlier message read")
+	}
+}
+
+func TestANoticeThatCannotBeMarkedIsNotShown(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	sent := f.send("cc:a", SendInput{To: "b", Message: "short-lived", ExpiresInSeconds: 60})
+	f.clock.advance(time.Minute)
+	if err := f.store.Sweep(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	folder := f.store.place.deliveries(sent.MessageID)
+	if err := os.Chmod(folder, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	result, err := f.store.Inbox(f.ctx, "cc:a", unread())
+	if chmodErr := os.Chmod(folder, 0o700); chmodErr != nil {
+		t.Fatal(chmodErr)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Notices) != 0 || f.delivery(sent.MessageID, "cc:b").Notice != "owed" {
+		t.Skipf("this account writes a read-only folder (root): %+v", result)
+	}
+	if again := f.inbox("cc:a", unread()); len(again.Notices) != 1 {
+		t.Fatalf("the notice is shown once it can be marked: %+v", again)
+	}
+}
+
+func TestAnAckThatTheDeadlineOvertakesSetsNoNote(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	sent := f.send("cc:a", SendInput{To: "b", Message: "too late", ExpiresInSeconds: 60})
+	f.clock.advance(time.Minute)
+	result, err := f.store.Ack(f.ctx, "cc:b", sent.MessageID, "read", "late note")
+	if err != nil || result.Changed || result.State != "expired" || f.delivery(sent.MessageID, "cc:b").Note != "" {
+		t.Fatalf("%+v %v", result, err)
+	}
+}

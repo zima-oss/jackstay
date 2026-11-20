@@ -65,13 +65,15 @@ func (store *Store) Ack(ctx context.Context, key, reference, state, note string)
 		if stepErr != nil && !errors.Is(stepErr, deliverystate.ErrNotAllowed) {
 			return stepErr
 		}
-		if note != "" && updated.Note != note && updated.State != before {
+		reached := (kind == deliverystate.AckRead && updated.State == string(deliverystate.Read)) ||
+			(kind == deliverystate.AckActed && updated.State == string(deliverystate.Acted))
+		if note != "" && updated.Note != note && updated.State != before && reached {
 			updated.Note = note
 			if err := transaction.writeDelivery(id, hash, updated); err != nil {
 				return err
 			}
 		}
-		result = AckResult{MessageID: id, State: updated.State, Changed: updated.State != before}
+		result = AckResult{MessageID: id, State: updated.State, Changed: updated.State != before && reached}
 		switch updated.State {
 		case string(deliverystate.Refused), string(deliverystate.Dropped), string(deliverystate.Expired):
 			result.Detail = "this delivery is " + updated.State + "; the ack changes nothing"

@@ -108,8 +108,14 @@ func sessionNoticeWords(notice SessionNotice) string {
 	return strings.TrimSpace(notice.Kind + " " + notice.About)
 }
 
-// markShown marks the given notices shown, in the step that returns them.
-func (transaction *transaction) markShown(session Session, notices []OwedNotice) error {
+// markShown marks the given notices shown, in the step that returns them, and returns those it
+// marked: a notice whose record could not be read or written again is left owed and not returned.
+func (transaction *transaction) markShown(session Session, notices []OwedNotice) ([]OwedNotice, error) {
+	var shown []OwedNotice
+	current, err := transaction.readSession(hashKey(session.Key))
+	if err != nil {
+		return nil, err
+	}
 	sessionChanged := false
 	for _, notice := range notices {
 		switch notice.source {
@@ -124,7 +130,7 @@ func (transaction *transaction) markShown(session Session, notices []OwedNotice)
 			}
 			delivery.Notice = string(next)
 			if err := transaction.writeDelivery(notice.messageID, notice.hash, delivery); err != nil {
-				return err
+				continue
 			}
 		case onRequest:
 			var commit Commit
@@ -137,36 +143,34 @@ func (transaction *transaction) markShown(session Session, notices []OwedNotice)
 			}
 			commit.Notice = string(next)
 			if err := writeRecord(transaction.place.commit(notice.messageID), commit, commitBound); err != nil {
-				return err
+				continue
 			}
 		case onSession:
-			for index := range session.Notices {
-				if session.Notices[index].ID == notice.noticeID && session.Notices[index].State == string(deliverystate.NoticeOwed) {
-					session.Notices[index].State = string(deliverystate.NoticeShown)
-					sessionChanged = true
+			found := false
+			for index := range current.Notices {
+				if current.Notices[index].ID == notice.noticeID && current.Notices[index].State == string(deliverystate.NoticeOwed) {
+					current.Notices[index].State, found, sessionChanged = string(deliverystate.NoticeShown), true, true
 				}
 			}
+			if !found {
+				continue
+			}
+		}
+		shown = append(shown, notice)
+	}
+	if sessionChanged {
+		if err := transaction.writeSession(current); err != nil {
+			// The session's own notices stay owed; the others were marked and are returned.
+			kept := shown[:0]
+			for _, notice := range shown {
+				if notice.source != onSession {
+					kept = append(kept, notice)
+				}
+			}
+			return kept, nil
 		}
 	}
-	if !sessionChanged {
-		return nil
-	}
-	current, err := transaction.readSession(hashKey(session.Key))
-	if err != nil {
-		return err
-	}
-	shown := map[string]bool{}
-	for _, notice := range session.Notices {
-		if notice.State == string(deliverystate.NoticeShown) {
-			shown[notice.ID] = true
-		}
-	}
-	for index := range current.Notices {
-		if shown[current.Notices[index].ID] {
-			current.Notices[index].State = string(deliverystate.NoticeShown)
-		}
-	}
-	return transaction.writeSession(current)
+	return shown, nil
 }
 
 // noticeLines is the lines of a list of notices.

@@ -176,16 +176,19 @@ func (transaction *transaction) reconcileWatchers(hash string) (Session, error) 
 		}
 		until, ok := parseStamp(watcher.Until)
 		armed := watcher.Armed || watcher.MessageID == ""
+		// The outcome is decided by when things happened, not by when this runs: an idle or an end
+		// counts only if the session entered it (`since`, kept on its record and in an observation's
+		// journal entry) before the subscription's until.
+		entered, enteredOK := parseStamp(session.Since)
+		inTime := ok && enteredOK && entered.Before(until)
 		switch {
 		case kind != "":
-		case !ok || !transaction.now.Before(until):
-			// Past its until, the subscription has expired whatever happens now (an idle or an end
-			// seen later never counts for it).
-			kind = NoticeSubscriptionExpired
-		case armed && session.State == StateGone:
+		case armed && session.State == StateGone && inTime:
 			kind = NoticeEnded
-		case armed && session.State == StateIdle && session.IdleGeneration > watcher.ArmedGeneration:
+		case armed && session.State == StateIdle && session.IdleGeneration > watcher.ArmedGeneration && inTime:
 			kind = NoticeIdle
+		case !ok || !transaction.now.Before(until) || session.State == StateGone:
+			kind = NoticeSubscriptionExpired
 		}
 		if kind != "" {
 			id := subscriptionID(session, watcher)
@@ -291,8 +294,11 @@ func (transaction *transaction) arrival(id, hash string, gone bool) int {
 // owe writes a notice on a session's record, once per ID.
 func (transaction *transaction) owe(key string, notice SessionNotice) error {
 	watcher, err := transaction.readSession(hashKey(key))
-	if err != nil {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil // the watcher's record is gone: nobody is left to tell
+	}
+	if err != nil {
+		return err // kept for a later try: a firing's entry stays until its notice is written
 	}
 	if slices.ContainsFunc(watcher.Notices, func(existing SessionNotice) bool { return existing.ID == notice.ID }) {
 		return nil

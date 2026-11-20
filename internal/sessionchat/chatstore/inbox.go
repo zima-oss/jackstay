@@ -139,6 +139,7 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 		if err != nil {
 			return err
 		}
+		// Sized with every collected notice; finish keeps only those it could mark shown.
 		result.Notices, result.NoticesMore = noticeLines(notices), noticesMore
 		page := pager{budget: ResultBound, base: marshalCompact(result)}
 		start := 0
@@ -152,6 +153,30 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 					break
 				}
 			}
+		}
+		// The page is built whole first; only then are its receipts written and its notices marked,
+		// so a body that fails to load marks nothing, and a receipt that fails to be written leaves
+		// its row returned but its delivery unread.
+		type pageItem struct {
+			item candidate
+			row  int
+		}
+		var readable []pageItem
+		finish := func() error {
+			for _, entry := range readable {
+				updated, stepErr := transaction.stepLoaded(entry.item.found, hash, entry.item.delivery,
+					deliverystate.Event{Kind: deliverystate.ReadWhole})
+				if stepErr == nil {
+					result.Messages[entry.row].State = updated.State
+				}
+			}
+			shown, err := transaction.markShown(session, notices)
+			if err != nil {
+				return err
+			}
+			result.Notices = noticeLines(shown)
+			result.NoticesMore += len(notices) - len(shown)
+			return nil
 		}
 		for index := start; index < len(visible) && len(result.Messages) < input.Limit; index++ {
 			item := visible[index]
@@ -169,18 +194,14 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 				break
 			}
 			if complete && offset == 0 && input.MarkRead {
-				updated, stepErr := transaction.stepLoaded(item.found, hash, item.delivery,
-					deliverystate.Event{Kind: deliverystate.ReadWhole})
-				if stepErr == nil {
-					item.delivery = updated
-				}
+				readable = append(readable, pageItem{item: item, row: len(result.Messages)})
 			}
 			view.Message, view.Offset, view.Complete, view.State = piece, offset, complete, item.delivery.State
 			result.Messages = append(result.Messages, view)
 			if !complete {
 				result.NextCursor = encodeCursor(cursor{Rank: rankOf(view.Priority), ID: view.ID, Offset: offset + len(piece), Filters: filters})
 				result.More = len(visible) - index - 1
-				return transaction.markShown(session, notices)
+				return finish()
 			}
 		}
 		returned := start + len(result.Messages)
@@ -189,7 +210,7 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 			last := result.Messages[len(result.Messages)-1]
 			result.NextCursor = encodeCursor(cursor{Rank: rankOf(last.Priority), ID: last.ID, Filters: filters})
 		}
-		return transaction.markShown(session, notices)
+		return finish()
 	})
 	return result, err
 }
