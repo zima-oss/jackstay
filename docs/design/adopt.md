@@ -356,7 +356,7 @@ Item IDs, what each needs, and what changes with the section:
 | `release` | `release` | |
 | `log` | the commands `log` and `stats` in the table | |
 | `evidence` | `receipts` | |
-| `inventory`, `timeline`, `owner` | always | |
+| `status`, `owner` | always | |
 | `profiles` | `adopt` | |
 
 Then the profile's `agents.rules`, under `### This project's organisation`, one bullet each.

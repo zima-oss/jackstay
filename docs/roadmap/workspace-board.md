@@ -1,5 +1,9 @@
 # Workspace board across repositories
 
+> Superseded: the board became the many-repository view of `jst status`, without the merge queue
+> ([W-090](../decisions/W-090-one-status-command.md), [the guide](../guide/status.md)). This
+> specification is kept as history.
+
 jackstay 0.6.0 removed the local merge queue (`jst queue`), and with it the board's `queue` source;
 the queue rows below are history.
 

@@ -256,11 +256,11 @@ Configures `jst review`: the reviewers, what they are told, and how findings dec
 
 ## `status`
 
-Sets the defaults of the workspace overview, `jst workspace board`.
+Sets the defaults of `jst status`.
 
 | Key | Type | What it does |
 |---|---|---|
-| `repos` | list of strings | Lists the repositories the overview reads when none are named: paths relative to this file's folder, or absolute. |
+| `repos` | list of strings | Lists the repositories `jst status` reads when none are named: paths relative to this file's folder, or absolute. |
 
 ## `telemetry`
 

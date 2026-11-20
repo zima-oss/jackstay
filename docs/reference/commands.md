@@ -675,9 +675,7 @@ example: jst review show parser-fix 2
 | [`jst brief save`](#jst-brief-save) | save a task brief for this worktree |
 | [`jst brief show`](#jst-brief-show) | show this worktree's saved task brief |
 | [`jst guard`](#jst-guard) | the Claude Code hook that refuses destructive commands |
-| [`jst inventory`](#jst-inventory) | local Git worktrees and observed runner sessions as JSON |
-| [`jst timeline`](#jst-timeline) | local PR, test, review and background stages as JSON |
-| [`jst workspace board`](#jst-workspace-board) | read local status across named repositories |
+| [`jst status`](#jst-status) | this repository's sessions, events, chat, brief and jobs; or one row per repository |
 | [`jst owner`](#jst-owner) | what the owner said in a Claude Code session, or where its tool calls went |
 | [`jst log`](#jst-log) | what jackstay did: commands, a run's tree, a Claude session, a tool call |
 | [`jst stats`](#jst-stats) | reports over jackstay's journal |
@@ -805,55 +803,34 @@ standard error); 64 the words are wrong.
 example: jst guard check -- 'git push --force origin main'
 ```
 
-### jst inventory
+### jst status
 
-Local Git worktrees and observed runner sessions as JSON.
-
-```text
-usage: jst inventory [--since DURATION]
-
-Print the local repository, its linked worktrees, and recent session observations as JSON.
-  --since DURATION  look back at most this long (default 24h, maximum 720h)
-
-Runner and guard coverage are reported from recorded evidence. Missing evidence is unknown.
-exit: 0 report written; 1 journal incomplete; 2 bad request or repository unavailable.
-
-example: jst inventory --since 48h
-```
-
-### jst timeline
-
-Local PR, test, review and background stages as JSON.
+This repository's sessions, events, chat, brief and jobs; or one row per repository.
 
 ```text
-usage: jst timeline [--since DURATION] [--until RFC3339] [--limit N]
+usage: jst status [--json] [--since DURATION] [--limit N] [REPO...]
 
-Print local delivery stages for this Git repository as versioned JSON.
-  --since DURATION  window before --until (default 24h, maximum 720h from now)
-  --until RFC3339   exclusive end of the window (default now)
-  --limit N         keep at most N of the newest rows (default 100, maximum 1000)
+What is going on locally, read without writing anything and without contacting a remote service.
 
-exit: 0 report written; 1 incomplete journal or ancestry scan; 2 bad request or repository unavailable.
+With no REPO it covers this repository, in detail: its worktrees, the agent sessions and delivery
+events (pull requests, tests, reviews, background jobs) the journal recorded in the window, chat
+counts, the brief, background jobs, the last gate and stored receipt (and whether they are for
+HEAD) and active cards. When this project's jackstay.json lists repositories in status.repos, no
+REPO means those instead.
 
-example: jst timeline --since 4h --limit 50
-```
+With one REPO it is that repository in detail; with several, one row per repository (at most 32).
+No message, receipt, card or brief text is shown, and events carry no arguments or prompts.
 
-### jst workspace board
+  --json            one versioned JSON envelope (schema, kind "repository" or "board", the
+                    window, partial, and the repositories)
+  --since DURATION  the window for sessions and events, back from now (default 24h, maximum 720h)
+  --limit N         keep at most the N newest events (default 20, maximum 1000)
 
-Read local status across named repositories.
+exit: 0 every source read; 1 at least one source unknown or partial (the report still printed); 2 the
+request is wrong (an option, a path, more than 32 repositories, or an unusable status.repos).
 
-```text
-usage: jst workspace board [--json] [REPO...]
-
-Read a summary of each explicitly supplied Git checkout. Linked worktrees share chat
-state; gate and receipt summaries are for the named checkout. No remote service is contacted.
-No message bodies, receipt contents, or card bodies are printed.
-At most 32 repositories may be supplied in one call. With none named, the repositories are the
-current project's status.repos in jackstay.json (relative to its folder).
-
-exit: 0 every requested source read; 1 at least one source is unknown or partial; 2 invalid use.
-
-example: jst workspace board --json ~/src/app ~/src/service
+example: jst status --since 4h
+         jst status --json ~/src/app ~/src/service
 ```
 
 ### jst owner
