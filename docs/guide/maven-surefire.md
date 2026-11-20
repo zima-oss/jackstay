@@ -93,7 +93,10 @@ pinned producer test checks this with JUnit 5 (JUnit Jupiter 5.13.4) and these r
 
 `passed-on-retry` is not a clean pass. jackstay stores no receipt for it, and a gate whose step
 ends `passed-on-retry` fails. The last `jst test:` line says how many tests passed only on retry.
-Read the report's flaky records, fix the test, and run the scope again.
+The report directory is removed when the run ends, but jackstay keeps Maven's output
+(`jst test last` names the file). Surefire prints each failed attempt there with its stack trace,
+and its summary lists the attempts of each flaky test (`Run 1: …`). To keep the XML as well,
+copy it out of `{report_dir}` in a wrapper. Fix the test, then run the scope again.
 
 When a suite has rerun records, Surefire writes its `tests`, `failures`, `errors` and `skipped`
 totals from the last rerun only. jackstay therefore does not compare that suite's totals with its

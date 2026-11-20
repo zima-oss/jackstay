@@ -55,6 +55,7 @@ func TestJestRetriedAssertionIsPassedOnRetry(t *testing.T) {
 		want   Outcome
 	}{
 		{file: "pass", status: "passed", want: PassedOnRetry},
+		{file: "pass", status: "pending", want: Unjudged},
 		{file: "fail", status: "failed", want: Failed},
 	} {
 		content, err := os.ReadFile(filepath.Join("testdata", "jest", sample.file+".json"))

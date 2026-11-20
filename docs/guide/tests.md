@@ -296,7 +296,8 @@ single report cannot prove coverage of the complete shard plan.
 
 Disable retries for evidence that must prove a first-attempt pass. Jest JSON exposes repeated
 invocations, so jackstay reports a successful Jest run with a repeated assertion as
-`unjudged`. Vitest JUnit and VSTest TRX from MSTest can collapse a failed first attempt followed
+`passed-on-retry` (exit 78), which is not a pass. A skipped or todo assertion with repeated
+invocations makes the report `unjudged`. Vitest JUnit and VSTest TRX from MSTest can collapse a failed first attempt followed
 by a pass into one final result. These reports cannot establish a first-attempt pass with
 retries enabled. TRX from Microsoft.Testing.Platform is outside these checks.
 [Jest CLI](https://jestjs.io/docs/cli) · [VSTest logger](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test-vstest)

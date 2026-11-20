@@ -97,8 +97,13 @@ func readJestSelected(report io.Reader, selection *JestSelection) Facts {
 				if *assertion.Invocations < 1 {
 					return invalid("the Jest report contains an invalid invocation count")
 				}
-				if *assertion.Invocations > 1 && assertion.Status == "passed" {
-					retried++
+				if *assertion.Invocations > 1 {
+					switch assertion.Status {
+					case "passed":
+						retried++
+					case "pending", "todo":
+						return invalid("a skipped Jest assertion reports repeated invocations")
+					}
 				}
 			}
 			if selection != nil {
