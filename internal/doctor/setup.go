@@ -222,6 +222,7 @@ func planSandbox(report Report, finding Finding) SetupItem {
 // RunSetup is jst setup. Mutations require an interactive choice or --yes with a selected ID.
 func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	planOnly, asJSON, yes, chat, prefix, autonomy, reviewer := false, false, false, false, "", "", ""
+	reviewerGiven := false
 	selected := map[string]bool{}
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
@@ -247,7 +248,7 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			case "--prefix":
 				prefix = value
 			case "--reviewer":
-				reviewer = value
+				reviewer, reviewerGiven = value, true
 			default:
 				autonomy = value
 			}
@@ -260,7 +261,7 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, setupUsage)
 		return 2
 	}
-	if reviewer != "" {
+	if reviewerGiven {
 		if len(args) != 2 {
 			fmt.Fprintln(stderr, setupUsage)
 			return 2

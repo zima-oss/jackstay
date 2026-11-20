@@ -78,7 +78,14 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	options.Defaults, _ = choices.MachineAnswers()
 	// One reader for every question, so none takes the line meant for the next.
 	reader := bufio.NewReader(stdin)
-	if mode == "apply" && atTerminal(stdin, stdout) {
+	plan, err := Make(options)
+	if err != nil {
+		fmt.Fprintf(stderr, "jst adopt: %v\n", err)
+		return 2
+	}
+	// The questions are asked only of a plan that would be written: with conflicts left nothing is,
+	// and the answers would be lost. Make may plan twice, so each question is asked once.
+	if mode == "apply" && plan.asksChoices && len(plan.Conflicts) == 0 && atTerminal(stdin, stdout) {
 		asked := map[string]string{}
 		options.Ask = func(question choices.Question, offered string) (string, error) {
 			if answer, known := asked[question.ID]; known {
@@ -90,11 +97,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 			return answer, err
 		}
-	}
-	plan, err := Make(options)
-	if err != nil {
-		fmt.Fprintf(stderr, "jst adopt: %v\n", err)
-		return 2
+		if plan, err = Make(options); err != nil {
+			fmt.Fprintf(stderr, "jst adopt: %v\n", err)
+			return 2
+		}
 	}
 	if mode == "apply" && plan.AsksAutonomy() {
 		if !atTerminal(stdin, stdout) {

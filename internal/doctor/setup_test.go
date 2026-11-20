@@ -459,7 +459,7 @@ func TestSetupKeepsThisMachinesReviewerBesideTheAutonomy(t *testing.T) {
 	if item := reviewerItem(choices.MachineAnswers()); item.Status != "done" || !strings.Contains(item.Text, "claude-code") {
 		t.Fatalf("item %+v", item)
 	}
-	for _, args := range [][]string{{"--reviewer", "gpt"}, {"--reviewer", "codex", "--plan"}} {
+	for _, args := range [][]string{{"--reviewer", "gpt"}, {"--reviewer", ""}, {"--reviewer", "codex", "--plan"}} {
 		if status := RunSetup(args, nil, &output, &diagnostics); status != 2 {
 			t.Errorf("%v: exit %d", args, status)
 		}

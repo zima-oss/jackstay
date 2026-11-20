@@ -49,7 +49,7 @@ func TestAnOlderPinIsNotAskedAboutChat(t *testing.T) {
 		return question.Recommended(), nil
 	}
 	made := apply(t, options)
-	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "pinned to v0.5.11") {
+	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "waits for the upgrade") {
 		t.Fatalf("chat %+v", chat)
 	}
 }
@@ -151,5 +151,43 @@ func TestAnAnswerThatEnablesAWorkflowGetsItsPin(t *testing.T) {
 	apply(t, options)
 	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"pin": "v0.5.0"`) {
 		t.Fatalf("no pin for the workflow the answer enabled:\n%s", text)
+	}
+}
+
+// In the upgrade from 0.5.x (a pinned file not yet at schema 3) chat is a schema-3 key that waits
+// for the third step: it is not asked, and a --chat is refused, so steps 1 and 2 go through.
+func TestChatWaitsForTheUpgradesSchemaStep(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}}`})
+	options := optionsFor(root)
+	options.Version, options.Pin, options.SettingsOnly = "0.6.0", true, true
+	options.Ask = func(question choices.Question, _ string) (string, error) {
+		if question.ID == "chat" {
+			t.Fatal("chat was asked in the upgrade's first step")
+		}
+		return question.Recommended(), nil
+	}
+	made := apply(t, options)
+	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "waits for the upgrade's third step") {
+		t.Fatalf("chat %+v", chat)
+	}
+	if text := read(t, root, "jackstay.json"); strings.Contains(text, `"chat"`) || !strings.Contains(text, `"pin": "v0.6.0"`) {
+		t.Fatalf("step 1 wrote:\n%s", text)
+	}
+	options.Ask, options.Pin = nil, false
+	options.Answers = map[string]string{"chat": "on"}
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "--chat: chat.enabled is a schema-3 key") {
+		t.Fatalf("--chat in the upgrade: %v", err)
+	}
+}
+
+// With conflicts left nothing is written, so nothing is asked: the answers would be lost.
+func TestNothingIsAskedOfAPlanWithConflicts(t *testing.T) {
+	root := project(t, map[string]string{
+		"jackstay.json": `{"jackstay_schema": 3, "project": "p", "land": {"autonomy": "prepare"}}`,
+		"AGENTS.md":     "<!-- jackstay-adopt: begin agents-block sha256:000000000000 -->\nno end\n",
+	})
+	code, stdout, stderr := runIn(t, true, "\n\n", "--apply", root)
+	if code != 1 || strings.Contains(stdout, "Which reviewer runs") {
+		t.Fatalf("exit %d, asked with conflicts left:\n%s%s", code, stdout, stderr)
 	}
 }

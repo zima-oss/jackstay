@@ -153,6 +153,8 @@ type Plan struct {
 	profile *profile.Profile
 	// asksAutonomy says the plan writes a new `land` section whose autonomy nobody chose.
 	asksAutonomy bool
+	// asksChoices says a question would be asked at a terminal: nothing settles it.
+	asksChoices bool
 }
 
 // Choice is one question's answer for the project.
@@ -528,18 +530,29 @@ func (planner *planner) choose(original, document *jsondoc.Object) error {
 		pin = "v" + planner.options.Version
 		pinWords = "this jackstay is " + pin
 	}
+	// A pinned file not yet at schema 3 is in the 0.5.x upgrade (land.md section 5): schema-3 keys
+	// wait for its third step, as landSection decides.
+	originalPin, _ := getString(original.Object("adopt"), "pin")
+	originalSchema, _ := original.Get("jackstay_schema")
+	upgrading := originalPin != "" && fmt.Sprint(originalSchema) != fmt.Sprint(config.Schema)
 	for _, question := range choices.All() {
 		choice := Choice{ID: question.ID, Key: question.Key.Name()}
 		ownValue, own := question.Key.Read(original)
 		fromProfile, profiled := question.Key.Read(document)
 		answer, given := planner.options.Answers[question.ID]
 		switch {
+		case given && question.Schema3 && upgrading:
+			return &UsageError{fmt.Sprintf("--%s: %s is a schema-3 key, and this project is in the upgrade from 0.5.x: "+
+				"give it with the upgrade's third step (schema 3)", question.ID, question.Key.Name())}
 		case given:
 			choice.Value, choice.From, choice.Written = answer, "--"+question.ID, true
 		case own:
 			choice.Value, choice.From = ownValue, "this project's jackstay.json"
 		case profiled:
 			choice.Value, choice.From = fromProfile, "the profile's defaults"
+		case question.Schema3 && upgrading:
+			choice.Value = question.Recommended()
+			choice.From = fmt.Sprintf("not asked: %s waits for the upgrade's third step (schema 3)", question.Key.Name())
 		case question.Schema3 && pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0:
 			choice.Value = question.Recommended()
 			choice.From = fmt.Sprintf("not asked: %s needs jackstay %s or later, and %s", question.Key.Name(), config.Schema3Release, pinWords)
@@ -553,6 +566,7 @@ func (planner *planner) choose(original, document *jsondoc.Object) error {
 		default:
 			// Nothing is written, so the key stays absent and its default applies; the machine's
 			// answer is only what a terminal apply would offer.
+			planner.plan.asksChoices = true
 			choice.Value = question.Recommended()
 			choice.From = fmt.Sprintf("not written: %s applies while %s is absent; choose with `jst adopt --apply --%s VALUE` "+
 				"(%s) or run it in a terminal", choice.Value, question.Key.Name(), question.ID, question.Values())
