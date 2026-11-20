@@ -1,16 +1,47 @@
 {{- /*
-  The guide, read from docs/guide (W-076: one source). The site carries only what a user needs
-  (W-077): the design and the decision records stay in the repository, and the guide's links to
-  them lead to GitHub (layouts/_markup/render-link.html). The integrations are a group of their own
-  in the sidebar, guide/integrations (its page is content/guide/integrations/_index.md). The guide
-  is of type docs, so Hextra shows its sidebar beside every page at every desktop width (its default
-  type hides the sidebar below 1280 pixels and lists nothing in it) and the previous and next pages
-  below each.
+  The site's pages, read from the repository (W-076: one source). The site carries what a user
+  needs (W-077): the guide from docs/guide, the generated reference from docs/reference, and the
+  contributors' pages; the design and the decision records stay in the repository, and links to
+  them lead to GitHub (layouts/_markup/render-link.html).
+
+  docs/guide/README.md orders everything: the `## ` headings `headings` names are the sidebar's
+  groups (each group's page shows the README's text under the heading), a file goes to the group
+  its first link in the README is under, and a page comes where the README first links to it. The
+  guide's files stay in one folder; a page's address before it moved into a group redirects to it
+  (`aliases` adds the older ones). Everything is of type docs, so Hextra shows the sidebar beside every page at every desktop width and the previous
+  and next pages below each.
 */ -}}
+{{- $order := (resources.Get "docs/guide/README.md").Content -}}
+{{- $at := dict -}}
+{{- range slice "](../reference/README.md" "\n## Contributing\n" -}}
+  {{- if not (strings.Contains $order .) }}{{ errorf "docs/guide/README.md has no %q" . }}{{ end -}}
+  {{- $at = merge $at (dict . (add (len (index (split $order .) 0)) 1)) -}}
+{{- end -}}
+{{- $start := "start" -}}
+{{- $daily := "daily-work" -}}
+{{- $agents := "agents" -}}
 {{- partial "jackstay/pages-from-docs.html" (dict
   "adapter" .
   "section" "guide"
   "folder" "docs/guide"
-  "groups" (dict "claude-code.md" "integrations" "codex.md" "integrations")
   "type" "docs"
+  "aliases" (dict
+    "claude-code.md" (slice "/guide/integrations/claude-code/")
+    "codex.md" (slice "/guide/integrations/codex/")
+    $agents (slice "/guide/integrations/")
+  )
+  "headings" (dict $start "Start" $daily "Daily work" $agents "Working with several agents")
 ) -}}
+{{- partial "jackstay/pages-from-docs.html" (dict
+  "adapter" .
+  "section" "guide/reference"
+  "folder" "docs/reference"
+  "type" "docs"
+  "weight" (index $at "](../reference/README.md")
+) -}}
+{{- $contributing := index $at "\n## Contributing\n" -}}
+{{- partial "jackstay/page-from-file.html" (dict "adapter" . "kind" "section" "path" "guide/contributing"
+  "file" "CONTRIBUTING.md" "title" "Contributing" "weight" $contributing
+  "aliases" (slice "/guide/more-on-github/" "/more-on-github/")) -}}
+{{- partial "jackstay/page-from-file.html" (dict "adapter" . "path" "guide/contributing/style"
+  "file" "docs/STYLE.md" "weight" 1) -}}

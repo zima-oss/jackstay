@@ -25,7 +25,7 @@ import (
 )
 
 func init() {
-	cli.Register(cli.Command{Name: "tidy", Summary: "report the branches and worktrees whose work is done (--fix: remove them)", Usage: help, Run: run})
+	cli.Register(cli.Command{Name: "tidy", Summary: "report, or remove, the branches and worktrees whose work is done", Usage: help, Run: run})
 }
 
 const usage = `usage: jst tidy [--fix] [--branch NAME]... [--worktree PATH]... [--no-fetch] [--no-github] [--json] [DIR]

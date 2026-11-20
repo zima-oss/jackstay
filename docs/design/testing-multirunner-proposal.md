@@ -5,27 +5,18 @@ interface. Separate test selection, process execution, evidence decoding, and ve
 Start with Go and JUnit XML. Keep the existing Swift behavior and add a Swift-specific structured
 report adapter when the target toolchain supplies evidence with the required fidelity.
 
-This is an implementation plan. The names and configuration examples below are provisional.
-
-The first implementation uses the [compatibility baseline](testing-compatibility.md), a shared
-verdict, bounded per-attempt report transport and opt-in Go JSON and JUnit judges.
-See the [implemented contract](testing.md#21-structured-evidence) for current configuration.
-Receipt lookup and gate resume validate the saved evidence under the current adapter version.
-TST-7 pins Vitest, Surefire, Jest and VSTest with partition and retry checks. See the
-[producer guide](../guide/tests.md#structured-test-reports) for the evidence each mode supplies.
-TST-8 provides [Go](../guide/tests.md#select-a-go-test-by-id) and
-[Jest](../guide/tests.md#select-a-jest-test-by-id) typed selectors, and opt-in Go and
-[JUnit](../guide/tests.md#read-junit-case-durations) timings while preserving Swift
-selection and duration history. Generic JUnit reports do not define a runner's selector
-syntax, and unsupported selector or duration settings are refused before execution.
+Status: TST-1 to TST-8 are built (the last section); the names below that are not in
+[testing.md](testing.md#21-structured-evidence) are provisional. Typed selectors and timings:
+[Go](../guide/tests.md#select-a-go-test-by-id), [Jest](../guide/tests.md#select-a-jest-test-by-id),
+[JUnit](../guide/tests.md#read-junit-case-durations); producers:
+[structured test reports](../guide/tests.md#structured-test-reports). Unsupported selector or
+duration settings are refused before execution.
 
 ## What the current code does
 
-- The scope runner creates a `judge.Reader` and derives a verdict from decoded output, process
-  termination and leftovers. The direct command path uses its own regex reader and decision
-  sequence. It rejects a negative count that the scope reader can sum. Both write run and receipt
-  records, so this difference can change what a user sees and which runs can be reused.
-  [Scope verdict](../../internal/judge/verdict.go) · [Direct evidence](../../internal/receipts/judge.go)
+- One verdict ([`judge.Evaluate`](../../internal/judge/verdict.go)) serves the scope runner and the
+  direct command ([direct evidence](../../internal/receipts/judge.go)); see the
+  [compatibility baseline](testing-compatibility.md).
 - `{tests}` expands to a regular expression for Swift selectors and `{slow}` expands to Swift
   classes. A test's identity, the runner's selector syntax, and the input to duration history are
   entangled. `{base}` already delegates change selection to the project's command.
@@ -47,11 +38,9 @@ syntax, and unsupported selector or duration settings are refused before executi
 | Swift | Current SwiftPM text adapter initially, structured Xcode reports in a later slice | Preserve mixed XCTest and Swift Testing counts, parameterized tests, cancellation and duration history. Prove an extraction contract for each supported Xcode range. [Apple Xcode release notes](https://developer.apple.com/documentation/xcode-release-notes/xcode-16-release-notes) |
 | .NET | JUnit XML where the configured MTP extension supports it, TRX for VSTest and MTP in a later slice | The platforms have different flags and prerequisites. A fixed file name can be overwritten by another target framework. [VSTest CLI](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test-vstest) · [MTP test reports](https://learn.microsoft.com/en-us/dotnet/core/testing/microsoft-testing-platform-test-reports) |
 
-Local probes in disposable fixtures confirmed three cases. Go emitted pass events for both a
-parent test and its subtest. A cached Go rerun replayed those events, and a no-match Go run
-ended with a package-level pass and no test-level pass. Pytest emitted two XML cases for one
-pass and one skip, and an empty XML report with exit 5 for a selector matching nothing. The
-other adapters in the table are proposals based on their published formats.
+Local probes confirmed: Go emits pass events for a parent and its subtest, replays them when
+cached, and ends a no-match run with only a package-level pass; pytest writes an empty report and
+exits 5 for a selector matching nothing.
 
 ## Proposed contract
 
@@ -83,45 +72,18 @@ other adapters in the table are proposals based on their published formats.
   never turns old, cached, discovered, partially parsed or reused evidence into a fresh pass.
   Historical receipt and run records remain readable.
 
-An opt-in starting shape could look like this:
-
-```json
-{
-  "test": {
-    "scopes": {
-      "x-go": {
-        "run": ["go", "test", "-json", "-count=1", "./..."],
-        "judge": "go-json"
-      },
-      "x-python": {
-        "run": ["pytest", "--junitxml={report}"],
-        "judge": "junit",
-        "report": "pytest.xml"
-      }
-    }
-  }
-}
-```
-
-The implemented file transport supports one declared report for any file adapter and an
-explicit list for JUnit. Single-file partition producers can use separate gate steps.
-Adapter selection is explicit. An unrecognized format must never fall back to a parser that might
-incorrectly confirm a pass.
+The implemented transport supports one declared report per file adapter and an explicit list for
+JUnit; adapter selection is explicit, and an unrecognized format never falls back to a parser that
+might confirm a pass.
 
 ## Implementation sequence and verification
 
-| Task | Depends on | Deliverable and done check |
-|---|---|---|
-| TST-1 Compatibility fixtures | None | Capture raw and scoped outcomes, exit status, console summaries, `test last`, receipts and gate marks for the same cases. Pin the Swift parallel, empty, skipped and cancelled examples. Record agreed fixes, such as negative count handling, as deliberate differences. |
-| TST-2 Common verdict | TST-1 | Extract one reducer over execution and evidence. Reuse it in both current entry points with a small compatibility policy for existing exit statuses and diagnostics. Prove parity in paired runs, including a stop, a veto line, a zero exit without evidence, and process cleanup failure. |
-| TST-3 Artifact transport | TST-2 | Use a private per-attempt report directory for raw and scoped runs. Test stale files, symlinks, missing file, partial file, two concurrent runs and cancellation. Use synthetic reports to keep the core gate independent of additional runtimes. |
-| TST-4 Go NDJSON adapter | TST-2 | Exercise real Go fixtures in a dedicated integration job. Check interleaved packages, cached replay, filtered zero match, skip, subtests, repeated tests, build failure, benches, and abrupt end. Start by using the adapter in jackstay's own Go recipe and compare it to the existing counter before migration. |
-| TST-5 JUnit XML and pytest | TST-2, TST-3 | Read case results and compare them with applicable suite counts. Prove all-skipped, failure, empty selection, setup error, nested suites, oversized and truncated reports. Run the same fixture via `jst test` and verify the saved record and receipt. |
-| TST-6 Receipt and gate migration | TST-2 and first structured adapter | Key results by semantic adapter inputs. Old keys remain readable for reporting where the configured format changes. Verify cache miss on an adapter version change, normal reuse within one version, clean-copy fresh runs, and that a resumed step cannot require a missing artifact. |
-| TST-7 Additional producers | TST-5 or TST-4, according to format | Onboard Vitest and Surefire through verified XML dialect fixtures, then Jest JSON and .NET TRX. Use pinning and per-producer CI. Give every producer at least one real invocation per supported version range and cover retries and sharding before accepting those modes. |
-| TST-8 Selection and duration capabilities | TST-2, stable IDs from TST-4 and TST-5 | Keep old Swift selection and introduce typed selectors where an adapter genuinely supports them. Measure selections against real fixture IDs. Report unsupported capabilities before launch. |
-| TST-9 Structured Swift migration | TST-2, TST-3 | Derive separate SwiftPM and Xcode contracts from captured fixtures. Compare the two Swift testing engines with legacy output on supported versions. Keep the text adapter available for projects that rely on it. [Initial SwiftPM and Xcode pilot](swift-structured-pilot.md). |
+TST-1 to TST-8 are built: the compatibility fixtures, the common verdict, the per-attempt report
+transport, the Go JSON and JUnit adapters, receipt and gate migration, the Vitest, Surefire, Jest
+and TRX producers, and typed selectors and timings. Their contracts are
+[testing.md](testing.md#21-structured-evidence) and the [tests guide](../guide/tests.md).
 
-The first release should close TST-1 through TST-6 and document the API limits. TST-7 producer
-lanes can run in parallel once their format is supported. TST-8 and TST-9 remain opt-in until
-their fixtures demonstrate the legacy contracts.
+TST-9, structured Swift, derives separate SwiftPM and Xcode contracts from captured fixtures and
+keeps the text adapter for projects that rely on it; see the
+[SwiftPM and Xcode pilot](swift-structured-pilot.md). It stays opt-in until its fixtures
+demonstrate the legacy contracts.
