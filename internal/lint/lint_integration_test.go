@@ -583,3 +583,36 @@ func TestTheBasesJackstayJSONIsFoundFromASubfolder(t *testing.T) {
 		t.Fatalf("the head's top jackstay.json from a subfolder: exists %v, %v", exists, err)
 	}
 }
+
+// ChangelogLine is D1 alone: the diff and the description, never the release history, so it judges
+// in a shallow clone of a release-enabled base, where ReleaseRules cannot read the history.
+func TestChangelogLineNeedsNoReleaseHistory(t *testing.T) {
+	start := map[string]string{"Config.xcconfig": "OTHER = 1\nMARKETING_VERSION = 0.1.0\n", "CHANGELOG.md": "# Changelog\n"}
+	origin := newRepo(t, releaseJSON, start)
+	origin.commit("more", map[string]string{"a.txt": "a"})
+	shallow := repoFixture{t: t, dir: filepath.Join(t.TempDir(), "shallow")}
+	origin.git("clone", "-q", "--depth", "1", "--no-local", origin.dir, shallow.dir)
+	base := shallow.git("rev-parse", "HEAD")
+	shallow.git("checkout", "-q", "-b", "feat")
+	shallow.commit("work", map[string]string{"src.txt": "x"})
+	head := shallow.git("rev-parse", "HEAD")
+	repo := release.NewRepo(shallow.dir)
+	baseConfig, err := repo.ConfigAt(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := Change{Base: base, Head: head, MergeBase: base, HeadBranch: "feat"}
+	if _, _, err := ReleaseRules(repo, baseConfig, change); err == nil {
+		t.Fatal("ReleaseRules read a shallow clone's release history: this test no longer shows the difference")
+	}
+	for body, want := range map[string]string{"": "D1-undocumented", "Changes: none (a test)": "", "Changes: none": "D1-undocumented"} {
+		change.Body = body
+		found, err := ChangelogLine(repo, baseConfig, change)
+		if err != nil {
+			t.Fatalf("%q: %v", body, err)
+		}
+		if got := ruleIDs(found); got != want {
+			t.Errorf("%q: %q, want %q", body, got, want)
+		}
+	}
+}

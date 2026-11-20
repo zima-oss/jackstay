@@ -36,7 +36,7 @@ func (work *session) repositoryOf(repositoryFlag string) error {
 
 func runRunWait(work *session, args []string) (int, error) {
 	timeoutDefault, intervalDefault, _ := work.waitDefaults()
-	flags := commandFlags("run-wait", work.deps.Stderr)
+	flags := commandFlags(work.name+" run-wait", work.deps.Stderr)
 	ref := flags.String("ref", "", "branch name or SHA prefix (at least 7 characters); default: the newest run")
 	repositoryFlag := flags.String("repo", "", "https://github.com/<owner>/<repo>; default: this checkout")
 	timeout := flags.Float64("timeout", timeoutDefault, "seconds to wait for the run to complete")
@@ -242,13 +242,13 @@ func (work *session) noRun(workflow, ref string, appear time.Duration, runs []gi
 		humanSeconds(appear), strings.Join(seen, ", "))
 }
 
-// --- pr-find -----------------------------------------------------------------------------------
+// --- jst land find -----------------------------------------------------------------------------------
 
 var pullStates = map[string]bool{"open": true, "closed": true, "merged": true, "all": true}
 
-func runPRFind(work *session, args []string) (int, error) {
+func runLandFind(work *session, args []string) (int, error) {
 	_, intervalDefault, _ := work.waitDefaults()
-	flags := commandFlags("pr-find", work.deps.Stderr)
+	flags := commandFlags(work.name, work.deps.Stderr)
 	head := flags.String("head", "", "the pull request's head branch")
 	search := flags.String("search", "", "GitHub search text")
 	repositoryFlag := flags.String("repo", "", "https://github.com/<owner>/<repo>; default: this checkout")
@@ -258,7 +258,7 @@ func runPRFind(work *session, args []string) (int, error) {
 		return 0, err
 	}
 	if *head == "" && *search == "" {
-		return 0, failf(exitRequest, "pr-find needs --head or --search")
+		return 0, failf(exitRequest, "%s needs --head or --search", work.name)
 	}
 	if !pullStates[*state] {
 		return 0, failf(exitRequest, "--state is open, closed, merged or all, not %q", *state)
@@ -274,7 +274,7 @@ func runPRFind(work *session, args []string) (int, error) {
 	return work.prFind(*head, *search, *state, waitSpan, interval)
 }
 
-// inState says whether a pull request is in a pr-find state ("closed" includes merged, as gh's).
+// inState says whether a pull request is in a `jst land find` state ("closed" includes merged, as gh's).
 func inState(pull githubapi.PullRequest, state string) bool {
 	switch state {
 	case "open":

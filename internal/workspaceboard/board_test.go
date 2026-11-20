@@ -14,7 +14,6 @@ import (
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
-	"github.com/zima-oss/jackstay/internal/mergequeue"
 	"github.com/zima-oss/jackstay/internal/sessionchat"
 )
 
@@ -24,7 +23,7 @@ func repository(t *testing.T, parent, name string) string {
 	if err := os.MkdirAll(filepath.Join(root, "cards"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	settings := `{"jackstay_schema":3,"project":"shared","cards":{"dir":"cards","id":"T-[0-9]+","unit":"pr","since":"2026-01-01"},"queue":{"enabled":true,"base_ref":"refs/heads/main"},"chat":{"enabled":true}}`
+	settings := `{"jackstay_schema":3,"project":"shared","cards":{"dir":"cards","id":"T-[0-9]+","unit":"pr","since":"2026-01-01"},"chat":{"enabled":true}}`
 	write(t, filepath.Join(root, "jackstay.json"), settings)
 	write(t, filepath.Join(root, "cards", "T-1-ready.md"), "---\n{\"state\":\"ready\"}\n---\nPrivate card body\n")
 	write(t, filepath.Join(root, "cards", "T-2-done.md"), "---\n{\"state\":\"done\"}\n---\n")
@@ -69,7 +68,7 @@ func TestBoardKeepsRepositoriesSeparateAndDoesNotWrite(t *testing.T) {
 	}
 	for _, row := range board.Repositories {
 		if row.Cards.Status != "ok" || len(row.Cards.Active) != 1 || row.Cards.Active[0].ID != "T-1" ||
-			row.Queue.Status != "empty" || row.Gate.Status != "none" || row.Receipt.Status != "none" ||
+			row.Gate.Status != "none" || row.Receipt.Status != "none" ||
 			row.Chat.Status != "available" || row.Chat.Sessions != 0 {
 			t.Fatalf("row: %+v", row)
 		}
@@ -106,7 +105,7 @@ func TestConfiguredMissingCardsDirectoryIsEmpty(t *testing.T) {
 	}
 }
 
-func TestBoardSharesQueueAndChatAcrossLinkedWorktrees(t *testing.T) {
+func TestBoardSharesChatAcrossLinkedWorktrees(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("JACKSTAY_HOME", home)
 	parent := t.TempDir()
@@ -118,10 +117,6 @@ func TestBoardSharesQueueAndChatAcrossLinkedWorktrees(t *testing.T) {
 	git(t, linked, "add", "feature.txt")
 	git(t, linked, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "feature")
 
-	service := mergequeue.Service{Here: root, Project: "shared", BaseRef: "refs/heads/main"}
-	if _, err := service.Enqueue(context.Background(), "refs/heads/feature"); err != nil {
-		t.Fatal(err)
-	}
 	common, err := (gitcli.Git{Dir: root}).CommonDir(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -145,9 +140,7 @@ func TestBoardSharesQueueAndChatAcrossLinkedWorktrees(t *testing.T) {
 		t.Fatalf("board: %+v", board)
 	}
 	mainRow, linkedRow := board.Repositories[0], board.Repositories[1]
-	if mainRow.Queue.Status != "queued" || mainRow.Queue.Freshness != "current" ||
-		linkedRow.Queue.Status != "queued" || linkedRow.Queue.Freshness != "current" ||
-		mainRow.Chat.Sessions != 1 || linkedRow.Chat.Sessions != 1 {
+	if mainRow.Chat.Sessions != 1 || linkedRow.Chat.Sessions != 1 {
 		t.Fatalf("shared sources: %+v %+v", mainRow, linkedRow)
 	}
 	if len(mainRow.Cards.Active) != 1 || len(linkedRow.Cards.Active) != 2 ||
@@ -194,7 +187,7 @@ func TestBoardCommandIsReadOnlyAndRequiresPaths(t *testing.T) {
 	}
 }
 
-func TestBoardMarksQueueAndEvidenceStale(t *testing.T) {
+func TestBoardMarksEvidenceStale(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("JACKSTAY_HOME", home)
 	root := repository(t, t.TempDir(), "repo")
@@ -219,32 +212,14 @@ func TestBoardMarksQueueAndEvidenceStale(t *testing.T) {
 		log.WriteByte('\n')
 	}
 	write(t, filepath.Join(home, ".all", "runs.jsonl"), log.String())
-	git(t, root, "branch", "feature")
-	service := mergequeue.Service{Here: root, Project: "shared", BaseRef: "refs/heads/main"}
-	if _, err := service.Enqueue(context.Background(), "refs/heads/feature"); err == nil {
-		// Both refs point at HEAD. Move feature below before enqueuing instead.
-		t.Fatal("queue accepted identical base and head")
-	}
-	git(t, root, "checkout", "-q", "feature")
+	git(t, root, "checkout", "-qb", "feature")
 	write(t, filepath.Join(root, "feature.txt"), "feature")
 	git(t, root, "add", "feature.txt")
 	git(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "feature")
-	if _, err := service.Enqueue(context.Background(), "refs/heads/feature"); err != nil {
-		t.Fatal(err)
-	}
 	board := Read(context.Background(), []string{root})
 	row := board.Repositories[0]
-	if board.Partial || row.Queue.Status != "queued" || row.Queue.Freshness != "current" ||
-		row.Gate.Freshness != "stale" || row.Receipt.Freshness != "stale" {
-		t.Fatalf("fresh queue and old evidence: %+v", row)
-	}
-	git(t, root, "checkout", "-q", "main")
-	write(t, filepath.Join(root, "base.txt"), "new base")
-	git(t, root, "add", "base.txt")
-	git(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "base moved")
-	board = Read(context.Background(), []string{root})
-	if board.Repositories[0].Queue.Freshness != "stale" {
-		t.Fatalf("moved base not stale: %+v", board.Repositories[0].Queue)
+	if board.Partial || row.Gate.Freshness != "stale" || row.Receipt.Freshness != "stale" {
+		t.Fatalf("old evidence: %+v", row)
 	}
 }
 

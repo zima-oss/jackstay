@@ -57,6 +57,35 @@ func (client *Client) Mutate(ctx context.Context, query string, variables map[st
 	return client.post(ctx, query, variables, out)
 }
 
+const enqueueMutation = `mutation($pullRequestId: ID!, $expectedHeadOid: GitObjectID) {
+  enqueuePullRequest(input: {pullRequestId: $pullRequestId, expectedHeadOid: $expectedHeadOid}) {
+    mergeQueueEntry { id }
+  }
+}`
+
+// Enqueue puts a pull request (by its node id) in its base's merge queue while its head is still
+// expectedHead; a write, never retried.
+func (client *Client) Enqueue(ctx context.Context, pullRequestID, expectedHead string) error {
+	if pullRequestID == "" {
+		return fmt.Errorf("the pull request's node id is unknown, so it cannot be put in the merge queue")
+	}
+	var data struct {
+		EnqueuePullRequest *struct {
+			MergeQueueEntry *struct {
+				ID string `json:"id"`
+			} `json:"mergeQueueEntry"`
+		} `json:"enqueuePullRequest"`
+	}
+	variables := map[string]any{"pullRequestId": pullRequestID, "expectedHeadOid": expectedHead}
+	if err := client.Mutate(ctx, enqueueMutation, variables, &data); err != nil {
+		return err
+	}
+	if data.EnqueuePullRequest == nil || data.EnqueuePullRequest.MergeQueueEntry == nil {
+		return fmt.Errorf("GitHub answered the merge queue request without a queue entry")
+	}
+	return nil
+}
+
 // Query is a read-only GraphQL query, retried as every read.
 func (client *Client) Query(ctx context.Context, query string, variables map[string]any, out any) error {
 	_, err := Read(ctx, client.retry, func() (struct{}, error) {
