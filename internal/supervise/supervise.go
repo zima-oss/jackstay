@@ -77,6 +77,8 @@ const (
 // Spec is what to run and how.
 type Spec struct {
 	Argv []string
+	// TraceArgv is the argv kept in telemetry when the real one may hold a credential; nil keeps Argv.
+	TraceArgv []string
 	// Env is the command's environment; nil is jackstay's own.
 	Env  []string
 	Dir  string
@@ -448,13 +450,20 @@ func Run(signals *Signals, spec Spec) (Outcome, error) {
 
 // startChildSpan is the span of the process a run starts (observability.md, section 2): under
 // the span of the run's context, else the innermost open one; its TRACEPARENT is the child's.
+func traceArgv(spec Spec) []string {
+	if spec.TraceArgv != nil {
+		return spec.TraceArgv
+	}
+	return spec.Argv
+}
+
 func startChildSpan(spec Spec) *telemetry.Span {
 	parent := spec.Trace
 	if parent == nil {
 		parent = spec.Context
 	}
 	_, span := telemetry.Start(parent, "exec "+filepath.Base(spec.Argv[0]), telemetry.Options{
-		Kind: trace.SpanKindClient, Attributes: []attribute.KeyValue{attribute.StringSlice(telemetry.AttrChildArgv, spec.Argv)}})
+		Kind: trace.SpanKindClient, Attributes: []attribute.KeyValue{attribute.StringSlice(telemetry.AttrChildArgv, traceArgv(spec))}})
 	return span
 }
 

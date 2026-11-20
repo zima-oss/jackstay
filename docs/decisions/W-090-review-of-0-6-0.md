@@ -34,5 +34,8 @@ The four parts land as separate changes, in the order above; each holds from its
 
 `jst review pool` and the `review.pool` key are gone; there was no release with them. A review run
 in the background is listed and stopped with `jst procs`. A changed model, effort, command or
-isolation pays every reviewer again. Reviewers may now reach the network and read outside the view;
-what they must not read is denied by path and by name.
+isolation pays every reviewer again. Reviewers may now reach the network and read outside the view,
+so instructions planted in a reviewed change could send out what a reviewer can read: the risk is
+accepted for efficiency, and narrowed by denying the credentials by path and by name (the other
+reviewer's login included) and leaving `.env` contents out of the patches. Both reviewers deny `.env`
+files by a pattern on macOS; on Linux Codex denies none until its rule is redesigned.

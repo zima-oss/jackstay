@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/flock"
+	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/access"
 	"github.com/zima-oss/jackstay/internal/review/claude"
 	"github.com/zima-oss/jackstay/internal/review/codex"
 	"github.com/zima-oss/jackstay/internal/review/runner"
@@ -108,7 +110,12 @@ func RealMachine(shared func(parts ...string) (string, error)) (Machine, error) 
 				}
 			}
 			if usesCodex {
-				return codex.CheckEnvironment(codex.Home(os.Environ()), marker)
+				if reason := codex.CheckEnvironment(codex.Home(os.Environ()), marker); reason != "" {
+					return reason
+				}
+			}
+			if slices.ContainsFunc(reviewers, func(reviewer ReviewerSettings) bool { return reviewer.Name == claude.Name }) {
+				return claude.CheckEnvironment(claude.ConfigFile(os.Environ(), homedir.AccountHome()))
 			}
 			return ""
 		},
@@ -483,7 +490,7 @@ func (round Round) sourceFailure(planned plan, folder, reason string) Result {
 	ended := round.Machine.Now().Format(time.RFC3339)
 	run := ReviewerRun{Reviewer: "source-view", Exit: -1, Started: ended, Ended: ended,
 		Outcome: runner.OutcomeFailed, Reason: reason}
-	_ = writeJSON(filepath.Join(folder, "source-view", "run.json"), run)
+	_ = writeRun(filepath.Join(folder, "source-view", "run.json"), run)
 	_ = writeFileWhole(filepath.Join(folder, "report.md"), []byte(FailureReport(planned.task, planned.attempt, []ReviewerRun{run})))
 	_ = round.Store.AppendIndex(failedLines(planned, []ReviewerRun{run}, folder))
 	return Result{Status: ExitReviewer, Folder: folder, Next: reason + "; read the report, then rerun"}
@@ -567,7 +574,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		if run.Ended == "" {
 			run.Ended = round.Machine.Now().Format(time.RFC3339)
 		}
-		_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
+		_ = writeRun(filepath.Join(reviewerFolder, "run.json"), run)
 		return run, Answer{}
 	}
 	if err := os.MkdirAll(reviewerFolder, 0o700); err != nil {
@@ -607,11 +614,11 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 	defer func() { endAgent(agent, run, reviewerFolder) }()
 	result := round.Machine.RunReviewer(agentCtx, runner.Request{
 		Reviewer: name, Command: reviewer.Command, Model: reviewer.Model, Effort: reviewer.Effort,
-		Timeout: time.Duration(reviewer.TimeoutMinutes) * time.Minute, Isolation: reviewer.Isolation,
+		Timeout: time.Duration(reviewer.TimeoutMinutes) * time.Minute, Isolation: reviewer.Isolation, MCPServers: reviewer.MCPServers,
 		Tree: tree, PinnedSource: true, RepositoryRoot: round.RepositoryRoot, Folder: reviewerFolder, Prompt: prompt, SchemaPath: schemaPath, Answered: startLock.Release,
 	})
 	startLock.Release()
-	run.Argv, run.Exit = result.Argv, result.Exit
+	run.Argv, run.Exit = redactedArgv(result.Argv), result.Exit // round.json keeps the runs too
 	run.Started, run.Ended = result.Started.Format(time.RFC3339), result.Ended.Format(time.RFC3339)
 	run.Seconds = result.Ended.Sub(result.Started).Seconds()
 	if result.Outcome != runner.OutcomeDone {
@@ -628,7 +635,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		return finish(OutcomeIncomplete, strings.TrimSpace(answer.Summary))
 	}
 	run.Outcome = runner.OutcomeDone
-	_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
+	_ = writeRun(filepath.Join(reviewerFolder, "run.json"), run)
 	return run, answer
 }
 
@@ -741,3 +748,12 @@ const (
 	OutcomeIncomplete   = "incomplete"
 	OutcomeNoSlot       = "no-slot"
 )
+
+// redactedArgv is argv as kept in run.json and round.json (access.RedactedArgv).
+func redactedArgv(argv []string) []string { return access.RedactedArgv(argv) }
+
+// writeRun writes a run's record, its argv redacted (redactedArgv): the one way run.json is written.
+func writeRun(path string, run ReviewerRun) error {
+	run.Argv = redactedArgv(run.Argv)
+	return writeJSON(path, run)
+}

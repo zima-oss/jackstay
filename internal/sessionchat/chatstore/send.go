@@ -574,6 +574,16 @@ func (transaction *transaction) makeRoom(plan planned, charge int64) error {
 	if measured.Messages < messages && deliverystate.Admit(measured.Bytes, charge, limit) {
 		return nil
 	}
+	// Short of room: the sweep runs, then done messages go, oldest first, and room is measured again.
+	if err := transaction.freeRoom(charge, limit, messages); err != nil {
+		return err
+	}
+	if measured, err = transaction.measure(); err != nil {
+		return err
+	}
+	if measured.Messages < messages && deliverystate.Admit(measured.Bytes, charge, limit) {
+		return nil
+	}
 	return refuse(ReasonCapacity, "the chat store is full; wait for its sweep to free room")
 }
 
@@ -753,6 +763,15 @@ func (transaction *transaction) duplicateOf(senderKey, key string) (SendResult, 
 // subscribeIdle is a standalone notify_when_idle (section 4.9): nothing is stored but the
 // subscription on the recipient's record, or, when the recipient is idle now, the notice at once.
 func (transaction *transaction) subscribeIdle(watcher, recipient Session, sessions []Session) (SendResult, error) {
+	// The subscription this one replaces gets its own outcome first, if it has one by now.
+	reconciled, err := transaction.reconcileWatchers(hashKey(recipient.Key))
+	if err != nil {
+		return SendResult{}, err
+	}
+	recipient = reconciled
+	if watcher, err = transaction.readSession(hashKey(watcher.Key)); err != nil { // owe may have written it
+		return SendResult{}, err
+	}
 	about := "[" + recipient.Ref + "]"
 	result := SendResult{Outcome: OutcomeSubscribed, Watching: sessionAddress(recipient, sessions)}
 	for _, notice := range watcher.Notices {

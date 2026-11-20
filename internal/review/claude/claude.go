@@ -5,16 +5,21 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/access"
 	"github.com/zima-oss/jackstay/internal/review/runner"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 	"github.com/zima-oss/jackstay/internal/supervise"
@@ -55,20 +60,49 @@ func restrictedVersion(text string) string {
 	return parts[1]
 }
 
-func environment(environ []string) []string {
+func environment(environ []string, temporary string) []string {
 	if environ == nil {
 		environ = os.Environ()
 	}
-	var kept []string
+	return access.Environment(environ, access.Claude, temporary)
+}
+
+func environOf(request runner.Request) []string {
+	if request.Environ != nil {
+		return request.Environ
+	}
+	return os.Environ()
+}
+
+// Temporary is the reviewer's own folder for temporary files.
+func Temporary(request runner.Request) string { return filepath.Join(request.Folder, "tmp") }
+
+// ConfigFile is the file Claude Code keeps its state in, and must be able to write.
+func ConfigFile(environ []string, home string) string {
 	for _, pair := range environ {
-		name, _, _ := strings.Cut(pair, "=")
-		switch name {
-		case "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "CLAUDE_CONFIG_DIR",
-			"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN":
-			kept = append(kept, pair)
+		if value, ok := strings.CutPrefix(pair, "CLAUDE_CONFIG_DIR="); ok && value != "" {
+			return filepath.Join(value, ".claude.json")
 		}
 	}
-	return kept
+	return filepath.Join(home, ".claude.json")
+}
+
+// CheckEnvironment refuses a run that must not start, as Codex's does (docs/design/review.md
+// section 2): Claude Code cannot write its own state here, as inside an agent's sandbox. "" when
+// the run may start; a missing file is made by Claude Code itself.
+func CheckEnvironment(configFile string) string {
+	file, err := os.OpenFile(configFile, os.O_WRONLY|os.O_APPEND, 0) // #nosec G304 -- Claude Code's own state file
+	if errors.Is(err, os.ErrNotExist) {
+		return ""
+	}
+	if err != nil {
+		if errors.Is(err, os.ErrPermission) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
+			return "Claude Code cannot save its state here (" + configFile + " is not writable): run `jst review` outside the sandbox"
+		}
+		return "Claude Code's state cannot be opened: " + err.Error()
+	}
+	_ = file.Close()
+	return ""
 }
 
 // Probe asks the CLI's local version. It makes no model request or login attempt.
@@ -79,7 +113,7 @@ func Probe(ctx context.Context, command string) (string, error) {
 	}
 	probe, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	captured, err := supervise.Capture(probe, []string{path, "--version"}, "", environment(nil), nil)
+	captured, err := supervise.Capture(probe, []string{path, "--version"}, "", environment(nil, ""), nil)
 	if err != nil || captured.Status != 0 || captured.Incomplete != "" {
 		return "", fmt.Errorf("could not read a complete version from Claude Code (%s)", command)
 	}
@@ -90,11 +124,44 @@ func Probe(ctx context.Context, command string) (string, error) {
 	return version, nil
 }
 
+// tools are what the reviewer may use: reading and searching files anywhere, and the web. No tool
+// that writes or runs a command.
+var tools = []string{"Read", "Glob", "Grep", "WebFetch", "WebSearch"}
+
+// Settings is the reviewer's access profile as Claude Code settings: reading the account's
+// secrets and `.env` files is denied, whatever the working folders.
+func Settings(home string, environ []string) string {
+	var deny []string
+	for _, path := range access.SecretPaths(home, access.Claude, environ) {
+		for _, tool := range []string{"Read", "Glob", "Grep"} {
+			deny = append(deny, tool+"(/"+path+"/**)", tool+"(/"+path+")")
+		}
+	}
+	for _, glob := range access.SecretFileGlobs {
+		for _, tool := range []string{"Read", "Glob", "Grep"} {
+			deny = append(deny, tool+"("+glob+")")
+		}
+	}
+	data, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": deny}, "disableAllHooks": true})
+	return string(data)
+}
+
 func argv(request runner.Request, executable string, schema []byte) []string {
+	allowed := slices.Clone(tools)
+	servers := map[string]any{}
+	for name, server := range request.MCPServers {
+		servers[name] = map[string]any{"command": server.Command, "args": server.Args}
+		allowed = append(allowed, "mcp__"+name+"__*")
+	}
+	mcp, _ := json.Marshal(map[string]any{"mcpServers": servers})
 	words := []string{executable, "--print", "--restricted", "--safe-mode", "--no-session-persistence",
 		"--output-format", "json", "--json-schema", string(schema),
-		"--permission-mode", "dontAsk", "--tools", "Read,Glob,Grep", "--allowedTools", "Read,Glob,Grep",
-		"--disallowedTools", "mcp__*", "--strict-mcp-config", "--mcp-config", `{"mcpServers":{}}`}
+		"--permission-mode", "dontAsk", "--tools", strings.Join(tools, ","), "--allowedTools", strings.Join(allowed, ","),
+		"--add-dir", "/", "--settings", Settings(homedir.AccountHome(), environOf(request)),
+		"--strict-mcp-config", "--mcp-config", string(mcp)}
+	if len(request.MCPServers) == 0 {
+		words = append(words, "--disallowedTools", "mcp__*")
+	}
 	if request.Model != "" {
 		words = append(words, "--model="+request.Model)
 	}
@@ -154,9 +221,14 @@ func Run(ctx context.Context, request runner.Request) runner.Result {
 		return finish(runner.OutcomeFailed, "the review schema could not be read")
 	}
 	result.Argv = argv(request, path, schema)
+	temporary := Temporary(request)
+	if err := os.MkdirAll(temporary, 0o700); err != nil {
+		return finish(runner.OutcomeFailed, "the reviewer's temporary folder could not be made")
+	}
 	bounded, cancel := context.WithTimeout(ctx, request.Timeout)
 	defer cancel()
-	captured, err := supervise.Capture(bounded, result.Argv, request.Tree, environment(request.Environ), request.Prompt)
+	captured, err := supervise.CaptureTraced(bounded, result.Argv, access.RedactedArgv(result.Argv), request.Tree,
+		environment(request.Environ, temporary), request.Prompt)
 	result.Exit = captured.Status
 	switch {
 	case ctx.Err() != nil:
