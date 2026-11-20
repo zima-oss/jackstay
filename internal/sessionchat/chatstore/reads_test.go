@@ -907,7 +907,9 @@ func TestABodyThatFailsToLoadMarksNothingRead(t *testing.T) {
 	}
 }
 
-func TestANoticeThatCannotBeMarkedIsNotShown(t *testing.T) {
+// Notices come at least once (W-096): one whose mark cannot be written is shown, stays owed, and is
+// shown again on the next read, then no more.
+func TestANoticeThatCannotBeMarkedComesAgain(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:b", "b", alpha, StateIdle)
@@ -927,11 +929,17 @@ func TestANoticeThatCannotBeMarkedIsNotShown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Notices) != 0 || f.delivery(sent.MessageID, "cc:b").Notice != "owed" {
-		t.Skipf("this account writes a read-only folder (root): %+v", result)
+	if f.delivery(sent.MessageID, "cc:b").Notice != "owed" {
+		t.Skip("this account writes a read-only folder (root)")
+	}
+	if len(result.Notices) != 1 {
+		t.Fatalf("the notice is shown although its mark failed: %+v", result)
 	}
 	if again := f.inbox("cc:a", unread()); len(again.Notices) != 1 {
-		t.Fatalf("the notice is shown once it can be marked: %+v", again)
+		t.Fatalf("a notice whose mark failed is shown again: %+v", again)
+	}
+	if third := f.inbox("cc:a", unread()); len(third.Notices) != 0 {
+		t.Fatalf("a marked notice is not shown again: %+v", third)
 	}
 }
 
@@ -1152,7 +1160,7 @@ func TestTheSweepFinishesARemovalStoppedAfterAnyStep(t *testing.T) {
 	_, _, all, _ := setUp(t)
 	for done := 1; done < len(all); done++ {
 		t.Run(fmt.Sprintf("after step %d", done), func(t *testing.T) {
-			f, envelope, steps, empty := setUp(t)
+			f, _, steps, empty := setUp(t)
 			for _, step := range steps[:done] { // the process is killed after these
 				if err := os.RemoveAll(step.path); err != nil {
 					t.Fatal(err)
@@ -1167,31 +1175,9 @@ func TestTheSweepFinishesARemovalStoppedAfterAnyStep(t *testing.T) {
 					t.Fatalf("%s is left after the sweep", step.path)
 				}
 			}
-			if exists(f.store.place.commit(envelope.ID)) {
-				t.Fatal("the commit record is left")
-			}
 			if after := f.measured().Bytes; after != empty {
 				t.Fatalf("every charge is freed: %d left over %d", after, empty)
 			}
 		})
-	}
-}
-
-// A machine crash can bring back a commit record whose files a removal already unlinked; the sweep
-// takes it for a removal under way and finishes it, whatever retention says.
-func TestACommitRecordLeftAloneIsARemovalUnderWay(t *testing.T) {
-	f := newFixture(t)
-	f.session("cc:a", "a", alpha, StateIdle)
-	f.session("cc:b", "b", alpha, StateIdle)
-	sent := f.send("cc:a", SendInput{To: "b", Message: "half removed"})
-	if err := os.Remove(f.store.place.envelope(sent.MessageID)); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.store.Sweep(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if exists(f.store.place.commit(sent.MessageID)) || exists(f.store.place.body(sent.MessageID)) ||
-		exists(f.store.place.deliveries(sent.MessageID)) {
-		t.Fatal("the removal is finished")
 	}
 }

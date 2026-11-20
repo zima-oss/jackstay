@@ -50,7 +50,8 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | `NoPushStartsAfterClose` | delivery | no steer of a closed request begins |
 | `NoWriteAfterFreeze` | delivery | no pass that still owns its claim writes a question after its mailbox froze |
 | `DeadlineClosesRequest` | delivery | a step that finds the deadline passed closes an open request, whatever its delivery's state |
-| `NoticeOnce` | delivery | each `refused`, `dropped` or `expired` delivery owes exactly one notice; a request and its delivery that expire together owe one between them |
+| `NoticeOwedOnce` | delivery | the table owes each `refused`, `dropped` or `expired` delivery exactly one notice; a request and its delivery that expire together owe one between them |
+| `NoticeAtLeastOnce` | delivery | a notice marked shown reached the sender at least once; a stop between the page and the mark shows it again (W-096) |
 | `RequestAgrees` | delivery | an answered request's delivery is final |
 | `FinalStable` | delivery | final states are never left (a step property) |
 | `DeadlineFirst` | delivery | an overdue `pending` delivery moves only to `expired` (or `dropped` at an end) |
@@ -64,12 +65,15 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | `CommitHasFiles` | send | a commit record never stands for files that are gone |
 | `RequestAgrees` | send | the request a response answers is answered or closed once, never overwritten |
 
-TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **7,104** distinct states for a delivery (34,358
+TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **21,072** distinct states for a delivery (107,618
 generated, the temporal properties checked over the whole graph) and **335** for a send (607
-generated) with no error. The Go exploration reaches the same 7,104 and 335 states, and its tests
-fail if either count changes, so the two forms cannot drift apart unnoticed. Before W-095, when the
-native route still pushed the text, both reached 30,736 delivery states; the doorbell model is the
-same world with the native push, the engine's hold and the hooks' announcement taken out.
+generated) with no error. The Go exploration reaches the same 21,072 and 335 states, and its tests
+fail if either count changes, so the two forms cannot drift apart unnoticed. Showing a notice, with
+a stop between the page and its mark, took the delivery model from 7,104 states to 21,072
+([W-096](../../decisions/W-096-clear-limits-over-more-machinery.md)).
+Before W-095, when the native route still pushed the text, both reached 30,736 delivery states; the
+doorbell model is the same world with the native push, the engine's hold and the hooks'
+announcement taken out.
 With each constant below set
 TRUE, TLC and the Go test both report the same broken property.
 
@@ -85,6 +89,7 @@ gives this counterexample, and the Go test fails if it ever stops doing so.
 | `DeadlineSkipsRequest` | 4.10 | the deadline passes; a pass's claim expires the request's delivery but not the request, and nobody owes the notice. Fix: every deadline check closes both |
 | `DeadlineNeedsPending` | 4.10 | (review round 1) the deadline passes; a read of a `delivered` request reads it and leaves the request open. Fix: a deadline check closes the request whatever its delivery's state |
 | `FreezeLeavesDelivery` | 4.4, 9.1 | the requesting mailbox freezes (or a closure crashes between its two writes); the closed question is still steered to the author. Fix: the freeze expires the delivery with its request, and every step first repairs a closed request's pending delivery |
+| `MarkBeforeShow` | 8.5 | (W-096) a notice is marked shown, then the step stops before its page is returned; the sender never sees it. Fix: the page first, then the mark, so a stop shows the notice again |
 | `FreezeIgnoresPushes` | 9.1 | (review rounds 1 and 2) a pass claims a question; the mailbox freezes; the pass writes it to the author. Redesigned: the freeze waits until no question is `sending` |
 | `RecoveryIgnoresSync` | 7.2, 7.3 | the commit folder cannot be fsynced; recovery rolls forward anyway; a machine crash loses the commit; the answer it applied stands for nothing (and a retry is told `duplicate` of nothing). Fix: an unsynced commit stops the operation; recovery fsyncs before it rolls forward |
 | `DerivedChargedLate` | 7.4 | sessions fill the store; a send is admitted for its own records; rolling it forward drops its markers. Fix: a send is charged for every record it creates |

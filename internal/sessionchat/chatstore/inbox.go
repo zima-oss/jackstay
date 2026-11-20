@@ -170,9 +170,8 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 					result.Messages[entry.row].State = updated.State
 				}
 			}
-			shown := transaction.markShown(hash, notices)
-			result.Notices = noticeLines(shown)
-			result.NoticesMore += len(notices) - len(shown)
+			result.Notices = noticeLines(notices)
+			transaction.markShown(hash, notices)
 			return nil
 		}
 		for index := start; index < len(visible) && len(result.Messages) < input.Limit; index++ {

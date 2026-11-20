@@ -316,7 +316,8 @@ A request is a direct message (never to a channel) with a `request` object:
   delivery share `expires_at` and expire **in one step**: whichever check finds the deadline (the
   sweep, the bridge's claim, a refused doorbell, a read, an ack, a response, section 4.10) closes the
   request and, when the delivery is `pending`, expires the delivery in the same locked step, without a
-  notice of its own. So the requester is told once, never twice and never not at all. The request's
+  notice of its own. So the requester is owed one notice, never two and never none (shown at least
+  once, section 8.5). The request's
   commit record is written first and the delivery second; a crash between the two leaves a closed
   request with a `pending` delivery, and every step that touches that delivery (a claim, a read, the
   sweep) first expires it, so a closed question is never claimed or read as open (the model's third
@@ -1060,7 +1061,8 @@ and gets `duplicate`.
 
 **A `duplicate` names a message that exists.** A retry is answered `duplicate` only when the message
 its idempotency entry names still has its commit record. An entry whose message is gone (removed by
-retention) is a leftover: it is removed and the send is fresh. So a key is remembered as long as its message is
+retention, or by a removal that a stop cut short between the commit record and the entry) is a
+leftover: it is removed and the send is fresh. So a key is remembered as long as its message is
 kept, no longer (the model's second review found the phantom `duplicate`).
 
 **Nothing is served before it is durable.** A message is served (steered, rung for, returned by a
@@ -1074,15 +1076,15 @@ at and skip (and, holding the exclusive lock, remove) a marker whose delivery is
 make reading fast; they are never the truth.
 
 **The sweep** (section 7.4) is a series of single-record changes and removals, each idempotent and
-rolled forward: there is nothing to roll back. A removal unlinks a message's files in the reverse of
-the order its send made them: its markers, its deliveries, the request index, the idempotency entry
-if it names the message, the body, the envelope, and the commit record last, then fsyncs the commit
-records' folder (the owner's ruling after the reads' review: an ordering rule, not a journal of
-removals). Each step is idempotent: a file already gone counts as done, and any other error stops
-the removal. So a removal cut short anywhere leaves the commit record, and the next sweep finds it. A
-commit record whose envelope is gone, or whose message lacks a delivery (a send writes every delivery
-before its commit), is a **removal under way**: readers take the message as absent, and the sweep
-finishes the removal, whatever retention says.
+rolled forward: there is nothing to roll back. A removal unlinks the commit record first and fsyncs
+its folder, so the message disappears at once and a machine crash cannot bring the record back over
+files already gone. Then it removes the message's markers, its deliveries, the request index, the
+idempotency entry if it names the message, the body, and the **envelope last**: the envelope is the
+one file a stopped removal is found by, so it goes last (the order of Maildir and of git's object
+store, the owner's ruling after the reads' review). Each step is idempotent: a file already gone
+counts as done, and any other error stops the removal. An envelope whose message has neither a
+commit record nor a journal entry, each known absent, is a removal a stop cut short, and the next
+sweep finishes it.
 
 A push to an engine (section 8) happens **outside** the lock: the pusher records `sending` under the
 lock, releases it, pushes, then takes the lock again to record the outcome.
@@ -1129,18 +1131,39 @@ removes a message that is not done, so a body a recipient may still fetch, or an
 never lost to make room;
 if room is still short, the send is refused with `capacity`.
 
-**What removal does not promise.** The removal order covers a process stopped between any two of its
-steps. It does not cover a stopped process followed by a machine crash before the folders it
-touched are fsynced: only the commit records' folder is fsynced, so the crash can bring back some of
-the files the removal had unlinked. When what comes back still reads as a removal under way (a commit
-record without its envelope or a delivery), the sweep finishes it; otherwise the restored files stay
-until retention removes them again, charged meanwhile. A restored idempotency entry can answer one
-retry `duplicate` of a message being removed. No message whose commit record is durable is lost,
-and none is served twice.
-
 Events are messages, but they are stored only while the store stays under 90% of each bound; an
 event that does not fit is not stored, and `Publish` reports it (section 10). So a full store refuses
 new sends and events, while every receipt and notice already owed stays correct.
+
+### 7.5 What the store promises, and what it does not
+
+Each mechanism has a plain behaviour and stated limits ([W-096](../decisions/W-096-clear-limits-over-more-machinery.md)); the store does not chase
+every combination of faults.
+
+Promised:
+
+- **Messages** are never lost or doubled by a process stopped at any point and started again: a send
+  and a response are atomic (section 7.3), and a retry with the same `idempotency_key` is `duplicate`
+  while the message exists.
+- **Notices and idle firings** are delivered **at least once**: never lost to a stop or a fault of
+  the store, possibly repeated (section 8.5).
+- **A removal** stopped between any two of its steps is finished by the next sweep (section 7.3).
+- **A transient disk error** propagates to the caller and is never taken as an outcome.
+
+Not promised:
+
+- **Exactly once for notices and idle firings.** A stop, or a mark that cannot be written, shows a
+  notice again.
+- **The last stretch to the client.** A process stopped after a step and before its result reaches
+  the client leaves what the step marked (a read receipt, a notice shown) marked. The outbox,
+  `chat.thread` and `chat.whoami` still hold it, so a sender can always ask.
+- **A stop followed by a machine crash.** Only the folders the rules above name are fsynced. A
+  machine crash right after a stopped removal can bring back files it had unlinked after the commit
+  record: those found by their envelope are removed again by the next sweep; the others stay,
+  charged, with nothing to find them by. This leak is accepted as rare. A restored idempotency entry
+  without its commit record is a leftover and makes the retry fresh (section 7.3).
+- **A retry across a disk error.** An idle observation that a read error stops is not retried: the
+  error goes to the hook, and the subscription ends as usual, with an expiry notice.
 
 ## 8. Delivery to Claude Code
 
@@ -1300,11 +1323,15 @@ shown to the session it is owed to, without being stored as a message, in the `n
 `chat.inbox` result: at most 50 lines, with the number left in `notices_more`. A doorbell says that
 notices wait, and how many; it shows none of them.
 
-A notice is shown **at most once**: `chat.inbox` marks exactly the notices it includes `shown` in the
-same locked step that returns them. Nothing is lost for good: the outbox holds every delivery
-receipt and its reason, and `chat.whoami` lists the session's idle notices of the last 24 h, so a
-sender can always ask. A notice is one line: what happened, to which message, and the reason, for
-example `msg_… to web@fix-login [3fa9c1]: expired unread`.
+A notice is shown **at least once**
+([W-096](../decisions/W-096-clear-limits-over-more-machinery.md)): `chat.inbox` builds its page,
+then marks the notices it includes `shown` in the same locked step. A mark that cannot be written
+leaves the notice owed, and it comes again on a later read; a mark is neither retried nor fsynced
+there, so a machine crash can also bring one back. A notice can thus be shown twice, and is never
+dropped by a fault of the store (section 7.5). Nothing is lost for good: the outbox holds every
+delivery receipt and its reason, and `chat.whoami` lists the session's idle notices of the last
+24 h, so a sender can always ask. A notice is one line: what happened, to which message, and the
+reason, for example `msg_… to web@fix-login [3fa9c1]: expired unread`.
 
 ### 8.6 Claude Code channels, opt-in
 
@@ -1599,8 +1626,8 @@ narrower than the last, and review alone does not end that. The model is in
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  TLC and the tests reach the same states, 7,104 for a delivery and 335 for a send (30,736 for a
-  delivery before W-095), and the tests fail if either count changes.
+  TLC and the tests reach the same states, 21,072 for a delivery and 335 for a send (7,104 before
+  notices were shown at least once, 30,736 before W-095), and the tests fail if either count changes.
 
 Checked: the bridge steers a message at most once, and every other route shows its text only
 through the inbox read (W-095); a crash never makes a steer look not made; final states are never
@@ -1661,8 +1688,8 @@ durable, so a machine crash could restore a record standing for nothing (7.3).
   `chat.inbox` or `chat.thread`; no doorbell carries any of a message's text; a steer, a refused
   doorbell, a read, an ack and a response each expire an overdue delivery or request themselves,
   before the sweep.
-- **Expiry and notices.** With the injected clock: delivery expiry, request expiry, a stale `sending` becoming `unconfirmed`; exactly one owed notice each, shown once
-  by whichever path comes first.
+- **Expiry and notices.** With the injected clock: delivery expiry, request expiry, a stale `sending` becoming `unconfirmed`; exactly one owed notice each, shown at
+  least once, and again when its mark fails.
 - **Output budget.** `chat.inbox`, `chat.outbox` and `chat.thread` on generated inputs (32 KiB bodies
   and every non-body field at its bound, of quotes and control characters): the result text stays
   under 48 KiB, following `next_cursor` always ends and reassembles each body exactly, a send whose

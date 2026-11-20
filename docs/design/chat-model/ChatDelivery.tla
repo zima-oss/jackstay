@@ -7,8 +7,8 @@
 (* Codex bridge, through one steer. Modelled: two bridge passes that may   *)
 (* pause or crash at any step, the native doorbell and its refusal, the    *)
 (* recipient's reads, acks and answers, the sweep, the deadline, the       *)
-(* recipient's end, and a review mailbox's freeze, of the recipient or of  *)
-(* the requester.                                                          *)
+(* recipient's end, a review mailbox's freeze, of the recipient or of      *)
+(* the requester, and the sender's inbox showing an owed notice.           *)
 (*                                                                         *)
 (* The transitions are the table of internal/sessionchat/deliverystate,    *)
 (* written again here operator for operator (Apply, ApplyMessage,          *)
@@ -26,7 +26,8 @@ CONSTANTS
     FreezeLeavesDelivery,   \* section 9.1 before: a freeze closes requests, not their deliveries
     DeadlineSkipsRequest,   \* section 4.10 before: a step's deadline check expires the delivery only
     DeadlineNeedsPending,   \* review round 1: a deadline closed a request only if its delivery could expire
-    FreezeIgnoresPushes     \* review rounds 1 and 2: a freeze closed its questions while one was being steered
+    FreezeIgnoresPushes,    \* review rounds 1 and 2: a freeze closed its questions while one was being steered
+    MarkBeforeShow          \* section 8.5 before W-096: a notice was marked shown, then its page returned
 
 Routes    == {"native", "hooks", "bridge", "mailbox", "poll"}
 States    == {"pending", "sending", "delivered", "read", "acted", "refused", "dropped", "expired"}
@@ -46,10 +47,11 @@ VARIABLES
     frozen,       \* the requesting mailbox froze
     writtenFrozen,\* a pass that still owned its claim wrote a question its mailbox had frozen
     overdue, alive,
-    dNotices, rNotices            \* times each record's notice became owed
+    dNotices, rNotices,           \* times each record's notice became owed
+    noticeShows                   \* times a notice's line reached the sender (2 stands for more than once)
 
 vars == <<d, rq, isRequest, fromMailbox, engine, pass, shown, requestKnown,
-          pushedClosed, lateOpen, frozen, writtenFrozen, overdue, alive, dNotices, rNotices>>
+          pushedClosed, lateOpen, frozen, writtenFrozen, overdue, alive, dNotices, rNotices, noticeShows>>
 
 ----------------------------------------------------------------------------
 (* The table (deliverystate.Apply). *)
@@ -175,8 +177,9 @@ SetMsg(r) ==
     /\ dNotices' = dNotices + (IF d.notice = "" /\ r.d.notice = "owed" THEN 1 ELSE 0)
     /\ rNotices' = rNotices + (IF rq.notice = "" /\ r.rq.notice = "owed" THEN 1 ELSE 0)
     /\ lateOpen' = (lateOpen \/ ("late" \in DOMAIN r /\ r.late))
+    /\ UNCHANGED noticeShows
 
-KeepMsg == UNCHANGED <<d, rq, dNotices, rNotices, lateOpen>>
+KeepMsg == UNCHANGED <<d, rq, dNotices, rNotices, lateOpen, noticeShows>>
 
 ----------------------------------------------------------------------------
 Init ==
@@ -192,7 +195,7 @@ Init ==
     /\ shown = 0 /\ requestKnown = FALSE /\ pushedClosed = FALSE
     /\ lateOpen = FALSE /\ frozen = FALSE /\ writtenFrozen = FALSE
     /\ overdue = FALSE /\ alive = TRUE
-    /\ dNotices = 0 /\ rNotices = 0
+    /\ dNotices = 0 /\ rNotices = 0 /\ noticeShows = 0
 
 (* The bridge's passes (section 9.2): the one route that still carries a message's text. *)
 
@@ -345,12 +348,35 @@ DeadlinePasses ==
 
 Sweep == SweepStale \/ SweepExpiresRequest \/ SweepExpiresDelivery
 
+(* The sender's inbox returns an owed notice (section 8.5). A notice is marked shown only after *)
+(* its page is returned, so a stop between the two returns it again: at least once (W-096).     *)
+(* MarkBeforeShow replays the rule before: marked first, then returned, so a stop between them  *)
+(* loses the notice.                                                                             *)
+
+OneMore(n) == IF n < 2 THEN n + 1 ELSE 2
+
+Shows(record) ==
+    \/ /\ record' = [record EXCEPT !.notice = "shown"] /\ noticeShows' = OneMore(noticeShows)
+    \/ /\ ~MarkBeforeShow /\ UNCHANGED record /\ noticeShows' = OneMore(noticeShows)   \* stopped before the mark
+    \/ /\ MarkBeforeShow /\ record' = [record EXCEPT !.notice = "shown"] /\ UNCHANGED noticeShows  \* stopped before the page
+
+ShowsDeliveryNotice ==
+    /\ d.notice = "owed" /\ Shows(d)
+    /\ UNCHANGED <<rq, dNotices, rNotices, lateOpen, frozen, writtenFrozen, isRequest, fromMailbox, engine, pass,
+                   shown, requestKnown, pushedClosed, overdue, alive>>
+
+ShowsRequestNotice ==
+    /\ rq.notice = "owed" /\ Shows(rq)
+    /\ UNCHANGED <<d, dNotices, rNotices, lateOpen, frozen, writtenFrozen, isRequest, fromMailbox, engine, pass,
+                   shown, requestKnown, pushedClosed, overdue, alive>>
+
 Next ==
     \/ \E p \in Passes : Claim(p) \/ WriteFails(p) \/ Steer(p) \/ Record(p) \/ RecordFailure(p) \/ Crash(p)
     \/ DoorbellRefused
     \/ InboxReads \/ InboxPeeks \/ Acks \/ Responds
     \/ Sweep
     \/ RecipientMailboxFreezes \/ RequestingMailboxFreezes \/ RecipientEnds \/ DeadlinePasses
+    \/ ShowsDeliveryNotice \/ ShowsRequestNotice
 
 \* The sweep runs at most every 10 minutes, but it runs (section 7.4).
 Spec == Init /\ [][Next]_vars /\ WF_vars(SweepStale) /\ WF_vars(SweepExpiresRequest)
@@ -361,7 +387,8 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(SweepStale) /\ WF_vars(SweepExpiresRequ
 
 TypeOK ==
     /\ d.route \in Routes /\ d.state \in States /\ d.attempts \in 0..MaxAttempts
-    /\ d.notice \in {"", "owed"} /\ rq.state \in {"none", "open", "answered", "expired"}
+    /\ d.notice \in {"", "owed", "shown"} /\ rq.notice \in {"", "owed", "shown"}
+    /\ rq.state \in {"none", "open", "answered", "expired"} /\ noticeShows \in 0..2
     /\ pass \in [Passes -> {"idle", "claimed", "written", "failed", "dead"}]
     /\ engine \in {"none", "accepted"}
 
@@ -386,13 +413,16 @@ NoWriteAfterFreeze == ~writtenFrozen
 \* A step that finds the deadline passed closes an open request, whatever its delivery's state.
 DeadlineClosesRequest == ~lateOpen
 
-\* Every refused, dropped or expired delivery owes exactly one notice; a request and its delivery
-\* that expire together owe one between them.
-NoticeOnce ==
+\* The table owes each refused, dropped or expired delivery exactly one notice; a request and its
+\* delivery that expire together owe one between them. Showing it is at least once (NoticeAtLeastOnce).
+NoticeOwedOnce ==
     /\ dNotices <= 1 /\ rNotices <= 1
     /\ (isRequest /\ d.state = "expired" /\ rq.state = "expired") => dNotices + rNotices = 1
     /\ d.state \in {"refused", "dropped"} => dNotices = 1
     /\ d.state = "expired" => dNotices + rNotices >= 1
+
+\* A notice marked shown reached the sender at least once; it may have reached it more than once.
+NoticeAtLeastOnce == (d.notice = "shown" \/ rq.notice = "shown") => noticeShows >= 1
 
 \* A request and its response agree: an answered request's delivery is final.
 RequestAgrees == rq.state = "answered" => d.state \in Final

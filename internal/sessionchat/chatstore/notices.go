@@ -2,7 +2,6 @@ package chatstore
 
 import (
 	"errors"
-	"path/filepath"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/durable"
@@ -111,19 +110,16 @@ func sessionNoticeWords(notice SessionNotice) string {
 	return strings.TrimSpace(notice.Kind + " " + notice.About)
 }
 
-// markShown marks the given notices shown, in the step that returns them, and returns those it
-// marked. A notice is returned only once its shown state is durable: a record that could not be
-// written, or whose folder will not sync, stays owed and is not returned. The session's own notices
-// are marked on the record as it is at that moment, so nothing written earlier in the step (an
-// arming) is undone; if that record cannot be read or written, they wait for the next read.
-func (transaction *transaction) markShown(sessionHash string, notices []OwedNotice) []OwedNotice {
-	var shown []OwedNotice
-	durableWrite := func(path string, record any, bound int) bool {
-		err := writeRecord(path, record, bound)
-		if errors.Is(err, durable.ErrNotSynced) {
-			err = transaction.store.syncFolder(filepath.Dir(path))
+// markShown marks the notices of a page shown, after the page is built (section 8.5). Notices are
+// delivered at least once (W-096): every notice on the page is returned, and one whose mark cannot be
+// written stays owed and comes again on a later read. A mark is never retried or synced in the step;
+// a machine crash that undoes it only shows the notice again. The session's own notices are marked
+// on the record as it is at that moment, so nothing written earlier in the step (an arming) is undone.
+func (transaction *transaction) markShown(sessionHash string, notices []OwedNotice) {
+	mark := func(path string, record any, bound int) {
+		if err := writeRecord(path, record, bound); err != nil && !errors.Is(err, durable.ErrNotSynced) {
+			transaction.store.log("notice-not-marked", path)
 		}
-		return err == nil
 	}
 	var sessionNotices []OwedNotice
 	for _, notice := range notices {
@@ -134,13 +130,9 @@ func (transaction *transaction) markShown(sessionHash string, notices []OwedNoti
 			if err := readRecord(path, deliveryBound, &delivery); err != nil {
 				continue
 			}
-			next, err := deliverystate.ShowNotice(deliverystate.Notice(delivery.Notice))
-			if err != nil {
-				continue
-			}
-			delivery.Notice = string(next)
-			if durableWrite(path, delivery, deliveryBound) {
-				shown = append(shown, notice)
+			if next, err := deliverystate.ShowNotice(deliverystate.Notice(delivery.Notice)); err == nil {
+				delivery.Notice = string(next)
+				mark(path, delivery, deliveryBound)
 			}
 		case onRequest:
 			var commit Commit
@@ -148,39 +140,34 @@ func (transaction *transaction) markShown(sessionHash string, notices []OwedNoti
 			if err := readRecord(path, commitBound, &commit); err != nil {
 				continue
 			}
-			next, err := deliverystate.ShowNotice(deliverystate.Notice(commit.Notice))
-			if err != nil {
-				continue
-			}
-			commit.Notice = string(next)
-			if durableWrite(path, commit, commitBound) {
-				shown = append(shown, notice)
+			if next, err := deliverystate.ShowNotice(deliverystate.Notice(commit.Notice)); err == nil {
+				commit.Notice = string(next)
+				mark(path, commit, commitBound)
 			}
 		case onSession:
 			sessionNotices = append(sessionNotices, notice)
 		}
 	}
 	if len(sessionNotices) == 0 {
-		return shown
+		return
 	}
 	current, err := transaction.readSession(sessionHash)
 	if err != nil {
-		return shown
+		return
 	}
-	var marked []OwedNotice
+	changed := false
 	for _, notice := range sessionNotices {
 		for index := range current.Notices {
 			if current.Notices[index].ID == notice.noticeID && current.Notices[index].State == string(deliverystate.NoticeOwed) {
 				current.Notices[index].State = string(deliverystate.NoticeShown)
-				marked = append(marked, notice)
+				changed = true
 			}
 		}
 	}
-	current.V = 1
-	if len(marked) > 0 && durableWrite(transaction.place.session(sessionHash), current, sessionBound) {
-		shown = append(shown, marked...)
+	if changed {
+		current.V = 1
+		mark(transaction.place.session(sessionHash), current, sessionBound)
 	}
-	return shown
 }
 
 // noticeLines is the lines of a list of notices.

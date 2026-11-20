@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/durable"
@@ -55,6 +56,9 @@ func (transaction *transaction) sweepIfDue() error {
 // notice whose pusher died, an idle subscription past its `until`), then removes the messages and
 // sessions past their retention. Each change is single-record and idempotent.
 func (transaction *transaction) sweep() error {
+	if err := transaction.finishRemovals(); err != nil {
+		return err
+	}
 	ids, err := listNames(transaction.place.commits())
 	if err != nil {
 		return err
@@ -62,12 +66,6 @@ func (transaction *transaction) sweep() error {
 	for _, name := range ids {
 		id := name[:len(name)-len(".json")]
 		if !messageIDPattern.MatchString(id) {
-			continue
-		}
-		if underway, err := transaction.removalUnderway(id); underway || err != nil {
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		found, err := transaction.message(id)
@@ -194,14 +192,14 @@ type removalStep struct {
 	folder bool // a folder, removed with whatever is left in it
 }
 
-// removalSteps are a message's files in the reverse of the order a send made them (section 7.3):
-// its markers, its deliveries, the request index, the idempotency entry if it names this message,
-// the body, the envelope, and the commit record last. So a removal cut short anywhere leaves the
-// commit record, and the next sweep finds the message and finishes it.
+// removalSteps are a message's files in removal order (section 7.3): the commit record first, so the
+// message disappears at once, then its markers, its deliveries, the request index, the idempotency
+// entry if it names this message, the body, and the envelope last. The envelope is the one file the
+// sweep finds a stopped removal by, so it goes last.
 func (transaction *transaction) removalSteps(envelope Envelope) ([]removalStep, error) {
 	place := transaction.place
 	id := envelope.ID
-	var steps []removalStep
+	steps := []removalStep{{path: place.commit(id), charge: deliverystate.CommitCharge}}
 	for _, hash := range envelope.Recipients {
 		steps = append(steps, removalStep{path: filepath.Join(place.inbox(hash), id), charge: deliverystate.MarkerCharge})
 	}
@@ -223,33 +221,22 @@ func (transaction *transaction) removalSteps(envelope Envelope) ([]removalStep, 
 			return nil, err
 		}
 	}
-	return append(steps, bareRemovalSteps(place, id, int64(envelope.BodyBytes))...), nil
+	return append(steps,
+		removalStep{path: place.body(id), charge: int64(envelope.BodyBytes)},
+		removalStep{path: place.envelope(id), charge: deliverystate.EnvelopeCharge}), nil
 }
 
-// bareRemovalSteps are the last steps of a removal: what is left once the envelope is gone.
-func bareRemovalSteps(place layout, id string, bodyBytes int64) []removalStep {
-	return []removalStep{
-		{path: place.deliveries(id), folder: true},
-		{path: place.body(id), charge: bodyBytes},
-		{path: place.envelope(id), charge: deliverystate.EnvelopeCharge},
-		{path: place.commit(id), charge: deliverystate.CommitCharge},
-	}
-}
-
-// removeMessage removes a message, step by step in removalSteps' order, then fsyncs the commits
-// folder. Each step is idempotent: a file already gone counts as done, and any other error stops
-// the removal, for the next sweep to finish. It returns the charges it freed.
+// removeMessage removes a message step by step in removalSteps' order. The commit record's unlink
+// is fsynced before anything else goes, so a machine crash cannot bring the record back over files
+// already gone. Each step is idempotent: a file already gone counts as done, and any other error
+// stops the removal, for the next sweep to finish. It returns the charges it freed.
 func (transaction *transaction) removeMessage(envelope Envelope) (int64, error) {
 	steps, err := transaction.removalSteps(envelope)
 	if err != nil {
 		return 0, err
 	}
-	return transaction.runRemoval(steps)
-}
-
-func (transaction *transaction) runRemoval(steps []removalStep) (int64, error) {
 	var freed int64
-	for _, step := range steps {
+	for index, step := range steps {
 		if step.folder {
 			if err := os.RemoveAll(step.path); err != nil {
 				return freed, err
@@ -263,32 +250,45 @@ func (transaction *transaction) runRemoval(steps []removalStep) (int64, error) {
 		case !errors.Is(err, os.ErrNotExist):
 			return freed, err
 		}
-	}
-	return freed, transaction.store.syncFolder(transaction.place.commits())
-}
-
-// removalUnderway finishes a removal a stop cut short (section 7.3): a commit record whose envelope
-// is gone, or whose message lacks a delivery a send always writes before its commit. It reports
-// whether it found one.
-func (transaction *transaction) removalUnderway(id string) (bool, error) {
-	var envelope Envelope
-	err := readRecord(transaction.place.envelope(id), envelopeBound, &envelope)
-	if errors.Is(err, os.ErrNotExist) {
-		_, err := transaction.runRemoval(bareRemovalSteps(transaction.place, id, 0))
-		transaction.store.log("removal-finished", id)
-		return true, err
-	}
-	if err != nil {
-		return false, nil // an envelope it cannot read is left as it is
-	}
-	for _, hash := range envelope.Recipients {
-		if _, err := os.Stat(transaction.place.delivery(id, hash)); errors.Is(err, os.ErrNotExist) {
-			_, err := transaction.removeMessage(envelope)
-			transaction.store.log("removal-finished", id)
-			return true, err
+		if index == 0 {
+			if err := transaction.store.syncFolder(transaction.place.commits()); err != nil {
+				return freed, err
+			}
 		}
 	}
-	return false, nil
+	return freed, nil
+}
+
+// finishRemovals finishes the removals a stop cut short (section 7.3): an envelope whose message has
+// neither a commit record nor a journal entry, each known absent (an error that leaves it unknown
+// leaves the envelope alone).
+func (transaction *transaction) finishRemovals() error {
+	names, err := listNames(transaction.place.messages())
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		id := strings.TrimSuffix(name, ".json")
+		if !messageIDPattern.MatchString(id) || !absent(transaction.place.commit(id)) ||
+			!absent(filepath.Join(transaction.place.journal(), id)) {
+			continue
+		}
+		var envelope Envelope
+		if err := readRecord(transaction.place.envelope(id), envelopeBound, &envelope); err != nil {
+			continue // an envelope it cannot read is left as it is
+		}
+		if _, err := transaction.removeMessage(envelope); err != nil {
+			return err
+		}
+		transaction.store.log("removal-finished", id)
+	}
+	return nil
+}
+
+// absent reports whether path is known not to exist.
+func absent(path string) bool {
+	_, err := os.Stat(path)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 // removeSession removes a session gone for 7 days, with its inbox markers.
