@@ -324,7 +324,7 @@ or the reverse) in the report.
 
 A run that ends in anything but `done` is not retried by jackstay — the session decides, with the reason
 and the files in front of it — and it does not take a round number: the next run of the task reuses
-N (section 4, "Attempts and rounds").
+N, and the answers the other reviewers gave (section 4, "Attempts and rounds").
 
 ## 4. Rounds, triage and W-019
 
@@ -351,6 +351,19 @@ takes round number N, so a jackstay killed at any point leaves an `attempt-<k>/`
 attempt, with its evidence, and the next run takes k+1 and still N. Rounds are numbered 1, 2, … in
 the order of those renames. With several reviewers and some failing, the attempt is not a round
 and exit is 5; the successful answers stay in its folder, readable.
+
+**Only the missing answers are paid for again** (W-090). `attempt.json` records the attempt's
+**binding**: a digest of the round number, the task, the commits (base, head, previous), the review
+policy and content policy, and the digests of the prompt, the verdict schema and the `--brief`
+file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
+starting reviewers, a run looks through the task's earlier attempts (never rounds), newest first,
+for one with its own binding; a reviewer's `answer.json` there is reused when it reads and checks as a
+fresh answer would (section 3.5), is not `incomplete`, and was given with the same model and
+effort, its `run.json` saying `done` — or missing, when jackstay was killed after the answer was
+written. The answer is copied into the new attempt, its run marked `reused` with the attempt it
+came from (the report says so), and only the other reviewers run. When every answer is found, no
+source view is built and no reviewer starts. Anything else that changed (a new commit, a round
+taken meanwhile, a new focus, model or policy) is another binding, and every reviewer runs.
 
 **Chains and the ledger.** A task's rounds form chains: round 1 starts one, `--fresh` starts
 another (a full review of `BASE..REV` with an empty ledger), every other round continues the

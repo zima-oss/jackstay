@@ -216,6 +216,8 @@ type ReviewerRun struct {
 	Exit     int      `json:"exit"`
 	Outcome  string   `json:"outcome"`
 	Reason   string   `json:"reason"`
+	// Reused names the earlier attempt whose answer this run is, "" for a run made now.
+	Reused string `json:"reused,omitempty"`
 }
 
 // RoundRecord is `round.json` (section 5).
@@ -249,6 +251,8 @@ type AttemptRecord struct {
 	Attempt int    `json:"attempt"`
 	Commit  string `json:"commit"`
 	Base    string `json:"base"`
+	// Binding names what the attempt asks its reviewers (reuse.go); "" before prompting.
+	Binding string `json:"binding,omitempty"`
 }
 
 // Entry is a round or an attempt in a task's folder.

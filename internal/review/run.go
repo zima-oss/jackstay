@@ -345,6 +345,20 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	if err := writeFileWhole(filepath.Join(folder, "prompt.md"), prompt); err != nil {
 		return usage("the attempt's folder: %v", err)
 	}
+	binding := bindingOf(planned, settings, prompt, Schema(settings.Severities), brief)
+	if err := writeJSON(filepath.Join(folder, AttemptName), AttemptRecord{Task: planned.task, Attempt: planned.attempt,
+		Commit: planned.commit, Base: planned.base, Request: round.Request, Binding: binding}); err != nil {
+		return usage("the attempt's folder: %v", err)
+	}
+	reusable := round.reusableAnswers(planned, settings, binding, names)
+	for _, name := range names {
+		if saved, ok := reusable[name]; ok {
+			fmt.Fprintf(round.Errors, "jst review: %s answered this question in %s; its answer is reused, not paid for again\n", name, saved.from)
+		}
+	}
+	if len(reusable) == len(names) {
+		return round.finish(settings, planned, names, options, folder, reusable, make([]ReviewerRun, len(names)), make([]Answer, len(names)))
+	}
 
 	queueContext, cancelQueue := context.WithTimeout(ctx, time.Duration(settings.QueueMinutes)*time.Minute)
 	defer cancelQueue()
@@ -380,6 +394,9 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	answers := make([]Answer, len(names))
 	var reviewersDone sync.WaitGroup
 	for position, name := range names {
+		if _, ok := reusable[name]; ok {
+			continue
+		}
 		reviewersDone.Add(1)
 		go func() {
 			defer reviewersDone.Done()
@@ -391,7 +408,24 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		return round.sourceFailure(planned, folder, fmt.Sprintf("removing the temporary source view: %v", err))
 	}
 	tree = ""
+	return round.finish(settings, planned, names, options, folder, reusable, runs, answers)
+}
 
+// finish turns an attempt's runs, those made now and those reused, into its outcome: a round when
+// every reviewer answered.
+func (round Round) finish(settings Settings, planned plan, names []string, options Options, folder string,
+	reusable map[string]reused, runs []ReviewerRun, answers []Answer) Result {
+	for position, name := range names {
+		saved, ok := reusable[name]
+		if !ok {
+			continue
+		}
+		run, err := saved.adopt(filepath.Join(folder, name))
+		if err != nil {
+			run.Outcome, run.Reason = runner.OutcomeFailed, "the reused answer could not be copied: "+err.Error()
+		}
+		runs[position], answers[position] = run, saved.answer
+	}
 	record := RoundRecord{Task: planned.task, Request: round.Request, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
 		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus, Policy: settings.policyID(), ContentPolicy: planned.contentPolicy,
 		PastLimit: options.PastLimit, Made: round.Machine.Now().Format(time.RFC3339), Runs: runs,
