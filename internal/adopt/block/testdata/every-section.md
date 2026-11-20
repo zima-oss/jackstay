@@ -34,6 +34,7 @@
   (`gh pr merge` is refused), never run `--confirm`.
 - **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`
   or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.
+  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.
 - **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
   Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
   Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.

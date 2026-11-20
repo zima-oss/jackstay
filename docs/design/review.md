@@ -223,6 +223,7 @@ embedded one with this project's severity words), so its last message is one JSO
       "consequence": "severe",
       "title": "one line",
       "detail": "what, where, why, and the smallest fix",
+      "ordinary_path": "",
       "repeats": ["r2-codex-F3"]
     }
   ],
@@ -232,9 +233,11 @@ embedded one with this project's severity words), so its last message is one JSO
 
 `verdict` is `approve`, `changes` (a new or still-open finding) or `incomplete` (the reason in
 `summary`, the ledger unchanged). `severity` is one of `severities`; W-048's axes are `likelihood`
-`ordinary` (happens by accident) or `unusual` (needs a deliberate setup), and `consequence`
+`ordinary` (happens by accident) or `unusual` (needs a hand-built setup or deliberate misuse), and `consequence`
 `severe` (lost work or data, an unnoticed wrong decision) or `mild`. `repeats` names ledger
-findings this one continues; `prior` answers every open finding, `fixed` or `open`. The schema
+findings this one continues; `ordinary_path` names, for an `unusual` finding, the ordinary work by
+which its setup arises by accident (empty when none does, and for an `ordinary` finding); `prior`
+answers every open finding, `fixed` or `open`. The schema
 sets `additionalProperties: false` and every member required (`[]` where empty).
 
 jackstay reads `answer.json` with `internal/strictjson` (one value, no member twice, no unknown member, 1
@@ -296,11 +299,17 @@ names any other is `inconsistent`. A finding enters the ledger in the round that
   later rounds. Found again later, it is a new finding of that round.
 
 **Triage and blocking** (W-048). With `triage` on, a finding is **realistic** when `likelihood` is
-`ordinary` or `consequence` is `severe`, **rare** when it is `unusual` and `mild`. One predicate
+`ordinary` or `consequence` is `severe` with an `ordinary_path`, **rare** when it is `unusual` and
+either `mild` or without an `ordinary_path`. One predicate
 says whether a finding blocks: its severity is in `blocking` and, with `triage` on, it is realistic
 (with `triage` off, the severity alone). A round **blocks** when any *open* finding of its ledger
 blocks after the round, found or answered `open` alike. Rare findings never block; the report lists
-them with a ready row for the project's later-findings card. The session checks the ratings.
+them with a ready row for the project's later-findings card. An `unusual` finding is realistic only
+when its `ordinary_path` names the ordinary work by which that setup arises by accident
+([W-094](../decisions/W-094-unusual-severe-findings-need-an-ordinary-path.md)): with it empty, a
+`severe` one is rare too, deferred and never blocking. The session checks the ratings, the path
+included, before it calls a finding a blocker or asks for a round past the limit; the next step
+`jst review` prints for a blocking round says so.
 
 **Places.** A place is the finding's `place` string, trimmed, with runs of spaces made one and
 compared without regard to case. The prompt lists prior places and asks for the exact string again
@@ -417,7 +426,8 @@ nothing is inferred: exit 0 only when all hold, else exit 1 with each reason tha
   repetition, round limit; not scheduling, storage or per-run overrides) and every reviewer of
   `review.use` finished (with `review.use` explicitly empty, any one completed reviewer);
 - after it, no open finding of the ledger blocks;
-- it is not redesign-due, and not past `round_limit` without `--past-limit` having been given.
+- it is not redesign-due, and not a round past `round_limit` that followed a limit round still
+  blocking by today's rule without `--past-limit` having been given.
 No other field promises anything; `blocks: false` on a record is not "reviewed". A single commit
 is checked as `REV^..REV`.
 
