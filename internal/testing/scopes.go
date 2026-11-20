@@ -135,6 +135,7 @@ func parse(args []string) (scope string, rest []string, chosen options, err erro
 // tester is one `jst test <scope>`, `list` or `plan`; every part that touches the machine can be
 // replaced in tests.
 type tester struct {
+	pin            *gatePin
 	stdout, stderr io.Writer
 	clock          supervise.Clock
 	getenv         func(string) string
@@ -295,6 +296,9 @@ func (base *tester) scope(args []string) int {
 			selectedRange = err == nil
 		}
 	}
+	if err == nil && base.pin != nil && chosen.commit == "" {
+		err = refused("the pinned gate requires an exact commit")
+	}
 	if err == nil && name == "" {
 		err = refused("which scope? " + Usage)
 	}
@@ -360,6 +364,8 @@ func (base *tester) scope(args []string) int {
 		case entry == nil:
 			err = refused("`" + name + "` is not a scope of " + proj.name + "; its scopes: " + joinComma(sortedKeys(scopes)) +
 				" (`jst test list`)")
+		case base.pin != nil && !has(entry, "steps"):
+			err = refused("the pinned gate must list its steps")
 		case has(entry, "steps") && len(rest) > 0:
 			err = refused("`" + name + "` is a list of steps and takes no names; given: " + joinSpace(rest))
 		case !has(entry, "steps") && (chosen.resume || chosen.keepGoing):

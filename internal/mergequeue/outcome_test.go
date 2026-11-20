@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/zima-oss/jackstay/internal/githubapi"
@@ -20,11 +19,36 @@ func testedHandoff(t *testing.T, service Service, pullRequest ...int) *State {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err = service.recordGate(ctx, state.Candidate, "counted-gate", []Evidence{{Key: strings.Repeat("a", 64), SHA256: strings.Repeat("b", 64)}})
+	return recordFixtureGate(t, service, state, "counted-gate")
+}
+
+func TestLegacyRecordedHandoffCanStillReconcile(t *testing.T) {
+	service, repository := fixture(t)
+	testedHandoff(t, service)
+	ctx := context.Background()
+	checked, err := service.Handoff(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return state
+	recorded, err := service.recordHandoff(ctx, checked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	place, _, err := service.place(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded.GateClaim = ""
+	if err := save(place, recorded); err != nil {
+		t.Fatal(err)
+	}
+	gitCommand(t, repository, "switch", "main")
+	gitCommand(t, repository, "merge", "--no-ff", "feature", "-m", "manual merge")
+	landed := gitCommand(t, repository, "rev-parse", "main")
+	state, err := service.Reconcile(ctx, landed)
+	if err != nil || state.Outcome == nil || !state.Outcome.Matched {
+		t.Fatalf("legacy handoff was not recoverable: %+v, %v", state, err)
+	}
 }
 
 func TestLocalLandingReconciliationPersistsAndRejectsReplacement(t *testing.T) {

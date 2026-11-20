@@ -4,6 +4,7 @@ package mergequeue
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -53,6 +54,7 @@ type State struct {
 	Candidate   string     `json:"candidate,omitempty"`
 	Tree        string     `json:"tree,omitempty"`
 	Attempt     int        `json:"attempt"`
+	GateClaim   string     `json:"gate_claim,omitempty"`
 	GateRunID   string     `json:"gate_run_id,omitempty"`
 	Receipts    []Evidence `json:"receipts,omitempty"`
 	HandoffAt   time.Time  `json:"handoff_at,omitempty"`
@@ -125,6 +127,11 @@ func read(place string) (*State, error) {
 	if state.Schema != stateSchema || state.Repository == "" || state.BaseRef == "" || state.HeadRef == "" ||
 		state.Base == "" || state.Head == "" || state.PullRequest < 0 || state.Attempt < 1 || state.Updated.IsZero() {
 		return nil, errors.New("queue state is incomplete or has an unsupported schema")
+	}
+	if state.GateClaim != "" {
+		if decoded, err := hex.DecodeString(state.GateClaim); err != nil || len(decoded) != 16 || hex.EncodeToString(decoded) != state.GateClaim {
+			return nil, errors.New("queue test claim is invalid")
+		}
 	}
 	if state.Outcome != nil && (state.HandoffAt.IsZero() || state.Outcome.Attempt != state.Attempt ||
 		!objectID(state.Outcome.Commit) || !objectID(state.Outcome.Tree) || state.Outcome.Observed.IsZero() ||
@@ -298,7 +305,7 @@ func (service Service) Prepare(ctx context.Context) (*State, error) {
 		}
 		if baseRef != state.BaseRef || base != state.Base || head != state.Head {
 			state.BaseRef, state.Base, state.Head = baseRef, base, head
-			state.Candidate, state.Tree, state.GateRunID, state.Receipts = "", "", "", nil
+			state.Candidate, state.Tree, state.GateClaim, state.GateRunID, state.Receipts = "", "", "", "", nil
 			state.Attempt++
 			if err := save(place, state); err != nil {
 				return nil, err
@@ -313,7 +320,7 @@ func (service Service) Prepare(ctx context.Context) (*State, error) {
 			if !errors.As(err, &gitExit) || gitExit.Code != 1 {
 				return nil, fmt.Errorf("cannot inspect queue candidate: %w", err)
 			}
-			state.Candidate, state.Tree, state.GateRunID, state.Receipts = "", "", "", nil
+			state.Candidate, state.Tree, state.GateClaim, state.GateRunID, state.Receipts = "", "", "", "", nil
 			state.Attempt++
 			if err := save(place, state); err != nil {
 				return nil, err
@@ -355,10 +362,36 @@ func objectID(value string) bool {
 	return err == nil && strings.ToLower(value) == value
 }
 
-// recordGate saves evidence from this command's completed gate invocation, after the caller
-// verified each exported receipt. It is deliberately private: no CLI can attach arbitrary data.
-func (service Service) recordGate(ctx context.Context, candidate, gateRunID string, evidence []Evidence) (*State, error) {
-	if !objectID(candidate) || gateRunID == "" || len(evidence) == 0 {
+// beginGate invalidates the previous result before testing starts. A later test
+// supersedes the claim, including when both tests use the same candidate.
+func (service Service) beginGate(ctx context.Context, prepared *State) (*State, error) {
+	var claim [16]byte
+	if _, err := rand.Read(claim[:]); err != nil {
+		return nil, err
+	}
+	return service.withLock(ctx, func(place, common string) (*State, error) {
+		state, err := read(place)
+		if err != nil {
+			return nil, err
+		}
+		fresh, err := service.fresh(ctx, state)
+		if err != nil || !fresh || !objectID(state.Candidate) || state.Repository != common ||
+			state.Candidate != prepared.Candidate || state.Attempt != prepared.Attempt ||
+			state.HeadRef != prepared.HeadRef || state.BaseRef != prepared.BaseRef || state.PullRequest != prepared.PullRequest {
+			return nil, errors.New("the candidate or its inputs changed before the gate started")
+		}
+		if state.Outcome != nil || !state.HandoffAt.IsZero() {
+			return nil, errors.New("the handoff is recorded; reconcile its result before testing again")
+		}
+		state.GateClaim = hex.EncodeToString(claim[:])
+		state.GateRunID, state.Receipts = "", nil
+		return state, save(place, state)
+	})
+}
+
+// recordGate saves verified evidence from the current test claim only.
+func (service Service) recordGate(ctx context.Context, tested *State, gateRunID string, evidence []Evidence) (*State, error) {
+	if !objectID(tested.Candidate) || tested.GateClaim == "" || gateRunID == "" || len(evidence) == 0 {
 		return nil, errors.New("a counted gate and its candidate are required")
 	}
 	for _, item := range evidence {
@@ -372,8 +405,9 @@ func (service Service) recordGate(ctx context.Context, candidate, gateRunID stri
 			return nil, err
 		}
 		fresh, err := service.fresh(ctx, state)
-		if err != nil || !fresh || state.Repository != common || state.Candidate != candidate {
-			return nil, errors.New("the candidate or its inputs changed while the gate ran")
+		if err != nil || !fresh || state.Repository != common || state.Candidate != tested.Candidate ||
+			state.Attempt != tested.Attempt || state.GateClaim != tested.GateClaim {
+			return nil, errors.New("the candidate, its inputs or the current test changed while the gate ran")
 		}
 		if state.Outcome != nil {
 			return nil, errors.New("the observed landing is already recorded")
@@ -396,7 +430,7 @@ func (service Service) handoff(ctx context.Context, verifyReceipts func(*State) 
 	if err != nil {
 		return nil, err
 	}
-	if state.Stale || state.Candidate == "" || state.GateRunID == "" || len(state.Receipts) == 0 {
+	if state.Stale || state.Candidate == "" || state.GateClaim == "" || state.GateRunID == "" || len(state.Receipts) == 0 {
 		return nil, errors.New("candidate is stale or has no counted gate evidence; prepare and test again")
 	}
 	if state.Outcome != nil {
@@ -418,7 +452,7 @@ func (service Service) handoff(ctx context.Context, verifyReceipts func(*State) 
 		confirmed.Repository != state.Repository || confirmed.BaseRef != state.BaseRef ||
 		confirmed.HeadRef != state.HeadRef || confirmed.Base != state.Base || confirmed.Head != state.Head ||
 		confirmed.PullRequest != state.PullRequest || confirmed.Tree != state.Tree ||
-		confirmed.GateRunID != state.GateRunID ||
+		confirmed.GateClaim != state.GateClaim || confirmed.GateRunID != state.GateRunID ||
 		!slices.Equal(confirmed.Receipts, state.Receipts) {
 		return nil, errors.New("queue inputs or policy changed while handoff evidence was read")
 	}
@@ -438,7 +472,8 @@ func (service Service) recordHandoff(ctx context.Context, checked *State) (*Stat
 			state.HeadRef != checked.HeadRef || state.Base != checked.Base || state.Head != checked.Head ||
 			state.PullRequest != checked.PullRequest ||
 			state.Attempt != checked.Attempt || state.Candidate != checked.Candidate || state.Tree != checked.Tree ||
-			state.GateRunID != checked.GateRunID || !slices.Equal(state.Receipts, checked.Receipts) {
+			state.GateClaim == "" || state.GateClaim != checked.GateClaim || state.GateRunID == "" ||
+			state.GateRunID != checked.GateRunID || len(state.Receipts) == 0 || !slices.Equal(state.Receipts, checked.Receipts) {
 			return nil, errors.New("queue inputs or evidence changed before handoff could be recorded")
 		}
 		if !state.HandoffAt.IsZero() {
