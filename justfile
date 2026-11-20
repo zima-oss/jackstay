@@ -98,6 +98,14 @@ docs:
       echo "FAILED: docs: the guide's sidebar is not shown on a desktop ($page)"; exit 1; fi && \
     echo "docs: the site builds"
 
+# The generated pages, written anew from the code: every command's help (internal/cli/testdata/help.txt),
+# the command and configuration references (docs/reference/) and the editor schema
+# (schemas/jackstay.schema.json). cmd/jst's tests fail while any of them differs from the code.
+reference:
+    go test -count=1 ./cmd/jst -run 'TestEveryCommandHelp|TestReferencesAreCurrent' -update
+    go run ./cmd/jst-schema > schemas/jackstay.schema.json
+    echo "reference: written; commit what changed"
+
 # The documentation site (W-076), built into .build/site as the Pages workflow builds and publishes
 # it, at HUGO_BASEURL (the Pages workflow's) or the site's address, and its links checked there
 site:
