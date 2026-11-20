@@ -90,7 +90,7 @@ func TestDirectStructuredReportsRecordAndKeyTheEvidence(t *testing.T) {
 }
 
 func TestDirectStructuredRunPassedOnRetryIsNoPass(t *testing.T) {
-	const settings = `{"jackstay_schema":1,"project":"demo","receipts":{"inputs":["src"],"toolchain":[],"env":[],"commands":[
+	const settings = `{"jackstay_schema":3,"project":"demo","receipts":{"inputs":["src"],"toolchain":[],"env":[],"commands":[
 		{"argv":["surefire-wrapper"],"judge":"junit","report":"report.xml","reuse":true}]}}`
 	world := newWorld(t, settings)
 	world.fake = &fakeRun{}
