@@ -125,7 +125,7 @@ func (store Store) endRequest(ctx context.Context, task string, match func(Reque
 	if err := durable.SyncFolder(filepath.Dir(path)); err != nil {
 		return End{}, false, err
 	}
-	store.forgetDeliveredEnds(task, request.ID)
+	store.forgetDeliveredEnds(request)
 	return end, true, nil
 }
 
@@ -281,11 +281,13 @@ func (store Store) LatestEnd(task string) (End, bool, error) {
 	return found[len(found)-1], true, nil
 }
 
-// forgetDeliveredEnds removes the task's older ends whose sessions have all been told.
-func (store Store) forgetDeliveredEnds(task, keep string) {
+// forgetDeliveredEnds removes the older ends of kept's task and repository whose sessions have all
+// been told; another clone's ends are its own.
+func (store Store) forgetDeliveredEnds(kept Request) {
+	task := kept.Task
 	found, _ := store.ends(task)
 	for _, end := range found {
-		if end.Request.ID == keep {
+		if end.Request.ID == kept.ID || end.Request.Repository != kept.Repository {
 			continue
 		}
 		told := true

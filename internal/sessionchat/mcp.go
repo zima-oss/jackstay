@@ -170,7 +170,7 @@ func toolDefinitions() []map[string]any {
 		{"chat.reply", "Reply to a message addressed to this session", map[string]any{"message_id": stringField(64), "body": stringField(16384), "idempotency_key": stringField(128)}, []string{"message_id", "body", "idempotency_key"}, false},
 		{"chat.ack", "Acknowledge one message addressed to this session", map[string]any{"message_id": stringField(64)}, []string{"message_id"}, false},
 		{"review.submit", "Start `jst review BASE..HEAD` in the background on pinned commits of this repository; the result comes to this session as a review.finished chat message. An equal review already running is joined", map[string]any{"base": stringField(200), "head": stringField(200), "task": stringField(200), "reviewers": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"codex", "claude-code"}}, "minItems": 1, "maxItems": 2}}, []string{"base", "head", "task", "reviewers"}, false},
-		{"review.status", "Where a review task of this repository stands: the review running in the background, and the newest round or attempt", map[string]any{"task": stringField(200)}, []string{"task"}, true},
+		{"review.status", "Where a task's background reviews in this repository stand: the one running, and how the latest ended (outcome, round, report)", map[string]any{"task": stringField(200)}, []string{"task"}, true},
 	}
 	result := make([]map[string]any, 0, len(fields))
 	for _, entry := range fields {
@@ -356,8 +356,7 @@ func sameRepository(ctx context.Context, root, commonDirectory string) error {
 
 // publicStatus is a task's status without the sessions subscribed to its requests.
 func publicStatus(status review.Status) map[string]any {
-	answer := map[string]any{"newest": status.Newest, "commit": status.Commit, "base": status.Base,
-		"outcome": status.Outcome, "blocks": status.Blocks, "report": status.Report}
+	answer := map[string]any{"report": status.Report}
 	if status.Running != nil {
 		answer["running"] = publicRequest(*status.Running)
 	}

@@ -314,3 +314,38 @@ func TestReviewStatusFromANestedRepositoryIsRefused(t *testing.T) {
 		t.Fatalf("the parent repository's status was read from a nested one: %+v", response)
 	}
 }
+
+func TestReviewStatusOfAnotherCloneOfTheSameProjectIsNotShown(t *testing.T) {
+	chat := newReviewChat(t)
+	submitter := chat.register(t, "submitter", strings.Repeat("s", 32))
+	answer := chat.call(t, submitter, "review.submit", map[string]any{"base": "HEAD^", "head": "HEAD", "task": "t", "reviewers": []string{"codex"}})
+	identity := answer["request"].(map[string]any)["id"].(string)
+	if err := chat.background(t).Store.Finish(context.Background(), "t", identity, review.Result{Status: review.ExitClear}, publisher{}); err != nil {
+		t.Fatal(err)
+	}
+	chat.running = false
+	clone := testrepo.New(t, map[string]string{
+		"jackstay.json": `{"jackstay_schema":3,"project":"review-chat-test","chat":{"enabled":true}}`,
+		"file.txt":      "first\n",
+	})
+	t.Setenv("JACKSTAY_HOME", chat.repository.Home)
+	cloneStore, err := StoreFor(clone.Root+"/.git", chat.store.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := cloneStore.Register("clone", strings.Repeat("c", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(clone.Root); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(map[string]any{"name": "review.status", "arguments": map[string]any{"task": "t"}})
+	response := (&Server{store: cloneStore, session: session}).call(encoded).(map[string]any)
+	if response["isError"] == true {
+		t.Fatalf("status: %+v", response)
+	}
+	if status := response["structuredContent"].(map[string]any); status["last"] != nil || status["running"] != nil {
+		t.Fatalf("a clone was shown another clone's review: %+v", status)
+	}
+}

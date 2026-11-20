@@ -367,3 +367,35 @@ func TestTwoClonesSharingAStoreSeeOnlyTheirOwnRequests(t *testing.T) {
 		t.Fatalf("the clone does not see its own end: %+v, %v", status, err)
 	}
 }
+
+func TestAnotherClonesEndIsNotForgottenAndItsRoundsAreNotStatus(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	first := h.background
+	first.Repository = "/clones/first/.git"
+	second := h.background
+	second.Repository = "/clones/second/.git"
+	done := func(background Background, subscriber string) {
+		t.Helper()
+		submitted, err := background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: subscriber})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := background.Store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitClear, Folder: "/store/round-1",
+			Record: &RoundRecord{Round: 1}}, &recording{}); err != nil {
+			t.Fatal(err)
+		}
+		h.alive = false
+	}
+	done(first, "s1")
+	done(second, "s2")
+	status, err := first.StatusOf("feature/x")
+	if err != nil || status.Last == nil || status.Last.Request.Repository != "/clones/first/.git" {
+		t.Fatalf("the second clone's end removed the first's: %+v, %v", status, err)
+	}
+	third := h.background
+	third.Repository = "/clones/third/.git"
+	if status, err := third.StatusOf("feature/x"); err != nil || status.Last != nil || status.Running != nil || status.Report != "" {
+		t.Fatalf("a clone with no review of its own was told another's: %+v, %v", status, err)
+	}
+}

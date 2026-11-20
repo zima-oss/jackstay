@@ -498,11 +498,11 @@ with the Bash tool's background flag; the session is told when the call ends and
   and given to the chat's publisher (`internal/chatevent`, [chat.md](chat.md) section 10); each one
   the chat stored is recorded in the end. What it did not take is pulled when that session's chat
   next reads its inbox or reaches its hook; a repeat stores nothing new. An older end of the task
-  whose sessions were all told is removed when a newer one is written. `review.status` shows the
-  latest end, the running request and the newest round with its commits. A request records its
-  repository (the Git common folder); two clones that share a project's review store each see only
-  their own requests and ends. Rounds are kept by project and task and pinned to commits, so a round
-  read there names the commits it reviewed.
+  of the same repository whose sessions were all told is removed when a newer one is written.
+- **Status.** A request records its repository (the Git common folder). `review.status` answers for
+  the asking repository only: its request running, if any, and how its latest one ended (outcome,
+  round, report). It reads nothing of the rounds kept by project and task, which clones of one
+  project share; a round made in the foreground is read with `jst review last`.
 
 ## 7. Commands
 

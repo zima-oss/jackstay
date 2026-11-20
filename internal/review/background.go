@@ -432,32 +432,28 @@ func BackgroundAt(folder, executable string) (Background, error) {
 		Store: store, Executable: executable, Launch: DetachedLaunch, Now: time.Now, Started: 10 * time.Second}, nil
 }
 
-// Status is where a task's reviews stand: the request running in the background, if any, and the
-// newest round or attempt.
+// Status is where a task's background reviews in this repository stand: the request running, if
+// any, and how the latest one ended (its outcome, round and report). It reads nothing of the task's
+// rounds kept by project, which clones of one project share: a round made in the foreground is
+// read with `jst review last`.
 type Status struct {
 	Running *Request `json:"running,omitempty"`
-	// Last is how the latest background request ended, even one that made no attempt.
-	Last    *End   `json:"last,omitempty"`
-	Newest  *Entry `json:"newest,omitempty"`
-	Commit  string `json:"commit,omitempty"` // what the newest round or attempt reviewed
-	Base    string `json:"base,omitempty"`
-	Outcome string `json:"outcome,omitempty"`
-	Blocks  *bool  `json:"blocks,omitempty"`
-	Report  string `json:"report,omitempty"`
+	Last    *End     `json:"last,omitempty"`
+	Report  string   `json:"report,omitempty"` // the latest end's report, when it made a round or attempt
 }
 
-// StatusOf reads where task stands.
+// StatusOf reads where task stands in this repository.
 func (background Background) StatusOf(task string) (Status, error) {
 	var status Status
+	if err := background.ReapLost(context.Background()); err != nil {
+		return Status{}, err
+	}
 	request, found, err := background.Store.ReadRequest(task)
 	if err != nil {
 		return Status{}, err
 	}
 	if found && background.live(request) && background.ours(request) {
 		status.Running = &request
-	}
-	if err := background.ReapLost(context.Background()); err != nil {
-		return Status{}, err
 	}
 	ends, err := background.Store.ends(task)
 	if err != nil {
@@ -466,30 +462,10 @@ func (background Background) StatusOf(task string) (Status, error) {
 	for index := len(ends) - 1; index >= 0; index-- {
 		if background.ours(ends[index].Request) {
 			status.Last = &ends[index]
+			if status.Last.Folder != "" {
+				status.Report = filepath.Join(status.Last.Folder, "report.md")
+			}
 			break
-		}
-	}
-	entries, err := background.Store.Entries(task)
-	if err != nil || len(entries) == 0 {
-		return status, err
-	}
-	newest := entries[len(entries)-1]
-	status.Newest = &newest
-	status.Report = filepath.Join(newest.Path, "report.md")
-	if newest.Round > 0 {
-		record, err := readRecord(newest.Path)
-		if err != nil {
-			return status, err
-		}
-		code, _ := Disposition(background.Settings, record)
-		status.Outcome = OutcomeWord(code)
-		status.Blocks = &record.Outcome.Blocks
-		status.Commit, status.Base = record.Commit, record.Base
-	} else {
-		status.Outcome = "no round: " + failureWords(ReadRuns(newest.Path))
-		var attempt AttemptRecord
-		if data, err := os.ReadFile(filepath.Join(newest.Path, AttemptName)); err == nil && strictjson.UnmarshalOpen(data, &attempt) == nil {
-			status.Commit, status.Base = attempt.Commit, attempt.Base
 		}
 	}
 	return status, nil

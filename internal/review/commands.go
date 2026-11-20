@@ -191,8 +191,12 @@ func submitBackground(ctx context.Context, found opened, options Options, stdout
 	if err != nil {
 		fmt.Fprintf(stderr, "jst review: no chat event will tell this session the result: %v\n", err)
 	}
-	submitted, err := (Background{RepositoryRoot: found.project.Root, Settings: found.settings, Repo: RepositoryAt(found.project.Root),
-		Store: found.store, Executable: executable, Launch: DetachedLaunch, Now: time.Now, Started: 10 * time.Second}).Submit(ctx, Submission{
+	background, err := BackgroundAt(found.project.Root, executable)
+	if err != nil {
+		fmt.Fprintf(stderr, "jst review: %v\n", err)
+		return ExitUsage
+	}
+	submitted, err := background.Submit(ctx, Submission{
 		Revision: options.Revision, Task: options.Task, Reviewers: options.Reviewers, Fresh: options.Fresh,
 		PastLimit: options.PastLimit, Focus: options.Focus, Subscriber: subscriber})
 	if err != nil {
