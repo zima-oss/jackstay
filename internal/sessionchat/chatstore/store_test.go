@@ -1025,3 +1025,93 @@ func TestARollbackKeepsItsEntryUntilItsRemovalsAreDurable(t *testing.T) {
 		t.Fatalf("usage is rebuilt from what is left: %+v %v", rebuilt, err)
 	}
 }
+
+func TestAJournalEntryTheDiskCannotReadIsKept(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	entry := filepath.Join(f.store.place.journal(), "msg_"+strings.Repeat("6", 26))
+	if err := os.MkdirAll(entry, 0o700); err != nil { // read fails without saying the entry is bad
+		t.Fatal(err)
+	}
+	if _, err := f.store.Sessions(f.ctx); err == nil {
+		t.Fatal("the operation stops")
+	}
+	if !exists(entry) || exists(filepath.Join(f.store.place.broken(), filepath.Base(entry))) {
+		t.Fatal("the entry is kept, not moved aside")
+	}
+}
+
+func TestARelativeAndAnAbsoluteGitFolderAreOneChannel(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "clone")
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	absolute, err := RepositoryChannel(filepath.Join(root, ".git"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	relative, err := RepositoryChannel(".git", "")
+	if err != nil || relative != absolute || relative.Name != "clone" {
+		t.Fatalf("%+v %+v %v", relative, absolute, err)
+	}
+}
+
+func TestAFailureAfterTheCommitIsUncertainWithTheIDs(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	f.store.syncFolder = func(folder string) error {
+		if folder == f.store.place.idempotency() { // only step 4 touches it
+			return errors.New("the disk refused")
+		}
+		return durable.SyncFolder(folder)
+	}
+	result, err := f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "b", Message: "committed", IdempotencyKey: "after-commit"})
+	if err != nil || result.Outcome != OutcomeUncertain || result.MessageID == "" {
+		t.Fatalf("%+v %v", result, err)
+	}
+	f.store.syncFolder = durable.SyncFolder
+	retry := f.send("cc:a", SendInput{To: "b", Message: "committed", IdempotencyKey: "after-commit"})
+	if retry.Outcome != OutcomeDuplicate || retry.MessageID != result.MessageID {
+		t.Fatalf("recovery finishes the committed send: %+v", retry)
+	}
+}
+
+func TestUsageMatchesTheFilesAfterAResponse(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	asked := f.send("cc:a", SendInput{To: "b", Message: "decide", Request: &RequestInput{Expects: "decision"}})
+	f.session("cc:a", "", alpha, StateGone)
+	if _, err := f.store.Respond(f.ctx, "cc:b", RespondInput{RequestID: asked.RequestID, Decision: "approve"}); err != nil {
+		t.Fatal(err)
+	}
+	var counted, rebuilt usage
+	if err := readRecord(f.store.place.usage(), usageBound, &counted); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(f.store.place.usage()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Sessions(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := readRecord(f.store.place.usage(), usageBound, &rebuilt); err != nil {
+		t.Fatal(err)
+	}
+	if counted.Bytes != rebuilt.Bytes {
+		t.Fatalf("counted %d, files %d", counted.Bytes, rebuilt.Bytes)
+	}
+}
+
+func TestAResumedSessionCountsAgainstTheLiveBound(t *testing.T) {
+	f := newFixture(t)
+	f.store.liveLimit = 2
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:old", "old", alpha, StateGone)
+	f.session("cc:b", "b", alpha, StateIdle)
+	_, err := f.store.Register(f.ctx, Registration{Key: "cc:old", KeySource: SourceEngine, Engine: EngineClaudeCode,
+		Channel: alpha, State: StateIdle})
+	f.refused(err, ReasonCapacity)
+}

@@ -65,6 +65,11 @@ func (store *Store) Register(ctx context.Context, registration Registration) (Se
 		case err != nil:
 			return err
 		default:
+			if session.State == StateGone && registration.State != "" && registration.State != StateGone {
+				if err := transaction.admitLive(); err != nil {
+					return err
+				}
+			}
 			if registration.Name != "" {
 				session.Name = registration.Name
 			}
@@ -145,13 +150,17 @@ func (transaction *transaction) newSession(registration Registration, hash, mome
 			live++
 		}
 	}
-	if live >= maxLiveSessions {
-		return Session{}, refuse(ReasonCapacity, "the account has %d live chat sessions; wait for one to end", maxLiveSessions)
+	if live >= transaction.store.liveLimit {
+		return Session{}, refuse(ReasonCapacity, "the account has %d live chat sessions; wait for one to end", transaction.store.liveLimit)
 	}
 	if !transaction.admit(deliverystate.SessionCharge, deliverystate.WriteLimit) {
 		return Session{}, refuse(ReasonCapacity, "the chat store is full; wait for the sweep to free room")
 	}
 	transaction.usage.Bytes += deliverystate.SessionCharge
+	// The charge is saved before the record exists, so no exit between them leaves it uncounted.
+	if err := transaction.saveUsage(); err != nil {
+		return Session{}, err
+	}
 	name := registration.Name
 	if name == "" {
 		name = DefaultName(registration.Channel, registration.Branch, registration.Worktree)
@@ -173,6 +182,24 @@ func (transaction *transaction) newSession(registration Registration, hash, mome
 		session.Subscriptions = []string{registration.Channel.ID}
 	}
 	return session, nil
+}
+
+// admitLive refuses one more live session past the account's bound (section 6.4).
+func (transaction *transaction) admitLive() error {
+	sessions, err := transaction.listSessions()
+	if err != nil {
+		return err
+	}
+	live := 0
+	for _, other := range sessions {
+		if other.State != StateGone {
+			live++
+		}
+	}
+	if live >= transaction.store.liveLimit {
+		return refuse(ReasonCapacity, "the account has %d live chat sessions; wait for one to end", transaction.store.liveLimit)
+	}
+	return nil
 }
 
 // Rename gives a session a new name (chat.whoami with `name`).
@@ -308,6 +335,9 @@ func (transaction *transaction) ensureChannel(channel Channel) error {
 			return refuse(ReasonCapacity, "the chat store is full; wait for the sweep to free room")
 		}
 		transaction.usage.Bytes += deliverystate.ChannelCharge
+		if err := transaction.saveUsage(); err != nil {
+			return err
+		}
 	default:
 		return err
 	}

@@ -280,10 +280,10 @@ func (transaction *transaction) recipientsOf(sender Session, destination target,
 			return nil, refuse(ReasonRecipientFull, "%s, subscribed to the channel, has %d messages waiting; send when it has read them",
 				fullAddress(session), queuePerRecipient)
 		}
-		recipients = append(recipients, session)
 		if len(recipients) == maxRecipients {
-			break
+			return nil, refuse(ReasonCapacity, "the channel has more than %d subscribers to deliver to", maxRecipients)
 		}
+		recipients = append(recipients, session)
 	}
 	return recipients, nil
 }
@@ -530,20 +530,36 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 		_ = transaction.rollBack(entry)
 		return SendResult{}, durableErr
 	}
-	if err := transaction.applyCommitted(entry, envelope); err != nil {
-		return SendResult{}, err
+	// Past the commit the message exists: a failure from here on leaves the entry for recovery to
+	// finish, and the sender is told uncertain with the IDs, never a bare error it might retry blind.
+	uncertain := func(err error) (SendResult, error) {
+		transaction.store.log("after-commit-failure", id+": "+err.Error())
+		result := SendResult{Outcome: OutcomeUncertain, MessageID: id, ThreadID: threadID}
+		if envelope.Request != nil {
+			result.RequestID = envelope.Request.RequestID
+		}
+		return result, nil
 	}
-	if err := transaction.writeDerived(entry, envelope); err != nil {
-		return SendResult{}, err
+	// Usage counts the send before its entry goes, so no exit between them undercounts it; a marker
+	// a delivery never gets (one created dropped) is not counted.
+	for _, delivery := range deliveries {
+		if !deliverystate.Unread(deliverystate.State(delivery.State)) {
+			charge -= deliverystate.MarkerCharge
+		}
 	}
-	// Usage counts the send before its entry goes, so no exit between them undercounts it.
 	transaction.usage.Messages++
 	transaction.usage.Bytes += charge
+	if err := transaction.applyCommitted(entry, envelope); err != nil {
+		return uncertain(err)
+	}
+	if err := transaction.writeDerived(entry, envelope); err != nil {
+		return uncertain(err)
+	}
 	if err := transaction.saveUsage(); err != nil {
-		return SendResult{}, err
+		return uncertain(err)
 	}
 	if err := transaction.removeJournal(id); err != nil {
-		return SendResult{}, err
+		return uncertain(err)
 	}
 	transaction.countExchange(plan)
 	result := SendResult{Outcome: OutcomeAccepted, MessageID: id, ThreadID: threadID}
@@ -643,7 +659,10 @@ func (transaction *transaction) writeDelivery(id, hash string, delivery Delivery
 		return err
 	}
 	if !deliverystate.Unread(deliverystate.State(delivery.State)) {
-		if err := os.Remove(filepath.Join(transaction.place.inbox(hash), id)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		err := os.Remove(filepath.Join(transaction.place.inbox(hash), id))
+		if err == nil {
+			transaction.usage.Bytes = max(0, transaction.usage.Bytes-deliverystate.MarkerCharge)
+		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

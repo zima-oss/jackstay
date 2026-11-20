@@ -1,8 +1,10 @@
 package chatstore
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -101,10 +103,14 @@ func (transaction *transaction) recover() (resolved []string, kept int, err erro
 	for _, name := range names {
 		path := filepath.Join(transaction.place.journal(), name)
 		var entry journalEntry
-		if readErr := readRecord(path, journalBound, &entry); readErr != nil || entry.ID != name || entry.Op == "" {
-			if errors.Is(readErr, os.ErrNotExist) {
-				continue
-			}
+		readErr := readRecord(path, journalBound, &entry)
+		switch {
+		case errors.Is(readErr, os.ErrNotExist):
+			continue
+		case readErr != nil && !unreadable(readErr):
+			// The disk did not answer: the entry may be whole, so it is kept and this operation stops.
+			return resolved, kept, readErr
+		case readErr != nil || entry.ID != name || entry.Op == "":
 			transaction.moveBroken(name)
 			continue
 		}
@@ -128,6 +134,14 @@ func (transaction *transaction) recover() (resolved []string, kept int, err erro
 		}
 	}
 	return resolved, kept, nil
+}
+
+// unreadable reports whether an entry was read but is not one: past its bound, or not its JSON.
+func unreadable(err error) bool {
+	var syntax *json.SyntaxError
+	var kind *json.UnmarshalTypeError
+	return errors.Is(err, durable.ErrTooLarge) || errors.As(err, &syntax) || errors.As(err, &kind) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // decide is section 7.3's choice for an entry: back without a commit record, forward once its

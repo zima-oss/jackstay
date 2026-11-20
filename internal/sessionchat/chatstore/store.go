@@ -42,6 +42,8 @@ type Store struct {
 	// record; a test makes them fail as a disk that cannot make a write durable does.
 	writeCommitFile func(path string, data []byte, mode os.FileMode, limit int) error
 	syncFolder      func(folder string) error
+	// liveLimit is the bound on live sessions (section 6.4); a test lowers it.
+	liveLimit int
 }
 
 // Options replace the clock and the source of random bits; a test sets them.
@@ -55,7 +57,7 @@ type Options struct {
 // Open is the store rooted at folder (the v1 folder of section 7.1).
 func Open(folder string, options Options) *Store {
 	store := &Store{place: layout{root: folder}, now: options.Now, random: options.Random, logger: options.Log,
-		writeCommitFile: durable.WriteAtomic, syncFolder: durable.SyncFolder}
+		writeCommitFile: durable.WriteAtomic, syncFolder: durable.SyncFolder, liveLimit: maxLiveSessions}
 	if store.now == nil {
 		store.now = time.Now
 	}

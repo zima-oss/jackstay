@@ -23,7 +23,11 @@ type Channel struct {
 // RepositoryChannel is the channel of the repository whose Git common directory is given. Project is
 // the `project` key of its jackstay.json, "" when unset; the name then comes from the clone's folder.
 func RepositoryChannel(commonDirectory, project string) (Channel, error) {
-	resolved, err := filepath.EvalSymlinks(commonDirectory)
+	absolute, err := filepath.Abs(commonDirectory)
+	if err != nil {
+		return Channel{}, err
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
 	if err != nil {
 		return Channel{}, err
 	}
