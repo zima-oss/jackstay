@@ -376,3 +376,25 @@ func TestChatEngineSetupIsExplicitAndDoesNotPromiseDelivery(t *testing.T) {
 		t.Fatalf("chat prompts consumed the next repair choice: %q, %v", answer, err)
 	}
 }
+
+func TestSetupKeepsAnsweredMachineDefaults(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	var output, diagnostics bytes.Buffer
+	if status := RunSetup([]string{"--answer", "autonomy=prepare", "--answer", "reviewer=claude-code"}, nil, &output, &diagnostics); status != 0 {
+		t.Fatalf("exit %d: %s", status, &diagnostics)
+	}
+	stored, err := os.ReadFile(filepath.Join(home, ".all", "choices.json"))
+	if err != nil || !strings.Contains(string(stored), `"autonomy": "prepare"`) || !strings.Contains(string(stored), `"reviewer": "claude-code"`) {
+		t.Fatalf("stored %s %v", stored, err)
+	}
+	if !strings.Contains(output.String(), "choice chat: off (recommended)") ||
+		!strings.Contains(output.String(), "choice autonomy: prepare (this machine's default (jst setup))") {
+		t.Fatalf("output:\n%s", &output)
+	}
+	for _, args := range [][]string{{"--answer", "autonomy=yolo"}, {"--answer", "reviewer=codex", "--plan"}} {
+		if status := RunSetup(args, nil, &output, &diagnostics); status != 2 {
+			t.Errorf("%v: exit %d", args, status)
+		}
+	}
+}

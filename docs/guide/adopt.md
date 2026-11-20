@@ -77,6 +77,29 @@ git commit -m "Adopt jackstay"
 Each time you add a section to `jackstay.json`, run `jst adopt` again: the AGENTS block lists only
 the tools the project has enabled, and a workflow is written when its section appears.
 
+### The questions
+
+Some of how jackstay behaves in a project is the project's choice, so adopt asks rather than
+assumes. With `--apply` on a terminal it asks each question `jackstay.json` does not answer yet,
+recommended answer first, and offers this machine's answer from `jst setup` when there is one:
+
+| Question | Answers, recommended first | Written to |
+|---|---|---|
+| `reviewer`: who runs `jst review` | `codex`, `claude-code`, `codex,claude-code` | `review.use` |
+| `chat`: the agent chat in this repository | `off`, `on` | `chat.enabled` (nothing for `off`) |
+
+A value the project already sets is never asked again. Without a terminal adopt writes no answer,
+and the plan's `choices` say what applies and how to choose; `--answer ID=VALUE` answers without a
+question and is written even over the project's value:
+
+```sh
+jst adopt --apply --answer reviewer=codex,claude-code
+```
+
+Two more of the owner's questions wait for keys this jackstay does not read yet: how far the agent
+may land a change on its own (`jst setup` already keeps a machine answer), and which test scopes
+CI runs.
+
 ### Conflicts
 
 A conflict is a difference `jst adopt` must not decide. Each has a stable ID:

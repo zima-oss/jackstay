@@ -1,8 +1,8 @@
 ==> jst adopt --help
 jst adopt: bring this project to jackstay's reference: jackstay.json, the AGENTS block, the guard hook, workflows
 
-usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--answer ID=VALUE]... [--json] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--answer ID=VALUE]... [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Brings the project around DIR (default: here) to jackstay's reference: jackstay.json, the AGENTS block
@@ -20,8 +20,16 @@ changes anything else; what it must not decide is a conflict (docs/design/adopt.
   --profile PATH   an organisation's profile; recorded in jackstay.json by --apply, used later without
                    the flag
   --profile-sha256 DIGEST  pin the exact portable bundle bytes; recorded for future adoption
+  --answer ID=VALUE  answer one of the questions below without being asked; written even over the
+                   project's value (repeatable)
   --json           the plan as one JSON object
   --block          print the AGENTS block this project gets; nothing is written
+
+The questions, the recommended answer first. With --apply on a terminal, adopt asks each one
+jackstay.json does not answer yet, offering this machine's default from jst setup; without a
+terminal it writes no answer and the plan says what applies:
+  reviewer   codex, claude-code, or codex,claude-code: who runs jst review (review.use)
+  chat       off or on: the agent chat in this repository (chat.enabled)
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
 2 usage, or jackstay.json or the profile cannot be read; 3 (--plan) changes pending, no conflict.
@@ -1186,6 +1194,7 @@ example: jst review show parser-fix 2
 jst setup: plan and apply selected machine setup repairs
 
 usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]
+       jst setup --answer ID=VALUE...
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
 POSIX shell profile, and let Claude Code's enabled sandbox write only the folders of the jackstay
@@ -1198,6 +1207,15 @@ read-only to the sandbox; run jst test gate and jst review outside it.
   --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
+  --answer ID=VALUE  keep this machine's answer to a question without being asked (repeatable)
+
+The questions, the recommended answer first. On a terminal setup asks them after the repairs and
+keeps the answers as this machine's defaults (`<jackstay home>/.all/choices.json`), which jst adopt
+offers first; a project's jackstay.json still decides:
+  reviewer   codex, claude-code, or codex,claude-code: who runs jst review
+  autonomy   merge-when-green (the agent merges when the required checks pass; jackstay.json
+             and the listed paths need a person) or prepare (the agent prepares, a person merges)
+  chat       off or on: the agent chat, which each repository still turns on in its jackstay.json
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a

@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,13 +10,14 @@ import (
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/adopt/block"
+	"github.com/zima-oss/jackstay/internal/choices"
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
-const usage = `usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+const usage = `usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--answer ID=VALUE]... [--json] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--answer ID=VALUE]... [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Brings the project around DIR (default: here) to jackstay's reference: jackstay.json, the AGENTS block
@@ -33,8 +35,16 @@ changes anything else; what it must not decide is a conflict (docs/design/adopt.
   --profile PATH   an organisation's profile; recorded in jackstay.json by --apply, used later without
                    the flag
   --profile-sha256 DIGEST  pin the exact portable bundle bytes; recorded for future adoption
+  --answer ID=VALUE  answer one of the questions below without being asked; written even over the
+                   project's value (repeatable)
   --json           the plan as one JSON object
   --block          print the AGENTS block this project gets; nothing is written
+
+The questions, the recommended answer first. With --apply on a terminal, adopt asks each one
+jackstay.json does not answer yet, offering this machine's default from jst setup; without a
+terminal it writes no answer and the plan says what applies:
+  reviewer   codex, claude-code, or codex,claude-code: who runs jst review (review.use)
+  chat       off or on: the agent chat in this repository (chat.enabled)
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
 2 usage, or jackstay.json or the profile cannot be read; 3 (--plan) changes pending, no conflict.
@@ -47,11 +57,19 @@ func init() {
 }
 
 // Run is `jst adopt`.
-func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	options, mode, asJSON, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "jst adopt: %v\n%s\n", err, strings.SplitN(usage, "\n\n", 2)[0])
 		return 2
+	}
+	if mode == "apply" && terminal(stdin) && terminal(stdout) {
+		asker := choices.TerminalAsker{In: bufio.NewReader(stdin), Out: stdout}
+		options.Ask = asker.Ask
+		if store, err := choices.MachineStore(); err == nil {
+			// Unreadable machine defaults only lose the offer; the recommended answer stands.
+			options.Defaults, _ = store.Load()
+		}
 	}
 	if mode == "block" {
 		body, err := BlockOf(options)
@@ -125,6 +143,19 @@ func parseArgs(args []string) (Options, string, bool, error) {
 			options.Pin = true
 		case "--settings-only":
 			options.SettingsOnly = true
+		case "--answer":
+			text, err := value()
+			if err != nil {
+				return options, "", false, err
+			}
+			id, answer, err := choices.ParseAnswer(text, keyed())
+			if err != nil {
+				return options, "", false, err
+			}
+			if options.Answers == nil {
+				options.Answers = map[string]string{}
+			}
+			options.Answers[id] = answer
 		case "--accept":
 			id, err := value()
 			if err != nil {
@@ -196,6 +227,23 @@ func BlockOf(options Options) (string, error) {
 	return block.Render(inputs), nil
 }
 
+// keyed are the questions adopt can write an answer for.
+func keyed() []choices.Question {
+	var found []choices.Question
+	for _, question := range choices.All() {
+		if question.Key != nil {
+			found = append(found, question)
+		}
+	}
+	return found
+}
+
+// terminal says the stream is a terminal, where a person can be asked.
+func terminal(stream any) bool {
+	file, isFile := stream.(*os.File)
+	return isFile && choices.IsTerminal(file)
+}
+
 func writeText(out io.Writer, plan *Plan) {
 	var text strings.Builder
 	profileWords := "no profile"
@@ -227,6 +275,10 @@ func writeText(out io.Writer, plan *Plan) {
 	fmt.Fprintf(&text, "exceptions (%d):\n", len(plan.Exceptions))
 	for _, exception := range plan.Exceptions {
 		fmt.Fprintf(&text, "  %-28s %s\n", exception.ID, exception.Why)
+	}
+	fmt.Fprintf(&text, "choices (%d):\n", len(plan.Choices))
+	for _, choice := range plan.Choices {
+		fmt.Fprintf(&text, "  %-28s %s = %s: %s\n", choice.ID, choice.Key, choice.Value, choice.From)
 	}
 	fmt.Fprintf(&text, "notes (%d):\n", len(plan.Notes))
 	for _, note := range plan.Notes {

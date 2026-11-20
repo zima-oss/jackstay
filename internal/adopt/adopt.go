@@ -29,6 +29,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/adopt/templates"
 	"github.com/zima-oss/jackstay/internal/changes"
 	"github.com/zima-oss/jackstay/internal/check"
+	"github.com/zima-oss/jackstay/internal/choices"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
@@ -60,6 +61,13 @@ type Options struct {
 	// GuardCommand is the hook command a new guard hook gets; "" is GuardCommand(), the launcher of
 	// the install this jst runs from.
 	GuardCommand string
+	// Answers are the choices given as `--answer ID=VALUE`; they are written even over the
+	// project's value.
+	Answers map[string]string
+	// Ask puts a question the project's file does not settle to a person (nil: nobody to ask, as
+	// without a terminal); Defaults are the machine's answers it offers first (jst setup).
+	Ask      func(question choices.Question, offered string) (string, error)
+	Defaults choices.Defaults
 }
 
 // SplitsSettings says whether the plan's changes touch jackstay.json and another file: one pull
@@ -126,10 +134,24 @@ type Plan struct {
 	Conflicts     []Conflict  `json:"conflicts"`
 	Exceptions    []Exception `json:"exceptions"`
 	Notes         []string    `json:"notes"`
+	// Choices are the answers to setup's and adopt's questions this project gets, and where each
+	// came from.
+	Choices []Choice `json:"choices"`
 
 	writes  []write
 	inputs  map[string]fileInput
 	profile *profile.Profile
+}
+
+// Choice is one question's answer for the project.
+type Choice struct {
+	ID    string `json:"id"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	// From is where the value came from: --answer, the person asked, the project's file; or, when
+	// nothing was written, what applies and how to choose.
+	From    string `json:"from"`
+	Written bool   `json:"written"`
 }
 
 type fileInput struct {
@@ -173,7 +195,7 @@ type planner struct {
 // that reads a recorded profile (Make, BlockOf) reads it from the main checkout.
 func newPlanner(options Options, root string) *planner {
 	return &planner{options: options, root: root, base: mainFolder(root),
-		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}, inputs: map[string]fileInput{}}}
+		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}, Choices: []Choice{}, inputs: map[string]fileInput{}}}
 }
 
 // Make computes the plan; an error is a usage or reading problem (exit 2).
@@ -403,6 +425,9 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 			setAdopt(document, "profile_sha256", strings.ToLower(planner.plan.ProfileSHA256))
 		}
 	}
+	if err := planner.choose(document); err != nil {
+		return err
+	}
 	planner.document = document
 	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
 	if planner.usesVersion(chosen) {
@@ -440,6 +465,44 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		}
 	}
 	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
+	return nil
+}
+
+// choose settles each question whose key this jackstay reads (W-090): an --answer, else the
+// project's own value, else the person's answer when there is a person to ask, else nothing is
+// written and the plan says what applies and how to choose. A question with no key yet is left to
+// jst setup's machine defaults.
+func (planner *planner) choose(document *jsondoc.Object) error {
+	for _, question := range choices.All() {
+		if question.Key == nil {
+			continue
+		}
+		choice := Choice{ID: question.ID, Key: question.Key.Name()}
+		current, set := question.Key.Read(document)
+		answer, given := planner.options.Answers[question.ID]
+		switch {
+		case given:
+			choice.Value, choice.From, choice.Written = answer, "--answer", true
+		case set:
+			choice.Value, choice.From = current, "this project's jackstay.json"
+		case planner.options.Ask != nil:
+			offered, _ := choices.Offered(question, "", false, planner.options.Defaults)
+			asked, err := planner.options.Ask(question, offered)
+			if err != nil {
+				return &UsageError{fmt.Sprintf("%s: %v", question.ID, err)}
+			}
+			choice.Value, choice.From, choice.Written = asked, "asked", true
+		default:
+			offered, from := choices.Offered(question, "", false, planner.options.Defaults)
+			choice.Value = offered
+			choice.From = fmt.Sprintf("not written (%s applies, %s); choose with `jst adopt --apply --answer %s=VALUE` "+
+				"(%s) or run it in a terminal", offered, from, question.ID, question.Values())
+		}
+		if choice.Written {
+			question.Key.Write(document, choice.Value)
+		}
+		planner.plan.Choices = append(planner.plan.Choices, choice)
+	}
 	return nil
 }
 
