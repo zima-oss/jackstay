@@ -998,7 +998,7 @@ own 12 MiB state file.
   common.json                  present when the person enabled #common (section 11)
   sessions/<hash>.json         hash = hex SHA-256 of the session key
   bindings/<process_id>-<start>.json
-  channels/<channel_id>.json   the channel's name and subscribers (hashes)
+  channels/<channel_id>.json   the channel's name; its subscribers are the sessions whose records list it
   messages/<id>.json           envelope, immutable
   bodies/<id>.txt              body, immutable
   deliveries/<id>/<hash>.json  one per recipient
