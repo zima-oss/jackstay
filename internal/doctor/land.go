@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/guard"
 	"github.com/zima-oss/jackstay/internal/hosting"
 	"github.com/zima-oss/jackstay/internal/remote"
+	scopes "github.com/zima-oss/jackstay/internal/testing"
 )
 
 // LandProject is what the land checks read of the project around the current folder.
@@ -130,6 +132,43 @@ func checkLand(report *Report, inputs Inputs) {
 		return
 	}
 	lintWrong = checkLandRules(report, facts, land, base, rules) || lintWrong
+	checkCIJobs(report, ciJobs(project.Config), base, rules)
+}
+
+// ciJobs are the CI jobs of the scopes CI covers (docs/design/land.md section 7.4): one
+// `jst test ci (SYSTEM)` for each system some scope's `ci` names, in order.
+func ciJobs(project config.Config) []string {
+	entries, _ := project.Section("test")["scopes"].(map[string]any)
+	systems := map[string]bool{}
+	for _, raw := range entries {
+		entry, _ := raw.(map[string]any)
+		listed, _ := entry["ci"].([]any)
+		for _, system := range listed {
+			if text, ok := system.(string); ok {
+				systems[text] = true
+			}
+		}
+	}
+	var jobs []string
+	for _, system := range slices.Sorted(maps.Keys(systems)) {
+		jobs = append(jobs, scopes.CIJobName(system))
+	}
+	return jobs
+}
+
+// checkCIJobs reports a system with covered scopes whose job the readable rules of the base do
+// not require: CI is the gate for those scopes only when the rules hold a change until it passes.
+func checkCIJobs(report *Report, jobs []string, base string, rules hosting.Rules) {
+	if !rules.ChecksRead {
+		return
+	}
+	for _, job := range jobs {
+		if !slices.ContainsFunc(rules.Required, func(required hosting.RequiredCheck) bool { return required.Name == job }) {
+			report.problem("land-ci-job-not-required", fmt.Sprintf("the rules of %s do not require the CI job `%s`, which runs the scopes CI covers "+
+				"there: a change can merge without them", base, job),
+				"name the CI job `"+job+"` (it runs `jst test ci`) and require it in the branch's rules on the host")
+		}
+	}
 }
 
 // checkLandRules judges the base's rules against the land section (section 4); lintWrong says the
