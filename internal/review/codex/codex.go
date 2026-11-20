@@ -116,15 +116,23 @@ func Filesystem(request Request, home string) string {
 	}
 	entries := []string{`":root"="read"`}
 	seen := map[string]bool{}
-	for _, path := range append(access.SecretPaths(home, access.Codex, environ), envLinks(request)...) {
+	deny := func(path string) {
+		if !seen[path] { // a TOML table takes each key once
+			seen[path] = true
+			entries = append(entries, strconv.Quote(path)+`="none"`)
+		}
+	}
+	for _, path := range access.SecretPaths(home, access.Codex, environ) {
 		if resolved, err := canonicalPath(path); err == nil {
 			path = resolved
 		}
-		if seen[path] { // a TOML table takes each key once
-			continue
+		deny(path)
+	}
+	for _, path := range envLinks(request) {
+		deny(path) // a link by its own path, as well as its target's
+		if folder, err := canonicalPath(filepath.Dir(path)); err == nil {
+			deny(filepath.Join(folder, filepath.Base(path)))
 		}
-		seen[path] = true
-		entries = append(entries, strconv.Quote(path)+`="none"`)
 	}
 	for _, root := range envGlobRoots(request, home) {
 		if resolved, err := canonicalPath(root); err == nil {
