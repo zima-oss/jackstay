@@ -468,7 +468,7 @@ finding; `--focus` only says where to look hardest.
   .trees/                                 legacy locked worktrees, if any
   .requests/<task hash>.json              the task's review running in the background (section 6)
   .requests/<task hash>-<id>.log          its output
-  .owed/<key hash>.json                   a `review.finished` event the chat has not yet taken
+  .ends/<task hash>-<id>.json             how a background request ended, and which sessions were told
 ```
 
 `attempt.json` is written first, so a failed attempt keeps what it was for (task, attempt, commit,
@@ -525,36 +525,31 @@ with the Bash tool's background flag; the session is told when the call ends and
 - **One request per task.** While the request's process lives (its id and start in the process
   table; without a table, until its deadline), an equal submission (same worktree, task, commits,
   reviewers and flags) joins it, adding its session (at most 32), and a different one is refused
-  (exit 2, "task busy"). A request whose process is gone is replaced: an equal one carries its
-  sessions over, and a different one leaves each of them a `review.finished` event saying it was
-  lost.
+  (exit 2, "task busy"). A request whose process is gone is ended as lost (below) before a new one
+  is written.
 - **Concurrency** is section 6's slots and nothing else: reviews of different tasks run at once, up
   to `max_concurrent` reviewer runs; there is no machine-wide worker.
-- **The result.** The run with `--request` marks the request running once it holds the task's lock
-  (a run whose request was replaced refuses, exit 2). When it ends, whatever its outcome, it removes
-  the request and writes one owed event per session, `<store>/.owed/<key hash>.json`, before giving
-  each to the chat's publisher (`internal/chatevent`, [chat.md](chat.md) section 10); a published
-  one is removed. What the chat could not take stays owed, and the chat pulls it when the session
-  next reads its inbox or reaches its hook. The event carries the outcome word, the round, the
-  report's path, the next step and `jst:review/<task>/<round>`. `jst review` is a plain foreground command with **one budget** for the whole call:
-`queue_minutes` (one shared window for source admission, reviewer slots and the start lock) plus the longest
-`timeout_minutes` plus 2 (the tree, the probe, the report, stopping a group). It prints the budget
-on its first line, and the documented `--for` is that budget rounded up (37 with the defaults:
-15 + 20 + 2). `jst bg`'s deadline is only the backstop. `jst review` does not call `jst bg` itself and
-needs nothing of its code.
-
-**The machine's cap.** Source views take separate machine-wide slots before materializing any
-tracked files and hold them through cleanup. The same configured concurrency ceiling applies to
-view slots and reviewer slots. Reviewer slots are lock files `~/.jackstay/.all/reviews/slots/<k>.lock`, k = 0…15, taken
-with `flock` and released by the kernel if jackstay dies. A reviewer run of a project whose
-`max_concurrent` is M may hold only a slot k < M; it tries them in order and, if none is free,
-waits (printing once that it waits, then every minute how many runs hold slots); if the slot and
-then the start lock are not both held within `queue_minutes`, it ends `failed` ("no slot") and
-Codex is never started. File or permission errors opening a lock fail immediately with their cause.
-Within one round, reviewers run concurrently,
-each as a goroutine that always returns a result value (a failure is a result, not a lost error),
-collected in order; no goroutine outlives the call. The start lock (section 2) is taken after the
-slot.
+- **The end.** The run with `--request` marks the request running once it holds the task's lock
+  (a run whose request was replaced refuses, exit 2). Every request ends exactly once, in one
+  record, `<store>/.ends/<task hash>-<request id>.json`, written under the request's lock before the
+  request is removed: the request (its sessions included), its outcome (exit status, outcome word,
+  next step, round and report folder), whether it was **lost**, and which sessions have been told.
+  A request ends when its run finishes, whatever the outcome; when its launch fails (the sessions
+  that joined meanwhile are told too); or, lost, when its process is found gone — by a new
+  submission of the task, by `review.status`, or when any session's chat looks for what it is owed.
+  Recovery has one rule: a request with an end is over — it cannot be joined, and a crash after the
+  end was written and before the request was removed tells the saved outcome, never a second one.
+  An end's next step is cut to 2 KiB, so it always fits its file.
+- **Telling the sessions.** Each session's `review.finished` event is made from the end (outcome
+  word, round, report path, next step, `jst:review/<task>/<round>`), keyed by request and session,
+  and given to the chat's publisher (`internal/chatevent`, [chat.md](chat.md) section 10); each one
+  the chat stored is recorded in the end. What it did not take is pulled when that session's chat
+  next reads its inbox or reaches its hook; a repeat stores nothing new. An older end of the task
+  of the same repository whose sessions were all told is removed when a newer one is written.
+- **Status.** A request records its repository (the Git common folder). `review.status` answers for
+  the asking repository only: its request running, if any, and how its latest one ended (outcome,
+  round, report). It reads nothing of the rounds kept by project and task, which clones of one
+  project share; a round made in the foreground is read with `jst review last`.
 
 ## 7. Commands
 

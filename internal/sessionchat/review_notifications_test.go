@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/config"
@@ -215,5 +217,147 @@ func TestAProcessFindsItsOwnChatSessionByItsToken(t *testing.T) {
 	t.Setenv("JACKSTAY_CHAT_SESSION_TOKEN", "")
 	if found, err := identify(context.Background(), chat.repository.Root); err != nil || found != "" {
 		t.Fatalf("a process without a token has a session: %q, %v", found, err)
+	}
+}
+
+func TestASubmissionFromANestedRepositoryIsRefused(t *testing.T) {
+	chat := newReviewChat(t)
+	nested := testrepo.New(t, map[string]string{"file.txt": "nested\n"})
+	original := reviewBackground
+	reviewBackground = func(string) (review.Background, error) { return original(chat.repository.Root) }
+	nestedStore, err := StoreFor(nested.Root+"/.git", chat.store.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(nested.Root); err != nil {
+		t.Fatal(err)
+	}
+	nestedSession, err := nestedStore.Register("nested", strings.Repeat("n", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(map[string]any{"name": "review.submit",
+		"arguments": map[string]any{"base": "HEAD^", "head": "HEAD", "task": "t", "reviewers": []string{"codex"}}})
+	response := (&Server{store: nestedStore, session: nestedSession}).call(encoded).(map[string]any)
+	if response["isError"] != true || !strings.Contains(response["content"].([]map[string]string)[0]["text"], "another repository") ||
+		len(chat.launched) != 0 {
+		t.Fatalf("a review of the parent repository was started from a nested one: %+v", response)
+	}
+}
+
+func TestAnIncompleteSubmissionIsRefused(t *testing.T) {
+	chat := newReviewChat(t)
+	submitter := chat.register(t, "submitter", strings.Repeat("s", 32))
+	for _, arguments := range []map[string]any{
+		{"base": "HEAD^", "task": "t", "reviewers": []string{"codex"}},
+		{"base": "HEAD^", "head": "HEAD", "reviewers": []string{"codex"}},
+		{"base": "HEAD^", "head": "HEAD", "task": "t", "reviewers": []string{}},
+	} {
+		encoded, _ := json.Marshal(map[string]any{"name": "review.submit", "arguments": arguments})
+		if response := (&Server{store: chat.store, session: submitter}).call(encoded).(map[string]any); response["isError"] != true {
+			t.Fatalf("an incomplete submission was taken: %v", arguments)
+		}
+	}
+	if len(chat.launched) != 0 {
+		t.Fatal("an incomplete submission started a run")
+	}
+}
+
+func TestALongEventFitsTheChatsMessageLimit(t *testing.T) {
+	long := strings.Repeat("é", 3000)
+	message := boundMessage([]string{"review of t: redesign due", long, "attached: jst:review/t/3"}, "event: review.finished; call chat.ack once read.", 4096)
+	if len(message) > 4096 || !utf8.ValidString(message) || !strings.HasPrefix(message, "review of t: redesign due") ||
+		!strings.HasSuffix(message, "call chat.ack once read.") {
+		t.Fatalf("message of %d bytes: %q…", len(message), message[:80])
+	}
+	if short := boundMessage([]string{"a", "b"}, "c", 4096); short != "a\nb\nc" {
+		t.Fatalf("a short message changed: %q", short)
+	}
+}
+
+func TestReviewStatusSaysWhenTheNewestRequestFailedAfterAnOlderClearRound(t *testing.T) {
+	chat := newReviewChat(t)
+	submitter := chat.register(t, "submitter", strings.Repeat("s", 32))
+	answer := chat.call(t, submitter, "review.submit", map[string]any{"base": "HEAD^", "head": "HEAD", "task": "t", "reviewers": []string{"codex"}})
+	identity := answer["request"].(map[string]any)["id"].(string)
+	background := chat.background(t)
+	if err := background.Store.Finish(context.Background(), "t", identity, review.Result{Status: review.ExitEnvironment,
+		Next: "Codex has no login"}, refusing{}); err == nil {
+		t.Fatal("refused publication not said")
+	}
+	chat.running = false
+	status := chat.call(t, submitter, "review.status", map[string]any{"task": "t"})
+	last, ok := status["last"].(map[string]any)
+	if !ok || last["outcome"] != "the environment refuses" || last["next"] != "Codex has no login" ||
+		last["request"].(map[string]any)["head"] == "" || status["running"] != nil {
+		t.Fatalf("status hides how the newest request ended: %+v", status)
+	}
+	if _, found := last["request"].(map[string]any)["subscribers"]; found {
+		t.Fatal("status shows the sessions subscribed")
+	}
+}
+
+func TestReviewStatusFromANestedRepositoryIsRefused(t *testing.T) {
+	chat := newReviewChat(t)
+	nested := testrepo.New(t, map[string]string{"file.txt": "nested\n"})
+	original := reviewBackground
+	reviewBackground = func(string) (review.Background, error) { return original(chat.repository.Root) }
+	nestedStore, err := StoreFor(nested.Root+"/.git", chat.store.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := nestedStore.Register("nested", strings.Repeat("n", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(map[string]any{"name": "review.status", "arguments": map[string]any{"task": "t"}})
+	if response := (&Server{store: nestedStore, session: session}).call(encoded).(map[string]any); response["isError"] != true {
+		t.Fatalf("the parent repository's status was read from a nested one: %+v", response)
+	}
+}
+
+func TestReviewStatusOfAnotherCloneOfTheSameProjectIsNotShown(t *testing.T) {
+	chat := newReviewChat(t)
+	submitter := chat.register(t, "submitter", strings.Repeat("s", 32))
+	answer := chat.call(t, submitter, "review.submit", map[string]any{"base": "HEAD^", "head": "HEAD", "task": "t", "reviewers": []string{"codex"}})
+	identity := answer["request"].(map[string]any)["id"].(string)
+	if err := chat.background(t).Store.Finish(context.Background(), "t", identity, review.Result{Status: review.ExitClear}, publisher{}); err != nil {
+		t.Fatal(err)
+	}
+	chat.running = false
+	// A clear round of the task saved in the store both clones share.
+	shared := chat.background(t).Store
+	round := filepath.Join(shared.TaskPath("t"), "round-1")
+	if err := os.MkdirAll(round, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record, _ := json.Marshal(review.RoundRecord{Task: "t", Round: 1, Chain: 1, Base: "b", Commit: "c"})
+	if err := os.WriteFile(filepath.Join(round, review.RecordName), record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clone := testrepo.New(t, map[string]string{
+		"jackstay.json": `{"jackstay_schema":3,"project":"review-chat-test","chat":{"enabled":true}}`,
+		"file.txt":      "first\n",
+	})
+	t.Setenv("JACKSTAY_HOME", chat.repository.Home)
+	cloneStore, err := StoreFor(clone.Root+"/.git", chat.store.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := cloneStore.Register("clone", strings.Repeat("c", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(clone.Root); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(map[string]any{"name": "review.status", "arguments": map[string]any{"task": "t"}})
+	response := (&Server{store: cloneStore, session: session}).call(encoded).(map[string]any)
+	if response["isError"] == true {
+		t.Fatalf("status: %+v", response)
+	}
+	if status := response["structuredContent"].(map[string]any); status["last"] != nil || status["running"] != nil ||
+		status["report"] != "" || status["outcome"] != nil || status["blocks"] != nil {
+		t.Fatalf("a clone was shown another clone's review: %+v", status)
 	}
 }

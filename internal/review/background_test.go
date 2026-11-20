@@ -3,12 +3,14 @@ package review
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
+	"github.com/zima-oss/jackstay/internal/durable"
 )
 
 // backgroundHarness submits against a fake repository; launches are recorded, and a launched
@@ -78,7 +80,7 @@ func TestAnEqualSubmissionJoinsAndADifferentOneIsRefusedWhileItRuns(t *testing.T
 	}
 }
 
-func TestARunThatDiedIsReplacedAndItsSubscribersAreNotForgotten(t *testing.T) {
+func TestARunThatDiedIsEndedAsLostBeforeAnotherStarts(t *testing.T) {
 	h := newBackgroundHarness(t)
 	ctx := context.Background()
 	if _, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"}); err != nil {
@@ -86,8 +88,8 @@ func TestARunThatDiedIsReplacedAndItsSubscribersAreNotForgotten(t *testing.T) {
 	}
 	h.alive = false
 	again, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s2"})
-	if err != nil || again.Joined || len(h.launched) != 2 || !slices.Equal(again.Request.Subscribers, []string{"s2", "s1"}) {
-		t.Fatalf("an equal review after a dead run does not carry its subscribers: %+v, %v", again, err)
+	if err != nil || again.Joined || len(h.launched) != 2 || !slices.Equal(again.Request.Subscribers, []string{"s2"}) {
+		t.Fatalf("a review after a dead run: %+v, %v", again, err)
 	}
 	h.alive = false
 	other, err := h.background.Submit(ctx, Submission{Revision: "c2", Subscriber: "s3"})
@@ -112,6 +114,9 @@ func TestARequestNotYetLaunchedIsLiveForAMinuteOnly(t *testing.T) {
 	}
 	if _, found, _ := h.background.Store.ReadRequest("feature/x"); found {
 		t.Fatal("a request whose launch failed was kept")
+	}
+	if end, found, _ := h.background.Store.LatestEnd("feature/x"); !found || end.Status != ExitUsage || !strings.Contains(end.Next, "no such program") {
+		t.Fatalf("a failed launch did not end its request for the sessions that joined: %+v", end)
 	}
 	young := Request{Created: h.now.Add(-30 * time.Second).Format(time.RFC3339)}
 	old := Request{Created: h.now.Add(-2 * time.Minute).Format(time.RFC3339)}
@@ -153,7 +158,7 @@ func TestFinishingARunTellsItsSubscribersOnceAndKeepsWhatTheChatRefused(t *testi
 	}
 	published := &recording{}
 	for _, subscriber := range []string{"s1", "s2"} {
-		if err := store.DeliverOwed(ctx, subscriber, published); err != nil {
+		if err := h.background.DeliverOwed(ctx, subscriber, published); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -193,5 +198,204 @@ func TestARunServingARequestMarksItRunningAndRefusesAReplacedOne(t *testing.T) {
 	saved, found, err := h.round.Store.ReadRequest("feature/x")
 	if err != nil || !found || !saved.Running {
 		t.Fatalf("the request was not marked running: %+v, %v, %v", saved, found, err)
+	}
+}
+
+func TestAResultIsSavedBeforeItsRequestIsRetired(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := h.background.Store
+	// The ends folder cannot be made: the result cannot be saved, so the request must stay.
+	if err := os.WriteFile(store.endsPath(), []byte("not a folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitClear}, &recording{}); err == nil {
+		t.Fatal("an unsaved result was not said")
+	}
+	if _, found, _ := store.ReadRequest("feature/x"); !found {
+		t.Fatal("the request was retired although its result was not saved")
+	}
+}
+
+func TestARunThatDiedIsToldToItsSessionsWithoutAnotherSubmission(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	if _, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	published := &recording{}
+	if err := h.background.DeliverOwed(ctx, "s1", published); err != nil || len(published.events) != 0 {
+		t.Fatalf("a live run was taken for lost: %+v, %v", published.events, err)
+	}
+	h.alive = false
+	if err := h.background.DeliverOwed(ctx, "s1", published); err != nil {
+		t.Fatal(err)
+	}
+	if len(published.events) != 1 || published.events[0].Meta["verdict"] != "lost" {
+		t.Fatalf("the session was not told its run died: %+v", published.events)
+	}
+	if _, found, _ := h.background.Store.ReadRequest("feature/x"); found {
+		t.Fatal("the dead request was kept")
+	}
+}
+
+func TestStatusSaysHowTheLatestRequestEndedEvenWithoutAnAttempt(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.background.Store.Finish(ctx, "feature/x", submitted.Request.ID,
+		Result{Status: ExitEnvironment, Next: "Codex has no login"}, &recording{}); err != nil {
+		t.Fatal(err)
+	}
+	h.alive = false
+	status, err := h.background.StatusOf("feature/x")
+	if err != nil || status.Running != nil || status.Last == nil || status.Last.Status != ExitEnvironment ||
+		status.Last.Request.Head != "c1" || status.Last.Next != "Codex has no login" || status.Last.Outcome != "the environment refuses" {
+		t.Fatalf("status: %+v, %v", status, err)
+	}
+}
+
+func TestACrashAfterTheEndWasWrittenTellsTheSameOutcomeAgain(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := h.background.Store
+	// The run wrote its end and died before removing its request.
+	saved, _, _ := store.ReadRequest("feature/x")
+	if err := durable.MakeFolder(store.endsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(store.endPath("feature/x", saved.ID), End{Request: saved, Status: ExitClear, Outcome: "clear",
+		Next: "nothing blocks", Ended: "2026-11-20T12:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	h.alive = false
+	published := &recording{}
+	if err := h.background.DeliverOwed(ctx, "s1", published); err != nil {
+		t.Fatal(err)
+	}
+	if len(published.events) != 1 || published.events[0].Meta["verdict"] != "clear" {
+		t.Fatalf("recovery told another outcome than the one saved: %+v", published.events)
+	}
+	if _, found, _ := store.ReadRequest("feature/x"); found {
+		t.Fatal("an ended request was kept")
+	}
+	if err := store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitBlocks}, published); err != nil || len(published.events) != 1 {
+		t.Fatalf("a late finish told a second outcome: %+v, %v", published.events, err)
+	}
+}
+
+func TestASessionCannotJoinARequestThatHasEnded(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	store := h.background.Store
+	// A launcher saved its launch failure's end and died before removing the young request.
+	young := Request{ID: "0123456789abcdef", Task: "feature/x", Worktree: "/work/repository", Head: "c1", Reviewers: []string{"codex"},
+		Subscribers: []string{"s1"}, Created: h.now.Format(time.RFC3339)}
+	if err := durable.MakeFolder(store.requestsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(store.RequestPath("feature/x"), young); err != nil {
+		t.Fatal(err)
+	}
+	if err := durable.MakeFolder(store.endsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(store.endPath("feature/x", young.ID), End{Request: young, Status: ExitUsage, Outcome: "refused",
+		Next: "could not start", Ended: h.now.Format(endedLayout)}); err != nil {
+		t.Fatal(err)
+	}
+	joined, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s2"})
+	if err != nil || joined.Joined || joined.Request.ID == young.ID || len(h.launched) != 1 {
+		t.Fatalf("a session joined an ended request: %+v, %v", joined, err)
+	}
+	if end, found, _ := store.LatestEnd("feature/x"); !found || end.Request.ID != young.ID && end.Request.ID != joined.Request.ID {
+		t.Fatalf("ends: %+v", end)
+	}
+}
+
+func TestAnEndAlwaysFitsItsFile(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("redesign, do not patch: a place named at length; ", 4000)
+	if err := h.background.Store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitRedesign, Next: long}, &recording{}); err != nil {
+		t.Fatal(err)
+	}
+	end, found, err := h.background.Store.LatestEnd("feature/x")
+	if err != nil || !found || len(end.Next) > maximumNextBytes || end.Outcome != "redesign due" {
+		t.Fatalf("end: %d bytes of next, %v, %v", len(end.Next), found, err)
+	}
+	if _, found, _ := h.background.Store.ReadRequest("feature/x"); found {
+		t.Fatal("the request outlived its end")
+	}
+}
+
+func TestTwoClonesSharingAStoreSeeOnlyTheirOwnRequests(t *testing.T) {
+	h := newBackgroundHarness(t)
+	h.background.Repository = "/clones/first/.git"
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := h.background
+	other.Repository = "/clones/second/.git"
+	if status, err := other.StatusOf("feature/x"); err != nil || status.Running != nil {
+		t.Fatalf("another clone sees this one's running request: %+v, %v", status, err)
+	}
+	if err := h.background.Store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitClear}, &recording{}); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := other.StatusOf("feature/x"); err != nil || status.Last != nil {
+		t.Fatalf("another clone sees this one's end: %+v, %v", status, err)
+	}
+	if status, err := h.background.StatusOf("feature/x"); err != nil || status.Last == nil {
+		t.Fatalf("the clone does not see its own end: %+v, %v", status, err)
+	}
+}
+
+func TestAnotherClonesEndIsNotForgottenAndItsRoundsAreNotStatus(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	first := h.background
+	first.Repository = "/clones/first/.git"
+	second := h.background
+	second.Repository = "/clones/second/.git"
+	done := func(background Background, subscriber string) {
+		t.Helper()
+		submitted, err := background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: subscriber})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := background.Store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitClear, Folder: "/store/round-1",
+			Record: &RoundRecord{Round: 1}}, &recording{}); err != nil {
+			t.Fatal(err)
+		}
+		h.alive = false
+	}
+	done(first, "s1")
+	done(second, "s2")
+	status, err := first.StatusOf("feature/x")
+	if err != nil || status.Last == nil || status.Last.Request.Repository != "/clones/first/.git" {
+		t.Fatalf("the second clone's end removed the first's: %+v, %v", status, err)
+	}
+	third := h.background
+	third.Repository = "/clones/third/.git"
+	if status, err := third.StatusOf("feature/x"); err != nil || status.Last != nil || status.Running != nil || status.Report != "" {
+		t.Fatalf("a clone with no review of its own was told another's: %+v, %v", status, err)
 	}
 }

@@ -3,7 +3,6 @@ package review
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
@@ -42,7 +42,8 @@ type Request struct {
 	ID          string   `json:"id"`
 	Task        string   `json:"task"`
 	Worktree    string   `json:"worktree"`
-	Base        string   `json:"base,omitempty"` // "" when the round takes the chain's base or the first parent
+	Repository  string   `json:"repository,omitempty"` // its Git common folder
+	Base        string   `json:"base,omitempty"`       // "" when the round takes the chain's base or the first parent
 	Head        string   `json:"head"`
 	Reviewers   []string `json:"reviewers"`
 	Fresh       bool     `json:"fresh,omitempty"`
@@ -63,8 +64,6 @@ func (store Store) requestsPath() string { return filepath.Join(store.Root, ".re
 func (store Store) RequestPath(task string) string {
 	return filepath.Join(store.requestsPath(), taskKey(task)+".json")
 }
-
-func (store Store) owedPath() string { return filepath.Join(store.Root, ".owed") }
 
 // Submission is what a session asks to have reviewed in the background.
 type Submission struct {
@@ -101,12 +100,15 @@ func DetachedLaunch(argv []string, folder, log string) (int, int64, <-chan struc
 // Background submits reviews of one project.
 type Background struct {
 	RepositoryRoot string
-	Settings       Settings
-	Repo           Repository
-	Store          Store
-	Executable     string
-	Launch         Launch
-	Now            func() time.Time
+	// Repository is the Git common folder of RepositoryRoot: the repository a request belongs to, so
+	// two clones that share a project's review store see only their own requests. "" is any.
+	Repository string
+	Settings   Settings
+	Repo       Repository
+	Store      Store
+	Executable string
+	Launch     Launch
+	Now        func() time.Time
 	// Alive says whether the process of a request still runs; nil uses the process table.
 	Alive func(pid int, start int64) (alive, known bool)
 	// Started waits for a new request to be taken by its run; nil does not wait.
@@ -116,8 +118,7 @@ type Background struct {
 // Submitted is a submission's answer.
 type Submitted struct {
 	Request Request
-	Joined  bool   // an equal request was already running and this one subscribed to it
-	Warning string // what went wrong on the side, the submission itself having succeeded
+	Joined  bool // an equal request was already running and this one subscribed to it
 }
 
 // ErrBusy is a task with another review running.
@@ -171,7 +172,7 @@ func (background Background) Submit(ctx context.Context, submission Submission) 
 		return Submitted{}, errors.New("--focus is one line of at most 2000 bytes")
 	}
 	now := background.Now()
-	asked := Request{Task: task, Worktree: background.RepositoryRoot, Base: base, Head: head, Reviewers: names,
+	asked := Request{Task: task, Worktree: background.RepositoryRoot, Repository: background.Repository, Base: base, Head: head, Reviewers: names,
 		Fresh: submission.Fresh, PastLimit: submission.PastLimit, Focus: submission.Focus,
 		Created: now.UTC().Format(time.RFC3339),
 		// The backstop of `jst bg` is the review's own budget and a minute more.
@@ -180,8 +181,11 @@ func (background Background) Submit(ctx context.Context, submission Submission) 
 		asked.Subscribers = []string{submission.Subscriber}
 	}
 
+	// A request whose run died is ended first, its sessions told it was lost.
+	if err := background.endIfDead(ctx, task); err != nil {
+		return Submitted{}, err
+	}
 	var answer Submitted
-	var replaced *Request
 	path := background.Store.RequestPath(task)
 	err = durable.Update(ctx, path, 0o600, maximumRequestBytes, func(current []byte) ([]byte, error) {
 		if current != nil {
@@ -203,16 +207,7 @@ func (background Background) Submit(ctx context.Context, submission Submission) 
 				answer = Submitted{Request: running, Joined: true}
 				return json.MarshalIndent(running, "", "  ")
 			}
-			replaced = &running
-			// An equal review that ended without telling its sessions is run again for them.
-			if running.sameReview(asked) {
-				for _, subscriber := range running.Subscribers {
-					if !slices.Contains(asked.Subscribers, subscriber) && len(asked.Subscribers) < MaximumSubscribers {
-						asked.Subscribers = append(asked.Subscribers, subscriber)
-					}
-				}
-				replaced.Subscribers = nil
-			}
+			return nil, fmt.Errorf("%w: the review of %s just stopped; submit again", ErrBusy, running.rangeText())
 		}
 		identity, err := newRequestID()
 		if err != nil {
@@ -225,15 +220,6 @@ func (background Background) Submit(ctx context.Context, submission Submission) 
 	})
 	if err != nil {
 		return Submitted{}, err
-	}
-	if replaced != nil && len(replaced.Subscribers) > 0 {
-		// Told now when the chat takes it, else pulled later; failing to keep it is only said.
-		lost := replaced.lostEvents()
-		if err := background.Store.owe(ctx, lost); err != nil {
-			answer.Warning = "the sessions of the review it replaces could not be told it was lost: " + err.Error()
-		} else {
-			_ = background.Store.deliver(ctx, lost, chatevent.Default())
-		}
 	}
 	if answer.Joined {
 		return answer, nil
@@ -248,8 +234,16 @@ func (background Background) launch(ctx context.Context, answer Submitted) (Subm
 	argv = append(argv, request.reviewArguments()...)
 	pid, start, done, err := background.Launch(argv, background.RepositoryRoot, request.Log)
 	if err != nil {
-		_ = background.Store.dropRequest(ctx, request.Task, request.ID)
-		return Submitted{}, fmt.Errorf("starting the review in the background: %w", err)
+		// Sessions may have joined meanwhile: they are told, as of any other end.
+		failure := fmt.Errorf("starting the review in the background: %w", err)
+		end, _, endErr := background.Store.endRequest(ctx, request.Task, func(current Request) bool { return current.ID == request.ID },
+			func(current Request) End {
+				return End{Request: current, Status: ExitUsage, Next: failure.Error() + "; submit again"}
+			})
+		if endErr == nil {
+			_ = background.Store.deliver(ctx, end, "", chatevent.Default())
+		}
+		return Submitted{}, errors.Join(failure, endErr)
 	}
 	request.PID, request.Start = pid, start
 	err = durable.Update(ctx, background.Store.RequestPath(request.Task), 0o600, maximumRequestBytes, func(current []byte) ([]byte, error) {
@@ -292,6 +286,12 @@ func (background Background) waitStarted(ctx context.Context, request Request, d
 }
 
 func (background Background) live(request Request) bool {
+	if request.ID != "" {
+		// A request with an end is over, whatever its process: its launcher died after ending it.
+		if _, err := os.Stat(background.Store.endPath(request.Task, request.ID)); err == nil {
+			return false
+		}
+	}
 	if request.PID <= 0 {
 		// Not launched yet, or its launch failed before it was recorded: live while young.
 		created, err := time.Parse(time.RFC3339, request.Created)
@@ -308,6 +308,11 @@ func (background Background) live(request Request) bool {
 	return err == nil && background.Now().Before(deadline)
 }
 
+// ours says whether request was made in this background's repository.
+func (background Background) ours(request Request) bool {
+	return background.Repository == "" || request.Repository == background.Repository
+}
+
 func processAlive(pid int, start int64) (bool, bool) {
 	row, found, err := procs.Row(pid)
 	if err != nil {
@@ -317,7 +322,8 @@ func processAlive(pid int, start int64) (bool, bool) {
 }
 
 func (request Request) sameReview(other Request) bool {
-	return request.Task == other.Task && request.Worktree == other.Worktree && request.Base == other.Base &&
+	return request.Task == other.Task && request.Worktree == other.Worktree && request.Repository == other.Repository &&
+		request.Base == other.Base &&
 		request.Head == other.Head && slices.Equal(request.Reviewers, other.Reviewers) && request.Fresh == other.Fresh &&
 		request.PastLimit == other.PastLimit && request.Focus == other.Focus
 }
@@ -383,101 +389,6 @@ func (store Store) markRunning(ctx context.Context, task, id string) error {
 	})
 }
 
-func (store Store) dropRequest(ctx context.Context, task, id string) error {
-	_, err := store.takeRequest(ctx, task, id)
-	return err
-}
-
-// takeRequest removes the task's request when it is id, and returns it.
-func (store Store) takeRequest(ctx context.Context, task, id string) (Request, error) {
-	var taken Request
-	path := store.RequestPath(task)
-	held, err := durable.Lock(ctx, path)
-	if err != nil {
-		return Request{}, err
-	}
-	defer held.Release()
-	data, err := durable.ReadLimited(path, maximumRequestBytes)
-	if errors.Is(err, fs.ErrNotExist) {
-		return Request{}, nil
-	}
-	if err != nil {
-		return Request{}, err
-	}
-	if err := strictjson.UnmarshalOpen(data, &taken); err != nil || taken.ID != id {
-		return Request{}, err
-	}
-	if err := os.Remove(path); err != nil {
-		return Request{}, err
-	}
-	return taken, durable.SyncFolder(filepath.Dir(path))
-}
-
-// Finish ends the run of request id: its subscriptions become owed `review.finished` events,
-// published now when the chat takes them. It never fails the review: what it could not do is said.
-func (store Store) Finish(ctx context.Context, task, id string, result Result, publisher chatevent.Publisher) error {
-	request, err := store.takeRequest(ctx, task, id)
-	if err != nil {
-		return err
-	}
-	if request.ID == "" || len(request.Subscribers) == 0 {
-		return nil
-	}
-	events := request.finishedEvents(result)
-	if err := store.owe(ctx, events); err != nil {
-		return err
-	}
-	return store.deliver(ctx, events, publisher)
-}
-
-func (request Request) event(summary, body string, meta map[string]string, attachments []chatevent.Attachment) chatevent.Event {
-	meta["task"] = request.Task
-	meta["request"] = request.ID
-	return chatevent.Event{Kind: chatevent.KindReviewFinished, Worktree: request.Worktree, Summary: chatevent.Summary(summary),
-		Body: body, Meta: meta, Attachments: attachments}
-}
-
-// perSubscriber is one event for each subscriber, each with its own key, so each is owed apart.
-func (request Request) perSubscriber(event chatevent.Event, ending string) []chatevent.Event {
-	events := make([]chatevent.Event, 0, len(request.Subscribers))
-	for _, subscriber := range request.Subscribers {
-		one := event
-		one.Recipients = []string{subscriber}
-		digest := sha256.Sum256([]byte(request.ID + "\x00" + ending + "\x00" + subscriber))
-		one.Key = "review/" + hex.EncodeToString(digest[:16])
-		events = append(events, one)
-	}
-	return events
-}
-
-func (request Request) finishedEvents(result Result) []chatevent.Event {
-	outcome := OutcomeWord(result.Status)
-	summary := fmt.Sprintf("review of %s (%s): %s", request.Task, request.rangeText(), outcome)
-	meta := map[string]string{"exit": strconv.Itoa(result.Status), "verdict": outcome}
-	var attachments []chatevent.Attachment
-	if result.Record != nil {
-		summary = fmt.Sprintf("review of %s, round %d (%s): %s", request.Task, result.Record.Round, request.rangeText(), outcome)
-		meta["round"] = strconv.Itoa(result.Record.Round)
-		attachments = append(attachments, chatevent.Attachment{
-			URI: fmt.Sprintf("jst:review/%s/%d", request.Task, result.Record.Round), Title: "the round's report"})
-	}
-	body := "next: " + result.Next
-	if result.Folder != "" {
-		body += "\nreport: " + filepath.Join(result.Folder, "report.md")
-	}
-	body += fmt.Sprintf("\nread it with `jst review last --task %s`", request.Task)
-	if len(body) > chatevent.MaxBodyBytes {
-		body = body[:chatevent.MaxBodyBytes]
-	}
-	return request.perSubscriber(request.event(summary, body, meta, attachments), "finished")
-}
-
-func (request Request) lostEvents() []chatevent.Event {
-	summary := fmt.Sprintf("review of %s (%s): stopped before it finished", request.Task, request.rangeText())
-	body := fmt.Sprintf("its process is gone; the log is %s. Submit it again; reviewers that answered are not run again.", request.Log)
-	return request.perSubscriber(request.event(summary, body, map[string]string{"verdict": "lost"}, nil), "lost")
-}
-
 // OutcomeWord is the word for a review's exit status.
 func OutcomeWord(status int) string {
 	switch status {
@@ -499,83 +410,6 @@ func OutcomeWord(status int) string {
 	return "exit " + strconv.Itoa(status)
 }
 
-func owedFile(store Store, key string) string {
-	digest := sha256.Sum256([]byte(key))
-	return filepath.Join(store.owedPath(), hex.EncodeToString(digest[:])+".json")
-}
-
-// owe writes each event as owed, before it is published.
-func (store Store) owe(_ context.Context, events []chatevent.Event) error {
-	if len(events) == 0 {
-		return nil
-	}
-	if err := durable.MakeFolder(store.owedPath(), 0o700); err != nil {
-		return err
-	}
-	var failures []error
-	for _, event := range events {
-		data, err := json.MarshalIndent(event, "", "  ")
-		if err == nil {
-			err = durable.WriteAtomic(owedFile(store, event.Key), data, 0o600, maximumRequestBytes)
-		}
-		if err != nil {
-			failures = append(failures, err)
-		}
-	}
-	return errors.Join(failures...)
-}
-
-func (store Store) deliver(ctx context.Context, events []chatevent.Event, publisher chatevent.Publisher) error {
-	var failures []error
-	for _, event := range events {
-		if err := publisher.Publish(ctx, event); err != nil {
-			failures = append(failures, err)
-			continue
-		}
-		if err := os.Remove(owedFile(store, event.Key)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			failures = append(failures, err)
-		}
-	}
-	return errors.Join(failures...)
-}
-
-// Owed are the events still owed to recipient.
-func (store Store) Owed(recipient string) ([]chatevent.Event, error) {
-	listed, err := os.ReadDir(store.owedPath())
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var owed []chatevent.Event
-	for _, item := range listed {
-		if !strings.HasSuffix(item.Name(), ".json") || strings.HasPrefix(item.Name(), ".") {
-			continue
-		}
-		data, err := durable.ReadLimited(filepath.Join(store.owedPath(), item.Name()), maximumRequestBytes)
-		if err != nil {
-			continue
-		}
-		var event chatevent.Event
-		if strictjson.UnmarshalOpen(data, &event) != nil || !slices.Contains(event.Recipients, recipient) {
-			continue
-		}
-		owed = append(owed, event)
-	}
-	return owed, nil
-}
-
-// DeliverOwed publishes what is still owed to recipient: the chat pulls it when that session
-// next reads its inbox, so no event waits for another review to run.
-func (store Store) DeliverOwed(ctx context.Context, recipient string, publisher chatevent.Publisher) error {
-	owed, err := store.Owed(recipient)
-	if err != nil || len(owed) == 0 {
-		return err
-	}
-	return store.deliver(ctx, owed, publisher)
-}
-
 // BackgroundAt is the project around folder, ready to submit reviews from another command (the
 // chat's `review.submit`), with jackstay's own binary as executable.
 func BackgroundAt(folder, executable string) (Background, error) {
@@ -591,47 +425,81 @@ func BackgroundAt(folder, executable string) (Background, error) {
 	if err != nil {
 		return Background{}, err
 	}
-	return Background{RepositoryRoot: found.Root, Settings: settings, Repo: RepositoryAt(found.Root), Store: store,
-		Executable: executable, Launch: DetachedLaunch, Now: time.Now, Started: 10 * time.Second}, nil
+	repository, err := repositoryIdentity(found.Root)
+	if err != nil {
+		return Background{}, err
+	}
+	return Background{RepositoryRoot: found.Root, Repository: repository, Settings: settings, Repo: RepositoryAt(found.Root),
+		Store: store, Executable: executable, Launch: launchDetached, Now: time.Now, Started: 10 * time.Second}, nil
 }
 
-// Status is where a task's reviews stand: the request running in the background, if any, and the
-// newest round or attempt.
+// folderOf says whether the round or attempt folder was made by request id.
+func (store Store) folderOf(folder, id string) bool {
+	var attempt AttemptRecord
+	data, err := os.ReadFile(filepath.Join(folder, AttemptName)) // #nosec G304 -- a folder of this store
+	return err == nil && strictjson.UnmarshalOpen(data, &attempt) == nil && attempt.Request == id
+}
+
+// launchDetached is the Launch BackgroundAt gives; tests replace it.
+var launchDetached Launch = DetachedLaunch
+
+// repositoryIdentity is the repository of root: its Git common folder and that folder's device and
+// inode, so a clone made later at the same path is another repository, and linked worktrees are one.
+func repositoryIdentity(root string) (string, error) {
+	folder, err := (gitRepository{root: root}).CommonDir(context.Background())
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(folder)
+	if err != nil {
+		return "", err
+	}
+	if identity, ok := info.Sys().(*syscall.Stat_t); ok {
+		return fmt.Sprintf("%s#%d:%d", folder, identity.Dev, identity.Ino), nil
+	}
+	return folder, nil
+}
+
+// Status is where a task's background reviews in this repository stand: the request running, if
+// any, and how the latest one ended (its outcome, round and report). It reads nothing of the task's
+// rounds kept by project, which clones of one project share: a round made in the foreground is
+// read with `jst review last`.
 type Status struct {
 	Running *Request `json:"running,omitempty"`
-	Newest  *Entry   `json:"newest,omitempty"`
-	Outcome string   `json:"outcome,omitempty"`
-	Blocks  *bool    `json:"blocks,omitempty"`
-	Report  string   `json:"report,omitempty"`
+	Last    *End     `json:"last,omitempty"`
+	Report  string   `json:"report,omitempty"` // the latest end's report, when it made a round or attempt
 }
 
-// StatusOf reads where task stands.
+// StatusOf reads where task stands in this repository.
 func (background Background) StatusOf(task string) (Status, error) {
 	var status Status
+	if err := background.ReapLost(context.Background()); err != nil {
+		return Status{}, err
+	}
 	request, found, err := background.Store.ReadRequest(task)
 	if err != nil {
 		return Status{}, err
 	}
-	if found && background.live(request) {
+	if found && background.live(request) && background.ours(request) {
 		status.Running = &request
 	}
-	entries, err := background.Store.Entries(task)
-	if err != nil || len(entries) == 0 {
-		return status, err
+	ends, err := background.Store.ends(task)
+	if err != nil {
+		return Status{}, err
 	}
-	newest := entries[len(entries)-1]
-	status.Newest = &newest
-	status.Report = filepath.Join(newest.Path, "report.md")
-	if newest.Round > 0 {
-		record, err := readRecord(newest.Path)
-		if err != nil {
-			return status, err
+	for index := len(ends) - 1; index >= 0; index-- {
+		if background.ours(ends[index].Request) {
+			last := ends[index]
+			// A folder pruned and taken again by a later review is not this end's: say none.
+			if last.Folder != "" && !background.Store.folderOf(last.Folder, last.Request.ID) {
+				last.Folder, last.Round = "", 0
+			}
+			status.Last = &last
+			if last.Folder != "" {
+				status.Report = filepath.Join(last.Folder, "report.md")
+			}
+			break
 		}
-		code, _ := Disposition(background.Settings, record)
-		status.Outcome = OutcomeWord(code)
-		status.Blocks = &record.Outcome.Blocks
-	} else {
-		status.Outcome = "no round: " + failureWords(ReadRuns(newest.Path))
 	}
 	return status, nil
 }

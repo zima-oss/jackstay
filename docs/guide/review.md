@@ -197,8 +197,8 @@ restarted), its sessions are told so, and submitting it again is enough.
 
 With `chat.enabled` and the repository's `jst chat serve` MCP server connected, `review.submit`
 takes `base`, `head`, `task` and an explicit `reviewers` list (`codex`, `claude-code` or both) and
-starts the same background round. `review.status` with a `task` shows the review running in the
-background, if any, and the newest round's outcome and report. The result arrives as a
+starts the same background round. `review.status` with a `task` shows this repository's review
+running in the background, if any, and how its latest one ended: outcome, round and report. The result arrives as a
 `review.finished` message from `jackstay`; read it with `chat.inbox` and acknowledge it with
 `chat.ack`. A result the chat could not take when the round ended is kept and delivered the next
 time the session reads its inbox or reaches a configured hook.

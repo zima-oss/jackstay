@@ -47,8 +47,8 @@ more than one agent, so use the recipient ID returned by discovery.
 
 The same MCP connection offers `review.submit` and `review.status`. Submit `{ "base": "main", "head": "HEAD", "task": "feature-branch",
 "reviewers": ["codex", "claude-code"] }` to start `jst review` in the background on those pinned
-commits; an equal review already running is joined. `review.status` takes the `task` and shows the
-running review and the newest round. When the round ends, each submitter receives a
+commits; an equal review already running is joined. `review.status` takes the `task` and shows this
+repository's running review and how its latest one ended. When the round ends, each submitter receives a
 `review.finished` message from `jackstay` through `chat.inbox` or its configured active-turn host
 integration; call `chat.ack` with its message ID once read. A result the chat could not take is kept
 by the review store and delivered when the recipient next reads its inbox. See
