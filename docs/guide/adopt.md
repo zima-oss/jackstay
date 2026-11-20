@@ -119,7 +119,9 @@ A session can do the update with this prompt:
 
 > Bring this project up to date with jackstay. Run `jst adopt --plan` (with `--profile <path>` the
 > first time, if there is one). Settle each conflict it lists: do the migration as the project's
-> own work, or add an exception with its reason to `jackstay.json`'s `adopt.exceptions`. Before
+> own work, or add an exception with its reason to `jackstay.json`'s `adopt.exceptions`. Look at
+> each workflow the plan lists as the project's own: keep it, or remove from it what jackstay's
+> workflows now do. Before
 > `--accept …:edited`, move the project's own lines out of the text the plan shows will be
 > replaced; never edit inside the `jackstay-adopt` markers. If the pin is to move (`--pin`), or the
 > change against the base would touch `jackstay.json` and other files (adopt's writes or your own
