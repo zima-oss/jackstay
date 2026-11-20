@@ -847,11 +847,18 @@ func TestNewerKeysWaitUntilThePinBefore060HasMoved(t *testing.T) {
 
 func TestNewerKeysAreRefusedForAProjectPinnedBefore060(t *testing.T) {
 	for pin, refused := range map[string]bool{"v0.5.11": true, "v0.6.0": false} {
-		root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":3,"adopt":{"pin":"` + pin + `"},"brief":{"max_age_hours":24}}`})
-		_, err := Make(optionsFor(root))
+		root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"adopt":{"pin":"` + pin + `"}}`})
+		options := optionsFor(root)
+		options.Profile = exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, nil)
+		_, err := Make(options)
 		if refused != (err != nil && strings.Contains(err.Error(), "the pinned jackstay "+pin)) {
 			t.Errorf("pin %s: %v", pin, err)
 		}
+	}
+	// A key the file has already is not added by this apply: what reads the file reads it already.
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":3,"adopt":{"pin":"v0.5.11"},"brief":{"max_age_hours":24}}`})
+	if _, err := Make(optionsFor(root)); err != nil {
+		t.Fatalf("a key the file already has: %v", err)
 	}
 }
 
@@ -874,6 +881,53 @@ func TestAProfileWorkflowNamesTheReleaseItDownloads(t *testing.T) {
 	options.SettingsOnly = false
 	apply(t, options)
 	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, workflow)
+	options.SettingsOnly = true
+	apply(t, options)
+	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) {
+		t.Fatalf("after the workflows landed:\n%s", text)
+	}
+}
+
+func TestAWorkflowWhoseReleaseCannotBeToldHoldsNewerKeysBack(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p","adopt":{"pin":"v0.6.0"}}`})
+	options := optionsFor(root)
+	options.Version = "0.6.0"
+	old := map[string]string{"custom": "name: custom\nenv:\n  VERSION: '@@jackstay_version@@'\n  CHANNEL: '@@channel_2@@'\n"}
+	options.Profile = exampleProfile(t, root, `{}`, old)
+	setValue := func(name, value string) {
+		t.Helper()
+		path := filepath.Join(root, "profiles", "profile.json")
+		text := strings.Replace(read(t, root, "profiles/profile.json"), `"agents"`, `"values": {"`+name+`": "`+value+`"}, "agents"`, 1)
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setValue("channel_2", "stable")
+	apply(t, options)
+	stale := strings.Replace(read(t, root, ".github/workflows/custom.yml"), "v0.6.0", "v0.5.11", 1)
+	if err := os.WriteFile(filepath.Join(root, ".github/workflows/custom.yml"), []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Its own template's line, other placeholder and all, tells the release: v0.5.11.
+	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, old)
+	setValue("channel_2", "stable")
+	options.SettingsOnly = true
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "v0.5.11 that .github/workflows/custom.yml downloads") {
+		t.Fatalf("an old release behind another placeholder: %v", err)
+	}
+	// The profile renames the variable in the same apply: the release on disk cannot be told.
+	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, map[string]string{"custom": "name: custom\nenv:\n  JST: '@@jackstay_version@@'\n"})
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "cannot be told") {
+		t.Fatalf("a release that cannot be told: %v", err)
+	}
+	// Another managed workflow's VERSION for another tool is not jackstay's.
+	other := map[string]string{"custom": "name: custom\nenv:\n  JST: '@@jackstay_version@@'\n", "tool": "name: tool\nenv:\n  VERSION: 'v0.5.11'\n"}
+	exampleProfile(t, root, `{}`, other)
+	options.SettingsOnly = false
+	options.Accept = []string{"workflow:custom:edited"}
+	apply(t, options)
+	options.Accept = nil
+	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, other)
 	options.SettingsOnly = true
 	apply(t, options)
 	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) {
