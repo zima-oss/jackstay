@@ -81,8 +81,7 @@ out, and a symlink appears as a plain file holding its target. Beyond it, a revi
 rest of the machine, read-only, and use the network, your full `PATH`, your proxy and CA settings
 and its own provider's login. It cannot write outside its own temporary folder, read `~/.ssh`,
 `~/.aws`, `~/.config/gh` and the other credential folders, the keychain, the other reviewer's login
-or `.env` files (on Linux, Codex: those in the checkout and the source view, at most 12 folders
-deep, that exist when the run starts), or see token-like environment variables other than its
+or `.env` files (on Linux, Codex can read `.env` files: that part waits for a redesign), or see token-like environment variables other than its
 provider's. Claude Code uses `Read`, `Glob`, `Grep`, `WebFetch` and `WebSearch`; Codex has
 read-only shell navigation and search. Managed Claude Code policies, managed hooks included, still
 apply. The [design](../design/review.md#34-the-run) lists the profile whole.

@@ -38,5 +38,4 @@ isolation pays every reviewer again. Reviewers may now reach the network and rea
 so instructions planted in a reviewed change could send out what a reviewer can read: the risk is
 accepted for efficiency, and narrowed by denying the credentials by path and by name (the other
 reviewer's login included) and leaving `.env` contents out of the patches. Both reviewers deny `.env`
-files by a pattern; on Linux Codex expands it when the run starts, in the checkout and the source view,
-to a bounded depth.
+files by a pattern on macOS; on Linux Codex denies none until its rule is redesigned.

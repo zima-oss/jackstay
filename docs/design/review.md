@@ -221,15 +221,13 @@ round's report merges their findings by `place`.
     also left out of the generated patches (`changes/*.patch`); the change index still names them.
     Claude Code: `Read`, `Glob` and `Grep` deny rules for each path and for `//**/.env` and
     `//**/.env.*` (anchored at the filesystem's root, not at its working folder), through
-    `--settings`. Codex: each path `"none"` in the profile, and `.env` / `.env.*` globs `"none"`.
-    On macOS they are `"/**/.env"` and `"/**/.env.*"`, checked at every read, links included. On
-    Linux Codex expands a glob before the run, takes regular files only, refuses one rooted at `/`
-    and stops every sandboxed command when its scan meets a folder it cannot read (Codex 0.169.0's
-    Linux sandbox source); so there jackstay gives it no glob: it lists the `.env` files and links
-    of the source view and the live checkout itself (12 folders deep, 200,000 entries per root,
-    passing over folders it cannot read and dependency folders) and denies each by its literal path,
-    a link by its own path and its target's. That is a snapshot: a `.env` elsewhere, deeper, or made
-    during the run is not denied to Codex on Linux. Not run on Linux here.
+    `--settings`. Codex on macOS: each path `"none"` in the profile, and the globs `"/**/.env"` and
+    `"/**/.env.*"` `"none"`, checked at every read, links included. **Codex on Linux denies no
+    `.env` file**: its sandbox expands a glob before the run, takes regular files only, refuses one
+    rooted at `/` and stops every sandboxed command when its scan meets a folder it cannot read
+    (Codex 0.169.0's Linux sandbox source), three designs were tried and none could be verified
+    here; so on Linux the reviewer keeps the read-only profile and the credential-path denials,
+    and `.env` files stay readable to it (the redesign is an issue of its own). Not run on Linux.
   - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
     `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
     local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,

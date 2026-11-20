@@ -18,11 +18,11 @@ func TestEnvFilesAreDeniedUnderRootsThisPlatformTakes(t *testing.T) {
 		return
 	}
 	if len(roots) != 0 {
-		t.Fatalf("roots: %v (here Codex gets literal paths, never a glob it scans itself)", roots)
+		t.Fatalf("roots: %v (no .env rule off macOS until it is redesigned)", roots)
 	}
 }
 
-func TestEnvFilesAndLinksAreListedPastAnUnreadableFolder(t *testing.T) {
+func TestNoEnvRuleIsGivenOffMacOS(t *testing.T) {
 	checkout, shared := t.TempDir(), t.TempDir()
 	target := filepath.Join(shared, "settings")
 	if err := os.WriteFile(target, []byte("X=made-up\n"), 0o600); err != nil {
@@ -53,9 +53,7 @@ func TestEnvFilesAndLinksAreListedPastAnUnreadableFolder(t *testing.T) {
 		}
 		return
 	}
-	resolved, _ := filepath.EvalSymlinks(target)
-	if !slices.Contains(links, filepath.Join(checkout, ".env")) || !slices.Contains(links, resolved) ||
-		!slices.Contains(links, filepath.Join(nested, ".env.local")) {
-		t.Fatalf("links: %v (a link, its target and a nested file; an unreadable folder passed over)", links)
+	if len(links) != 0 {
+		t.Fatalf("links: %v (no .env rule off macOS until it is redesigned)", links)
 	}
 }
