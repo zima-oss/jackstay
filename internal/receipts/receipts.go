@@ -29,7 +29,9 @@ const (
 	StatusGaveUp     = 75
 	StatusNothingRun = 76
 	StatusUnjudged   = 77
-	StatusNoStart    = 127
+	// StatusPassedOnRetry is a run whose tests all passed, some only on a retry: not a clean pass.
+	StatusPassedOnRetry = 78
+	StatusNoStart       = 127
 )
 
 // Outcomes the last `jst test:` line names.
@@ -40,6 +42,7 @@ const (
 	OutcomeFailed         = "failed"
 	OutcomeNothingRun     = "nothing-run"
 	OutcomeUnjudged       = "unjudged"
+	OutcomePassedOnRetry  = "passed-on-retry" // #nosec G101 -- an outcome's name
 	OutcomeStopped        = "stopped"
 	OutcomeStoppedWaiting = "stopped-waiting"
 	OutcomeGaveUp         = "gave-up"

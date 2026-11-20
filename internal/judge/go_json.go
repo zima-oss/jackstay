@@ -135,9 +135,10 @@ func (reader *goJSONReader) packageEvent(pkg *goJSONPackage, event goJSONEvent) 
 	switch event.Action {
 	case "output":
 		// go test replays test events from its cache. The package summary records
-		// that fact even though the replayed events look like a fresh execution.
+		// that fact even though the replayed events look like a fresh execution: it writes
+		// "(cached)" in place of the elapsed time and keeps the rest of the line (coverage).
 		fields := strings.Fields(event.Output)
-		if len(fields) >= 3 && fields[0] == "ok" && fields[1] == event.Package && fields[len(fields)-1] == "(cached)" {
+		if len(fields) >= 3 && fields[0] == "ok" && fields[1] == event.Package && fields[2] == "(cached)" {
 			reader.cached = true
 		}
 	case "pass", "fail", "skip":

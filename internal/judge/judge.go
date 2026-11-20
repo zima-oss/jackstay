@@ -57,16 +57,17 @@ const (
 // An Outcome is a run's verdict.
 type Outcome string
 
-// The outcomes, by the order of verdicts: failed > timed-out > stopped > unjudged > nothing-run >
-// passed (exited-0 is the `exit` judge's passed).
+// The outcomes, by the order of verdicts: failed > timed-out > stopped > unjudged > passed-on-retry >
+// nothing-run > passed (exited-0 is the `exit` judge's passed).
 const (
-	Failed     Outcome = "failed"
-	TimedOut   Outcome = "timed-out"
-	Stopped    Outcome = "stopped"
-	Unjudged   Outcome = "unjudged"
-	NothingRun Outcome = "nothing-run"
-	Passed     Outcome = "passed"
-	ExitedZero Outcome = "exited-0"
+	Failed        Outcome = "failed"
+	TimedOut      Outcome = "timed-out"
+	Stopped       Outcome = "stopped"
+	Unjudged      Outcome = "unjudged"
+	PassedOnRetry Outcome = "passed-on-retry" // #nosec G101 -- an outcome's name
+	NothingRun    Outcome = "nothing-run"
+	Passed        Outcome = "passed"
+	ExitedZero    Outcome = "exited-0"
 )
 
 // Options are a scope's judge and patterns, as jackstay.json declares them. The patterns are RE2.
@@ -394,6 +395,7 @@ func (reader *Reader) ReadReport(report *testreport.Report) {
 		_ = file.Close()
 		facts.Counts.Counted += part.Counts.Counted
 		facts.Counts.Skipped += part.Counts.Skipped
+		facts.Retried += part.Retried
 		if facts.Failure == "" {
 			facts.Failure = part.Failure
 		}

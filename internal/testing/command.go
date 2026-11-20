@@ -319,6 +319,11 @@ func (did *ran) judged(launchedRun launched, reader *judge.Reader, seen *leftove
 	case judge.Unjudged:
 		return did.finish(receipts.OutcomeUnjudged, receipts.StatusUnjudged, more,
 			fmt.Sprintf("outcome=unjudged (exit %d: %s; %s s; %s)", receipts.StatusUnjudged, verdict.Why, took, detail))
+	case judge.PassedOnRetry:
+		more["why"] = verdict.Why
+		return did.finish(receipts.OutcomePassedOnRetry, receipts.StatusPassedOnRetry, more,
+			fmt.Sprintf("outcome=passed-on-retry (exit %d: %s, not a clean pass; %s s; %s; no receipt)",
+				receipts.StatusPassedOnRetry, verdict.Why, took, detail))
 	}
 	return did.finish(receipts.OutcomeNothingRun, receipts.StatusNothingRun, more,
 		fmt.Sprintf("outcome=nothing-run (exit %d: no test was counted; %s s; %s)", receipts.StatusNothingRun, took, detail))
