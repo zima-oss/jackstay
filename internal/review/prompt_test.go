@@ -63,4 +63,11 @@ func TestAnUnusualAndSevereFindingMustNameItsOrdinaryPath(t *testing.T) {
 			t.Errorf("the session is not told to re-check the ratings: %s", guidance)
 		}
 	}
+	settings.Triage = false
+	if _, plain := Disposition(settings, RoundRecord{Round: 1, Outcome: Outcome{Blocks: true}}); strings.Contains(plain, "W-094") {
+		t.Errorf("with triage off a rating decides nothing, yet the session is told to re-check it: %s", plain)
+	}
+	if form := verdictForm(PromptData{Severities: []string{"blocker"}, Blocking: []string{"blocker"}}); strings.Contains(form, "ordinary-work path") {
+		t.Error("with triage off the form still asks for an ordinary-work path")
+	}
 }

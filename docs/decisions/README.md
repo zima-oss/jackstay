@@ -32,7 +32,7 @@ is added in a pull request.
 | [W-042](W-042-recoverable-trash.md) | `jst trash`: a recoverable delete inside the sandbox, named by the guard's advice |
 | [W-043](W-043-guard-go-design-approved-trash-seven-days.md) | `jst trash` keeps entries 7 days by default |
 | [W-047](W-047-release-redesign-fixed-settings-no-one-off-imports.md) | Release simplified: no one-off imports; the settings file changes alone; prepare only prints; a GitHub release created once |
-| [W-048](W-048-review-findings-triaged-by-realism.md) | Review findings rated by likelihood and consequence; rare ones go to a later-findings card |
+| [W-048](W-048-review-findings-triaged-by-realism.md) | Review findings rated by likelihood and consequence; rare ones go to a later-findings card (amended by W-094) |
 | [W-050](W-050-go-part3-design-github-account-all-steps-here.md) | GitHub through go-github with a project's own `github.account` |
 | [W-051](W-051-jst-review-codex-rounds.md) | `jst review`: Codex review rounds; its defaults, effort medium |
 | [W-052](W-052-guard-dead-end-and-clean-copy-gate.md) | `jst discard` ends the guard's keep-a-copy dead end; the gate runs on a clean copy it removes |

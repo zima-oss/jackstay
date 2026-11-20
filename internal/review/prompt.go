@@ -91,9 +91,9 @@ func verdictForm(data PromptData) string {
 	form.WriteString("  hand-built setup or deliberate misuse (the tool guards against accidents, not an adversary).\n")
 	form.WriteString("  `consequence`: `severe` for lost work or data or a wrong decision that passes unnoticed, `mild`\n")
 	form.WriteString("  for an inconvenience or a wrong output seen at once. Rate honestly.\n")
-	form.WriteString("- A finding you rate `unusual` and `severe` must name, in its `detail`, the ordinary-work path by\n")
-	form.WriteString("  which that setup arises by accident. Without such a path, rate it `mild`.\n")
 	if data.Triage {
+		form.WriteString("  A finding you rate `unusual` and `severe` must name, in its `detail`, the ordinary-work path by\n")
+		form.WriteString("  which that setup arises by accident. Without such a path, rate it `mild`.\n")
 		form.WriteString("  An `unusual` and `mild` finding is rare: it is recorded for later, not fixed now.\n")
 	}
 	form.WriteString("- `id`: a short id of your own for each new finding (`F1`, `F2`, ...); jackstay gives it its ledger id.\n")

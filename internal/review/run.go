@@ -447,15 +447,17 @@ func (round Round) sourceFailure(planned plan, folder, reason string) Result {
 
 // Disposition is a round's exit status and next step (section 7: redesign before the owner).
 func Disposition(settings Settings, record RoundRecord) (int, string) {
+	recheck := ""
+	if settings.Triage {
+		recheck = "re-check each blocking rating (an unusual and severe finding blocks only with an ordinary-work path, W-094), "
+	}
 	switch {
 	case len(record.Outcome.RedesignDue) > 0:
 		return ExitRedesign, "redesign, do not patch (W-019): " + strings.Join(record.Outcome.RedesignDue, "; ")
 	case record.Round >= settings.RoundLimit && record.Outcome.Blocks:
-		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: re-check each blocking rating (an unusual and severe "+
-			"finding blocks only with an ordinary-work path, W-094), then ask the owner", record.Round, settings.RoundLimit)
+		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: %sthen ask the owner", record.Round, settings.RoundLimit, recheck)
 	case record.Outcome.Blocks:
-		return ExitBlocks, "re-check each blocking rating (an unusual and severe finding blocks only with an ordinary-work path, " +
-			"W-094), fix the blocking findings that stand, then run the next round"
+		return ExitBlocks, recheck + "fix the blocking findings that stand, then run the next round"
 	}
 	return ExitClear, "nothing blocks"
 }
