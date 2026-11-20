@@ -102,11 +102,11 @@ docs:
     for page in $pages; do \
       markdown="${page%/index.html}.md"; [[ "$page" == */index.html && -d "$folder/public/${page%/index.html}" && \
         -n "$(cd "$folder/public/${page%/index.html}" && find . -mindepth 2 -name index.html -print -quit)" ]] && \
-        markdown="${page%.html}.md"; [[ "$page" == guide/index.html ]] && continue; \
+        markdown="${page%.html}.md"; \
       [[ -s "$folder/public/$markdown" ]] || { echo "FAILED: docs: no Markdown $markdown for $page"; exit 1; }; \
       grep -qF "{{site_address}}$markdown" "$folder/public/llms.txt" || \
         { echo "FAILED: docs: llms.txt does not list $markdown"; exit 1; }; done && \
-    if grep -nE '\]\((\.\./|[A-Za-z0-9_-]+\.md)' "$folder/public/llms-full.txt"; then \
+    if grep -nE '\]\((\.\./|[A-Za-z0-9_-]+\.md)|^ {0,3}\[[^]]+\]: *(\.\./|[A-Za-z0-9_-]+\.md)' "$folder/public/llms-full.txt"; then \
       echo "FAILED: docs: llms-full.txt keeps a link relative to the repository"; exit 1; fi && \
     grep -q '^Page: {{site_address}}guide/reference/configuration/$' "$folder/public/llms-full.txt" || \
       { echo "FAILED: docs: llms-full.txt lacks the configuration reference"; exit 1; } && \

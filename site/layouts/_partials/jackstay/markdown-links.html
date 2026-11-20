@@ -1,32 +1,21 @@
 {{- /*
   Returns a page's Markdown with its links made absolute, for the Markdown the site serves to agents
-  (llms-full.txt and each page's Markdown, W-093). A relative link to a file a page is made from
-  becomes that page's address, any other relative link the file's address on GitHub, an in-page
-  `#fragment` the page's own address with it; the fragment is kept. The HTML's render hook
-  (_markup/render-link.html) resolves the same links and checks them.
+  (llms-full.txt and each page's Markdown, W-093). The links are not parsed here: rendering the
+  page's HTML runs the link render hook (_markup/render-link.html), which resolves and checks each
+  link as Goldmark parsed it (inline, with a title, or by reference) and records the address it
+  gave each destination. Each destination is then replaced where Markdown writes one: after `](`
+  in an inline link, after `]: ` in a reference definition.
 
   Context: a dict with
     page  the page whose Markdown it is
 */ -}}
 {{- $page := .page -}}
+{{- $rendered := $page.Content -}}
 {{- $text := $page.RawContent -}}
-{{- $source := $page.Params.jackstay_source | default "" -}}
-{{- range findRESubmatch `\]\(([^)\s]+)\)` $text -}}
-  {{- $destination := index . 1 -}}
-  {{- $url := urls.Parse $destination -}}
-  {{- $href := "" -}}
-  {{- if and $source (not $url.Scheme) (not $url.Host) $url.Path (not (hasPrefix $url.Path "/")) -}}
-    {{- $target := path.Clean (path.Join (path.Dir $source) $url.Path) -}}
-    {{- $href = printf "%s/blob/main/%s" site.Params.repository $target -}}
-    {{- with where site.Pages "Params.jackstay_source" $target -}}
-      {{- $href = (index (sort . "RelPermalink") 0).Permalink -}}
-    {{- end -}}
-  {{- else if and (not $url.Scheme) (not $url.Host) (not $url.Path) $url.Fragment -}}
-    {{- $href = $page.Permalink -}}
-  {{- end -}}
-  {{- if $href -}}
-    {{- with $url.Fragment }}{{ $href = printf "%s#%s" $href . }}{{ end -}}
-    {{- $text = replace $text (index . 0) (printf "](%s)" $href) -}}
-  {{- end -}}
+{{- range $destination, $href := $page.Store.Get "jackstay_links" -}}
+  {{- $text = replace $text (printf "](%s)" $destination) (printf "](%s)" $href) -}}
+  {{- $text = replace $text (printf "](%s " $destination) (printf "](%s " $href) -}}
+  {{- $quoted := replaceRE `([.\\+*?()|\[\]{}^$])` `\$1` $destination -}}
+  {{- $text = replaceRE (printf `(?m)^( {0,3}\[[^\]]+\]:[ \t]*)%s([ \t]|$)` $quoted) (printf "${1}%s${2}" $href) $text -}}
 {{- end -}}
 {{- return $text -}}

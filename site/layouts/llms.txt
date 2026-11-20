@@ -8,6 +8,8 @@
 {{ with site.GetPage "/guide" -}}
 {{ index (split (.RawContent | replaceRE `^# [^\n]*\n+` "") "\n\n") 0 }}
 
+- [{{ .Title }}]({{ template "llms-markdown" . }}): the guide's index.
+
 Every page below, in one file: {{ "llms-full.txt" | absURL }}
 {{- template "llms-tree" (dict "page" . "level" 2) }}
 {{ end -}}
