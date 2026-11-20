@@ -1,11 +1,12 @@
 package deliverystate
 
 // The delivery model of docs/design/chat-model/ChatDelivery.tla, run over this package's table: every
-// interleaving of one delivery's pushers (two passes, either of which may pause or crash at any step),
-// the recipient's hook, its reads, acks and answers, the sweep, the deadline, the recipient's end and
-// a review mailbox's freeze, explored breadth first to the last reachable state. A variant replays a
-// rule of the spec as it stood before the model (section 4.10's bare ID, section 4.4's two expiry
-// notices, section 9.1's freeze) and must find the counterexample the fix removed.
+// interleaving of one delivery's steers (two bridge passes, either of which may pause or crash at any
+// step), the native doorbell and its refusal, the recipient's reads, acks and answers, the sweep, the
+// deadline, the recipient's end and a review mailbox's freeze, explored breadth first to the last
+// reachable state. A variant replays a rule of the spec as it stood before the model (section 4.4's
+// two expiry notices, section 9.1's freeze, and the others below) and must find the counterexample the
+// fix removed.
 
 import (
 	"fmt"
@@ -15,17 +16,15 @@ import (
 
 // variant selects the rules the explored world follows.
 type variant struct {
-	bareIDIsEvidence      bool // as written: naming the bare message ID proves the engine showed it
 	separateRequestExpiry bool // as written: a request and its delivery expire with a notice each
 	freezeLeavesDelivery  bool // as written: a freeze closes the mailbox's requests, not their deliveries
 	deadlineSkipsRequest  bool // as written: a pass's or reader's deadline check expires the delivery only
 	deadlineNeedsPending  bool // round 1: a deadline closed a request only while its delivery could expire
-	freezeIgnoresPushes   bool // rounds 1 and 2: a freeze closed its questions while one was being pushed
+	freezeIgnoresPushes   bool // rounds 1 and 2: a freeze closed its questions while one was being steered
 }
 
 type passState struct {
-	pc    string // idle, claimed, written, failed, dead
-	reply EngineAnswer
+	pc string // idle, claimed, written, failed, dead
 }
 
 type world struct {
@@ -33,17 +32,14 @@ type world struct {
 	request         Request
 	isRequest       bool
 	fromMailbox     bool
-	engine          string // what the engine really did: none, accepted, held, refused, full, dropped
+	engine          string // what the app-server did with a steer: none, accepted
 	passes          [2]passState
-	hook            string // idle, announced: recorded `delivered`, text not yet returned
-	shown           int    // times the text reached the recipient's model by a push
-	handleKnown     bool   // a frame the engine showed carried the handle and the request ID
-	idKnown         bool   // the bare ID reached the recipient (another message's `thread`, `reply_to`)
-	exposed         bool   // a read returned a native body the engine never accepted
-	pushedClose     bool   // a push of a request began (claim, announce) after it closed
-	lateOpen        bool   // a step that checks the deadline found it passed and left the request open
-	frozen          bool   // the requesting mailbox froze
-	writtenFrozen   bool   // a pass that still owned its claim wrote a question its mailbox had frozen
+	shown           int  // times the text reached the recipient's model by a steer
+	requestKnown    bool // the recipient was shown the request (a read, or a steer), so it can answer
+	pushedClose     bool // a steer of a request began (a claim) after it closed
+	lateOpen        bool // a step that checks the deadline found it passed and left the request open
+	frozen          bool // the requesting mailbox froze
+	writtenFrozen   bool // a pass that still owned its claim wrote a question its mailbox had frozen
 	overdue         bool
 	alive           bool
 	deliveryNotices int
@@ -59,7 +55,7 @@ var passNames = [2]string{"pass-1", "pass-2"}
 
 // The distinct states TLC finds for the two modules (docs/design/chat-model/README.md).
 const (
-	deliveryStates = 30736
+	deliveryStates = 7104
 	sendStates     = 335
 )
 
@@ -76,7 +72,6 @@ func initialWorlds(rules variant) []world {
 					isRequest:   isRequest,
 					fromMailbox: fromMailbox,
 					engine:      "none",
-					hook:        "idle",
 					alive:       true,
 				}
 				start.passes[0].pc, start.passes[1].pc = "idle", "idle"
@@ -88,26 +83,6 @@ func initialWorlds(rules variant) []world {
 		}
 	}
 	return worlds
-}
-
-// naming is how the recipient can name the delivery now, under the variant's rules.
-func (w world) naming(rules variant) (Naming, bool) {
-	switch {
-	case w.handleKnown:
-		return ByHandle, true
-	case w.idKnown && rules.bareIDIsEvidence:
-		return ByHandle, true // the old rule: a bare ID counted as a frame's evidence
-	case w.idKnown:
-		return ByID, true
-	}
-	return ByNothing, false
-}
-
-// read records what a read returned: a native body the engine never accepted is an exposure.
-func (w *world) read() {
-	if w.delivery.Route == Native && w.engine != "accepted" {
-		w.exposed = true
-	}
 }
 
 func (w *world) setDelivery(next Delivery) {
@@ -131,8 +106,7 @@ func (w world) apply(event Event, rules variant) (world, bool) {
 	plain := rules.separateRequestExpiry || !w.isRequest ||
 		rules.freezeLeavesDelivery && w.request.State == Closed ||
 		rules.deadlineSkipsRequest && checksDeadline(event.Kind) ||
-		rules.deadlineNeedsPending && (!Expirable(w.delivery.State) ||
-			w.delivery.State != Pending && !namesTheDelivery(event.Kind))
+		rules.deadlineNeedsPending && !Expirable(w.delivery.State)
 	if plain {
 		delivery, err := Apply(w.delivery, event)
 		if err != nil {
@@ -154,13 +128,12 @@ func (w world) apply(event Event, rules variant) (world, bool) {
 func successors(w world, rules variant) []step {
 	var steps []step
 	add := func(name string, next world) { steps = append(steps, step{name, next}) }
-	byPusher := w.delivery.Route == Native || w.delivery.Route == Bridge
 
-	// The passes of the detached pusher, or the bridge (sections 8.3 and 9.2).
+	// The bridge's passes (section 9.2): the one route that still carries a message's text.
 	for index := range w.passes {
 		pass := w.passes[index]
 		name := passNames[index]
-		if byPusher && pass.pc == "idle" {
+		if w.delivery.Route == Bridge && pass.pc == "idle" {
 			if claimed, ok := w.apply(Event{Kind: Claim, Pusher: name, Overdue: w.overdue}, rules); ok {
 				if claimed.delivery.State == Sending && claimed.delivery.Pusher == name && w.delivery.State == Pending {
 					claimed.passes[index].pc = "claimed"
@@ -176,35 +149,20 @@ func successors(w world, rules variant) []step {
 			failed := w
 			failed.passes[index].pc = "failed"
 			add(name+" fails before writing", failed)
-			answers := []EngineAnswer{Accepted, HeldBy, RefusedBy, QueueFull}
-			if w.delivery.Route == Bridge {
-				answers = []EngineAnswer{Accepted}
+			written := w
+			written.passes[index].pc = "written"
+			if w.frozen && w.delivery.State == Sending && w.delivery.Pusher == name {
+				written.writtenFrozen = true
 			}
-			for _, answer := range answers {
-				written := w
-				written.passes[index] = passState{pc: "written", reply: answer}
-				if w.frozen && w.delivery.State == Sending && w.delivery.Pusher == name {
-					written.writtenFrozen = true
-				}
-				switch answer {
-				case Accepted:
-					written.engine, written.shown, written.handleKnown = "accepted", w.shown+1, true
-				case HeldBy:
-					written.engine = "held"
-				case RefusedBy:
-					written.engine = "refused"
-				case QueueFull:
-					written.engine = "full"
-				}
-				add(fmt.Sprintf("%s writes, engine %s", name, answer), written)
-			}
+			written.engine, written.shown, written.requestKnown = "accepted", w.shown+1, true
+			add(name+" steers", written)
 		case "written":
-			for _, answer := range []EngineAnswer{pass.reply, Lost} {
+			for _, answer := range []EngineAnswer{Accepted, Lost} {
 				recorded := w
 				if next, ok := w.apply(Event{Kind: Answer, Pusher: name, Answer: answer}, rules); ok {
 					recorded = next
 				}
-				recorded.passes[index] = passState{pc: "idle"}
+				recorded.passes[index].pc = "idle"
 				add(fmt.Sprintf("%s records %s", name, answer), recorded)
 			}
 		case "failed":
@@ -212,93 +170,51 @@ func successors(w world, rules variant) []step {
 			if next, ok := w.apply(Event{Kind: Failure, Pusher: name}, rules); ok {
 				recorded = next
 			}
-			recorded.passes[index] = passState{pc: "idle"}
+			recorded.passes[index].pc = "idle"
 			add(name+" records a confirmed failure", recorded)
 		}
 		if pass.pc == "claimed" || pass.pc == "written" || pass.pc == "failed" {
 			crashed := w
-			crashed.passes[index] = passState{pc: "dead"}
+			crashed.passes[index].pc = "dead"
 			add(name+" crashes", crashed)
 		}
 	}
 
-	// Claude Code releases or silently discards a held copy (section 4.2).
-	if w.engine == "held" {
-		released := w
-		released.engine, released.shown, released.handleKnown = "accepted", w.shown+1, true
-		add("engine releases the held copy", released)
-		discarded := w
-		discarded.engine = "dropped"
-		add("engine discards the held copy", discarded)
-	}
-
-	// The hooks route (section 8.4): recorded `delivered` under the lock, returned after it.
-	if w.alive && w.hook == "idle" {
-		if announced, ok := w.apply(Event{Kind: Announce, Overdue: w.overdue}, rules); ok {
-			if announced.delivery.State == Delivered && w.delivery.State == Pending {
-				announced.hook = "announced"
-				if w.isRequest && w.request.State != Open {
-					announced.pushedClose = true
-				}
-			}
-			add("hook announces", announced)
+	// The native doorbell (section 8.3): a ring the engine takes or ignores changes nothing; one it
+	// refuses (the connection closed) refuses the delivery. A hook's ring changes nothing at all.
+	if w.alive {
+		if refused, ok := w.apply(Event{Kind: RingRefused, Overdue: w.overdue}, rules); ok {
+			add("the engine refuses the doorbell", refused)
 		}
-	}
-	if w.hook == "announced" {
-		returned := w
-		returned.hook, returned.shown, returned.handleKnown = "idle", w.shown+1, true
-		add("hook returns the text", returned)
-		lost := w
-		lost.hook = "idle"
-		add("hook crashes before returning", lost)
 	}
 
 	// The recipient's own calls; a review mailbox makes none.
 	if w.alive && w.delivery.Route != Mailbox {
 		if read, ok := w.apply(Event{Kind: ReadWhole, Overdue: w.overdue}, rules); ok {
 			if read.delivery.State == Read && w.delivery.State != Read {
-				read.read()
-				read.handleKnown = true // the read returned the frame: its request ID
+				read.requestKnown = true
 			}
 			add("chat.inbox reads it whole", read)
 		}
-		if Visible(w.delivery, ByNothing) && !w.overdue {
+		if Visible(w.delivery) && !w.overdue && !w.requestKnown {
 			again := w
-			again.read()
-			again.handleKnown = true
-			if again != w {
-				add("chat.inbox returns it again", again)
+			again.requestKnown = true
+			add("chat.inbox returns it again", again)
+		}
+		for _, kind := range []Kind{AckRead, AckActed} {
+			if acked, ok := w.apply(Event{Kind: kind, Overdue: w.overdue}, rules); ok {
+				add("chat.ack "+string(kind), acked)
 			}
 		}
-		if named, ok := w.naming(rules); ok {
-			if confirmed, ok := w.apply(Event{Kind: Confirm, Overdue: w.overdue, Named: named}, rules); ok {
-				if Visible(confirmed.delivery, named) {
-					confirmed.read()
-				}
-				add("chat.inbox names it in ids", confirmed)
-			}
-			for _, kind := range []Kind{AckRead, AckActed} {
-				if acked, ok := w.apply(Event{Kind: kind, Overdue: w.overdue, Named: named}, rules); ok {
-					add("chat.ack "+string(kind), acked)
-				}
-			}
-			if w.isRequest && named == ByHandle {
-				request, delivery, err := Respond(w.request, w.delivery, w.overdue, named)
-				if err == nil || err == ErrRequestClosed {
-					answered := w
-					answered.setRequest(request)
-					answered.setDelivery(delivery)
-					add("chat.respond", answered)
-				}
+		if w.isRequest && w.requestKnown {
+			request, delivery, err := Respond(w.request, w.delivery, w.overdue)
+			if err == nil || err == ErrRequestClosed {
+				answered := w
+				answered.setRequest(request)
+				answered.setDelivery(delivery)
+				add("chat.respond", answered)
 			}
 		}
-	}
-
-	// Another message of the thread carries the bare ID (`thread`, `reply_to`).
-	if !w.idKnown {
-		leaked := w
-		leaked.idKnown = true
-		add("another message names its ID", leaked)
 	}
 
 	// The sweep: a stale `sending`, and deadlines nobody touched (sections 4.10 and 7.4).
@@ -381,10 +297,10 @@ func invariant(w world) string {
 	switch {
 	case w.shown > 1:
 		return "AtMostOnce: the text reached the model twice"
-	case w.exposed:
-		return "NoEarlyExposure: a read showed a native body the engine never accepted"
-	case (w.engine != "none" || w.hook == "announced") && w.delivery.State == Pending:
-		return "NeverLooksUnpushed: a pushed delivery is recorded pending"
+	case w.delivery.Route != Bridge && w.shown > 0:
+		return "ContentOnlyThroughInbox: a doorbell route carried the text"
+	case w.engine != "none" && w.delivery.State == Pending:
+		return "NeverLooksUnpushed: a steered delivery is recorded pending"
 	case w.pushedClose:
 		return "NoPushStartsAfterClose: a push of a closed request began"
 	case w.deliveryNotices > 1 || w.requestNotices > 1:
@@ -491,12 +407,11 @@ func TestTheSpecBeforeTheModelBreaksAProperty(t *testing.T) {
 		rules variant
 		want  string
 	}{
-		{"a bare ID as evidence (section 4.10)", variant{bareIDIsEvidence: true}, "NoEarlyExposure"},
 		{"two expiry notices for one request (section 4.4)", variant{separateRequestExpiry: true}, "NoticeOnce"},
 		{"a freeze leaving its questions pushable (section 9.1)", variant{freezeLeavesDelivery: true}, "NoPushStartsAfterClose"},
 		{"a deadline check that forgets the request (section 4.10)", variant{deadlineSkipsRequest: true}, "NoticeOnce"},
 		{"an overdue read of a delivered request (section 4.10, review round 1)", variant{deadlineNeedsPending: true}, "DeadlineClosesRequest"},
-		{"a freeze beside a push under way (section 9.1, review rounds 1 and 2)", variant{freezeIgnoresPushes: true}, "NoWriteAfterFreeze"},
+		{"a freeze beside a steer under way (section 9.1, review rounds 1 and 2)", variant{freezeIgnoresPushes: true}, "NoWriteAfterFreeze"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

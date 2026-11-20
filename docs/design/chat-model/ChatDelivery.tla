@@ -1,11 +1,14 @@
 ---------------------------- MODULE ChatDelivery ----------------------------
 (***************************************************************************)
 (* One delivery of the agent chat (docs/design/chat.md, sections 4.2, 4.4, *)
-(* 4.10, 8 and 9.1), on any of the five routes: two passes of the pusher   *)
-(* (or the bridge) that may pause or crash at any step, the recipient's    *)
-(* hook, its reads, acks and answers, another message of the thread that   *)
-(* carries the bare ID, the sweep, the deadline, the recipient's end, and  *)
-(* a review mailbox's freeze, of the recipient or of the requester.        *)
+(* 4.10, 8 and 9.1), on any of the five routes. Since W-095 the native and *)
+(* hooks routes ring a doorbell and carry no text: a message's text        *)
+(* reaches the recipient's model only through its inbox read, or, on the   *)
+(* Codex bridge, through one steer. Modelled: two bridge passes that may   *)
+(* pause or crash at any step, the native doorbell and its refusal, the    *)
+(* recipient's reads, acks and answers, the sweep, the deadline, the       *)
+(* recipient's end, and a review mailbox's freeze, of the recipient or of  *)
+(* the requester.                                                          *)
 (*                                                                         *)
 (* The transitions are the table of internal/sessionchat/deliverystate,    *)
 (* written again here operator for operator (Apply, ApplyMessage,          *)
@@ -17,125 +20,95 @@
 EXTENDS Naturals
 
 CONSTANTS
-    MaxAttempts,            \* confirmed failures before the route moves to hooks (4)
-    Passes,                 \* the pusher's passes, e.g. {"p1", "p2"}
-    BareIdIsEvidence,       \* section 4.10 before: a bare message ID proves a shown frame
+    MaxAttempts,            \* confirmed failures before the bridge stops steering (4)
+    Passes,                 \* the bridge's passes, e.g. {"p1", "p2"}
     SeparateRequestExpiry,  \* section 4.4 before: a request and its delivery expire apart
     FreezeLeavesDelivery,   \* section 9.1 before: a freeze closes requests, not their deliveries
     DeadlineSkipsRequest,   \* section 4.10 before: a step's deadline check expires the delivery only
     DeadlineNeedsPending,   \* review round 1: a deadline closed a request only if its delivery could expire
-    FreezeIgnoresPushes     \* review rounds 1 and 2: a freeze closed its questions while one was being pushed
+    FreezeIgnoresPushes     \* review rounds 1 and 2: a freeze closed its questions while one was being steered
 
 Routes    == {"native", "hooks", "bridge", "mailbox", "poll"}
-States    == {"pending", "sending", "delivered", "held", "read", "acted",
-              "refused", "dropped", "expired"}
+States    == {"pending", "sending", "delivered", "read", "acted", "refused", "dropped", "expired"}
 Final     == {"acted", "refused", "dropped", "expired"}
-Expirable == {"pending", "held"}
-Answers   == {"accepted", "held", "refused", "queue_full"}
+Expirable == {"pending"}
 
 VARIABLES
     d,            \* the delivery record: route, state, reason, pusher, attempts, notice, request
     rq,           \* the request's commit record: state ("none" when not a request), notice
     isRequest, fromMailbox,       \* fixed for a behaviour
-    engine,       \* what the engine really did with a written line
-    pass,         \* each pass: its pc and the answer its socket carried back
-    hook,         \* "announced": recorded delivered, text not yet returned
-    shown,        \* times the text reached the recipient's model by a push
-    handleKnown,  \* a frame the engine showed carried the handle and the request ID
-    idKnown,      \* the bare ID reached the recipient through another message
-    exposed,      \* a read returned a native body the engine never accepted
-    pushedClosed, \* a push of a request began (claim, announce) after it closed
+    engine,       \* what the app-server did with a steer: "none" or "accepted"
+    pass,         \* each bridge pass's pc
+    shown,        \* times the text reached the recipient's model by a steer
+    requestKnown, \* the recipient was shown the request (a read, or a steer), so it can answer
+    pushedClosed, \* a steer of a request began (a claim) after it closed
     lateOpen,     \* a step that checks the deadline found it passed and left the request open
     frozen,       \* the requesting mailbox froze
     writtenFrozen,\* a pass that still owned its claim wrote a question its mailbox had frozen
     overdue, alive,
     dNotices, rNotices            \* times each record's notice became owed
 
-vars == <<d, rq, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
-          exposed, pushedClosed, lateOpen, frozen, writtenFrozen, overdue, alive, dNotices, rNotices>>
+vars == <<d, rq, isRequest, fromMailbox, engine, pass, shown, requestKnown,
+          pushedClosed, lateOpen, frozen, writtenFrozen, overdue, alive, dNotices, rNotices>>
 
 ----------------------------------------------------------------------------
 (* The table (deliverystate.Apply). *)
 
-Ev(kind, p, answer, late, named) ==
-    [kind |-> kind, pusher |-> p, answer |-> answer, overdue |-> late, named |-> named]
+Ev(kind, p, answer, late) == [kind |-> kind, pusher |-> p, answer |-> answer, overdue |-> late]
 
 Ok(dl) == [ok |-> TRUE, d |-> dl]
 No(dl) == [ok |-> FALSE, d |-> dl]
 
-Visible(dl, named) ==
-    CASE dl.state \in {"refused", "dropped", "expired"} -> FALSE
-      [] dl.state = "held"       -> dl.route = "native" /\ named = "handle"
-      [] dl.route # "native"     -> TRUE
-      [] dl.state \in {"read", "acted"} -> TRUE
-      [] dl.state = "delivered"  -> dl.reason # "unconfirmed" \/ named = "handle"
-      [] OTHER                   -> named = "handle"
+Visible(dl) == dl.state \notin {"refused", "dropped", "expired"}
 
 Expire(dl) ==
-    [dl EXCEPT !.state = "expired", !.pusher = "",
-               !.reason = IF dl.state = "held" THEN "engine_held_unresolved" ELSE "expired",
+    [dl EXCEPT !.state = "expired", !.pusher = "", !.reason = "expired",
                !.notice = IF dl.request THEN dl.notice ELSE "owed"]
 
 Confirmed(dl, st) ==
     [dl EXCEPT !.state = st, !.pusher = "",
                !.reason = IF dl.reason = "unconfirmed" THEN "" ELSE dl.reason]
 
-ChecksDeadline(kind) == kind \in {"claim", "announce", "read-whole", "ack-read", "ack-acted", "confirm"}
-NamesIt(kind)        == kind \in {"ack-read", "ack-acted", "confirm"}
+ChecksDeadline(kind) == kind \in {"claim", "ring-refused", "read-whole", "ack-read", "ack-acted"}
 
-DeadlineFires(dl, ev) ==
-    /\ ev.overdue /\ dl.state \in Expirable /\ ChecksDeadline(ev.kind)
-    /\ (dl.state = "pending" \/ NamesIt(ev.kind))
-
-AnswerOf(dl, answer) ==
-    CASE answer = "accepted"   -> [dl EXCEPT !.state = "delivered", !.pusher = ""]
-      [] answer = "lost"       -> [dl EXCEPT !.state = "delivered", !.reason = "unconfirmed", !.pusher = ""]
-      [] answer = "held"       -> [dl EXCEPT !.state = "held", !.pusher = ""]
-      [] answer = "refused"    -> [dl EXCEPT !.state = "refused", !.reason = "engine_refused",
-                                             !.notice = "owed", !.pusher = ""]
-      [] answer = "queue_full" -> [dl EXCEPT !.state = "dropped", !.reason = "engine_queue_full",
-                                             !.notice = "owed", !.pusher = ""]
-
-NamedCall(dl, ev) ==
-    IF dl.state \in Final THEN Ok(dl)
-    ELSE IF ~Visible(dl, ev.named) THEN No(dl)
-    ELSE CASE ev.kind = "confirm" ->
-                IF dl.state = "held" \/ (dl.state = "delivered" /\ dl.reason = "unconfirmed")
-                THEN Ok([dl EXCEPT !.state = "delivered", !.reason = ""]) ELSE Ok(dl)
-           [] ev.kind = "ack-read" ->
-                IF dl.state \in {"pending", "delivered", "held"} THEN Ok(Confirmed(dl, "read")) ELSE Ok(dl)
-           [] OTHER -> Ok(Confirmed(dl, "acted"))
+DeadlineFires(dl, ev) == ev.overdue /\ dl.state \in Expirable /\ ChecksDeadline(ev.kind)
 
 Apply(dl, ev) ==
     IF DeadlineFires(dl, ev) THEN Ok(Expire(dl))
     ELSE CASE ev.kind = "claim" ->
-                IF dl.state = "pending" /\ dl.route \in {"native", "bridge"} /\ dl.attempts < MaxAttempts
+                IF dl.state = "pending" /\ dl.route = "bridge" /\ dl.attempts < MaxAttempts
                 THEN Ok([dl EXCEPT !.state = "sending", !.pusher = ev.pusher]) ELSE No(dl)
-           [] ev.kind = "announce" ->
-                IF dl.route = "hooks" /\ dl.state = "pending"
-                THEN Ok([dl EXCEPT !.state = "delivered"]) ELSE No(dl)
            [] ev.kind = "answer" ->
-                IF dl.state = "sending" /\ dl.pusher = ev.pusher THEN Ok(AnswerOf(dl, ev.answer)) ELSE No(dl)
+                IF dl.state = "sending" /\ dl.pusher = ev.pusher
+                THEN Ok(IF ev.answer = "accepted"
+                        THEN [dl EXCEPT !.state = "delivered", !.pusher = ""]
+                        ELSE [dl EXCEPT !.state = "delivered", !.reason = "unconfirmed", !.pusher = ""])
+                ELSE No(dl)
            [] ev.kind = "failure" ->
                 IF dl.state = "sending" /\ dl.pusher = ev.pusher
-                THEN Ok([dl EXCEPT !.state = "pending", !.pusher = "", !.attempts = dl.attempts + 1,
-                                   !.route = IF dl.attempts + 1 >= MaxAttempts /\ dl.route = "native"
-                                             THEN "hooks" ELSE dl.route])
+                THEN Ok([dl EXCEPT !.state = "pending", !.pusher = "", !.attempts = dl.attempts + 1])
                 ELSE No(dl)
            [] ev.kind = "stale" ->
                 IF dl.state = "sending"
                 THEN Ok([dl EXCEPT !.state = "delivered", !.reason = "unconfirmed", !.pusher = ""]) ELSE No(dl)
+           [] ev.kind = "ring-refused" ->
+                IF dl.route = "native" /\ dl.state = "pending"
+                THEN Ok([dl EXCEPT !.state = "refused", !.reason = "engine_refused", !.notice = "owed"])
+                ELSE No(dl)
            [] ev.kind \in {"expire", "close-request"} ->
                 IF dl.state \in Expirable THEN Ok(Expire(dl)) ELSE No(dl)
            [] ev.kind = "end" ->
-                IF dl.state \in {"pending", "sending", "held"}
+                IF dl.state \in {"pending", "sending"}
                 THEN Ok([dl EXCEPT !.state = "dropped", !.reason = "recipient_ended", !.pusher = "",
                                    !.notice = "owed"])
                 ELSE No(dl)
            [] ev.kind = "read-whole" ->
-                IF dl.state \in {"pending", "delivered"} /\ Visible(dl, ev.named)
-                THEN Ok(Confirmed(dl, "read")) ELSE No(dl)
-           [] ev.kind \in {"ack-read", "ack-acted", "confirm"} -> NamedCall(dl, ev)
+                IF dl.state \in {"pending", "delivered"} THEN Ok(Confirmed(dl, "read")) ELSE No(dl)
+           [] ev.kind = "ack-read" ->
+                IF dl.state \in Final THEN Ok(dl)
+                ELSE IF dl.state \in {"pending", "delivered"} THEN Ok(Confirmed(dl, "read")) ELSE Ok(dl)
+           [] ev.kind = "ack-acted" ->
+                IF dl.state \in Final THEN Ok(dl) ELSE Ok(Confirmed(dl, "acted"))
            [] ev.kind = "freeze" ->
                 IF dl.route = "mailbox" /\ dl.state = "pending"
                 THEN Ok([dl EXCEPT !.state = "read"]) ELSE No(dl)
@@ -149,7 +122,7 @@ ExpireRequest(r, dl) ==
     [ok |-> TRUE, rq |-> ClosedRq, d |-> IF dl.state \in Expirable THEN Expire(dl) ELSE dl]
 
 \* A closure writes the request's record, then the delivery's; a crash between them is repaired by
-\* the next step, before anything else, so a closed question is never claimed or announced.
+\* the next step, before anything else, so a closed question is never claimed.
 ApplyMessage(r, dl, ev) ==
     IF dl.request /\ r.state = "expired" /\ dl.state \in Expirable
     THEN LET repaired == Expire(dl)
@@ -165,18 +138,20 @@ ApplyMessage(r, dl, ev) ==
                   d  |-> IF dl.request /\ r.state = "expired" /\ after.d.state \in Expirable
                          THEN Expire(after.d) ELSE after.d]
 
-Respond(r, dl, late, named) ==
-    IF r.state # "open" THEN [ok |-> FALSE, rq |-> r, d |-> dl]
+\* An answered request refuses a second answer; a closed one is refused unchanged; past the deadline
+\* the request closes with its delivery and the answer is refused (request_closed).
+Respond(r, dl, late) ==
+    IF r.state = "answered" THEN [ok |-> FALSE, rq |-> r, d |-> dl]
+    ELSE IF r.state = "expired" THEN [ok |-> TRUE, rq |-> r, d |-> dl]
     ELSE IF late THEN ExpireRequest(r, dl)
-    ELSE IF dl.state \notin Final /\ ~Visible(dl, named) THEN [ok |-> FALSE, rq |-> r, d |-> dl]
-    ELSE LET after == Apply(dl, Ev("ack-acted", "", "none", FALSE, named))
+    ELSE LET after == Apply(dl, Ev("ack-acted", "", "none", FALSE))
          IN [ok |-> after.ok, rq |-> [r EXCEPT !.state = "answered"], d |-> after.d]
 
 (* One event through the table, with the request unless a variant keeps them apart. *)
 Step(ev) ==
     IF /\ isRequest /\ ~SeparateRequestExpiry
        /\ ~(DeadlineSkipsRequest /\ ChecksDeadline(ev.kind))
-       /\ ~(DeadlineNeedsPending /\ ~(d.state \in Expirable /\ (d.state = "pending" \/ NamesIt(ev.kind))))
+       /\ ~(DeadlineNeedsPending /\ d.state \notin Expirable)
        /\ ~(FreezeLeavesDelivery /\ rq.state = "expired")
     THEN ApplyMessage(rq, d, ev)
     ELSE LET after == Apply(d, ev)
@@ -192,14 +167,6 @@ SetMsg(r) ==
 
 KeepMsg == UNCHANGED <<d, rq, dNotices, rNotices, lateOpen>>
 
-Naming ==
-    IF handleKnown THEN "handle"
-    ELSE IF idKnown /\ BareIdIsEvidence THEN "handle"
-    ELSE IF idKnown THEN "id"
-    ELSE "nothing"
-
-ShowsNative(dl) == d.route = "native" /\ engine # "accepted"
-
 ----------------------------------------------------------------------------
 Init ==
     /\ isRequest \in BOOLEAN
@@ -210,104 +177,69 @@ Init ==
     /\ (d.route = "mailbox" => ~isRequest)
     /\ rq = [state |-> IF isRequest THEN "open" ELSE "none", notice |-> ""]
     /\ engine = "none"
-    /\ pass = [p \in Passes |-> [pc |-> "idle", reply |-> "none"]]
-    /\ hook = "idle" /\ shown = 0
-    /\ handleKnown = FALSE /\ idKnown = FALSE /\ exposed = FALSE /\ pushedClosed = FALSE
+    /\ pass = [p \in Passes |-> "idle"]
+    /\ shown = 0 /\ requestKnown = FALSE /\ pushedClosed = FALSE
     /\ lateOpen = FALSE /\ frozen = FALSE /\ writtenFrozen = FALSE
     /\ overdue = FALSE /\ alive = TRUE
     /\ dNotices = 0 /\ rNotices = 0
 
-(* The pusher's passes, or the bridge (sections 8.3 and 9.2). *)
+(* The bridge's passes (section 9.2): the one route that still carries a message's text. *)
 
 Claim(p) ==
-    /\ pass[p].pc = "idle" /\ d.route \in {"native", "bridge"}
-    /\ LET r == Step(Ev("claim", p, "none", overdue, "nothing")) IN
+    /\ pass[p] = "idle" /\ d.route = "bridge"
+    /\ LET r == Step(Ev("claim", p, "none", overdue)) IN
        /\ r.ok /\ SetMsg(r)
        /\ LET owns == r.d.state = "sending" /\ r.d.pusher = p /\ d.state = "pending" IN
-          /\ pass' = IF owns THEN [pass EXCEPT ![p].pc = "claimed"] ELSE pass
+          /\ pass' = IF owns THEN [pass EXCEPT ![p] = "claimed"] ELSE pass
           /\ pushedClosed' = (pushedClosed \/ (owns /\ isRequest /\ rq.state # "open"))
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed, overdue, alive>>
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, shown, requestKnown, overdue, alive>>
 
 WriteFails(p) ==
-    /\ pass[p].pc = "claimed"
-    /\ pass' = [pass EXCEPT ![p].pc = "failed"]
+    /\ pass[p] = "claimed"
+    /\ pass' = [pass EXCEPT ![p] = "failed"]
     /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
-Write(p) ==
-    /\ pass[p].pc = "claimed"
-    /\ \E answer \in (IF d.route = "bridge" THEN {"accepted"} ELSE Answers) :
-          /\ pass' = [pass EXCEPT ![p] = [pc |-> "written", reply |-> answer]]
-          /\ engine' = CASE answer = "accepted" -> "accepted"
-                         [] answer = "held"     -> "held"
-                         [] answer = "refused"  -> "refused"
-                         [] OTHER               -> "full"
-          /\ shown' = IF answer = "accepted" THEN shown + 1 ELSE shown
-          /\ handleKnown' = (handleKnown \/ answer = "accepted")
+Steer(p) ==
+    /\ pass[p] = "claimed"
+    /\ pass' = [pass EXCEPT ![p] = "written"]
+    /\ engine' = "accepted" /\ shown' = shown + 1 /\ requestKnown' = TRUE
     /\ writtenFrozen' = (writtenFrozen \/ (frozen /\ d.state = "sending" /\ d.pusher = p))
     /\ KeepMsg
-    /\ UNCHANGED <<frozen, isRequest, fromMailbox, hook, idKnown, exposed, pushedClosed, overdue, alive>>
+    /\ UNCHANGED <<frozen, isRequest, fromMailbox, pushedClosed, overdue, alive>>
 
 Record(p) ==
-    /\ pass[p].pc = "written"
-    /\ \E answer \in {pass[p].reply, "lost"} :
-          LET r == Step(Ev("answer", p, answer, FALSE, "nothing")) IN
+    /\ pass[p] = "written"
+    /\ \E answer \in {"accepted", "lost"} :
+          LET r == Step(Ev("answer", p, answer, FALSE)) IN
           IF r.ok THEN SetMsg(r) ELSE KeepMsg
-    /\ pass' = [pass EXCEPT ![p] = [pc |-> "idle", reply |-> "none"]]
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
+    /\ pass' = [pass EXCEPT ![p] = "idle"]
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 RecordFailure(p) ==
-    /\ pass[p].pc = "failed"
-    /\ LET r == Step(Ev("failure", p, "none", FALSE, "nothing")) IN
+    /\ pass[p] = "failed"
+    /\ LET r == Step(Ev("failure", p, "none", FALSE)) IN
        IF r.ok THEN SetMsg(r) ELSE KeepMsg
-    /\ pass' = [pass EXCEPT ![p] = [pc |-> "idle", reply |-> "none"]]
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
+    /\ pass' = [pass EXCEPT ![p] = "idle"]
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 Crash(p) ==
-    /\ pass[p].pc \in {"claimed", "written", "failed"}
-    /\ pass' = [pass EXCEPT ![p] = [pc |-> "dead", reply |-> "none"]]
+    /\ pass[p] \in {"claimed", "written", "failed"}
+    /\ pass' = [pass EXCEPT ![p] = "dead"]
     /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
-\* Claude Code releases a held copy to the model, or silently discards it (section 4.2).
-EngineReleases ==
-    /\ engine = "held"
-    /\ engine' = "accepted" /\ shown' = shown + 1 /\ handleKnown' = TRUE
-    /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, pass, hook, idKnown, exposed, pushedClosed, overdue, alive>>
+(* The native doorbell (section 8.3): a ring the engine takes or ignores changes nothing; one it *)
+(* refuses (the connection closed) refuses the delivery. A hook's ring changes nothing at all.   *)
 
-EngineDiscards ==
-    /\ engine = "held" /\ engine' = "dropped"
-    /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, pass, hook, shown, handleKnown, idKnown, exposed,
-                   pushedClosed, overdue, alive>>
-
-(* The hooks route (section 8.4). *)
-
-HookAnnounces ==
-    /\ alive /\ hook = "idle"
-    /\ LET r == Step(Ev("announce", "", "none", overdue, "nothing")) IN
-       /\ r.ok /\ SetMsg(r)
-       /\ LET took == r.d.state = "delivered" /\ d.state = "pending" IN
-          /\ hook' = IF took THEN "announced" ELSE hook
-          /\ pushedClosed' = (pushedClosed \/ (took /\ isRequest /\ rq.state # "open"))
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, handleKnown, idKnown, exposed, overdue, alive>>
-
-HookReturns ==
-    /\ hook = "announced" /\ hook' = "idle" /\ shown' = shown + 1
-    /\ handleKnown' = TRUE   \* the hook's text carries the request ID
-    /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, idKnown, exposed, pushedClosed,
-                   overdue, alive>>
-
-HookLoses ==
-    /\ hook = "announced" /\ hook' = "idle"
-    /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, handleKnown, idKnown, exposed,
+DoorbellRefused ==
+    /\ alive
+    /\ LET r == Step(Ev("ring-refused", "", "none", overdue)) IN r.ok /\ SetMsg(r)
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 (* The recipient's own calls; a review mailbox makes none. *)
@@ -316,55 +248,38 @@ Calls == alive /\ d.route # "mailbox"
 
 InboxReads ==
     /\ Calls
-    /\ LET r == Step(Ev("read-whole", "", "none", overdue, "nothing")) IN
+    /\ LET r == Step(Ev("read-whole", "", "none", overdue)) IN
        /\ r.ok /\ SetMsg(r)
-       /\ exposed' = (exposed \/ (r.d.state = "read" /\ d.state # "read" /\ ShowsNative(d)))
-       /\ handleKnown' = (handleKnown \/ (r.d.state = "read" /\ d.state # "read"))
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, idKnown,
+       /\ requestKnown' = (requestKnown \/ (r.d.state = "read" /\ d.state # "read"))
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown,
                    pushedClosed, overdue, alive>>
 
 InboxReadsAgain ==
-    /\ Calls /\ ~overdue /\ Visible(d, "nothing")
-    /\ exposed' = (exposed \/ ShowsNative(d))
-    /\ handleKnown' = TRUE
+    /\ Calls /\ ~overdue /\ Visible(d) /\ ~requestKnown
+    /\ requestKnown' = TRUE
     /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, idKnown,
-                   pushedClosed, overdue, alive>>
-
-InboxNamesIt ==
-    /\ Calls /\ Naming # "nothing"
-    /\ LET r == Step(Ev("confirm", "", "none", overdue, Naming)) IN
-       /\ r.ok /\ SetMsg(r)
-       /\ exposed' = (exposed \/ (Visible(r.d, Naming) /\ ShowsNative(d)))
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown,
                    pushedClosed, overdue, alive>>
 
 Acks ==
-    /\ Calls /\ Naming # "nothing"
+    /\ Calls
     /\ \E kind \in {"ack-read", "ack-acted"} :
-          LET r == Step(Ev(kind, "", "none", overdue, Naming)) IN r.ok /\ SetMsg(r)
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+          LET r == Step(Ev(kind, "", "none", overdue)) IN r.ok /\ SetMsg(r)
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 Responds ==
-    /\ Calls /\ isRequest /\ Naming = "handle"
-    /\ LET r == Respond(rq, d, overdue, "handle") IN r.ok /\ SetMsg(r)
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
-                   pushedClosed, overdue, alive>>
-
-\* Another message of the thread carries the bare ID (its `thread` or `reply_to`).
-IdLeaks ==
-    /\ ~idKnown /\ idKnown' = TRUE
-    /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, exposed,
+    /\ Calls /\ isRequest /\ requestKnown
+    /\ LET r == Respond(rq, d, overdue) IN r.ok /\ SetMsg(r)
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 (* The sweep, the deadline, the end, the freezes (sections 4.10, 7.4, 8.2, 9.1). *)
 
 SweepStale ==
-    /\ LET after == Apply(d, Ev("stale", "", "none", FALSE, "nothing")) IN
+    /\ LET after == Apply(d, Ev("stale", "", "none", FALSE)) IN
        after.ok /\ SetMsg([rq |-> rq, d |-> after.d])
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 SweepExpiresRequest ==
@@ -372,22 +287,22 @@ SweepExpiresRequest ==
     /\ IF SeparateRequestExpiry THEN SetMsg([rq |-> ClosedRq, d |-> d])
        ELSE \/ SetMsg(ExpireRequest(rq, d))
             \/ SetMsg([rq |-> ClosedRq, d |-> d])   \* a crash after the request's write
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 SweepExpiresDelivery ==
     /\ overdue /\ (~isRequest \/ SeparateRequestExpiry \/ rq.state # "open")
-    /\ LET after == Apply(d, Ev("expire", "", "none", TRUE, "nothing")) IN
+    /\ LET after == Apply(d, Ev("expire", "", "none", TRUE)) IN
        after.ok /\ SetMsg([rq |-> rq, d |-> after.d])
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 RecipientMailboxFreezes ==
     /\ alive /\ ~overdue /\ d.route = "mailbox"
-    /\ LET after == Apply(d, Ev("freeze", "", "none", FALSE, "nothing")) IN
+    /\ LET after == Apply(d, Ev("freeze", "", "none", FALSE)) IN
        after.ok /\ SetMsg([rq |-> rq, d |-> after.d])
     /\ alive' = FALSE
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue>>
 
 RequestingMailboxFreezes ==
@@ -397,29 +312,28 @@ RequestingMailboxFreezes ==
        ELSE \/ SetMsg(ExpireRequest(rq, d))
             \/ SetMsg([rq |-> ClosedRq, d |-> d])   \* a crash after the request's write
     /\ frozen' = TRUE
-    /\ UNCHANGED <<writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
 RecipientEnds ==
     /\ alive /\ alive' = FALSE
-    /\ LET after == Apply(d, Ev("end", "", "none", FALSE, "nothing")) IN
+    /\ LET after == Apply(d, Ev("end", "", "none", FALSE)) IN
        IF after.ok THEN SetMsg([rq |-> rq, d |-> after.d]) ELSE KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue>>
 
 DeadlinePasses ==
     /\ ~overdue /\ overdue' = TRUE
     /\ KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
+    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, alive>>
 
 Sweep == SweepStale \/ SweepExpiresRequest \/ SweepExpiresDelivery
 
 Next ==
-    \/ \E p \in Passes : Claim(p) \/ WriteFails(p) \/ Write(p) \/ Record(p) \/ RecordFailure(p) \/ Crash(p)
-    \/ EngineReleases \/ EngineDiscards
-    \/ HookAnnounces \/ HookReturns \/ HookLoses
-    \/ InboxReads \/ InboxReadsAgain \/ InboxNamesIt \/ Acks \/ Responds \/ IdLeaks
+    \/ \E p \in Passes : Claim(p) \/ WriteFails(p) \/ Steer(p) \/ Record(p) \/ RecordFailure(p) \/ Crash(p)
+    \/ DoorbellRefused
+    \/ InboxReads \/ InboxReadsAgain \/ Acks \/ Responds
     \/ Sweep
     \/ RecipientMailboxFreezes \/ RequestingMailboxFreezes \/ RecipientEnds \/ DeadlinePasses
 
@@ -433,25 +347,24 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(SweepStale) /\ WF_vars(SweepExpiresRequ
 TypeOK ==
     /\ d.route \in Routes /\ d.state \in States /\ d.attempts \in 0..MaxAttempts
     /\ d.notice \in {"", "owed"} /\ rq.state \in {"none", "open", "answered", "expired"}
-    /\ pass \in [Passes -> [pc : {"idle", "claimed", "written", "failed", "dead"},
-                            reply : Answers \cup {"none"}]]
-    /\ engine \in {"none", "accepted", "held", "refused", "full", "dropped"}
+    /\ pass \in [Passes -> {"idle", "claimed", "written", "failed", "dead"}]
+    /\ engine \in {"none", "accepted"}
 
-\* Every route pushes a message at most once.
+\* The bridge steers a message's text at most once.
 AtMostOnce == shown <= 1
 
-\* A native body is never returned by a read before Claude Code accepted it.
-NoEarlyExposure == ~exposed
+\* On every other route the text reaches the model only through the inbox read: a doorbell carries none.
+ContentOnlyThroughInbox == d.route # "bridge" => shown = 0
 
-\* A line that may have reached the engine, or a hook's announcement, is never recorded as not pushed.
-NeverLooksUnpushed == (engine # "none" \/ hook = "announced") => d.state # "pending"
+\* A steer that may have reached the engine is never recorded as not steered.
+NeverLooksUnpushed == engine # "none" => d.state # "pending"
 
-\* No push of a request begins (a claim, an announcement) once it is closed. A push already claimed
-\* when its request closes may still arrive; the answer to it is refused as request_closed.
+\* No steer of a request begins (a claim) once it is closed. A steer already claimed when its request
+\* closes may still arrive; the answer to it is refused as request_closed.
 NoPushStartsAfterClose == ~pushedClosed
 
 \* No question is written to the author by a pass that still owned its claim when the mailbox froze:
-\* the freeze waits for pushes under way (a pass stalled past 60 s was swept and owns nothing).
+\* the freeze waits for steers under way (a pass stalled past 60 s was swept and owns nothing).
 NoWriteAfterFreeze == ~writtenFrozen
 
 \* A step that finds the deadline passed closes an open request, whatever its delivery's state.
@@ -471,7 +384,7 @@ RequestAgrees == rq.state = "answered" => d.state \in Final
 \* Final states are never left.
 FinalStable == [][d.state \in Final => d'.state = d.state]_vars
 
-\* The deadline is applied before an ack, a read or a push.
+\* The deadline is applied before a steer, a read, an ack or a refused doorbell.
 DeadlineFirst ==
     [][(overdue /\ d.state \in Expirable /\ d'.state # d.state) => d'.state \in {"expired", "dropped"}]_vars
 

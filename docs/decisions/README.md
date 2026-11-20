@@ -60,3 +60,4 @@ is added in a pull request.
 | [W-090](W-090-landing.md) | 0.6.0 landing: one `jst land` behind hosting adapters; two autonomy modes chosen at adopt and setup; `jst gh` and the queue removed |
 | [W-092](W-092-thin-land-and-where-tests-run.md) | `jst land` stays thin: push, open, required checks, merge; where tests run is each project's declared split between local and CI |
 | [W-093](W-093-docs-for-people-and-agents.md) | The documentation: a checked style guide; flags, exit codes and keys in one home, references generated from it; the site by task, with `llms.txt` for agents and the contributors' pages (amends W-077) |
+| [W-095](W-095-the-socket-is-a-doorbell.md) | Claude Code's messaging socket is only a doorbell; a chat message is delivered when the recipient reads it from its inbox |

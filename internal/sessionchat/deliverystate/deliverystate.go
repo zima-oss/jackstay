@@ -1,8 +1,12 @@
 // Package deliverystate is the transition table of the agent chat's deliveries
 // (docs/design/chat.md, sections 4.2, 4.10, 7.3 and 8). It holds no files and no clock: the store
-// calls Apply under its lock with what it observed (the deadline, the pusher's answer, what the
-// caller named) and writes back the delivery it returns. The model in docs/design/chat-model and the
+// calls Apply under its lock with what it observed (the deadline, the bridge's answer, a refused
+// doorbell) and writes back the delivery it returns. The model in docs/design/chat-model and the
 // property tests of this package check the same rules.
+//
+// Since W-095 the native and hooks routes carry no content: they ring a doorbell, and a message's
+// text reaches the recipient's model only when the recipient reads it from its inbox. Only the
+// Codex bridge still pushes a message's text, at most once.
 package deliverystate
 
 import (
@@ -18,7 +22,6 @@ const (
 	Pending   State = "pending"
 	Sending   State = "sending"
 	Delivered State = "delivered"
-	Held      State = "held"
 	Read      State = "read"
 	Acted     State = "acted"
 	Refused   State = "refused"
@@ -27,7 +30,7 @@ const (
 )
 
 // States lists every delivery state.
-var States = []State{Pending, Sending, Delivered, Held, Read, Acted, Refused, Dropped, Expired}
+var States = []State{Pending, Sending, Delivered, Read, Acted, Refused, Dropped, Expired}
 
 // Route is the one way a delivery is pushed (section 8.1).
 type Route string
@@ -49,13 +52,12 @@ type Reason string
 
 // The receipt reasons.
 const (
-	NoReason             Reason = ""
-	Unconfirmed          Reason = "unconfirmed"
-	EngineRefused        Reason = "engine_refused"
-	EngineQueueFull      Reason = "engine_queue_full"
-	RecipientEnded       Reason = "recipient_ended"
-	ExpiredReason        Reason = "expired"
-	EngineHeldUnresolved Reason = "engine_held_unresolved"
+	NoReason    Reason = ""
+	Unconfirmed Reason = "unconfirmed"
+	// EngineRefused: the recipient's engine refused the native doorbell (it closed the connection).
+	EngineRefused  Reason = "engine_refused"
+	RecipientEnded Reason = "recipient_ended"
+	ExpiredReason  Reason = "expired"
 )
 
 // Notice is the state of the notice a delivery owes its sender (section 8.5).
@@ -69,8 +71,8 @@ const (
 	NoticeShown   Notice = "shown"
 )
 
-// MaxAttempts is the number of confirmed failures after which the native route gives the
-// delivery to the hooks, and the bridge stops steering it (sections 8.3 and 9.2).
+// MaxAttempts is the number of confirmed failures after which the bridge stops steering a delivery,
+// which then waits in the recipient's inbox (section 9.2).
 const MaxAttempts = 4
 
 // Delivery is the part of a delivery record the table reads and writes.
@@ -78,7 +80,7 @@ type Delivery struct {
 	Route    Route
 	State    State
 	Reason   Reason
-	Pusher   string // the pass that set `sending`; empty otherwise
+	Pusher   string // the bridge pass that set `sending`; empty otherwise
 	Attempts int
 	Notice   Notice
 	// Request marks the delivery of a request: its expiry notice is owed on the request's commit
@@ -91,16 +93,17 @@ type Kind string
 
 // The events of the table.
 const (
-	// Claim is a native or bridge pass setting `sending` before it pushes (section 8.3 step 1).
+	// Claim is the bridge setting `sending` before it steers a message (section 9.2).
 	Claim Kind = "claim"
-	// Announce is a hook putting the delivery in its output (section 8.4).
-	Announce Kind = "announce"
-	// Answer is the engine's (or app-server's) answer to a push, recorded by its pass.
+	// Answer is the app-server's answer to a steer, recorded by its pass.
 	Answer Kind = "answer"
-	// Failure is a confirmed failure: nothing reached the engine.
+	// Failure is a confirmed failure of a steer: nothing reached the engine.
 	Failure Kind = "failure"
 	// Stale is the sweep finding `sending` older than 60 s.
 	Stale Kind = "stale"
+	// RingRefused is the recipient's engine refusing the native doorbell: it closed the connection
+	// before the line was taken (section 8.3). A doorbell it took, or ignored, changes nothing.
+	RingRefused Kind = "ring-refused"
 	// Expire is the sweep, or another step's deadline check, finding `expires_at` passed.
 	Expire Kind = "expire"
 	// End is the recipient's end: SessionEnd, a dead process, or a mailbox closed without a freeze.
@@ -111,52 +114,32 @@ const (
 	AckRead Kind = "ack-read"
 	// AckActed is chat.ack with `acted`, or chat.respond to this request.
 	AckActed Kind = "ack-acted"
-	// Confirm is chat.inbox naming the delivery in `ids`.
-	Confirm Kind = "confirm"
 	// Freeze is a review mailbox's freeze reading what was sent to it (section 9.1).
 	Freeze Kind = "freeze"
 	// CloseRequest is a request closed before its deadline (a freeze of the mailbox that asked it):
-	// its delivery, if not yet pushed or still held, expires with it.
+	// its delivery, if not yet read, expires with it.
 	CloseRequest Kind = "close-request"
 )
 
-// EngineAnswer is what a push's answer said.
+// EngineAnswer is what a steer's answer said.
 type EngineAnswer string
 
-// The answers a pass records.
+// The answers a bridge pass records.
 const (
-	Accepted  EngineAnswer = "accepted"
-	HeldBy    EngineAnswer = "held"
-	RefusedBy EngineAnswer = "refused"
-	QueueFull EngineAnswer = "queue_full"
-	// Lost is a line written with no answer, or one jackstay cannot parse.
+	Accepted EngineAnswer = "accepted"
+	// Lost is a steer written with no answer, or one jackstay cannot parse.
 	Lost EngineAnswer = "lost"
-)
-
-// Naming is what a recipient's call named the message by.
-type Naming string
-
-// How a call names a delivery.
-const (
-	// ByNothing: the call does not name it (chat.inbox without ids).
-	ByNothing Naming = ""
-	// ByID: the bare message ID, which other messages' `thread` and `reply_to` also carry.
-	ByID Naming = "id"
-	// ByHandle: the delivery's handle, or its request ID, which only a frame the engine showed carries.
-	ByHandle Naming = "handle"
 )
 
 // Event is one thing that happened to a delivery, with what the store observed when it happened.
 type Event struct {
 	Kind Kind
-	// Pusher is the pass that claims (Claim) or records (Answer, Failure).
+	// Pusher is the bridge pass that claims (Claim) or records (Answer, Failure).
 	Pusher string
-	// Answer is the push's answer (Answer).
+	// Answer is the steer's answer (Answer).
 	Answer EngineAnswer
 	// Overdue is true when `expires_at` has passed, checked under the same lock (section 4.10).
 	Overdue bool
-	// Named is how the recipient's call named the delivery (ReadWhole, AckRead, AckActed, Confirm).
-	Named Naming
 }
 
 // Errors of Apply. The delivery returned with them is the one given, unchanged.
@@ -166,8 +149,7 @@ var (
 	// ErrSuperseded: a pass recorded an outcome for a delivery it no longer owns (compare-and-set);
 	// the outcome is dropped and logged.
 	ErrSuperseded = errors.New("deliverystate: the delivery moved on; the outcome is dropped")
-	// ErrNotVisible: the recipient named a native delivery its engine has not shown, by a name
-	// that does not prove the engine showed it.
+	// ErrNotVisible: the recipient asked for a delivery whose body it may no longer read.
 	ErrNotVisible = errors.New("deliverystate: not visible to the recipient")
 )
 
@@ -178,44 +160,39 @@ func Final(state State) bool {
 
 // Unread reports whether a delivery keeps its inbox marker (section 7.1).
 func Unread(state State) bool {
-	return state == Pending || state == Sending || state == Delivered || state == Held
+	return state == Pending || state == Sending || state == Delivered
 }
 
 // CountsAgainstQueue reports whether a delivery counts towards the recipient's 50 (section 4.8).
 func CountsAgainstQueue(state State) bool {
-	return state == Pending || state == Sending || state == Held
+	return state == Pending || state == Sending
 }
 
-// Expirable reports whether a deadline moves the state to expired (section 4.10).
-func Expirable(state State) bool { return state == Pending || state == Held }
+// Expirable reports whether a deadline moves the state to expired (section 4.10): a message the
+// recipient has not read, and that no steer is carrying.
+func Expirable(state State) bool { return state == Pending }
 
-// Visible reports whether the body is visible to the recipient (section 4.10), given how the
-// reading call names it.
-func Visible(delivery Delivery, named Naming) bool {
+// Visible reports whether the body is visible to the recipient (section 4.10): on every route, until
+// the delivery is refused, dropped or expired. No route shows a body anywhere but the inbox read,
+// except the bridge's steer, which is the same text the inbox returns.
+func Visible(delivery Delivery) bool {
 	switch delivery.State {
-	case Held, Refused, Dropped, Expired:
-		if delivery.Route != Native || delivery.State != Held {
-			return false
-		}
-		return named == ByHandle
+	case Refused, Dropped, Expired:
+		return false
 	}
-	if delivery.Route != Native {
-		return true
-	}
-	switch delivery.State {
-	case Read, Acted:
-		return true
-	case Delivered:
-		return delivery.Reason != Unconfirmed || named == ByHandle
-	default: // pending, sending: the engine has not answered
-		return named == ByHandle
-	}
+	return true
 }
 
-// Due reports whether a pass may claim the delivery now, before priority and next_attempt.
+// Due reports whether a bridge pass may claim the delivery now, before priority and next_attempt.
 func Due(delivery Delivery) bool {
-	return delivery.State == Pending &&
-		(delivery.Route == Native || delivery.Route == Bridge) && delivery.Attempts < MaxAttempts
+	return delivery.State == Pending && delivery.Route == Bridge && delivery.Attempts < MaxAttempts
+}
+
+// Rings reports whether the recipient's doorbell may ring for the delivery: it waits unread on the
+// native or hooks route (sections 8.3 and 8.4). Ringing changes nothing, so a repeated ring is
+// harmless.
+func Rings(delivery Delivery) bool {
+	return delivery.State == Pending && (delivery.Route == Native || delivery.Route == Hooks)
 }
 
 // Apply returns the delivery after the event, or the delivery unchanged and an error.
@@ -231,10 +208,9 @@ func Apply(delivery Delivery, event Event) (Delivery, error) {
 }
 
 func apply(delivery Delivery, event Event) (Delivery, error) {
-	// Deadlines first (section 4.10): a step that would push, read, ack or answer an overdue
-	// pending or held delivery expires it instead, and goes on as if it had expired already.
-	if event.Overdue && Expirable(delivery.State) && checksDeadline(event.Kind) &&
-		(delivery.State == Pending || namesTheDelivery(event.Kind)) {
+	// Deadlines first (section 4.10): a step that would steer, read, ack or answer an overdue
+	// pending delivery expires it instead, and goes on as if it had expired already.
+	if event.Overdue && Expirable(delivery.State) && checksDeadline(event.Kind) {
 		return expire(delivery), nil
 	}
 	switch event.Kind {
@@ -244,12 +220,6 @@ func apply(delivery Delivery, event Event) (Delivery, error) {
 		}
 		delivery.State, delivery.Pusher = Sending, event.Pusher
 		return delivery, nil
-	case Announce:
-		if delivery.Route != Hooks || delivery.State != Pending {
-			return delivery, ErrNotAllowed
-		}
-		delivery.State = Delivered
-		return delivery, nil
 	case Answer, Failure:
 		if delivery.State != Sending || delivery.Pusher != event.Pusher {
 			return delivery, ErrSuperseded
@@ -258,9 +228,6 @@ func apply(delivery Delivery, event Event) (Delivery, error) {
 		if event.Kind == Failure {
 			delivery.State = Pending
 			delivery.Attempts++
-			if delivery.Attempts >= MaxAttempts && delivery.Route == Native {
-				delivery.Route = Hooks
-			}
 			return delivery, nil
 		}
 		switch event.Answer {
@@ -268,14 +235,6 @@ func apply(delivery Delivery, event Event) (Delivery, error) {
 			delivery.State = Delivered
 		case Lost:
 			delivery.State, delivery.Reason = Delivered, Unconfirmed
-		case HeldBy:
-			delivery.State = Held
-		case RefusedBy:
-			delivery.State, delivery.Reason = Refused, EngineRefused
-			delivery.Notice = NoticeOwed
-		case QueueFull:
-			delivery.State, delivery.Reason = Dropped, EngineQueueFull
-			delivery.Notice = NoticeOwed
 		default:
 			return delivery, ErrNotAllowed
 		}
@@ -286,25 +245,45 @@ func apply(delivery Delivery, event Event) (Delivery, error) {
 		}
 		delivery.State, delivery.Reason, delivery.Pusher = Delivered, Unconfirmed, ""
 		return delivery, nil
+	case RingRefused:
+		if delivery.Route != Native || delivery.State != Pending {
+			return delivery, ErrNotAllowed
+		}
+		delivery.State, delivery.Reason, delivery.Notice = Refused, EngineRefused, NoticeOwed
+		return delivery, nil
 	case Expire, CloseRequest:
 		if !Expirable(delivery.State) {
 			return delivery, ErrNotAllowed
 		}
 		return expire(delivery), nil
 	case End:
-		if delivery.State != Pending && delivery.State != Sending && delivery.State != Held {
+		if delivery.State != Pending && delivery.State != Sending {
 			return delivery, ErrNotAllowed
 		}
 		delivery.State, delivery.Reason, delivery.Pusher = Dropped, RecipientEnded, ""
 		delivery.Notice = NoticeOwed
 		return delivery, nil
 	case ReadWhole:
-		if (delivery.State != Pending && delivery.State != Delivered) || !Visible(delivery, event.Named) {
+		if delivery.State != Pending && delivery.State != Delivered {
 			return delivery, ErrNotVisible
 		}
 		return confirmedRead(delivery), nil
-	case AckRead, AckActed, Confirm:
-		return recipientNames(delivery, event)
+	case AckRead, AckActed:
+		if Final(delivery.State) {
+			// Accepted, changes nothing, and says so (section 5.2, chat.ack).
+			return delivery, nil
+		}
+		if event.Kind == AckRead {
+			if delivery.State == Pending || delivery.State == Delivered {
+				return confirmedRead(delivery), nil
+			}
+			return delivery, nil // `read` already, or being steered: changes nothing
+		}
+		delivery.State, delivery.Pusher = Acted, ""
+		if delivery.Reason == Unconfirmed {
+			delivery.Reason = NoReason
+		}
+		return delivery, nil
 	case Freeze:
 		if delivery.Route != Mailbox || delivery.State != Pending {
 			return delivery, ErrNotAllowed
@@ -313,38 +292,6 @@ func apply(delivery Delivery, event Event) (Delivery, error) {
 		return delivery, nil
 	}
 	return delivery, ErrNotAllowed
-}
-
-// recipientNames applies the recipient's own calls that name a delivery.
-func recipientNames(delivery Delivery, event Event) (Delivery, error) {
-	if Final(delivery.State) {
-		// Accepted, changes nothing, and says so (section 5.2, chat.ack).
-		return delivery, nil
-	}
-	// A native delivery the engine has not shown is named only by its handle: a bare ID may have
-	// come from another message's `thread` or `reply_to`.
-	if !Visible(delivery, event.Named) {
-		return delivery, ErrNotVisible
-	}
-	switch event.Kind {
-	case Confirm:
-		if delivery.State == Held || (delivery.State == Delivered && delivery.Reason == Unconfirmed) {
-			delivery.State, delivery.Reason = Delivered, NoReason
-		}
-		return delivery, nil
-	case AckRead:
-		switch delivery.State {
-		case Pending, Delivered, Held:
-			return confirmedRead(delivery), nil
-		}
-		return delivery, nil // `read` already, or passed: changes nothing
-	default: // AckActed
-		delivery.State, delivery.Pusher = Acted, ""
-		if delivery.Reason == Unconfirmed {
-			delivery.Reason = NoReason
-		}
-		return delivery, nil
-	}
 }
 
 func confirmedRead(delivery Delivery) Delivery {
@@ -356,27 +303,16 @@ func confirmedRead(delivery Delivery) Delivery {
 }
 
 func expire(delivery Delivery) Delivery {
-	if delivery.State == Held {
-		delivery.Reason = EngineHeldUnresolved
-	} else {
-		delivery.Reason = ExpiredReason
-	}
-	delivery.State, delivery.Pusher = Expired, ""
+	delivery.State, delivery.Reason, delivery.Pusher = Expired, ExpiredReason, ""
 	if !delivery.Request {
 		delivery.Notice = NoticeOwed
 	}
 	return delivery
 }
 
-// namesTheDelivery reports whether the event is a recipient's call naming the delivery, which may
-// find it held; a pass, a hook and an inbox read only ever take a pending one.
-func namesTheDelivery(kind Kind) bool {
-	return kind == AckRead || kind == AckActed || kind == Confirm
-}
-
 func checksDeadline(kind Kind) bool {
 	switch kind {
-	case Claim, Announce, ReadWhole, AckRead, AckActed, Confirm:
+	case Claim, RingRefused, ReadWhole, AckRead, AckActed:
 		return true
 	}
 	return false
@@ -392,39 +328,26 @@ type Edge struct {
 var Table = []Edge{
 	{Pending, Sending, Claim},
 	{Pending, Expired, Claim},
-	{Pending, Delivered, Announce},
-	{Pending, Expired, Announce},
 	{Sending, Delivered, Answer},
-	{Sending, Held, Answer},
-	{Sending, Refused, Answer},
-	{Sending, Dropped, Answer},
 	{Sending, Pending, Failure},
 	{Sending, Delivered, Stale},
+	{Pending, Refused, RingRefused},
+	{Pending, Expired, RingRefused},
 	{Pending, Expired, Expire},
-	{Held, Expired, Expire},
 	{Pending, Expired, CloseRequest},
-	{Held, Expired, CloseRequest},
 	{Pending, Dropped, End},
 	{Sending, Dropped, End},
-	{Held, Dropped, End},
 	{Pending, Read, ReadWhole},
 	{Delivered, Read, ReadWhole},
 	{Pending, Expired, ReadWhole},
 	{Pending, Read, AckRead},
 	{Delivered, Read, AckRead},
-	{Held, Read, AckRead},
 	{Pending, Expired, AckRead},
-	{Held, Expired, AckRead},
 	{Pending, Acted, AckActed},
 	{Sending, Acted, AckActed},
 	{Delivered, Acted, AckActed},
-	{Held, Acted, AckActed},
 	{Read, Acted, AckActed},
 	{Pending, Expired, AckActed},
-	{Held, Expired, AckActed},
-	{Held, Delivered, Confirm},
-	{Held, Expired, Confirm},
-	{Pending, Expired, Confirm},
 	{Pending, Read, Freeze},
 }
 
@@ -455,7 +378,7 @@ type Request struct {
 }
 
 // ExpireRequest closes an open request at its deadline, or at its mailbox's freeze, in one step
-// with its delivery: the delivery expires too when it is pending or held, and the requester is owed
+// with its delivery: the delivery expires too when it is still pending, and the requester is owed
 // one notice, on the request's commit record, whatever became of the delivery.
 func ExpireRequest(request Request, delivery Delivery) (Request, Delivery, error) {
 	if request.State != Open {
@@ -474,14 +397,13 @@ func ExpireRequest(request Request, delivery Delivery) (Request, Delivery, error
 
 // ApplyMessage is Apply for a delivery together with its message's request (the zero Request for a
 // message that is not one). A deadline found by any step closes an open request, whatever its
-// delivery's state, and expires the delivery with it when that is pending or held
-// (ExpireRequest), before the event applies; so a pusher's or a reader's deadline check never
-// expires one without the other, and a read past the deadline of a delivered request still closes
-// the request.
+// delivery's state, and expires the delivery with it when that is still pending (ExpireRequest),
+// before the event applies; so a pass's or a reader's deadline check never expires one without the
+// other, and a read past the deadline of a delivered request still closes the request.
 func ApplyMessage(request Request, delivery Delivery, event Event) (Request, Delivery, error) {
 	// A request's closure writes two files, its commit record and then its delivery; a crash
-	// between them leaves the request closed and its delivery pending or held. Every step repairs
-	// that first, so a closed question is never claimed or announced.
+	// between them leaves the request closed and its delivery pending. Every step repairs that
+	// first, so a closed question is never claimed.
 	if delivery.Request && request.State == Closed && Expirable(delivery.State) {
 		repaired, err := Apply(delivery, Event{Kind: CloseRequest})
 		if err != nil {
@@ -509,7 +431,7 @@ func ApplyMessage(request Request, delivery Delivery, event Event) (Request, Del
 		return request, delivery, err
 	}
 	// A request closed early (its mailbox froze) while its delivery was `sending`: a confirmed
-	// failure, or a hold, must not leave a closed question waiting to be pushed.
+	// failure must not leave a closed question waiting to be steered.
 	if delivery.Request && request.State == Closed && Expirable(next.State) {
 		if closed, err := Apply(next, Event{Kind: CloseRequest}); err == nil {
 			next = closed
@@ -521,7 +443,7 @@ func ApplyMessage(request Request, delivery Delivery, event Event) (Request, Del
 // Respond answers an open request in one commit with its response (section 4.4): the request becomes
 // answered and its delivery acted, unless that delivery is final. An overdue request is closed
 // instead and the response refused (request_closed).
-func Respond(request Request, delivery Delivery, overdue bool, named Naming) (Request, Delivery, error) {
+func Respond(request Request, delivery Delivery, overdue bool) (Request, Delivery, error) {
 	if request.State == Answered {
 		return request, delivery, ErrAlreadyAnswered
 	}
@@ -535,10 +457,7 @@ func Respond(request Request, delivery Delivery, overdue bool, named Naming) (Re
 		}
 		return closedRequest, closedDelivery, ErrRequestClosed
 	}
-	if !Final(delivery.State) && !Visible(delivery, named) {
-		return request, delivery, ErrNotVisible
-	}
-	next, err := Apply(delivery, Event{Kind: AckActed, Named: named})
+	next, err := Apply(delivery, Event{Kind: AckActed})
 	if err != nil {
 		return request, delivery, err
 	}
@@ -552,33 +471,13 @@ var (
 	ErrRequestClosed   = errors.New("deliverystate: request_closed")
 )
 
-// Notice transitions (section 8.5): owed → sending (a native push claims it) → shown, or back to
-// owed on a confirmed failure; owed → shown directly when a hook or chat.inbox includes it.
+// Notice transitions (section 8.5): owed → shown when chat.inbox or a hook includes it. A doorbell
+// says only that notices wait; it shows none.
 
 // ShowNotice marks an owed notice shown by a hook or chat.inbox, in the step that returns it.
 func ShowNotice(notice Notice) (Notice, error) {
 	if notice != NoticeOwed {
 		return notice, ErrNotAllowed
-	}
-	return NoticeShown, nil
-}
-
-// ClaimNotice marks an owed notice `sending` before a native push carries it.
-func ClaimNotice(notice Notice) (Notice, error) {
-	if notice != NoticeOwed {
-		return notice, ErrNotAllowed
-	}
-	return NoticeSending, nil
-}
-
-// SettleNotice records a native push's outcome for a `sending` notice: a confirmed failure returns
-// it to owed; any answer, a lost one, or 60 s without an outcome makes it shown, never pushed again.
-func SettleNotice(notice Notice, confirmedFailure bool) (Notice, error) {
-	if notice != NoticeSending {
-		return notice, ErrNotAllowed
-	}
-	if confirmedFailure {
-		return NoticeOwed, nil
 	}
 	return NoticeShown, nil
 }
@@ -602,11 +501,11 @@ func MessageDone(deliveries []Delivery, whole []bool, request Request) bool {
 // (section 7.4). Whole is true when a push carried the whole body.
 func NeedsMessage(delivery Delivery, whole bool) bool {
 	switch {
-	case delivery.State == Pending || delivery.State == Sending || delivery.State == Held:
+	case delivery.State == Pending || delivery.State == Sending:
 		return true
 	case delivery.State == Delivered && (delivery.Reason == Unconfirmed || !whole):
 		return true
-	case delivery.State == Delivered && (delivery.Route == Hooks || delivery.Route == Bridge):
+	case delivery.State == Delivered && delivery.Route == Bridge:
 		return true
 	case delivery.Notice == NoticeOwed || delivery.Notice == NoticeSending:
 		return true

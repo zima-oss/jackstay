@@ -10,9 +10,8 @@ import (
 // reached by some input.
 func TestApplyFollowsTheTableExactly(t *testing.T) {
 	reasons := []Reason{NoReason, Unconfirmed}
-	kinds := []Kind{Claim, Announce, Answer, Failure, Stale, Expire, End, ReadWhole, AckRead, AckActed, Confirm, Freeze, CloseRequest}
-	answers := []EngineAnswer{Accepted, HeldBy, RefusedBy, QueueFull, Lost}
-	namings := []Naming{ByNothing, ByID, ByHandle}
+	kinds := []Kind{Claim, Answer, Failure, Stale, RingRefused, Expire, End, ReadWhole, AckRead, AckActed, Freeze, CloseRequest}
+	answers := []EngineAnswer{Accepted, Lost}
 	reached := map[Edge]bool{}
 	inputs := 0
 	for _, route := range Routes {
@@ -25,8 +24,8 @@ func TestApplyFollowsTheTableExactly(t *testing.T) {
 							for _, kind := range kinds {
 								for _, answer := range answers {
 									for _, overdue := range []bool{false, true} {
-										for _, named := range namings {
-											event := Event{Kind: kind, Pusher: "pass-1", Answer: answer, Overdue: overdue, Named: named}
+										{
+											event := Event{Kind: kind, Pusher: "pass-1", Answer: answer, Overdue: overdue}
 											inputs++
 											next, err := applyNoPanic(t, delivery, event)
 											if err != nil {
@@ -41,7 +40,7 @@ func TestApplyFollowsTheTableExactly(t *testing.T) {
 											if next.State != state {
 												reached[Edge{state, next.State, kind}] = true
 											}
-											if next.Route != route && (route != Native || next.Route != Hooks || kind != Failure) {
+											if next.Route != route {
 												t.Fatalf("%+v %+v: route changed to %s", delivery, event, next.Route)
 											}
 											if (next.State == Refused || next.State == Dropped || next.State == Expired && !request) &&
@@ -80,12 +79,12 @@ func applyNoPanic(t *testing.T, delivery Delivery, event Event) (next Delivery, 
 }
 
 func TestAPassRecordsOnlyWhatItOwns(t *testing.T) {
-	claimed, err := Apply(Delivery{Route: Native, State: Pending}, Event{Kind: Claim, Pusher: "pass-1"})
+	claimed, err := Apply(Delivery{Route: Bridge, State: Pending}, Event{Kind: Claim, Pusher: "pass-1"})
 	if err != nil || claimed.State != Sending || claimed.Pusher != "pass-1" {
 		t.Fatalf("claim: %+v %v", claimed, err)
 	}
 	swept, _ := Apply(claimed, Event{Kind: Stale})
-	late, err := Apply(swept, Event{Kind: Answer, Pusher: "pass-1", Answer: RefusedBy})
+	late, err := Apply(swept, Event{Kind: Answer, Pusher: "pass-1", Answer: Accepted})
 	if err != ErrSuperseded || late != swept {
 		t.Fatalf("a late answer after the sweep: %+v %v", late, err)
 	}
@@ -95,59 +94,78 @@ func TestAPassRecordsOnlyWhatItOwns(t *testing.T) {
 	}
 }
 
-func TestTheFourthConfirmedFailureMovesTheRouteToHooks(t *testing.T) {
-	for _, route := range []Route{Native, Bridge} {
+// W-095: the native and hooks routes ring a doorbell and push nothing; only the bridge claims.
+func TestOnlyTheBridgeClaimsAndOnlyTheDoorbellRoutesRing(t *testing.T) {
+	for _, route := range Routes {
 		delivery := Delivery{Route: route, State: Pending}
-		for attempt := 1; attempt <= MaxAttempts; attempt++ {
-			claimed, err := Apply(delivery, Event{Kind: Claim, Pusher: "pass-1"})
-			if err != nil {
-				t.Fatalf("%s attempt %d: %v", route, attempt, err)
-			}
-			delivery, _ = Apply(claimed, Event{Kind: Failure, Pusher: "pass-1"})
+		_, err := Apply(delivery, Event{Kind: Claim, Pusher: "pass-1"})
+		if (err == nil) != (route == Bridge) {
+			t.Errorf("%s: claim %v", route, err)
 		}
-		want := map[Route]Route{Native: Hooks, Bridge: Bridge}[route]
-		if delivery.Route != want || delivery.State != Pending || Due(delivery) {
-			t.Fatalf("%s after %d failures: %+v", route, MaxAttempts, delivery)
+		if Rings(delivery) != (route == Native || route == Hooks) {
+			t.Errorf("%s: rings %v", route, Rings(delivery))
 		}
+	}
+	if Rings(Delivery{Route: Native, State: Read}) {
+		t.Error("a read delivery rings")
 	}
 }
 
-func TestOnlyTheHandleNamesANativeDeliveryTheEngineHasNotShown(t *testing.T) {
-	for _, state := range []State{Pending, Held} {
-		delivery := Delivery{Route: Native, State: state}
-		if _, err := Apply(delivery, Event{Kind: AckRead, Named: ByID}); err != ErrNotVisible {
-			t.Errorf("%s: a bare ID acked it: %v", state, err)
+func TestARefusedDoorbellIsARefusedDeliveryWithItsNotice(t *testing.T) {
+	refused, err := Apply(Delivery{Route: Native, State: Pending}, Event{Kind: RingRefused})
+	if err != nil || refused.State != Refused || refused.Reason != EngineRefused || refused.Notice != NoticeOwed || Visible(refused) {
+		t.Fatalf("got %+v %v", refused, err)
+	}
+	read := Delivery{Route: Native, State: Read}
+	if after, err := Apply(read, Event{Kind: RingRefused}); err != ErrNotAllowed || after != read {
+		t.Fatalf("a refused doorbell after the read changes nothing: %+v %v", after, err)
+	}
+	if _, err := Apply(Delivery{Route: Hooks, State: Pending}, Event{Kind: RingRefused}); err != ErrNotAllowed {
+		t.Fatal("a hook's doorbell cannot be refused")
+	}
+}
+
+func TestTheFourthConfirmedFailureStopsTheBridge(t *testing.T) {
+	delivery := Delivery{Route: Bridge, State: Pending}
+	for attempt := 1; attempt <= MaxAttempts; attempt++ {
+		claimed, err := Apply(delivery, Event{Kind: Claim, Pusher: "pass-1"})
+		if err != nil {
+			t.Fatalf("attempt %d: %v", attempt, err)
 		}
+		delivery, _ = Apply(claimed, Event{Kind: Failure, Pusher: "pass-1"})
 	}
-	unconfirmed := Delivery{Route: Native, State: Delivered, Reason: Unconfirmed}
-	if _, err := Apply(unconfirmed, Event{Kind: Confirm, Named: ByID}); err != ErrNotVisible {
-		t.Errorf("a bare ID confirmed an unconfirmed push: %v", err)
+	if delivery.Route != Bridge || delivery.State != Pending || Due(delivery) || !Visible(delivery) {
+		t.Fatalf("after %d failures it waits in the inbox: %+v", MaxAttempts, delivery)
 	}
-	confirmed, err := Apply(unconfirmed, Event{Kind: Confirm, Named: ByHandle})
-	if err != nil || confirmed.State != Delivered || confirmed.Reason != NoReason {
-		t.Errorf("the handle did not confirm it: %+v %v", confirmed, err)
-	}
-	if _, err := Apply(Delivery{Route: Poll, State: Pending}, Event{Kind: AckRead, Named: ByID}); err != nil {
-		t.Errorf("a poll delivery needs no handle: %v", err)
+}
+
+func TestEveryRouteShowsTheBodyUntilItIsRefusedDroppedOrExpired(t *testing.T) {
+	for _, route := range Routes {
+		for _, state := range States {
+			want := state != Refused && state != Dropped && state != Expired
+			if got := Visible(Delivery{Route: route, State: state}); got != want {
+				t.Errorf("%s %s: visible %v", route, state, got)
+			}
+		}
 	}
 }
 
 func TestARequestAndItsDeliveryExpireWithOneNotice(t *testing.T) {
 	request := Request{State: Open}
 	delivery := Delivery{Route: Native, State: Pending, Request: true}
-	closedRequest, expired, err := ApplyMessage(request, delivery, Event{Kind: Claim, Pusher: "pass-1", Overdue: true})
+	closedRequest, expired, err := ApplyMessage(request, delivery, Event{Kind: ReadWhole, Overdue: true})
 	if err != nil || closedRequest.State != Closed || closedRequest.Notice != NoticeOwed ||
 		expired.State != Expired || expired.Notice != NoNotice {
 		t.Fatalf("got %+v %+v %v", closedRequest, expired, err)
 	}
-	if _, _, err := Respond(closedRequest, expired, false, ByHandle); err != ErrRequestClosed {
+	if _, _, err := Respond(closedRequest, expired, false); err != ErrRequestClosed {
 		t.Fatalf("an answer after the deadline: %v", err)
 	}
 }
 
-func TestAClosedRequestIsNotPushedAgainAfterAFailure(t *testing.T) {
+func TestAClosedRequestIsNotSteeredAgainAfterAFailure(t *testing.T) {
 	request := Request{State: Open}
-	delivery, _ := Apply(Delivery{Route: Native, State: Pending, Request: true}, Event{Kind: Claim, Pusher: "pass-1"})
+	delivery, _ := Apply(Delivery{Route: Bridge, State: Pending, Request: true}, Event{Kind: Claim, Pusher: "pass-1"})
 	request, delivery, err := ExpireRequest(request, delivery) // the requesting mailbox froze
 	if err != nil || delivery.State != Sending {
 		t.Fatalf("freeze: %+v %v", delivery, err)
@@ -159,15 +177,9 @@ func TestAClosedRequestIsNotPushedAgainAfterAFailure(t *testing.T) {
 }
 
 func TestNoticesAreShownOnce(t *testing.T) {
-	sending, _ := ClaimNotice(NoticeOwed)
-	if again, err := ClaimNotice(sending); err == nil {
-		t.Fatalf("claimed twice: %s", again)
-	}
-	if back, _ := SettleNotice(sending, true); back != NoticeOwed {
-		t.Fatalf("a confirmed failure: %s", back)
-	}
-	if shown, _ := SettleNotice(sending, false); shown != NoticeShown {
-		t.Fatalf("an answer: %s", shown)
+	shown, err := ShowNotice(NoticeOwed)
+	if err != nil || shown != NoticeShown {
+		t.Fatalf("%s %v", shown, err)
 	}
 	if _, err := ShowNotice(NoticeShown); err == nil {
 		t.Fatal("shown twice")
@@ -180,13 +192,13 @@ func TestADeliveryKeepsItsMessageWhileItMayStillBeRead(t *testing.T) {
 		whole    bool
 		want     bool
 	}{
-		{Delivery{Route: Native, State: Delivered}, true, false},
-		{Delivery{Route: Native, State: Delivered}, false, true},
-		{Delivery{Route: Native, State: Delivered, Reason: Unconfirmed}, true, true},
-		{Delivery{Route: Hooks, State: Delivered}, true, true},
+		{Delivery{Route: Native, State: Pending}, true, true},
+		{Delivery{Route: Bridge, State: Delivered}, true, true},
+		{Delivery{Route: Bridge, State: Delivered, Reason: Unconfirmed}, true, true},
 		{Delivery{Route: Native, State: Refused, Notice: NoticeOwed}, true, true},
 		{Delivery{Route: Native, State: Refused, Notice: NoticeShown}, true, false},
 		{Delivery{Route: Poll, State: Read}, true, false},
+		{Delivery{Route: Hooks, State: Acted}, true, false},
 	}
 	for _, test := range cases {
 		if got := NeedsMessage(test.delivery, test.whole); got != test.want {
@@ -205,23 +217,23 @@ func TestAResponseToAGoneRequesterOwesItsNotice(t *testing.T) {
 	}
 }
 
-// A push under way when its request reaches its deadline may still arrive; it cannot be answered.
-func TestAPushUnderWayWhenTheRequestClosesCannotBeAnswered(t *testing.T) {
+// A steer under way when its request reaches its deadline may still arrive; it cannot be answered.
+func TestASteerUnderWayWhenTheRequestClosesCannotBeAnswered(t *testing.T) {
 	request := Request{State: Open}
-	delivery, _ := Apply(New(Native, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+	delivery, _ := Apply(New(Bridge, true, false), Event{Kind: Claim, Pusher: "pass-1"})
 	request, delivery, _ = ExpireRequest(request, delivery)
 	_, delivery, err := ApplyMessage(request, delivery, Event{Kind: Answer, Pusher: "pass-1", Answer: Accepted})
 	if err != nil || delivery.State != Delivered {
 		t.Fatalf("the write after the freeze: %+v %v", delivery, err)
 	}
-	if _, _, err := Respond(request, delivery, false, ByHandle); err != ErrRequestClosed {
+	if _, _, err := Respond(request, delivery, false); err != ErrRequestClosed {
 		t.Fatalf("an answer to it: %v", err)
 	}
 }
 
 // Review round 1: an overdue read of a delivered request closes the request and still reads.
 func TestAReadPastTheDeadlineClosesADeliveredRequest(t *testing.T) {
-	request, delivery, err := ApplyMessage(Request{State: Open}, Delivery{Route: Hooks, State: Delivered, Request: true},
+	request, delivery, err := ApplyMessage(Request{State: Open}, Delivery{Route: Bridge, State: Delivered, Request: true},
 		Event{Kind: ReadWhole, Overdue: true})
 	if err != nil || request.State != Closed || request.Notice != NoticeOwed || delivery.State != Read {
 		t.Fatalf("got %+v %+v %v", request, delivery, err)
@@ -254,23 +266,23 @@ func TestAResponseNeedsAnOpenRequest(t *testing.T) {
 	}
 }
 
-// Review rounds 1 and 2: a freeze waits for a question being pushed.
-func TestAFreezeWaitsForAQuestionBeingPushed(t *testing.T) {
-	sending, _ := Apply(New(Native, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+// Review rounds 1 and 2: a freeze waits for a question being steered.
+func TestAFreezeWaitsForAQuestionBeingSteered(t *testing.T) {
+	sending, _ := Apply(New(Bridge, true, false), Event{Kind: Claim, Pusher: "pass-1"})
 	if FreezeMayProceed([]Delivery{sending}) {
-		t.Fatal("froze beside a push under way")
+		t.Fatal("froze beside a steer under way")
 	}
 	swept, _ := Apply(sending, Event{Kind: Stale})
 	if !FreezeMayProceed([]Delivery{swept, New(Hooks, true, false)}) {
-		t.Fatal("a swept push still holds the freeze")
+		t.Fatal("a swept steer still holds the freeze")
 	}
 }
 
 // Review round 3: a crash between a closure's two writes leaves the delivery pending; the next
-// step repairs it instead of pushing a closed question.
-func TestAClosureCutShortIsRepairedBeforeAnyPush(t *testing.T) {
+// step repairs it instead of steering a closed question.
+func TestAClosureCutShortIsRepairedBeforeAnySteer(t *testing.T) {
 	closed := Request{State: Closed, Notice: NoticeOwed}
-	_, delivery, err := ApplyMessage(closed, New(Native, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+	_, delivery, err := ApplyMessage(closed, New(Bridge, true, false), Event{Kind: Claim, Pusher: "pass-1"})
 	if err != nil || delivery.State != Expired || delivery.Notice != NoNotice {
 		t.Fatalf("got %+v %v", delivery, err)
 	}
