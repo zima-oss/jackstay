@@ -25,7 +25,7 @@ func TestDefaults(t *testing.T) {
 		t.Fatal(problems)
 	}
 	codex := s.Reviewers["codex"]
-	if len(s.Use) != 0 || s.Reviewers["claude-code"].Command != "claude" {
+	if len(s.Use) != 1 || s.Use[0] != DefaultReviewer || s.Reviewers["claude-code"].Command != "claude" {
 		t.Fatalf("reviewer built-ins and opt-in defaults: %+v", s)
 	}
 	if codex.Effort != "medium" || codex.TimeoutMinutes != 20 || codex.Command != "codex" || len(codex.Isolation) != len(DefaultIsolation) {
@@ -195,5 +195,18 @@ func TestClaudeCodeIsAnOptInReviewerWithFixedIsolation(t *testing.T) {
 		"use":["claude-code"]}}`)
 	if words := strings.Join(problems, "\n"); !strings.Contains(words, "isolation") || !strings.Contains(words, "effort") {
 		t.Fatalf("unsafe or invalid Claude CLI settings accepted: %v", problems)
+	}
+}
+
+func TestCodexIsTheReviewerWhenNothingNamesOne(t *testing.T) {
+	for _, document := range []string{`{"jackstay_schema":2}`, `{"jackstay_schema":2,"review":{}}`} {
+		settings, problems := settingsFrom(t, document)
+		if len(problems) != 0 || len(settings.Use) != 1 || settings.Use[0] != "codex" {
+			t.Fatalf("%s: use %v, problems %v", document, settings.Use, problems)
+		}
+	}
+	settings, problems := settingsFrom(t, `{"jackstay_schema":2,"review":{"use":["claude-code"]}}`)
+	if len(problems) != 0 || len(settings.Use) != 1 || settings.Use[0] != "claude-code" {
+		t.Fatalf("review.use: %v, %v", settings.Use, problems)
 	}
 }

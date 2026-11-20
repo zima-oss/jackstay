@@ -102,8 +102,11 @@ func TestTheCoreNeedsNeitherClaudeCodeNorCodex(t *testing.T) {
 	}
 	run(0, "check")
 	run(0, "test", "--", "sh", "-c", "echo again")
-	if out := run(2, "review", "HEAD"); !strings.Contains(out, "choose a reviewer") {
-		t.Fatalf("the refusal does not ask for a reviewer selection:\n%s", out)
+	if out := run(6, "review", "HEAD"); !strings.Contains(out, "Codex is not installed") {
+		t.Fatalf("the default reviewer is not Codex:\n%s", out)
+	}
+	if out := run(2, "review", "HEAD", "--reviewer", ""); !strings.Contains(out, "--reviewer names no reviewer") {
+		t.Fatalf("an empty --reviewer was not refused:\n%s", out)
 	}
 	for _, each := range []struct{ name, program string }{{"codex", "Codex"}, {"claude-code", "Claude Code"}} {
 		out := run(6, "review", "HEAD", "--reviewer", each.name)
