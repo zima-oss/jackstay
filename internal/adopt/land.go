@@ -9,10 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/adopt/jsondoc"
 	"github.com/zima-oss/jackstay/internal/adopt/profile"
+	"github.com/zima-oss/jackstay/internal/adopt/templates"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
@@ -37,7 +40,8 @@ var upgradeSteps = []string{
 // schema 3: an existing section gets the keys it lacks, its autonomy kept; a file that is or
 // becomes schema 3 gets the section whole. A schema-2 file of a project upgrading from 0.5.x gets
 // it only as the third of three pull requests: after the pin and after the workflows that download
-// it, which the second step writes as the coming policy needs them. The section is decided from
+// it, which the second step writes as the coming policy needs them (Make decides when the second
+// step is done). The section is decided from
 // the project's own file: a profile's defaults fill a new section's other keys, never autonomy.
 // changed says the pin and the schema must be settled again.
 func (planner *planner) landSection(original *jsondoc.Object, chosen *profile.Profile) (changed bool, err error) {
@@ -57,15 +61,19 @@ func (planner *planner) landSection(original *jsondoc.Object, chosen *profile.Pr
 	if planner.existed {
 		pin, _ := getString(original.Object("adopt"), "pin")
 		if pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0 {
+			if err := planner.pinStepKeepsSchema(original); err != nil {
+				return false, err
+			}
 			planner.upgradeNotes(1)
 			return false, nil
 		}
-		if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) && planner.workflowsPending(chosen) {
-			planner.upgradeNotes(2)
-			planner.landComing = true
-			return true, nil
-		}
-		if schema, _ := original.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
+		if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
+			if !planner.options.landNow {
+				// Steps 2 and 3: the workflows are those the coming policy needs; Make judges from
+				// this whole plan whether step 2 is done, and plans again with landNow if it is.
+				planner.upgrading, planner.landComing = true, true
+				return true, nil
+			}
 			planner.upgradeNotes(3)
 		}
 	}
@@ -112,33 +120,6 @@ func fillLand(section *jsondoc.Object) {
 	}
 }
 
-// workflowsPending says whether the managed workflows on disk are not yet what the prospective
-// file asks: the second step of the upgrade has not landed.
-func (planner *planner) workflowsPending(chosen *profile.Profile) bool {
-	probe := probeOf(planner)
-	probe.landComing = true
-	if err := probe.workflows(chosen); err != nil {
-		return true
-	}
-	for _, change := range probe.plan.Changes {
-		if strings.HasPrefix(change.ID, "workflow:") {
-			return true
-		}
-	}
-	for _, conflict := range probe.plan.Conflicts {
-		if strings.HasPrefix(conflict.ID, "workflow:") {
-			return true
-		}
-	}
-	return false
-}
-
-// probeOf is a planner of the same project and prospective file that plans into a plan of its own.
-func probeOf(source *planner) *planner {
-	return &planner{options: source.options, root: source.root, base: source.base, plain: source.plain,
-		plan: &Plan{inputs: map[string]fileInput{}}}
-}
-
 // upgradeNotes say the three steps of the upgrade in order and which one is due.
 func (planner *planner) upgradeNotes(due int) {
 	for index, step := range upgradeSteps {
@@ -151,6 +132,69 @@ func (planner *planner) upgradeNotes(due int) {
 		}
 		planner.note(fmt.Sprintf("upgrade to the land section, step %d of 3 (%s): %s", index+1, state, step))
 	}
+}
+
+// pinStepKeepsSchema refuses a first step that would raise jackstay.json to schema 3: a key it adds
+// that needs 3 (adopt.profile_sha256 from --profile-sha256, say) would be refused by the 0.5.x the
+// workflows still download.
+func (planner *planner) pinStepKeepsSchema(original *jsondoc.Object) error {
+	before := config.Schema3Keys(config.Config(jsondoc.ToPlain(original).(map[string]any)))
+	var added []string
+	for _, key := range config.Schema3Keys(planner.plain) {
+		if !slices.Contains(before, key) {
+			added = append(added, key)
+		}
+	}
+	if len(added) == 0 {
+		return nil
+	}
+	return &UsageError{fmt.Sprintf("the upgrade's first step moves the pin alone and keeps jackstay.json at schema 2, and this "+
+		"apply would add `%s`, which needs schema 3: leave it out now (record the profile digest in step 3, or after the upgrade)",
+		strings.Join(added, "`, `"))}
+}
+
+// downloadsJackstay finds a workflow that downloads a jackstay release; pinnedVersion reads the
+// release it names.
+var (
+	downloadsJackstay = regexp.MustCompile(`JACKSTAY_VERSION|` + regexp.QuoteMeta(templates.Repository))
+	pinnedVersion     = regexp.MustCompile(`(?m)^\s*JACKSTAY_VERSION:\s*["']?v?([0-9]+\.[0-9]+\.[0-9]+)["']?\s*(#.*)?$`)
+)
+
+// stepTwoLeft is what keeps the upgrade's second step from being done, read from a whole plan with
+// its settlements and exceptions: whether a managed workflow is still to write or settle, and each
+// workflow the project keeps (its own, or by an exception) that downloads a jackstay older than
+// 0.6.0 or whose release cannot be read.
+func (planner *planner) stepTwoLeft() (pending bool, blockers []string) {
+	for _, change := range planner.plan.Changes {
+		pending = pending || strings.HasPrefix(change.ID, "workflow:")
+	}
+	for _, conflict := range planner.plan.Conflicts {
+		pending = pending || strings.HasPrefix(conflict.ID, "workflow:")
+	}
+	for _, path := range planner.retained {
+		input, err := readInput(planner.root, path)
+		if err != nil || !input.exists {
+			blockers = append(blockers, fmt.Sprintf("blocker: step 3 is not offered: %s is kept and cannot be read", path))
+			continue
+		}
+		if !downloadsJackstay.MatchString(input.text) {
+			continue
+		}
+		found := pinnedVersion.FindAllStringSubmatch(input.text, -1)
+		if len(found) == 0 {
+			blockers = append(blockers, fmt.Sprintf("blocker: step 3 is not offered: %s is kept and downloads jackstay, "+
+				"and which release it downloads cannot be read (a JACKSTAY_VERSION: vX.Y.Z line)", path))
+			continue
+		}
+		for _, match := range found {
+			if install.Compare(match[1], config.Schema3Release) < 0 {
+				blockers = append(blockers, fmt.Sprintf("blocker: step 3 is not offered: %s is kept and downloads jackstay v%s, "+
+					"which would refuse a schema-3 jackstay.json: move it to %s or later", path, match[1], config.Schema3Release))
+				break
+			}
+		}
+	}
+	return pending, blockers
 }
 
 // AsksAutonomy says the plan writes a new `land` section whose autonomy nobody chose: --apply asks a

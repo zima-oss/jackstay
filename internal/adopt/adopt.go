@@ -60,6 +60,8 @@ type Options struct {
 	// GuardCommand is the hook command a new guard hook gets; "" is GuardCommand(), the launcher of
 	// the install this jst runs from.
 	GuardCommand string
+	// landNow is Make's own: the upgrade's second step is done, so this plan is its third.
+	landNow bool
 	// Autonomy is --autonomy: the `land.autonomy` a new `land` section gets ("": not given, so a
 	// person is asked before --apply writes one; the plan shows Offered).
 	Autonomy string
@@ -179,9 +181,13 @@ type planner struct {
 	existed bool
 	// profileLand is the profile's `land` defaults for a project without a section (nil: none).
 	profileLand *jsondoc.Object
-	// landComing says the upgrade's second step is due: the workflows are those of a project with
-	// a `land` section, which the third step writes.
+	// landComing says the workflows are those of a project with a `land` section, which the
+	// upgrade's third step writes.
 	landComing bool
+	// upgrading says the plan is the upgrade's second or third step, which Make tells apart.
+	upgrading bool
+	// retained are the workflows the project keeps: its own, and those kept by an exception.
+	retained []string
 }
 
 // newPlanner is the planner of the project at root: the one place base is set, so every path
@@ -191,26 +197,59 @@ func newPlanner(options Options, root string) *planner {
 		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}, inputs: map[string]fileInput{}}}
 }
 
-// Make computes the plan; an error is a usage or reading problem (exit 2).
+// Make computes the plan; an error is a usage or reading problem (exit 2). For a project upgrading
+// from 0.5.x past the pin (docs/design/land.md section 5), the whole plan, its settlements and
+// exceptions applied, says whether the workflows step is done; only then is the plan the third
+// step, schema 3 with the `land` section.
 func Make(options Options) (*Plan, error) {
+	plan, planner, err := makePlan(options)
+	if err != nil || !planner.upgrading {
+		return plan, err
+	}
+	judged := planner
+	if options.SettingsOnly {
+		whole := options
+		whole.SettingsOnly = false
+		if _, judged, err = makePlan(whole); err != nil {
+			plan.Notes = append(plan.Notes, "blocker: step 3 is not offered: the workflows cannot be planned: "+err.Error())
+			planner.upgradeNotes(2)
+			sort.Strings(plan.Notes)
+			return plan, nil
+		}
+	}
+	pending, blockers := judged.stepTwoLeft()
+	if !pending && len(blockers) == 0 {
+		third := options
+		third.landNow = true
+		plan, _, err = makePlan(third)
+		return plan, err
+	}
+	planner.upgradeNotes(2)
+	plan.Notes = append(plan.Notes, blockers...)
+	sort.Strings(plan.Notes)
+	return plan, nil
+}
+
+// makePlan is one plan and the planner that made it.
+func makePlan(options Options) (*Plan, *planner, error) {
 	root, err := projectRoot(options.Dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner := newPlanner(options, root)
 	original, existed, err := planner.readConfig()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.existed = existed
 	exceptions := stringMap(original.Object("adopt"), "exceptions")
 	chosen, err := planner.readProfile(original)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.plan.profile = chosen
 	if err := planner.prospective(original, chosen); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.configChange(original, existed)
 	if chosen != nil {
@@ -219,7 +258,7 @@ func Make(options Options) (*Plan, error) {
 	if options.SettingsOnly {
 		for _, id := range options.Accept {
 			if fileConflict(id) {
-				return nil, &UsageError{fmt.Sprintf("--accept %s is for a managed file: give it to the apply after the settings merge", id)}
+				return nil, nil, &UsageError{fmt.Sprintf("--accept %s is for a managed file: give it to the apply after the settings merge", id)}
 			}
 		}
 		for id := range exceptions {
@@ -228,14 +267,14 @@ func Make(options Options) (*Plan, error) {
 			}
 		}
 	} else if err := planner.managedFiles(chosen); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.except(exceptions)
 	if err := planner.accept(options.Accept); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.sort()
-	return planner.plan, nil
+	return planner.plan, planner, nil
 }
 
 func (planner *planner) managedFiles(chosen *profile.Profile) error {
@@ -1169,6 +1208,7 @@ func (planner *planner) workflows(chosen *profile.Profile) error {
 				replacement: &write{path: path, remove: true}, acceptWhat: "remove the workflow edited by hand"})
 		case isWanted:
 		default:
+			planner.retained = append(planner.retained, path)
 			planner.note(path + " is the project's own; jackstay leaves it alone: keep it, or remove from it what jackstay's workflows do")
 		}
 	}
@@ -1222,6 +1262,7 @@ func (planner *planner) except(exceptions map[string]string) {
 			used[conflict.ID] = true
 			planner.plan.Exceptions = append(planner.plan.Exceptions, Exception{ID: conflict.ID, Why: why})
 			if strings.HasPrefix(conflict.ID, "workflow:") {
+				planner.retained = append(planner.retained, conflict.Path)
 				planner.note(conflict.Path + " is kept by an exception: it is the project's own; keep it, or remove from it what jackstay's workflows do")
 			}
 		case excepted:

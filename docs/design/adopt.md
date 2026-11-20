@@ -87,7 +87,13 @@ project's: `jst adopt` reads it to find conflicts and never changes it.
   step and the one due: the pin (`--apply --pin --settings-only`, the file stays schema 2), the
   workflows that download the new pin (those a project with a `land` section has, `card-line`
   included), then schema 3 with the section. Each plan holds only what is
-  due, so schema 3 is never planned before the workflows run a jackstay that reads it.
+  due, so schema 3 is never planned before the workflows run a jackstay that reads it. Step 2 is
+  done when the whole plan, its exceptions and accepts applied, writes no workflow and leaves no
+  workflow conflict, and every workflow the project keeps (its own, or by an exception) that
+  downloads jackstay names a `JACKSTAY_VERSION` of 0.6.0 or later; a kept workflow that names an
+  older one, or whose release cannot be read, is a `blocker:` note naming the file, and step 3
+  waits. Step 1 refuses a key that needs schema 3 (`adopt.profile_sha256` from
+  `--profile-sha256`, say): the profile's digest is recorded in step 3 or after the upgrade.
 - **The profile's defaults** (section 6, `jackstay_json.defaults`) added where the project has no value:
   a missing section is added whole; inside an existing object only missing keys are added,
   recursively; a value the project has (a list, a string, a different number) is never replaced.

@@ -209,8 +209,11 @@ The upgrade from 0.5.x is three pull requests, planned by adopt and merged by a 
 schema 2 without a `land` section.
 
 `jst doctor` reports: the `land` section valid; the account connects; the rules readable, with the
-checks they require (none: a note); `method` allowed; a required queue; `gh pr merge` refused by
-the guard; and, from section 7, the CI-covered scopes the rules do not require.
+checks they require (none: a note); the check of the job that runs `jst lint pr` required, the job
+found in the checkout's workflows (its `name:`, else its ID; none is a problem; several, a name
+with an expression or a matrix, or rules unread leave it unverified); `method` allowed; a required
+queue; `gh pr merge` refused by the guard; and, from section 7, the CI-covered scopes the rules do
+not require.
 
 ## 6. What is removed
 

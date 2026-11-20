@@ -3,6 +3,8 @@ package adopt
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
 )
 
@@ -332,5 +335,81 @@ func TestAProfilesLandDefaultsNeverChooseAutonomy(t *testing.T) {
 	land, _, err := config.LandOf([]byte(read(t, root, "jackstay.json")))
 	if err != nil || land.Autonomy != config.AutonomyPrepare || !slices.Equal(land.HumanPaths, []string{"docs/decisions/**"}) {
 		t.Fatalf("the section: %+v, %v", land, err)
+	}
+}
+
+// upgradeAtWorkflows is a 0.5.x project whose pin moved to 0.6.0 (step 1 merged) and whose
+// workflows, card-line and release, step 2 wrote; release.yml is then the project's, kept by an
+// exception, and names release.
+func upgradeAtWorkflows(t *testing.T, release func(string) string) string {
+	t.Helper()
+	settings := `"jackstay_schema": 2, "project": "p", "changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}, ` +
+		`"release": {"merge": "owner", "first": "0.1.0", "files": [{"path": "VERSION", "match": "^(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"}]}, `
+	root := project(t, map[string]string{"jackstay.json": `{` + settings + `"adopt": {"pin": "v0.6.0"}}`,
+		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	apply(t, landOptions(root, ""))
+	path := filepath.Join(root, ".github/workflows/release.yml")
+	if err := os.WriteFile(path, []byte(release(read(t, root, ".github/workflows/release.yml"))+"# the project's own step\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "jackstay.json"), []byte(`{`+settings+
+		`"adopt": {"pin": "v0.6.0", "exceptions": {"workflow:release:edited": "the project's own release steps"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// Step 2 is judged from the whole plan, exceptions applied: a kept workflow on 0.6.0 lets step 3
+// come; one still on 0.5.x is a blocker that names it.
+func TestStepThreeWaitsForEveryKeptWorkflowToRun060(t *testing.T) {
+	current := upgradeAtWorkflows(t, func(text string) string { return text })
+	made := plan(t, landOptions(current, ""))
+	if !made.AsksAutonomy() || !slices.ContainsFunc(made.Notes, func(note string) bool { return strings.Contains(note, "step 3 of 3 (due)") }) {
+		t.Fatalf("a kept workflow on 0.6.0: changes %v, notes %v", changeIDs(made.Changes), made.Notes)
+	}
+	older := upgradeAtWorkflows(t, func(text string) string {
+		return strings.ReplaceAll(text, `JACKSTAY_VERSION: "v0.6.0"`, `JACKSTAY_VERSION: "v0.5.11"`)
+	})
+	made = plan(t, landOptions(older, ""))
+	blocked := slices.ContainsFunc(made.Notes, func(note string) bool {
+		return strings.HasPrefix(note, "blocker: step 3 is not offered: .github/workflows/release.yml") && strings.Contains(note, "v0.5.11")
+	})
+	if made.AsksAutonomy() || slices.Contains(changeIDs(made.Changes), "jackstay.json") || !blocked {
+		t.Fatalf("a kept workflow on 0.5.11: changes %v, notes %v", changeIDs(made.Changes), made.Notes)
+	}
+	unreadable := upgradeAtWorkflows(t, func(text string) string {
+		return strings.ReplaceAll(text, `JACKSTAY_VERSION: "v0.6.0"`, `JACKSTAY_VERSION: "${{ vars.RELEASE }}"`)
+	})
+	if made = plan(t, landOptions(unreadable, "")); made.AsksAutonomy() ||
+		!slices.ContainsFunc(made.Notes, func(note string) bool { return strings.Contains(note, "cannot be read") }) {
+		t.Fatalf("a kept workflow whose release cannot be read: notes %v", made.Notes)
+	}
+}
+
+// Step 1 keeps the file at schema 2: recording a profile's digest there is refused.
+func TestThePinStepRefusesAProfileDigest(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}}`,
+		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
+	source := exampleProfile(t, root, `{}`, nil)
+	var bundle, failure bytes.Buffer
+	if code := cli.Dispatch([]string{"profile", "export", source}, nil, &bundle, &failure); code != 0 {
+		t.Fatalf("export: %s", failure.String())
+	}
+	bundlePath := filepath.Join(root, "policy.bundle.json")
+	if err := os.WriteFile(bundlePath, bundle.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(bundle.Bytes())
+	options := landOptions(root, "")
+	options.Pin, options.SettingsOnly = true, true
+	options.Profile, options.ProfileSHA256 = bundlePath, hex.EncodeToString(digest[:])
+	var usage *UsageError
+	if _, err := Make(options); !errors.As(err, &usage) || !strings.Contains(err.Error(), "adopt.profile_sha256") ||
+		!strings.Contains(err.Error(), "step 3") {
+		t.Fatalf("step 1 with a profile digest: %v", err)
+	}
+	options.ProfileSHA256 = ""
+	if _, err := Make(options); err != nil {
+		t.Fatalf("step 1 with a loose profile: %v", err)
 	}
 }
