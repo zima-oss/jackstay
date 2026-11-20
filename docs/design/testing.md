@@ -1,35 +1,20 @@
 # Testing: scopes, a judge, a timeout, a gate — `jst test <scope>`
 
-Decisions: [W-012](../decisions/W-012-test-scopes-vocabulary.md) (one vocabulary of scopes, run as
-`jst test <scope>`; each project defines its selection policy) and
-[W-013](../decisions/W-013-quality-testing-declarative.md) (no time-sensitive tests; everything
-jackstay adds is declarative and general; the goal is good and efficient testing in every project,
-with jackstay helping), from a study of the test scopes and scripts of projects that adopt it.
-
-Status: built.
-
-The [verdict compatibility baseline](testing-compatibility.md) pins the direct command, scope,
-gate and Swift fixture outcomes before structured runner adapters are added.
-
-The [multi-runner testing proposal](testing-multirunner-proposal.md) describes a staged path to
-structured test evidence across languages.
-
-Nothing here names a project. A project declares its commands, checks and paths in `jackstay.json`;
-jackstay supplies the behaviour. Any project with `swift test`, or with any command and the `exit`
-judge, uses the same keys.
+Decisions: [W-012](../decisions/W-012-test-scopes-vocabulary.md) (one vocabulary of scopes; each
+project defines its selection) and [W-013](../decisions/W-013-quality-testing-declarative.md) (no
+time-sensitive tests; everything declarative and general). Status: built. How to use scopes is the
+[tests guide](../guide/tests.md); the raw form `jst test -- COMMAND`, its outcomes, receipts and run
+record are [implementation.md](implementation.md) section 9. The
+[compatibility baseline](testing-compatibility.md) pins the outcomes; the
+[multi-runner proposal](testing-multirunner-proposal.md) is the path to structured evidence.
 
 ## The problem
 
-Projects that grow their own test tooling tend to grow the same ladder of scopes under different
-names, files and rules, with the rule for when each runs written in several places that disagree.
-Judging a Swift run by a regex over `Executed N tests` over-counts (every enclosing suite prints a
-total) and can fail passing filtered runs (SwiftPM prints `Executed 0 tests` for each bundle a
-filter excludes); it does not check that every bundle ended, and it does not count Swift Testing
-(`@Test`). Without a timeout that ends the whole process tree, a hung suite can hold a shared lock
-for a long time, and stopping its wrapper can leave `xctest` running, reparented to pid 1. Tests
-that leave files behind (preference plists, temporary folders) can fail later runs. Gates that run
-cheap checks after a long suite, and hand-kept lists of slow classes, waste time (measured on
-real suites).
+Each project otherwise grows its own ladder of scopes, with the rule for when each runs written in
+several places. A regex over `Executed N tests` over-counts a Swift run (every enclosing suite
+prints a total), fails filtered runs (`Executed 0 tests` per excluded bundle), misses a bundle that
+never ended and does not count Swift Testing. A hung suite stopped through its wrapper can leave
+`xctest` running. Leftover files fail later runs, and hand-kept slow lists drift.
 
 ## 1. Scopes
 
@@ -40,11 +25,9 @@ and deleted paths participate. With selection configured, `jst test changed` dis
 the chosen scope's execution and receipt policy. An explicit `BASE..REV` runs on a clean copy of
 `REV`. See [path-based selection](../guide/tests.md#choose-a-scope-from-changed-paths).
 
-    jst test <scope> [ARGS…] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock]
-                     [--resume] [--keep-going] [--commit REV]
-    jst test list            the project's scopes: name, what it runs, when the project runs it
-    jst test plan <scope> [ARGS…]   the words that would run, step by step; runs nothing
-    jst test -- COMMAND …    any command, recorded and judged (`receipts.commands`)
+`jst test <scope>` runs a scope; `jst test list` lists the project's scopes (name, what it runs,
+when the project runs it); `jst test plan <scope>` prints the words that would run, step by step,
+and runs nothing. Flags: `jst test --help`.
 
 ### The vocabulary
 
@@ -61,52 +44,33 @@ Extra names are allowed only with the prefix `x-` (`x-coverage`), so the six nev
 | `display` | the sets that need a real screen, device or other environment (`requires`) | varies |
 | `gate` | every step a change must pass to merge: checks and runs, in order | the longest |
 
-When each is required (before a commit, before a pull request, after merges on main, before a
-tag) is the project's rule, written **once**, in the scope's `when` text in `jackstay.json`; `jst test
-list` prints it, and the project's AGENTS.md points to `jst test list` instead of restating it
-(the jackstay block says so). jackstay does not choose the cadence.
+When each is required is the project's rule, written **once**, in the scope's `when` text, which
+`jst test list` prints; jackstay does not choose the cadence.
 
 ### Declaring a scope
 
-`jackstay.json` has an optional `test` section (an unknown key is an error, as everywhere in the file):
+The optional `test` section, abridged (use: the [tests guide](../guide/tests.md#scopes-jst-test-scope)):
 
 ```json
 "test": {
-  "judge": "swift-test",
-  "timeout": 1800,
+  "judge": "swift-test", "timeout": 1800,
   "leftovers": [{"glob": "~/Library/Preferences/ExampleTests.*.plist", "fail": true}],
   "scopes": {
-    "focused": {"run": ["swift", "test", "--filter", "{tests}"], "timeout": 600,
-                "when": "while working, for the classes you touched"},
-    "changed": {"run": ["python3", "-I", "Scripts/select.py", "--run", "--base", "{base}"],
-                "base": "origin/main", "judge": "steps",
-                "when": "before every code commit"},
-    "quick":   {"run": ["swift", "test", "--skip", "{slow}"], "slow": {"class_seconds": 20},
-                "when": "before handing over"},
-    "full":    {"run": ["swift", "test", "--skip", "^ExampleTests\\.Snapshot"], "timeout": 2400},
-    "display": {"run": ["swift", "test", "--filter", "^ExampleTests\\.Snapshot"],
-                "requires": [{"run": ["Scripts/screen-ok.sh"], "why": "needs an unlocked 2x screen"}]},
-    "gate":    {"steps": ["format", "docs", "build", "full"], "when": "before every pull request"}
+    "focused": {"run": ["swift", "test", "--filter", "{tests}"], "when": "while working"},
+    "quick":   {"run": ["swift", "test", "--skip", "{slow}"], "slow": {"class_seconds": 20}},
+    "gate":    {"steps": ["format", "quick"], "when": "before every pull request"}
   },
-  "steps": {
-    "format": {"run": ["swift", "format", "lint", "--strict", "-r", "Sources"], "judge": "exit"},
-    "docs":   {"run": ["python3", "-I", "Scripts/check_docs.py"], "judge": "exit"},
-    "build":  {"run": ["swift", "build"], "judge": "exit"}
-  }
+  "steps": {"format": {"run": ["swift", "format", "lint", "-r", "Sources"], "judge": "exit"}}
 }
 ```
 
 Keys of a scope (all optional except `run` or `steps`):
 
-- `run`: the words. Placeholders, replaced as whole words or inside one: `{tests}` (the ARGS of
-  `focused`, each escaped and joined as one alternation: `Target.Class/test` → exactly that test;
-  `Target.Class` → `^Target\.Class(/|$)`; a bare `Class` → `(^|\.)Class(/|$)`, so it matches in
-  any target, since `swift test --filter` matches `Target.Class/test`; refused when no ARGS are
-  given), `{base}` (the scope's `base`, or `--base REF` on the command line),
-  `{slow}` (section 4) and `{report}` (the private JUnit report path). A placeholder is `{name}`
-  of lower-case letters and `_`, not preceded by
-  `$`; an unknown such name is an error in `jackstay.json` (a typo). Any other brace is literal:
-  `${VAR}` in a `sh -c` word, `{2}` or `{2,3}` in a filter pattern.
+- `run`: the words. Placeholders, whole words or inside one: `{tests}` (`focused`'s ARGS, escaped,
+  one alternation: `Target.Class/test` exactly; `Target.Class` → `^Target\.Class(/|$)`; `Class` →
+  `(^|\.)Class(/|$)`; refused without ARGS), `{base}` (the scope's `base` or `--base REF`), `{slow}`
+  (section 4), `{report}` (section 2.1). A placeholder is `{name}` of lower-case letters and `_`,
+  not after `$`; an unknown one is an error. Other braces (`${VAR}`, `{2,3}`) are literal.
 - `steps`: instead of `run`, a list of step names (`steps` section) or scope names; section 5.
 - `judge`: `swift-test` (section 2), `steps` (a count line declared by `evidence`),
   `go-json`, `junit`, `jest-json` and `trx` (section 2.1), or `exit` (status only; the outcome is
@@ -117,58 +81,37 @@ Keys of a scope (all optional except `run` or `steps`):
   of file names, and `empty_exit` for an optional no-collection exit status.
 - `timeout` (seconds of the command's own run) and `lock_wait` (seconds waiting for the lock,
   counted apart; default: the scope's `timeout`); section 3.
-- `requires`: checks run first, each with its own `timeout` (default 60 s) and the same tree stop
-  (section 3); one that ends non-zero or times out makes the outcome `not-started` with its `why`
-  (and `timed out` when it did), and nothing runs.
-- `env`: variables set for the run (names and values in `jackstay.json`, recorded).
-- `lock`: whether this scope takes the machine-wide lock when the project's `lock.enabled` is
-  true (default true for `full`, `display`, `changed`, steps and `x-` scopes; false for
-  `focused`, `quick`). A list of steps (`gate`) has no `lock` of its own: each step takes the lock
-  by its own `lock`. The lock stays off by default (W-005).
+- `requires`: checks run first, each with its own `timeout` (default 60 s) and the tree stop of
+  section 3; one that fails or times out makes the outcome `not-started` with its `why`.
+- `env`: variables set for the run, recorded.
+- `lock`: whether the scope takes the machine-wide lock when `lock.enabled` is true (default true
+  for `full`, `display`, `changed`, steps and `x-` scopes; false for `focused`, `quick`); a gate's
+  steps each take it by their own `lock`.
 - `when`: one line of text for `jst test list`.
 
 `jst check` validates the section like the rest of `jackstay.json`; `jst test plan` shows the result.
 
 ## 2. The `swift-test` judge
 
-Built into jackstay, in place of per-project `Executed` regexes, for any project that declares it. It
-reads the output (both streams, escape sequences removed, read to its end) and requires, for
-`passed`:
+It reads both streams, escape sequences removed, to their end, and requires, for `passed`:
 
 1. **XCTest bundles.** Every `Test Suite '<name>.xctest' started` has its matching `… passed|failed
-   at` and its `Executed N tests, with F failures` line. A bundle that started and did not end
-   makes the run `unjudged` (a crash or a quit-as-application end looks like a normal exit
-   otherwise).
-2. **Counts, per engine.** XCTest: the sum of each bundle's own total (one line per bundle, not
-   every enclosing suite), executed less skipped. Swift Testing: its run summary (`✔ Test run with
-   N tests … passed`, `✘ Test run with N tests … failed`), judged on its own: a Swift Testing run
-   that started (`◇ Test run started`) must reach its summary, or the run is `unjudged`. Its
-   summary counts skipped tests too, so Swift Testing's executed count is the number of its
-   `✔ Test … passed` / `✘ Test … failed` lines (`started` and `skipped` lines are not counted);
-   a summary of `0 tests` is a proven zero (SwiftPM prints one after an XCTest-only run), and so
-   is a summary whose N tests are all accounted for by `skipped` lines: either adds 0. When the
-   summary's N is above 0 and the per-test lines do not account for all N (a quieter output), the
-   run is `unjudged`, not counted from the summary. A bundle
-   with 0 is normal (a filter excluded it). The **run** must count above 0 in either engine — a
-   run of only `@Test` cases with no XCTest bundle passes on Swift Testing's count — or the
-   outcome is `nothing-run` (76).
-2a. **Output SwiftPM hides.** `swift test --parallel` does not print a passing test's lines, and
-   its xUnit file records a test that ended the process with `exit(0)` as passed and does not
-   show skips (SwiftPM 6.3 `ParallelTestRunner`, `XUnitGenerator`). The judge cannot prove a pass
-   from either, so a `swift-test` scope whose words hold `--parallel` is an error in `jackstay.json`
-   (`judge: exit` remains possible: its outcome is `exited-0`, never `passed`). A wrapper (`make test`) can hide the flag, so the judge also
-   checks the output: every engine the scope `expects` (`"expect": ["xctest"]` by default for
-   `swift-test`; `["swift-testing"]` or both where declared) must show its own markers — an
-   XCTest bundle's `started`/total lines (they appear even for a bundle a filter excluded, with
-   `Executed 0 tests`), Swift Testing's run start and summary. An expected engine with no markers,
-   or SwiftPM's parallel progress lines (`[N/M] Testing …`), makes the run `unjudged`, whatever the
-   other engine counted.
+   at` and its `Executed N tests, with F failures` line, or the run is `unjudged`.
+2. **Counts, per engine.** XCTest: the sum of each bundle's own total, executed less skipped.
+   Swift Testing: a run that started (`◇ Test run started`) must reach its summary (`✔`/`✘ Test run
+   with N tests …`), or the run is `unjudged`. Its count is its `✔ Test … passed` / `✘ Test …
+   failed` lines; a summary of `0 tests`, or one whose N are all `skipped` lines, adds 0; per-test
+   lines that do not account for N make it `unjudged`. A bundle with 0 is normal (a filter). The
+   **run** must count above 0 in either engine, or it is `nothing-run` (76).
+2a. **Output SwiftPM hides.** `swift test --parallel` prints no passing test's lines, and its xUnit
+   file counts an `exit(0)` as a pass and shows no skips, so a `swift-test` scope with `--parallel`
+   is an error in `jackstay.json`. Behind a wrapper, every engine in `expect` (default
+   `["xctest"]`) must show its markers (bundle start and total lines; Swift Testing's start and
+   summary); missing markers, or parallel progress lines (`[N/M] Testing …`), make it `unjudged`.
 3. **Failures.** Any bundle with F > 0, any `Test Suite '…' failed`, any `Test Case '…' failed`,
    any `✘ Test … failed` / `✘ Test run … failed`, or a status other than 0 makes it `failed`.
-4. **After the end.** An XCTest `Test Case '…' started` after every started bundle has ended makes
-   it `unjudged` (a test ran outside any judged total). Anything else may follow: Swift Testing,
-   which SwiftPM runs after XCTest, has its own rule (2), and a wrapper may print its own lines
-   (a `make` recipe's next check).
+4. **After the end.** An XCTest `Test Case '…' started` after every bundle ended makes it
+   `unjudged`; anything else may follow. A bundle's total must be the line right after its end.
 5. **Project vetoes** (`veto`) and `leftovers` with `"fail": true` (section 6) add failures.
 6. **Order of verdicts.** A proven failure (a status the command ended with **by itself** that is
    not 0, a failure line, a veto, an attributed leftover) makes the outcome `failed` even when
@@ -182,11 +125,9 @@ The judge prints its reading as the last line's detail:
 (`counted` is the sum of every bundle's own total, less the skipped).
 `failed` adds the first failing case; `unjudged` says which bundle did not end.
 
-The patterns are SwiftPM's and XCTest's documented forms, held in one table in jackstay
-(`internal/judge`) with tests against recorded outputs, anonymised to fixtures. An engine's markers
-appear only when it ran something (with a filter that matches none of its tests, SwiftPM prints
-none of its lines), so `expect` must name the engines a scope's words really run. A Swift
-release that changes a form is a jackstay change, made once for every project.
+The patterns are one table in `internal/judge`, tested against anonymised recorded outputs.
+`expect` must name only engines a scope's words really run (an engine a filter excludes prints
+nothing).
 
 ### 2.1. Structured evidence
 
@@ -235,18 +176,15 @@ The [producer guide](../guide/tests.md#structured-test-reports) lists the pinned
 
 ## 3. A timeout that ends the whole run
 
-- The command runs in a **new session** (`setsid`); its descendants keep that session id even
-  when reparented to pid 1, unless one starts a session of its own.
-- The session's members are found by listing every pid (`proc_listallpids`) and asking each its
-  session with `getsid(pid)` (`proc_pidinfo`'s BSD info gives the parent and group, not the
-  session); a pid whose `getsid` fails is skipped and said. Every descendant ever seen (sampled
-  every second and at the end, by session and by parent links) is remembered **with its start time**
-  (`proc_pidinfo` `pbi_start_tvsec`), and is signalled only if a pid with that start time still
-  exists — a reused pid is never signalled.
+A scope's command runs in a session of its own and is stopped as a session tree: how its members
+are found, remembered by id and start time, and signalled is
+[implementation.md](implementation.md) section 5.2. What is particular to a scope:
+
+- The session's members are found by listing every pid (`proc_listallpids` on macOS) and asking
+  each its session with `getsid(pid)`; a pid whose `getsid` fails is skipped and said.
 - At `timeout` seconds of the command's run: SIGTERM to the group, the session and the remembered
   descendants; after a grace of 10 s, SIGKILL to what is left. The same stop is used when
-  `jst test` itself is asked to stop (SIGINT, SIGTERM, SIGHUP, SIGQUIT), not a signal to one group
-  alone.
+  `jst test` itself is asked to stop.
 - **After a normal end, too**: when the command has ended (any status), whatever is left of its
   session and of the remembered descendants is stopped the same way **before** the lock is let go
   and the outcome is written. Processes that had to be stopped are named in the line
@@ -280,9 +218,7 @@ The [producer guide](../guide/tests.md#structured-test-reports) lists the pinned
   line says `quick=everything (no durations yet)`.
 - `jst test plan quick` prints the classes skipped and their medians.
 
-This takes the place of hand-kept slow lists; it is measured from the project's own runs, so it is never a
-reason to keep a slow or timing-dependent test (W-013): a slow class is skipped from `quick`, not
-excused from `full`.
+A slow class is skipped from `quick`, never excused from `full` (W-013).
 
 ## 5. The gate: steps in order
 
@@ -351,7 +287,6 @@ excused from `full`.
   step, as `passed` does. The gate's outcome is `passed` when every step `passed`, `exited-0` or
   `resumed` and at least one ran now; when every step was `resumed`, the outcome is `resumed`
   (exit 0): nothing ran, and it is not counted as a pass.
-- `jst test gate --from STEP` is not offered: the order is the project's contract.
 - `jst test <scope> --commit REV` runs the scope on a clean copy of REV that jackstay makes, and always
   removes (W-052, [discard-and-clean-gate.md](discard-and-clean-gate.md) section 3).
 
@@ -361,20 +296,15 @@ Every run gets `JACKSTAY_RUN_ID` (its run id) and `JACKSTAY_RUN_TMP` (a folder o
 removed after the run unless it holds leftovers) in its environment. `leftovers` is a list of
 `{"glob": …, "fail": bool}`; `~`, `$TMPDIR`, `{run_id}` and `{run_tmp}` are expanded.
 
-- A glob that holds `{run_id}` or `{run_tmp}` is **attributed**: whatever matches after the run
-  is this run's (a project whose tests name their files with the token gets exact answers).
-  With `"fail": true` it makes the outcome `failed`.
-- A glob without the token: entries that are new **and** born inside the run are listed. When no
-  other run on this machine overlapped (from `runs.jsonl`: other projects' and sessions' recorded
-  runs), they are this run's, and `"fail": true` fails it. When another run overlapped, they are
-  `unattributed`: under a `"fail": true` glob the outcome is `unjudged` (77) — no receipt, no step
-  mark, never `passed` — and the line says which entries; under `"fail": false` they are listed
-  and recorded. So a required cleanliness check is never claimed without an answer; the remedy is
-  the token. Unrecorded processes can
-  create matching files; that is a limit (below), and the remedy is the token.
-- A glob whose folder cannot be listed or whose entries' times cannot be read (a permission, the
-  sandbox) is not "nothing left": under `"fail": true` the run is `unjudged` (no receipt, no
-  mark; a proven failure stays `failed`), under `"fail": false` it is said.
+- A glob holding `{run_id}` or `{run_tmp}` is **attributed**: whatever matches after the run is this
+  run's; with `"fail": true` the outcome is `failed`.
+- A glob without the token lists entries new **and** born inside the run. With no overlapping
+  recorded run (`runs.jsonl`), they are this run's. With one, they are `unattributed`: under
+  `"fail": true` the outcome is `unjudged` (77) and the line names them; under `"fail": false` they
+  are listed. The remedy is the token.
+- A glob whose folder or entry times cannot be read is no answer: `unjudged` under `"fail": true`
+  (a proven failure stays `failed`), said under `"fail": false`. The walk stats every path
+  component and takes only ENOENT/ENOTDIR as "nothing there".
 - jackstay never deletes them; the project's tests own their cleanup.
 
 ## 7. The record and `jst test last`
@@ -382,111 +312,56 @@ removed after the run unless it holds leftovers) in its environment. `leftovers`
 `run` lines of a scope carry `scope`, `judge`, `counted`, `bundles`, `swift_testing`,
 `timed_out`, `survivors`, `leftovers`, `gate_run_id`/`step`, and `lock_waited_seconds` (the wait,
 apart from the run), `killed`, `left_running`, `run_tmp_kept`, `quick`, `env`, `timeout`. `jst test last [--scope S]` prints the
-last run of a scope. `jst baseline` reads scopes, so "how often does each scope run, how long,
-how often does it fail" is measured per project in one vocabulary.
+last run of a scope; `jst baseline` measures scopes per project in one vocabulary.
 
 ## Failure behaviour
 
-| Failure | What happens |
-|---|---|
-| `jackstay.json` `test` section unusable | `not-started` (2) for every scope; `jst test -- …` still works: `jackstay.json` is validated per section, and the raw form needs only `lock` and `receipts` to be usable |
-| a scope not declared | refused (2), listing the declared ones |
-| `focused` without names | refused (2) |
-| a `requires` check fails | `not-started` (2) with its `why`; nothing ran |
-| status 0, and neither engine counted a test above 0 (no XCTest bundle total above 0, no Swift Testing summary above 0) | `nothing-run` (76) |
-| output not read to its end | `unjudged` (77) |
-| timeout | `timed-out` (124), the tree stopped, survivors named |
-| durations file unreadable | `{slow}` skips nothing; said in the line |
-| resume asked after a `failed` step on the same tree | refused (2) with the reason |
+An unusable `test` section, an undeclared scope (the declared ones listed), `focused` or test names
+without `{tests}` in the words, or a failed `requires` check is `not-started` (2); `jst test --`
+still runs, needing only `lock` and `receipts`. An unreadable durations file makes `{slow}` skip
+nothing, said in the line. The other outcomes are sections 2 to 5.
 
 ## What it cannot see
 
-- A test that passes for the wrong reason (an absence window that is too short, an assertion that
-  checks nothing). The judge counts and reads verdicts; W-013's timing defects are found by the
-  projects' reviews and audits, not by jackstay.
-- A descendant that starts its own session and is never seen at a sample; and other accounts'
-  processes (`sudo`), which `proc_pidinfo` does not describe to this account.
-- A `requires` check, run by `jst test` itself, when `jst test` is killed while it runs: the check
-  ends at its own timeout or not at all.
-- Leftovers outside the declared globs; the cause of an unattributed leftover when runs overlap;
-  a file made by a process that is not a recorded run.
-- Whether a project's `changed` selector chose well: jackstay runs it and judges what it ran.
-- Swift Testing per-suite times, until its event stream is read.
-- Output formats other than SwiftPM/XCTest/Swift Testing for the `swift-test` judge; other
-  projects use `steps` or `exit`.
+A test that passes for the wrong reason (W-013's timing defects are for the projects' reviews); a
+descendant that starts its own session between samples, and other accounts' processes; a
+`requires` check when `jst test` is killed during it; leftovers outside the declared globs, or made
+by an unrecorded process; whether a `changed` selector chose well; output formats other than
+SwiftPM/XCTest/Swift Testing for the `swift-test` judge.
 
 ## Details of the behaviour
 
-- Names (ARGS) given to a scope whose words hold no `{tests}` are refused (2).
 - A scope runs in the checkout's root, or in its `cwd` (a folder of the checkout), whatever the
   folder `jst test` was called from; `cwd` is in the key.
 - `requires` checks run in `jst test` itself, before the lock and before a receipt is looked up.
-  A failed check writes a `run` line with outcome `not-started`, which no count takes as a run. A
-  check stopped at its timeout is a failed check whatever it ended with; a stopped check is
-  recorded with its session and what was killed (`requires_session`, `requires_killed`). The
-  `requires` of a nested list of steps is checked before its first leaf runs.
+  A failed check writes a `not-started` `run` line, which no count takes as a run; one stopped at
+  its timeout fails whatever it ended with (`requires_session`, `requires_killed`). A nested list's
+  `requires` is checked before its first leaf.
 - Receipts for a scope: only when its expanded words are a `receipts.commands` entry with
   `"reuse": true` (as for `jst test --`); the scope's definition and `test.leftovers` are in the
   key. Off inside a gate.
-- After a normal end the session has up to 1 s to empty by itself (the last helper ending with its
-  parent) before what is left is stopped; this bounds a wait for an event and decides nothing by
-  time.
+- After a normal end the session has up to 1 s to empty by itself before what is left is stopped.
 - Durations are recorded from `passed` and `failed` runs (not `unjudged`, `timed-out`, `stopped`).
 - The gate writes a `gate-start` line and, at its end, a `gate` line (`steps`: each step's outcome,
   seconds and run id); each step's own `start`/`run` lines carry `step` and `gate_run_id`. A gate
   stopped or killed during a step leaves the step's `stopped` line and a `gate-start` with no
   `gate`. A gate refused by a bar ends `refused` (2). `jst test last --scope gate` shows the gate.
-- Any bar of a step's key refuses `--resume`, also after a later pass of that step on the same
-  tree (the bar means "no run of the same step on the same key ended failed" cannot be shown). A
-  key with a bar gets no mark, so no mark outlives a bar.
-- A step's key holds a command entry's own `refs` and `merge_bases`; a ref that cannot be resolved
-  allows no mark.
-- A clean checkout and the same HEAD before and after prove the content of every tracked file;
-  the stamps compared before and after are every tracked file's identity, size and times, and
-  `receipts.extra_files` with their content.
 - A recorded run whose `start` has no `run` overlaps only while its pid is alive.
-- Per-section reading reaches every tool: `jst lock` reads `lock`, the guard and `jst tidy` read
-  `guard`, `jst test --` and `jst receipts key` read `lock` and `receipts`, the guard's Card check,
-  `jst gh`'s card rules and `jst bg` read only their own sections; `jst check` judges all. A
-  section's type errors stay in that section (only `jackstay_schema` and `project` are the file's
-  own); the project file's cross-section check ([implementation.md](implementation.md) section
-  3.2) reads only the sections it compares.
 - A list of steps (`gate`) takes no `timeout`, `lock_wait`, `lock` or `resume` of its own: each step
   has its own. Its `requires` is checked like a step's.
-- A `failed` run of a scope outside a gate (`jst test full`) also writes the bar of that step's key,
-  taken before it ran, so a gate's `--resume` cannot stand on an earlier mark of it — but only when
-  the scope's `resume` is on, the checkout is clean (as above) and its key can be made, and only for
-  that exact key: a run given test names (`{tests}`), another `{base}` or another folder is another
-  key, and a run that reused a receipt ran nothing and writes no bar. After a failure outside those
-  conditions, run the gate without `--resume`.
+- A `failed` scope run outside a gate (`jst test full`) also writes the bar of that step's key, when
+  `resume` is on, the checkout clean and the key computable. Test names, another `{base}` or folder
+  make another key; a reused receipt writes no bar.
 - An inner run killed outright (no result) is `unjudged` to the gate: no verdict, no bar.
-- The tree remembers a process by pid and start time. It trusts membership by session only while
-  the pid of the command is free or still the command (same start time); a child is adopted by its
-  parent link only when the parent is the remembered process and the child started after it; the
-  group is signalled only while a remembered process is in it; every group a remembered process
-  leads is signalled too (SwiftPM starts `xctest` in a group of its own). So a pid or session id
-  the system gave to another process is never signalled. While the stop waits it reads the process
-  table again and signals what is new at once (a TERM handler that starts a child in a session of
-  its own).
+- Membership by session is trusted only while the command's pid is free or still the command
+  (same start time); a child is adopted by its parent link only when the parent is the remembered
+  process and the child started after it; every group a remembered process leads is signalled too
+  (SwiftPM starts `xctest` in a group of its own). While the stop waits it reads the process table
+  again and signals what is new at once.
 - A process table that cannot be read is "the end of the tree cannot be confirmed", not "nothing
   left": the run is `unjudged` (`tree_unconfirmed`, no receipt, no mark) and a `requires` check is
   not passed. `JACKSTAY_PROC_UNREADABLE=1` makes jackstay act so (tests only).
-- An XCTest bundle's total must be the very next line of its own end in its stream; a bundle that
-  ends without starting is `unjudged`.
-- The leftovers walk lists every folder a glob passes through, stats every path component and
-  takes only ENOENT/ENOTDIR as "nothing there"; one that cannot be listed is no answer
-  (`unjudged` under `"fail": true`).
+- A bundle that ends without starting is `unjudged`.
 - `jst test`'s own files in `$TMPDIR` are removed before it ends by re-raising a signal.
 - A request to stop that comes after the command ended by itself keeps that end: a non-zero status,
   an attributed leftover, is `failed`.
-
-## Rules
-
-- The six names are fixed; extras need `x-`.
-- `--resume` refuses to rerun a step that `failed` on the same tree (W-013's "fix, do not shield").
-- Default `lock` per scope (section 1); the machine-wide lock itself stays off by default (W-005).
-- Durations are medians over the last 20 runs; `quick` with no data skips nothing.
-- Leftovers are never deleted by jackstay; failing on them is opt-in per glob; an overlap with
-  another run is said, not failed.
-- The AGENTS block (`internal/adopt/block`) has a scopes paragraph: run `jst test list`; use
-  `jst test <scope>`; `when` comes from the list.
