@@ -854,3 +854,29 @@ func TestNewerKeysAreRefusedForAProjectPinnedBefore060(t *testing.T) {
 		}
 	}
 }
+
+func TestAProfileWorkflowNamesTheReleaseItDownloads(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"p","adopt":{"pin":"v0.5.11"}}`})
+	options := optionsFor(root)
+	options.Version = "0.5.11"
+	workflow := map[string]string{"custom": "name: custom\nenv:\n  VERSION: '@@jackstay_version@@'\n"}
+	options.Profile = exampleProfile(t, root, `{}`, workflow)
+	apply(t, options)
+	// The pin moves alone, settings first (W-085); custom.yml still downloads v0.5.11.
+	options.Version, options.Pin, options.SettingsOnly = "0.6.0", true, true
+	apply(t, options)
+	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, workflow)
+	options.Pin = false
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "v0.5.11 that .github/workflows/custom.yml downloads") {
+		t.Fatalf("a schema-3 key while a profile workflow downloads v0.5.11: %v", err)
+	}
+	exampleProfile(t, root, `{}`, workflow)
+	options.SettingsOnly = false
+	apply(t, options)
+	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, workflow)
+	options.SettingsOnly = true
+	apply(t, options)
+	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) {
+		t.Fatalf("after the workflows landed:\n%s", text)
+	}
+}

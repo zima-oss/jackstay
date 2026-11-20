@@ -421,7 +421,7 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		}
 	}
 	if newer := config.Schema3Keys(planner.plain); len(newer) > 0 {
-		if reader, err := planner.oldestReader(original); err != nil {
+		if reader, err := planner.oldestReader(original, chosen); err != nil {
 			return err
 		} else if reader != "" {
 			return &UsageError{fmt.Sprintf("`%s` need jackstay %s or later, and %s would still read %s: "+
@@ -440,10 +440,10 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 // oldestReader names a jackstay before 0.6.0 that reads the project's file while this apply rolls
 // out, or "" when there is none. A pinned project is read by the jackstay its managed workflows
 // download: the one pinned before the apply until the workflows that move the pin have landed (the
-// settings land before the workflows, W-085), so the pin before, the pin after and the
-// JACKSTAY_VERSION of each managed workflow on disk all count. An unpinned project is read only by
-// the jackstay at hand, which reads schema 3.
-func (planner *planner) oldestReader(original *jsondoc.Object) (string, error) {
+// settings land before the workflows, W-085), so the pin before, the pin after and the release each
+// managed workflow on disk downloads all count (workflowVersions). An unpinned project is read only
+// by the jackstay at hand, which reads schema 3.
+func (planner *planner) oldestReader(original *jsondoc.Object, chosen *profile.Profile) (string, error) {
 	tooOld := func(pin string) bool {
 		return pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0
 	}
@@ -465,9 +465,9 @@ func (planner *planner) oldestReader(original *jsondoc.Object) (string, error) {
 		if marked, _, _ := templates.Header(existing[name]); !marked {
 			continue
 		}
-		for _, found := range workflowVersion.FindAllStringSubmatch(existing[name], -1) {
-			if tooOld(found[1]) {
-				return "the jackstay " + found[1] + " that " + workflowsDir + "/" + name + " downloads", nil
+		for _, version := range workflowVersions(existing[name], wantedTemplates(chosen, planner.plain)) {
+			if tooOld(version) {
+				return "the jackstay " + version + " that " + workflowsDir + "/" + name + " downloads", nil
 			}
 		}
 	}
@@ -477,6 +477,37 @@ func (planner *planner) oldestReader(original *jsondoc.Object) (string, error) {
 // workflowVersion is the jackstay release a managed workflow downloads, as jackstay's own templates
 // name it.
 var workflowVersion = regexp.MustCompile(`(?m)^\s*JACKSTAY_VERSION:\s*["']?(v?[0-9][^"'\s]*)`)
+
+// workflowVersions are the jackstay releases a managed workflow's text names: its JACKSTAY_VERSION,
+// and what stands where a template wants puts @@jackstay_version@@, line by line, whatever the
+// other placeholders of that line were.
+func workflowVersions(text string, wanted []templates.Template) []string {
+	var found []string
+	for _, match := range workflowVersion.FindAllStringSubmatch(text, -1) {
+		found = append(found, match[1])
+	}
+	for _, template := range wanted {
+		for _, line := range strings.Split(template.Text, "\n") {
+			if !strings.Contains(line, "@@jackstay_version@@") {
+				continue
+			}
+			pattern := regexp.QuoteMeta(strings.TrimSpace(line))
+			pattern = strings.ReplaceAll(pattern, "@@jackstay_version@@", `(v?[0-9][0-9A-Za-z.+-]*)`)
+			pattern = placeholderInPattern.ReplaceAllString(pattern, `.*?`)
+			compiled, err := regexp.Compile(`(?m)^\s*` + pattern + `\s*$`)
+			if err != nil {
+				continue
+			}
+			for _, match := range compiled.FindAllStringSubmatch(text, -1) {
+				found = append(found, match[1:]...)
+			}
+		}
+	}
+	return found
+}
+
+// placeholderInPattern is a template placeholder other than the version, once quoted for a pattern.
+var placeholderInPattern = regexp.MustCompile(`@@[a-z_]+@@`)
 
 // workflowValues are the values a managed workflow is rendered with, for the pin given.
 func (planner *planner) workflowValues(chosen *profile.Profile, pin string) map[string]string {
