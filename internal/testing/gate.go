@@ -557,15 +557,19 @@ func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked
 		proj.say("step %s: runs (\"resume\": false)", path.name)
 	}
 	proj.say("step %s: %s", path.name, shellWords(found.argv))
+	var ended result
 	if key != "" {
 		// The step runs again: its old pass no longer speaks for this tree, also if this run is
-		// stopped before it can say anything. A pass writes a new mark.
+		// stopped before it can say anything. A pass writes a new mark. A mark that cannot be
+		// removed could not be undone by a failure: the step does not start, and the gate records
+		// that like any other outcome.
 		if err := proj.removeMark(key); err != nil {
-			ended := proj.notStarted(err.Error())
-			return &ended.status, true
+			ended = proj.notStarted(err.Error())
 		}
 	}
-	ended := proj.runLeaf(chosen, nil, gateID, true)
+	if ended.outcome == "" {
+		ended = proj.runLeaf(chosen, nil, gateID, true)
+	}
 	if ended.signalled {
 		return &ended.status, true
 	}

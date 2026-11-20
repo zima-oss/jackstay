@@ -349,7 +349,8 @@ jst test: outcome=passed (gate gate, 0.9 s: lint=exited-0, full=passed)
 
 Every run's output is kept in `~/.jackstay/<project>/outputs/` (the newest 30). A run that did not
 pass prints up to 40 lines that say what went wrong, and where the whole output is. After a
-failure, read `jst test last` instead of running again.
+failure, read `jst test last` instead of running again; when the run warns that it was not logged,
+open the output file it names instead, since `jst test last` shows the run before it.
 
 ## Receipts
 

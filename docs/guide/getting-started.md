@@ -87,7 +87,8 @@ jst test: outcome=passed (0 s, counted=12)
 ```
 
 Read the last `jst test:` line. `exited-0` means the command ended 0 but nothing counted its tests,
-which is not a pass. After a failure, `jst test last` shows what went wrong without running again.
+which is not a pass. After a failure, `jst test last` shows what went wrong without running again
+(a run that warns it was not logged names its output file instead).
 Add a `gate` scope for what a change must pass before it merges: [Tests](tests.md).
 
 Run `jst adopt --apply` again after adding a section: the `AGENTS.md` block then tells agents about

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -480,14 +481,25 @@ func TestARunThatCannotRemoveItsMarkDoesNotStart(t *testing.T) {
 	if len(before) == 0 {
 		t.Fatal("the gate left no marks to start from")
 	}
-	receipts.RemoveFile = func(string) error { return errors.New("operation not permitted") }
+	// Only the marks are protected: every other removal goes through.
+	receipts.RemoveFile = func(path string) error {
+		if strings.HasPrefix(path, marks+string(os.PathSeparator)) {
+			return errors.New("operation not permitted")
+		}
+		return os.Remove(path)
+	}
 	t.Cleanup(func() { receipts.RemoveFile = os.Remove })
 
 	w.expectStatus(w.jst("full"), statusRefused) // a resumable scope on a clean checkout
-	w.expectSaid("cannot be removed")
+	w.expectSaid("the mark " + marks)
 	w.expectLast("outcome=not-started")
+	w.stderr.Reset()
 	w.expectStatus(w.jst("gate"), statusRefused) // its first step
+	w.expectSaid("the mark " + marks)
 	w.expectCounters("cheap middle full", 1, 1, 1)
+	if gate := w.lastRecord("gate"); gate.Text("outcome") == receipts.OutcomePassed || !strings.Contains(fmt.Sprint(gate), "not-started") {
+		t.Fatalf("the gate's closing record: %v", gate)
+	}
 	if after, _ := os.ReadDir(marks); len(after) != len(before) {
 		t.Fatalf("marks %d, then %d", len(before), len(after))
 	}
