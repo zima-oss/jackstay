@@ -91,6 +91,11 @@ func verdictForm(data PromptData) string {
 	form.WriteString("  hand-built setup or deliberate misuse (the tool guards against accidents, not an adversary).\n")
 	form.WriteString("  `consequence`: `severe` for lost work or data or a wrong decision that passes unnoticed, `mild`\n")
 	form.WriteString("  for an inconvenience or a wrong output seen at once. Rate honestly.\n")
+	form.WriteString("  A transient read or write error of the local disk during an ordinary call is a rare hardware\n")
+	form.WriteString("  fault, whatever `ordinary_path` says: the code need only pass the error to its caller, never\n")
+	form.WriteString("  taken as an outcome. A process killed between two writes (a session stopped, Ctrl-C, sleep, a\n")
+	form.WriteString("  reboot) is `ordinary`: a finding when, after restart and recovery, the state stays wrong or a\n")
+	form.WriteString("  message is lost or doubled.\n")
 	if data.Triage {
 		form.WriteString("  An `unusual` finding with an empty `ordinary_path` is rare too, however `severe` (W-094).\n")
 		form.WriteString("  An `unusual` and `mild` finding is rare: it is recorded for later, not fixed now.\n")

@@ -48,6 +48,22 @@ func TestTemplateCannotDropTheForm(t *testing.T) {
 	}
 }
 
+func TestADiskErrorIsRareAndAKillIsOrdinary(t *testing.T) {
+	for _, triage := range []bool{true, false} {
+		form := verdictForm(PromptData{Triage: triage, Severities: []string{"blocker", "major", "minor"}, Blocking: []string{"blocker"}})
+		for _, want := range []string{
+			"transient read or write error of the local disk",
+			"taken as an outcome",
+			"killed between two writes",
+			"message is lost or doubled",
+		} {
+			if !strings.Contains(form, want) {
+				t.Errorf("triage %v: the verdict form lacks %q:\n%s", triage, want, form)
+			}
+		}
+	}
+}
+
 func TestAnUnusualAndSevereFindingMustNameItsOrdinaryPath(t *testing.T) {
 	form := verdictForm(PromptData{Triage: true, Severities: []string{"blocker", "major", "minor"}, Blocking: []string{"blocker"}})
 	for _, want := range []string{"hand-built setup or deliberate misuse", "`ordinary_path`", "however `severe` (W-094)"} {
