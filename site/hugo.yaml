@@ -40,6 +40,13 @@ module:
       target: assets/docs
     - source: ../CONTRIBUTING.md
       target: assets/CONTRIBUTING.md
+    # What the contributors' pages link to on GitHub.
+    - source: ../SECURITY.md
+      target: assets/SECURITY.md
+    - source: ../CODE_OF_CONDUCT.md
+      target: assets/CODE_OF_CONDUCT.md
+    - source: ../LICENSE
+      target: assets/LICENSE
     # The quick install, served beside the pages as /install.sh.
     - source: ../install.sh
       target: static/install.sh
@@ -75,23 +82,42 @@ params:
     list:
       displayTags: false
 
+# For agents (the llmstxt.org convention): /llms.txt lists every page with a link to its Markdown,
+# /llms-full.txt is every page's Markdown in the sidebar's order, and each page has its Markdown at
+# index.md beside it. All three are made from the same pages as the site
+# (layouts/llms.txt, layouts/llmsfull.txt; the theme's page.markdown.md).
+outputs:
+  home: [html, llms, llmsfull]
+  section: [html, markdown]
+  page: [html, markdown]
+
+outputFormats:
+  llmsfull:
+    baseName: llms-full
+    mediaType: text/plain
+    isPlainText: true
+    notAlternative: true
+
 copyright: "jackstay is licensed under the Apache License 2.0."
 
 # Keep the primary navigation short. The guide sidebar orders the task pages.
 menu:
   main:
     - name: Get started
-      pageRef: /guide/getting-started
+      pageRef: /guide/start/getting-started
       weight: 1
     - name: Guide
       pageRef: /guide
       weight: 2
-    - name: Search
+    - name: Reference
+      pageRef: /guide/reference
       weight: 3
+    - name: Search
+      weight: 4
       params:
         type: search
     - name: GitHub
-      weight: 4
+      weight: 5
       url: https://github.com/zima-oss/jackstay
       params:
         icon: github

@@ -28,7 +28,7 @@ const gitTimeout = 5 * time.Minute
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "sync", Summary: "bring this branch up to date with the default branch (merge only; --push)", Usage: syncHelp, Run: runSync},
+		cli.Command{Name: "sync", Summary: "bring this branch up to date with the default branch", Usage: syncHelp, Run: runSync},
 		cli.Command{Name: "start", Summary: "a new branch and its worktree on the default branch as fetched", Usage: startHelp, Run: runStart},
 	)
 }

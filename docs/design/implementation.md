@@ -678,12 +678,19 @@ page over TLS, covering each refusal, and checks the guide, home page and script
 one-liner; `just check` runs shellcheck.
 
 **The documentation site** ([W-076](../decisions/W-076-quick-install-and-docs-site.md),
-[W-077](../decisions/W-077-docs-site-for-users-only.md)), Hugo and Hextra from `site/`, carries only
-the home page, the guide in `docs/guide/README.md`'s order, and a page pointing to the design,
-decisions and CONTRIBUTING on GitHub.
+[W-077](../decisions/W-077-docs-site-for-users-only.md) amended by
+[W-093](../decisions/W-093-docs-for-people-and-agents.md)), Hugo and Hextra from `site/`, carries the
+home page, the guide by task, the generated reference and the contributors' pages; the design and
+the decisions stay on GitHub. For agents it writes `/llms.txt`, `/llms-full.txt` and each page's
+Markdown.
 
-- `site/hugo.yaml` mounts `docs/` and `CONTRIBUTING.md`; `site/content/_content.gotmpl` makes a
-  page of each guide file, titled by its `# Title`.
+- `site/hugo.yaml` mounts `docs/` and the root's Markdown files; `site/content/_content.gotmpl`
+  makes a page of each file of `docs/guide` and `docs/reference`, titled by its `# Title`. The
+  guide's `README.md` orders the sidebar: its `## ` headings that the adapter names are the groups,
+  and a page goes to the group its first link is under; a page moved into a group keeps its old
+  address as a redirect.
+- The Markdown served to agents takes each link's address from the link hook (below), so it is
+  absolute; a reference definition split over two lines stops the build.
 - The link hook (`site/layouts/_markup/render-link.html`) turns a link to a guide file into its
   page and one to another mounted file into a GitHub link, checking each `#fragment` against
   GitHub's heading ids; a dead link stops the build.

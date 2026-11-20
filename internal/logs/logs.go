@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	cli.Register(cli.Command{Name: "log", Summary: "what jackstay did: commands, a run's tree (--trace), a Claude session (--session), a tool call; --json",
+	cli.Register(cli.Command{Name: "log", Summary: "what jackstay did: commands, a run's tree, a Claude session, a tool call",
 		Usage: help, Run: command})
 }
 
