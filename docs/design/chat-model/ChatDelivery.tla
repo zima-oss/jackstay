@@ -27,13 +27,14 @@ VARIABLES
     attempts,     \* confirmed native failures
     pc,           \* where the pusher is
     owner,        \* the pusher still owns its `sending` record (compare-and-set)
-    engine,       \* what Claude Code actually did with a written line
+    engine,       \* what Claude Code actually did with a written line (it may change later)
+    reply,        \* the answer the socket carried back, fixed when the line is written
     shown,        \* how many times the text reached the recipient's model by a push
     exposed,      \* a read showed a native body the engine had not accepted
     overdue,      \* expires_at has passed
     alive         \* the recipient session still exists
 
-vars == <<route, state, unconfirmed, attempts, pc, owner, engine, shown, exposed, overdue, alive>>
+vars == <<route, state, unconfirmed, attempts, pc, owner, engine, reply, shown, exposed, overdue, alive>>
 
 TypeOK ==
     /\ route \in {"native", "hooks"}
@@ -43,6 +44,7 @@ TypeOK ==
     /\ pc \in PusherPcs
     /\ owner \in BOOLEAN
     /\ engine \in Engines
+    /\ reply \in Engines
     /\ shown \in 0..3
     /\ exposed \in BOOLEAN
     /\ overdue \in BOOLEAN
@@ -56,6 +58,7 @@ Init ==
     /\ pc = "idle"
     /\ owner = FALSE
     /\ engine = "none"
+    /\ reply = "none"
     /\ shown = 0
     /\ exposed = FALSE
     /\ overdue = FALSE
@@ -78,13 +81,13 @@ Claim ==
        THEN /\ state' = "expired"
             /\ UNCHANGED <<pc, owner>>
        ELSE /\ state' = "sending" /\ pc' = "claimed" /\ owner' = TRUE
-    /\ UNCHANGED <<route, unconfirmed, attempts, engine, shown, exposed, overdue, alive>>
+    /\ UNCHANGED <<route, unconfirmed, attempts, engine, reply, shown, exposed, overdue, alive>>
 
 \* Step 2: the line is written; the engine decides; the answer may or may not come back.
 Write ==
     /\ pc = "claimed"
     /\ \E decision \in {"accepted", "held", "refused"} :
-          /\ engine' = decision
+          /\ engine' = decision /\ reply' = decision
           /\ shown' = IF decision = "accepted" THEN shown + 1 ELSE shown
     /\ pc' = "written"
     /\ UNCHANGED <<route, state, unconfirmed, attempts, owner, exposed, overdue, alive>>
@@ -93,19 +96,19 @@ Write ==
 WriteFails ==
     /\ pc = "claimed"
     /\ pc' = "failed"
-    /\ UNCHANGED <<route, state, unconfirmed, attempts, owner, engine, shown, exposed, overdue, alive>>
+    /\ UNCHANGED <<route, state, unconfirmed, attempts, owner, engine, reply, shown, exposed, overdue, alive>>
 
 \* Step 3: the answer arrived; recorded only if the pusher still owns the record.
 RecordAnswer ==
     /\ pc = "written"
     /\ IF owner /\ state = "sending"
-       THEN state' = CASE engine = "accepted" -> "delivered"
-                       [] engine = "held"     -> "held"
-                       [] engine = "refused"  -> "refused"
-                       [] OTHER               -> state
+       THEN state' = CASE reply = "accepted" -> "delivered"
+                       [] reply = "held"     -> "held"
+                       [] reply = "refused"  -> "refused"
+                       [] OTHER              -> state
        ELSE UNCHANGED state
     /\ pc' = "idle" /\ owner' = FALSE
-    /\ UNCHANGED <<route, unconfirmed, attempts, engine, shown, exposed, overdue, alive>>
+    /\ UNCHANGED <<route, unconfirmed, attempts, engine, reply, shown, exposed, overdue, alive>>
 
 \* Step 3: the answer was lost: `delivered` with `unconfirmed`, never retried.
 RecordLost ==
@@ -114,7 +117,7 @@ RecordLost ==
        THEN /\ state' = "delivered" /\ unconfirmed' = TRUE
        ELSE UNCHANGED <<state, unconfirmed>>
     /\ pc' = "idle" /\ owner' = FALSE
-    /\ UNCHANGED <<route, attempts, engine, shown, exposed, overdue, alive>>
+    /\ UNCHANGED <<route, attempts, engine, reply, shown, exposed, overdue, alive>>
 
 \* Step 3: a confirmed failure: back to pending; the fourth moves the route to hooks.
 RecordFailure ==
@@ -125,19 +128,19 @@ RecordFailure ==
             /\ route' = IF attempts + 1 = MaxAttempts THEN "hooks" ELSE route
        ELSE UNCHANGED <<state, attempts, route>>
     /\ pc' = "idle" /\ owner' = FALSE
-    /\ UNCHANGED <<unconfirmed, engine, shown, exposed, overdue, alive>>
+    /\ UNCHANGED <<unconfirmed, engine, reply, shown, exposed, overdue, alive>>
 
 \* The pusher dies wherever it is.
 Crash ==
     /\ pc \in {"claimed", "written", "failed"}
     /\ pc' = "dead"
-    /\ UNCHANGED <<route, state, unconfirmed, attempts, owner, engine, shown, exposed, overdue, alive>>
+    /\ UNCHANGED <<route, state, unconfirmed, attempts, owner, engine, reply, shown, exposed, overdue, alive>>
 
 \* A held copy that Claude Code later releases to the model (section 4.2).
 EngineReleases ==
     /\ engine = "held"
     /\ engine' = "accepted" /\ shown' = shown + 1
-    /\ UNCHANGED <<route, state, unconfirmed, attempts, pc, owner, exposed, overdue, alive>>
+    /\ UNCHANGED <<route, state, unconfirmed, attempts, pc, owner, reply, exposed, overdue, alive>>
 
 ----------------------------------------------------------------------------
 (* The hooks route (section 8.4): recorded `delivered`, then shown, or lost in a crash. *)
@@ -148,50 +151,65 @@ HookAnnounces ==
        THEN /\ state' = "expired" /\ UNCHANGED shown
        ELSE /\ state' = "delivered"
             /\ shown' \in {shown, shown + 1}
-    /\ UNCHANGED <<route, unconfirmed, attempts, pc, owner, engine, exposed, overdue, alive>>
+    /\ UNCHANGED <<route, unconfirmed, attempts, pc, owner, engine, reply, exposed, overdue, alive>>
 
 ----------------------------------------------------------------------------
 (* The recipient, the sweep and time. *)
 
+\* chat.inbox without ids: it returns the body only when Visible says so (section 4.10), and
+\* exposed records a body returned for a native delivery the engine never accepted.
 InboxRead ==
-    /\ Visible /\ alive
-    /\ state' = IF state \in {"pending", "delivered"} /\ ~overdue THEN "read"
-                ELSE IF state = "pending" /\ overdue THEN "expired" ELSE state
-    /\ exposed' = (exposed \/ (route = "native" /\ engine # "accepted"))
-    /\ UNCHANGED <<route, unconfirmed, attempts, pc, owner, engine, shown, overdue, alive>>
+    /\ alive
+    /\ IF overdue /\ state \in {"pending", "held"}
+       THEN /\ state' = "expired" /\ UNCHANGED exposed
+       ELSE /\ state' = IF Visible /\ state \in {"pending", "delivered"} THEN "read" ELSE state
+            /\ exposed' = (exposed \/ (Visible /\ route = "native" /\ engine # "accepted"))
+    /\ UNCHANGED <<route, unconfirmed, attempts, pc, owner, engine, reply, shown, overdue, alive>>
 
 Ack ==
     /\ alive
     /\ state \in {"pending", "sending", "delivered", "held", "read"}
     /\ route = "native" => engine = "accepted"     \* the recipient knows the ID only from a shown copy
-    /\ state' = "acted"
+    /\ state' = IF overdue /\ state \in {"pending", "held"} THEN "expired" ELSE "acted"
     /\ owner' = IF state = "sending" THEN FALSE ELSE owner
-    /\ UNCHANGED <<route, unconfirmed, attempts, pc, engine, shown, exposed, overdue, alive>>
+    /\ UNCHANGED <<route, unconfirmed, attempts, pc, engine, reply, shown, exposed, overdue, alive>>
+
+\* chat.inbox naming the ID: the recipient knows it only from a frame its engine showed it.
+ReadById ==
+    /\ alive /\ route = "native" /\ engine = "accepted"
+    /\ \/ state = "held"
+       \/ state = "delivered" /\ unconfirmed
+    /\ IF overdue /\ state = "held"
+       THEN /\ state' = "expired" /\ UNCHANGED unconfirmed
+       ELSE /\ state' = "delivered" /\ unconfirmed' = FALSE
+    /\ UNCHANGED <<route, attempts, pc, owner, engine, reply, shown, exposed, overdue, alive>>
 
 SessionEnds ==
     /\ alive
     /\ alive' = FALSE
-    /\ state' = IF state \in {"pending", "held"} THEN "dropped" ELSE state
-    /\ UNCHANGED <<route, unconfirmed, attempts, pc, owner, engine, shown, exposed, overdue>>
+    /\ state' = IF state \in {"pending", "sending", "held"} THEN "dropped" ELSE state
+    /\ owner' = FALSE
+    /\ UNCHANGED <<route, unconfirmed, attempts, pc, engine, reply, shown, exposed, overdue>>
 
 DeadlinePasses ==
     /\ ~overdue
     /\ overdue' = TRUE
-    /\ UNCHANGED <<route, state, unconfirmed, attempts, pc, owner, engine, shown, exposed, alive>>
+    /\ UNCHANGED <<route, state, unconfirmed, attempts, pc, owner, engine, reply, shown, exposed, alive>>
 
 \* Section 7.4: a stale `sending` becomes `delivered`, `unconfirmed`; overdue pending or held expire.
 Sweep ==
     \/ /\ state = "sending" /\ pc \in {"claimed", "written", "failed", "dead"}
        /\ state' = "delivered" /\ unconfirmed' = TRUE /\ owner' = FALSE
        /\ pc' = IF pc = "dead" THEN "idle" ELSE pc
-       /\ UNCHANGED <<route, attempts, engine, shown, exposed, overdue, alive>>
+       /\ UNCHANGED <<route, attempts, engine, reply, shown, exposed, overdue, alive>>
     \/ /\ overdue /\ state \in {"pending", "held"}
        /\ state' = "expired"
-       /\ UNCHANGED <<route, unconfirmed, attempts, pc, owner, engine, shown, exposed, overdue, alive>>
+       /\ UNCHANGED <<route, unconfirmed, attempts, pc, owner, engine, reply, shown, exposed, overdue, alive>>
 
 Next ==
     \/ Claim \/ Write \/ WriteFails \/ RecordAnswer \/ RecordLost \/ RecordFailure \/ Crash
-    \/ EngineReleases \/ HookAnnounces \/ InboxRead \/ Ack \/ SessionEnds \/ DeadlinePasses
+    \/ EngineReleases \/ HookAnnounces \/ InboxRead \/ ReadById \/ Ack \/ SessionEnds
+    \/ DeadlinePasses
     \/ Sweep
 
 Spec == Init /\ [][Next]_vars
@@ -210,5 +228,8 @@ NeverLooksUnpushed == (route = "native" /\ engine # "none") => state # "pending"
 
 \* Final states are never left.
 FinalStable == [][state \in Final => state' = state]_vars
+
+\* Nothing moves an overdue pending or held delivery to acted (section 4.10).
+DeadlineFirst == [][(overdue /\ state \in {"pending", "held"}) => state' # "acted"]_vars
 
 =============================================================================

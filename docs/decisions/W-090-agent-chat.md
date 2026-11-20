@@ -37,7 +37,7 @@ about chat; the rest of W-090 concerns review, landing and setup).
 
 The [chat design](../design/chat.md) gives the contract: the tool and record schemas, bounds that
 fit the store, the store on the shared durable package, delivery and its fallback, setup, the test
-plan and the questions still open. The socket's line format is undocumented, so the native layer
+plan and the decisions on its open questions. The socket's line format is undocumented, so the native layer
 is captured from a live session, pinned by a contract test and used only for verified Claude Code
 versions. 0.5.x chat state is not imported, and its limit keys stop having an effect.
 
@@ -45,7 +45,8 @@ versions. 0.5.x chat state is not imported, and its limit keys stop having an ef
 
 The maintainer then decided the spec's open questions. The related list limits sending only. A
 session hears its own repository's channel by default. No messaging token is presented. Chat is
-enabled per repository in `jackstay.json`, never by setup. A Codex session uses its thread ID when
+enabled per repository in `jackstay.json`, never by setup (sessions outside a repository only by
+the person's separate choice). A Codex session uses its thread ID when
 it can be read, otherwise a launch token. `asyncRewake` waits until after 0.6.0. Delivery is at most
 once, and a lost answer is reported as `unconfirmed`. `crossSessionInbound` is not imitated off the
 native route. The delivery state machine is modelled formally before code.

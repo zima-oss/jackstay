@@ -108,7 +108,6 @@ breaking halfway, and both are narrow:
 - a message with `reply_to` set to a message this session received may go back to that message's
   sender.
 
-The same set decides which channels' history a session may read (section 5.2, `chat.thread`).
 Without `chat.related` a session may send to, and read, every channel and session of the account. The
 list limits what a repository's sessions send. It does not filter what they receive (W-091).
 
@@ -122,8 +121,8 @@ process:
 | engine | key | where jackstay learns it |
 |---|---|---|
 | Claude Code | `cc:` + `session_id` | the stdin of every hook, captured by `jst hook claude` at `SessionStart` (section 8.2) |
-| Codex | `cx:` + thread ID | the review launcher or the app-server bridge, which both know the thread (section 9) |
-| any, with a token | `tk:` + hex SHA-256 of `JACKSTAY_CHAT_SESSION_TOKEN` | the environment of the MCP server and the hooks; it overrides the engine's ID |
+| Codex | `cx:` + thread ID | wherever it can be read: the review launcher and the app-server bridge, and an MCP server or hook once Codex is found to expose it (section 9.2) |
+| any, with a token | `tk:` + hex SHA-256 of `JACKSTAY_CHAT_SESSION_TOKEN` | the environment of the MCP server, the hooks and the bridge; it overrides the engine's ID |
 | none of these | `ep:` + 128 random bits | an ephemeral session: it can send, and receives only while its connection lives |
 | jackstay itself | `jackstay` | the sender of events and notices (section 10) |
 
@@ -246,10 +245,11 @@ that is already `gone` (section 4.4). Every allowed transition, and nothing else
 | `sending` | `pending` | a confirmed failure: nothing reached the engine (section 8.3) |
 | `pending` | `delivered` | a hook's announcement, recorded in the same locked step that pushes it (section 8.4) |
 | `delivered` | `delivered` | the Codex bridge steering an unacknowledged message into a later turn: only `steers` changes (section 9.2) |
-| `pending`, `held` | `dropped` | `SessionEnd`, a dead process, or a closed mailbox (`recipient_ended`) |
+| `pending`, `sending`, `held` | `dropped` | `SessionEnd`, a dead process, or a closed mailbox (`recipient_ended`); from `sending` the pusher's later outcome is then dropped (compare-and-set) |
 | `pending`, `held` | `expired` | the sweep, at `expires_at` (reason `expired`, or `engine_held_unresolved` from `held`) |
 | `pending`, `delivered` | `read` | `chat.inbox` emitting the whole body in one response, while the body is visible (section 4.10); `chat.ack` with `read`; or a review mailbox's freeze (section 9.1) |
 | `held` | `read` | `chat.ack` with `read` naming it (the recipient saw the copy its engine released) |
+| `held`, `delivered` (`unconfirmed`) | `delivered` (confirmed) | the recipient's `chat.inbox` naming it in `ids`: it knows the ID only from a frame its engine showed it, so this is evidence that the engine accepted or released it (section 4.10) |
 | `pending`, `sending`, `delivered`, `held`, `read` | `acted` | `chat.ack` with `acted`, or `chat.respond` to this request (from `sending`: the engine showed the message before its pusher recorded the answer) |
 
 `refused`, `dropped`, `expired` and `acted` are final. A pusher records its outcome only if the
@@ -292,8 +292,8 @@ Every message belongs to a thread. `thread_id` is the ID of the thread's first m
 sent without `thread_id` and without `reply_to` starts a new thread. `reply_to` names the message
 being answered and implies its thread; a `thread_id` that disagrees with it is refused as `invalid`.
 
-A session may read a thread's messages that it sent, that were addressed to it, or that went to a
-channel it may read (section 2). A thread has no size of its own; retention removes old messages
+A session may read a thread's messages that it sent, that were addressed to it, or that went to any
+channel (the related list limits only sending, W-091). A thread has no size of its own; retention removes old messages
 from it (section 7.4).
 
 ### 4.4 Structured requests and responses
@@ -335,7 +335,8 @@ still `accepted`: the message is kept as the channel's history with no deliverie
 reads the past with `chat.thread` by channel (section 5.2), within what section 2 allows.
 
 At registration a session is subscribed to its own repository's channel; every other subscription
-is its own choice (W-091). Sending to a
+is its own choice (W-091). A `#common` session hears `#common` by default; a review mailbox
+subscribes to nothing. Sending to a
 channel needs no subscription; the related list (section 2) decides.
 
 ### 4.6 Expiry and priority
@@ -430,15 +431,19 @@ hooks and every push. A body is **visible to its recipient** only when the deliv
 - is on the `hooks`, `bridge`, `mailbox` or `poll` route and is not `held`, `refused`, `dropped` or
   `expired`; or
 - is on the `native` route and Claude Code has accepted it (`delivered` without `unconfirmed`), or
-  the recipient has itself acknowledged or answered it (`read`, `acted`).
+  the recipient has itself acknowledged or answered it (`read`, `acted`), or the recipient names it in
+  `chat.inbox`'s `ids`. Message IDs are 128 random bits that only a frame shown by the engine carries
+  to the recipient, so naming one is evidence that Claude Code accepted, or later released, that frame;
+  it makes the delivery `delivered` (confirmed) and the rest of a cut body readable without claiming it
+  was read.
 
 So on the native route the recipient's engine decides first, as it would for any peer's message: a
 native delivery that is `pending`, `sending`, `held`, `refused`, or `delivered` with `unconfirmed`
 shows the recipient only its count ("2 messages wait for your engine's decision"), never its sender,
 summary or body. The other routes have no engine policy to defer to, and jackstay does not imitate
 `crossSessionInbound` there: the frame's "not consent" line protects them (W-091).
-A channel message is visible to a session that is not its recipient (through `chat.thread`) when
-the session may read that channel (section 2); its deliveries to others do not change that.
+A channel message is visible through `chat.thread` to every session of the account, since the related
+list limits only sending; its deliveries to others do not change that.
 
 **Deadlines are checked where they matter, not only by the sweep.** In the same locked step in which
 a pusher would set `sending` or `delivered`, in which `chat.inbox` or `chat.thread` would return a
@@ -532,7 +537,7 @@ Returns `sessions`: each a `session_ref` plus `state`, `since`, `last_seen`, `de
 `ephemeral` and `reachable` (false when the related list forbids sending to it).
 
 **`chat.channels`**: the known channels. Input `{}`. Returns `channels`: each with `channel` (its
-address), `subscribers` (a count), `subscribed`, `writable` and `readable`.
+address), `subscribers` (a count), `subscribed` and `writable`. Any channel may be subscribed to.
 
 **`chat.subscribe`**: subscribe to or leave one channel.
 
@@ -775,8 +780,8 @@ write a caller can make large).
                       "armed_generation": { "type": "integer", "minimum": 0 } } } },
     "idle_generation": { "type": "integer", "minimum": 0 },
     "notices": { "type": "array", "maxItems": 32, "items": {
-      "type": "object", "additionalProperties": false, "required": ["kind", "about", "at", "state"],
-      "properties": { "kind": { "enum": ["idle", "ended", "not_delivered", "subscription_expired"] },
+      "type": "object", "additionalProperties": false, "required": ["id", "kind", "about", "at", "state"],
+      "properties": { "id": { "type": "string", "maxLength": 140 }, "kind": { "enum": ["idle", "ended", "not_delivered", "subscription_expired"] },
                       "about": { "type": "string", "maxLength": 76 }, "message_id": { "$ref": "#/$defs/message_id" },
                       "at": { "type": "string" }, "state": { "enum": ["owed", "sending", "shown"] } } } },
     "stop_blocks": { "type": "integer", "minimum": 0, "maximum": 3 },
@@ -936,8 +941,9 @@ own 12 MiB state file.
 
 ```text
 ~/.jackstay/.all/chat/v1/
-  lock                         one lock file: shared for readers, exclusive for writers
-  journal/<id>                 an operation in progress (section 7.3)
+  lock                         the store's one lock (exclusive), taken by every reader and writer
+  journal/<id>                 an operation in progress (section 7.3); journal/broken/ for unreadable ones
+  common.json                  present when the person enabled #common (section 11)
   sessions/<hash>.json         hash = hex SHA-256 of the session key
   bindings/<process_id>-<start>.json
   channels/<channel_id>.json   the channel's name and subscribers (hashes)
@@ -964,11 +970,11 @@ to it:
 
 | chat needs | from `internal/durable` | chat adds |
 |---|---|---|
-| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | nothing |
+| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | how it treats `ErrNotSynced`: the new file is what readers see, so the change counts as made (a send is `accepted`); the folder is fsynced again before the lock is released, and a second failure is logged and reported by `jst doctor` |
 | a bounded read: a file past its record's bound (section 6.4) is an error | `ReadLimited` (`ErrTooLarge`) | nothing |
 | one lock for the store, with a deadline | `LockFile` on `lock`, waited for with the caller's context | its deadlines: at most 2 s in a hook (then the hook does nothing, so a turn is never held up by chat), 5 s in a tool (then `store_busy`) |
 | a shared mode for readers | not offered: `LockFile` is exclusive | readers take the same exclusive lock for their short read. A shared mode, if it is added to `internal/durable` later, changes nothing else here: section 7.3 never relies on readers running together |
-| create-exclusive for markers, journal entries and idempotency entries | not offered | `O_CREATE\|O_EXCL` then `SyncFolder`, under the store's lock |
+| create-exclusive for markers and idempotency entries; publication of journal entries | not offered | markers and idempotency entries: `O_CREATE\|O_EXCL` then `SyncFolder`; journal entries: a fsynced temporary file linked to its name, then `SyncFolder` (section 7.3); all under the store's lock |
 | capacity accounting | not offered | `usage.json`, written with `WriteAtomic` under the store's lock and rebuilt from the folders (section 7.4) |
 
 ### 7.3 Writes, commit and recovery
@@ -984,8 +990,11 @@ that points at a read delivery, and every reader checks the delivery behind each
 
 **A send or a response** writes many files and is journalled:
 
-1. under the exclusive lock, create `journal/<id>` naming the operation;
-2. write the body, the envelope and every delivery;
+1. under the lock, publish `journal/<id>` naming the operation: the whole entry is written to a
+   temporary file and fsynced, then linked into `journal/` under its final name (a link never replaces
+   an existing name), and the folder is fsynced, so an entry is never seen empty or half written;
+2. write the body, the envelope and every delivery, and, for a send with `notify_when_idle`, the
+   subscription on the recipient's session record;
 3. write the **commit record**; for a response, also rewrite the request's commit record to
    `answered` with `response_id`, and set the request's delivery to `acted` unless it is final;
 4. write the derived files: the `inbox` markers of the deliveries created `pending`, the `outbox`
@@ -994,11 +1003,15 @@ that points at a read delivery, and every reader checks the delivery behind each
 
 The commit record is the commit point: a message without one does not exist for any reader.
 
-**Recovery runs before anything is served.** Every process that takes the lock, shared or exclusive,
-first lists `journal/`. If it is not empty, the process takes the exclusive lock and finishes each
-entry: an operation whose commit record exists is rolled forward (the rest of step 3, then step 4);
+**Recovery runs before anything is served.** Every process, reader or writer, takes the store's one
+lock (section 7.2) and, under that same acquisition, first lists `journal/`. If it is not empty, it
+finishes each entry before its own work: an operation whose commit record exists is rolled forward (the rest of step 3, then step 4);
 one without it is rolled back by removing the files of that message ID, which no reader has seen.
-A review mailbox's freeze (`journal/freeze-<mailbox hash>`, section 9.1) is always rolled forward.
+A review mailbox's freeze (`journal/freeze-<mailbox hash>`, section 9.1) and an idle subscription's
+firing (`journal/fire-<watcher hash>-<recipient hash>-<generation>`: the notice written on the watcher's
+record under that stable name, then the subscription removed from the recipient's) are always rolled
+forward. An entry that cannot be parsed (only a fault of the disk can make one) is moved to
+`journal/broken/`, logged, and reported by `jst doctor`, so it never blocks the store.
 Only then does it read or write. So a reader never sees a half-made send, a request and its response
 always agree, and a client that retries with the same `idempotency_key` after a crash finds the entry
 and gets `duplicate`.
@@ -1117,12 +1130,15 @@ primary route.
 
 **The detached pusher.** Native pushes come from one process per account, `jst chat push`, which is
 **detached** (started with a double fork, so its parent is the system's init and it is a descendant of
-no session). Claude Code may treat a writer that descends from the recipient session as that session's
-own child and skip its inbound policy; a detached pusher never is one, so every recipient's policy
-applies, even when the only session open is the recipient itself. Any `jst chat serve` or hook that
-writes a native delivery, event or notice starts the pusher if it is not running (a lock file
+no session). When no explicit `crossSessionInbound` value applies, Claude Code may accept a message
+from a writer that descends from the recipient session as from its own child, without the default
+decision a peer gets; a detached pusher is never such a writer, so the recipient's default and explicit
+inbound settings both apply, even when the only session open is the recipient itself. Any `jst chat serve` or hook that
+writes a native delivery, event or notice, or changes a session's state (a `Stop` making it idle),
+starts the pusher if it is not running and any native delivery is `pending` (a lock file
 `pusher.lock` keeps it single); it runs a **pass** at each store change and every 15 seconds, and
-exits after 10 minutes with nothing due. A pass serves every `native` delivery in the store, whoever
+exits only after 10 minutes in which no native delivery was `pending` at all, so work that becomes
+due later (a `later` message waiting for its recipient's idle) always has a pusher. A pass serves every `native` delivery in the store, whoever
 sent it. A delivery is **due** when its route is `native`, it is `pending`, `next_attempt` has
 passed, and its priority allows it now (`later` only to an `idle` recipient). For each due delivery
 the pass:
@@ -1297,9 +1313,13 @@ round is deferred (section 14).
 
 An interactive Codex session uses the same MCP server (registered by setup) and polls with
 `chat.inbox`. Its key is its thread ID when the app-server bridge runs for it, otherwise its token,
-otherwise ephemeral (W-091: the thread ID when it can be read, otherwise the launch token). Whether
-Codex exposes its thread ID to an MCP server or a hook is checked before 0.6.0; until it is, an
-unbridged Codex session needs a launch token for a stable identity.
+otherwise ephemeral. The order is the one of section 3.1 for every process acting for the session
+(its MCP server, its bridge): a token, when its launcher sets one, overrides; without one, the thread
+ID wherever it can be read; otherwise an ephemeral key. So the server and the bridge of one session
+always use the same key. W-091's "the thread ID, otherwise a launch token" follows: a launcher that can
+read the thread ID sets no token, and one that cannot sets it. Whether Codex exposes its thread ID to
+an MCP server or a hook is checked before 0.6.0; until it is, an unbridged Codex session needs a launch
+token for a stable identity.
 
 The 0.5.x app-server bridge (`jst chat codex-bridge`) stays for a running Codex turn, with two
 changes:
@@ -1396,7 +1416,9 @@ Under `jackstay_schema: 3` the `chat` section of `jackstay.json` has two keys:
 
 - `enabled` (default `false`): chat is enabled per repository, here, never by setup (W-091). In a
   repository without `"enabled": true` the tools answer `chat_disabled` and the hooks do nothing for
-  chat; a session outside any repository (`#common`) can use chat once setup has registered it.
+  chat. A session outside any repository (`#common`) has no `jackstay.json`; it takes part only after
+  the person enables it explicitly with `jst setup --chat --common` (which writes `common.json` in the
+  store), a separate choice from registering the server, and setup names it as such.
 - `related` (default absent: unrestricted): the list of section 2, at most 32 channel addresses.
 
 The 0.5.x keys (`max_message_bytes`, `max_pending`, `max_pending_per_session`, `max_sessions`,
@@ -1428,7 +1450,8 @@ confirmation (`--apply` without asking; `--plan` only shows):
   folders (W-090's rule: only the subfolders jst must write).
 - **Chat is enabled per repository.** Setup registers the server and the hooks for the machine, and
   says plainly that a repository's sessions take part only once its `jackstay.json` sets
-  `"chat": {"enabled": true}` (section 11); it never sets that key itself.
+  `"chat": {"enabled": true}` (section 11); it never sets that key itself. Sessions outside a
+  repository take part only with `--common`, which setup offers as its own choice.
 - **Channels** are added only with `--claude-channels` (section 8.6).
 - **After writing**, setup runs `claude mcp get jackstay` and asks the new server for its tool list
   over stdio, and reports either the chat tools it found or what is missing.
@@ -1497,7 +1520,8 @@ narrower than the last, and review alone does not end that. The model:
   that lands the store.
 
 A first TLA+ sketch is in [`chat-model/`](chat-model/README.md). It models the native and hooks
-routes for one delivery and states the first three properties; it has not been run through TLC yet.
+routes for one delivery, with a reader that honours section 4.10 only through its definition of
+visibility, and states the first four properties and the deadline rule; it has not been run through TLC yet.
 
 ### 15.1 Unit tests (`go test ./internal/sessionchat/...`)
 
@@ -1543,7 +1567,7 @@ routes for one delivery and states the first three properties; it has not been r
 - **Crash points.** A fault-injecting writer stops after each step of section 7.3: for a send and a
   response, after each journal step; for an ack, between the delivery and its marker; for a pusher,
   between `sending` and the push and between the push and the outcome; for the sweep, after each
-  change. After each: a reader taking the shared lock first sees either nothing or the whole send; a
+  change. After each: a reader taking the lock first sees either nothing or the whole send; a
   retry with the same `idempotency_key` gets `duplicate`; a request and its response agree; a stale
   marker is skipped and removed; a pusher's crash leaves the delivery `sending`, then `unconfirmed`,
   and it is never pushed again.
@@ -1602,16 +1626,17 @@ record goes into the pull request that lands the native layer.
 
 ## 16. Decided (W-091)
 
-The questions this spec left open were decided by the maintainer in W-091. Each answer is now part
-of the body:
+The questions this spec left open were decided by the maintainer in W-091, summarised in
+[W-090's record](../decisions/W-090-agent-chat.md#the-open-questions-decided-w-091). Each answer is now
+part of the body:
 
 | question | decided | where |
 |---|---|---|
-| Does the related list filter what a repository's sessions receive? | No: it limits sending only | section 2 |
+| Does the related list filter what a repository's sessions receive? | No: it limits sending only, and no reading of history either | sections 2, 4.3 |
 | Is a session subscribed to its own repository's channel? | Yes; every other channel is explicit | section 4.5 |
 | Is Claude Code's messaging token presented on the socket? | No | sections 8.3, 13 |
-| Is chat on by default once setup has run? | No: chat is enabled per repository in `jackstay.json`, and setup says so | sections 11, 12 |
-| A Codex session's identity without the bridge | Its thread ID when it can be read, otherwise a launch token; whether Codex exposes the thread ID is checked before 0.6.0 | sections 3.1, 9.2 |
+| Is chat on by default once setup has run? | No: chat is enabled per repository in `jackstay.json`, and setup says so; sessions outside a repository (`#common`) by the person's separate `--common` choice | sections 11, 12 |
+| A Codex session's identity without the bridge | Its thread ID when it can be read, otherwise a launch token (a token, when a launcher sets one, still overrides); whether Codex exposes the thread ID is checked before 0.6.0 | sections 3.1, 9.2 |
 | The `asyncRewake` wake | After 0.6.0, if the pilot shows a need | sections 8.4, 14 |
 | The delivery promise | At most once, no retry; a lost answer is reported as `unconfirmed` | sections 4.2, 8.3 |
 | Imitating `crossSessionInbound` on the hooks and poll routes | No; the frame's "not consent" line protects them | section 4.10 |
