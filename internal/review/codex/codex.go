@@ -107,8 +107,8 @@ func Argv(request Request, answerPath string) []string {
 func Temporary(request Request) string { return filepath.Join(request.Folder, "tmp") }
 
 // Filesystem is the permission profile's filesystem table: read everything; never the account's
-// secrets nor any `.env` file — glob rules Codex checks at every read (on Linux it expands them
-// when the run starts, globScanDepth folders deep); write only Temporary.
+// secrets nor a `.env` file — glob rules under envGlobRoots, which Codex checks at every read on
+// macOS and expands when the run starts on Linux, globScanDepth folders deep; write only Temporary.
 func Filesystem(request Request, home string) string {
 	environ := request.Environ
 	if environ == nil {
@@ -126,8 +126,16 @@ func Filesystem(request Request, home string) string {
 		seen[path] = true
 		entries = append(entries, strconv.Quote(path)+`="none"`)
 	}
-	for _, glob := range access.SecretFileGlobs {
-		entries = append(entries, strconv.Quote(strings.TrimPrefix(glob, "/"))+`="none"`)
+	for _, root := range envGlobRoots(request, home) {
+		if resolved, err := canonicalPath(root); err == nil {
+			root = resolved
+		}
+		for _, name := range access.SecretFileNames {
+			if key := strings.TrimSuffix(root, "/") + "/**/" + name; !seen[key] {
+				seen[key] = true
+				entries = append(entries, strconv.Quote(key)+`="none"`)
+			}
+		}
 	}
 	if temporary, err := canonicalPath(Temporary(request)); err == nil {
 		entries = append(entries, strconv.Quote(temporary)+`="write"`)
@@ -309,6 +317,7 @@ func Run(ctx context.Context, request Request) Result {
 		return finish(OutcomeFailed, err.Error())
 	}
 	spec := GroupSpec(append([]string{path}, argv[1:]...))
+	spec.TraceArgv = access.RedactedArgv(spec.Argv)
 	spec.Dir, spec.Env, spec.Input = request.Tree, access.Environment(environ, access.Codex, temporary), request.Prompt
 	spec.Trace = ctx
 	stderrTail := &tailBuffer{limit: 64 << 10}

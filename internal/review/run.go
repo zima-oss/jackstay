@@ -19,6 +19,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/access"
 	"github.com/zima-oss/jackstay/internal/review/claude"
 	"github.com/zima-oss/jackstay/internal/review/codex"
 	"github.com/zima-oss/jackstay/internal/review/runner"
@@ -736,33 +737,8 @@ const (
 	OutcomeNoSlot       = "no-slot"
 )
 
-// redactedArgv is argv as kept in run.json: an MCP server's definition may carry a credential in
-// its command, arguments or environment, so every MCP setting — jackstay's, or a project's in its
-// isolation flags, whole table or one key — is kept by key only. `mcp_servers={}` is kept as is.
-func redactedArgv(argv []string) []string {
-	kept := slices.Clone(argv)
-	for index, word := range kept {
-		value, inline := strings.CutPrefix(word, "--config=")
-		if !inline {
-			if index == 0 || kept[index-1] != "-c" && kept[index-1] != "--config" {
-				if kept[max(index-1, 0)] == "--mcp-config" && index > 0 && word != `{"mcpServers":{}}` {
-					kept[index] = "<redacted>"
-				}
-				continue
-			}
-			value = word
-		}
-		key, setting, _ := strings.Cut(value, "=")
-		if strings.HasPrefix(strings.TrimSpace(key), "mcp_servers") && strings.TrimSpace(setting) != "{}" {
-			redacted := key + "=<redacted>"
-			if inline {
-				redacted = "--config=" + redacted
-			}
-			kept[index] = redacted
-		}
-	}
-	return kept
-}
+// redactedArgv is argv as kept in run.json and round.json (access.RedactedArgv).
+func redactedArgv(argv []string) []string { return access.RedactedArgv(argv) }
 
 // writeRun writes a run's record, its argv redacted (redactedArgv): the one way run.json is written.
 func writeRun(path string, run ReviewerRun) error {

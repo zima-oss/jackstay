@@ -69,6 +69,9 @@ func SecretPaths(home, reviewer string, environ []string) []string {
 // the reviewer's working folder.
 var SecretFileGlobs = []string{"//**/.env", "//**/.env.*"}
 
+// SecretFileNames are the names of those files, for rules that take a folder and a pattern.
+var SecretFileNames = []string{".env", ".env.*"}
+
 // tokenLike are names of variables that carry a credential.
 var tokenLike = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|COOKIE|SESSION_?KEY|(^|_)AUTH($|_))`)
 
@@ -145,4 +148,32 @@ func Environment(environ []string, reviewer, temporary string) []string {
 type MCPServer struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
+}
+
+// RedactedArgv is argv as jackstay keeps it (run.json, round.json, telemetry): an MCP server's definition may carry a credential in
+// its command, arguments or environment, so every MCP setting — jackstay's, or a project's in its
+// isolation flags, whole table or one key — is kept by key only. `mcp_servers={}` is kept as is.
+func RedactedArgv(argv []string) []string {
+	kept := slices.Clone(argv)
+	for index, word := range kept {
+		value, inline := strings.CutPrefix(word, "--config=")
+		if !inline {
+			if index == 0 || kept[index-1] != "-c" && kept[index-1] != "--config" {
+				if kept[max(index-1, 0)] == "--mcp-config" && index > 0 && word != `{"mcpServers":{}}` {
+					kept[index] = "<redacted>"
+				}
+				continue
+			}
+			value = word
+		}
+		key, setting, _ := strings.Cut(value, "=")
+		if strings.HasPrefix(strings.TrimSpace(key), "mcp_servers") && strings.TrimSpace(setting) != "{}" {
+			redacted := key + "=<redacted>"
+			if inline {
+				redacted = "--config=" + redacted
+			}
+			kept[index] = redacted
+		}
+	}
+	return kept
 }

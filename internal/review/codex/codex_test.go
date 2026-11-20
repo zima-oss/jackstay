@@ -173,7 +173,7 @@ func TestPinnedSourceUsesTheReviewerAccessProfile(t *testing.T) {
 	home := homedir.AccountHome()
 	temporary, _ := canonicalPath(Temporary(request))
 	for _, want := range []string{`":root"="read"`, strconv.Quote(filepath.Join(home, ".ssh")) + `="none"`,
-		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`, `"/**/.env"="none"`, `"/**/.env.*"="none"`,
+		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`, globKey(request, home, ".env"), globKey(request, home, ".env.*"),
 		strconv.Quote(temporary) + `="write"`} {
 		if !strings.Contains(filesystem, want) {
 			t.Errorf("the filesystem table lacks %s: %s", want, filesystem)
@@ -407,4 +407,13 @@ func TestTheProjectsInheritWinsAndEveryKeyIsOnce(t *testing.T) {
 	if defaults < 0 || project < defaults {
 		t.Fatalf("the project's inherit does not come after jackstay's default: %v", argv)
 	}
+}
+
+// globKey is the profile's entry denying files named name under the first root of this platform.
+func globKey(request Request, home, name string) string {
+	root := envGlobRoots(request, home)[0]
+	if resolved, err := canonicalPath(root); err == nil {
+		root = resolved
+	}
+	return strconv.Quote(strings.TrimSuffix(root, "/")+"/**/"+name) + `="none"`
 }

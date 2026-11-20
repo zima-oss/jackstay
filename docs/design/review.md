@@ -281,20 +281,22 @@ round's report merges their findings by `place`.
     also left out of the generated patches (`changes/*.patch`); the change index still names them.
     Claude Code: `Read`, `Glob` and `Grep` deny rules for each path and for `//**/.env` and
     `//**/.env.*` (anchored at the filesystem's root, not at its working folder), through
-    `--settings`. Codex: each path `"none"` in the profile, and the globs `"/**/.env"` and
-    `"/**/.env.*"` `"none"`, which Codex checks at every read on macOS and expands when the run
-    starts on Linux (`glob_scan_max_depth` 12). jackstay walks no folder for them.
+    `--settings`. Codex: each path `"none"` in the profile, and `.env` / `.env.*` globs `"none"`.
+    On macOS they are `"/**/.env"` and `"/**/.env.*"`, checked at every read. On Linux Codex
+    expands a glob when the run starts (`glob_scan_max_depth` 12) and refuses one rooted at `/`, so
+    the globs are rooted at the source view, the live checkout and the folder beside it (not when
+    that is the account's home): a `.env` elsewhere, deeper, or made during the run is not denied
+    to Codex there (taken from Codex 0.169.0's Linux sandbox source; not run on Linux here).
   - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
     `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
     local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,
     `disableAllHooks`. `review.reviewers.<name>.mcp_servers` gives chosen servers back, and their
     tools only. Their definitions may hold a credential, so `run.json` and `round.json` keep every
     MCP setting of the argv — jackstay's, or a project's in its isolation flags, whole table or one
-    key — by key only (a reused run's record too).
+    key — by key only (a reused run's record too), and so does the argv kept in telemetry.
   Checked against Codex 0.169.0 and Claude Code 2.1.328 on macOS (2026-11-20): both were denied
   `~/.ssh`, the untracked `.env` of the checkout and of a checkout beside it, and the other
-  reviewer's login, listed `/usr/share`, and fetched
-  `https://example.com`; Codex's shell had the user's full `PATH` and no `GH_TOKEN` set in the
+  reviewer's login, listed `/usr/share`, and fetched a public web page; Codex's shell had the user's full `PATH` and no `GH_TOKEN` set in the
   caller, and wrote nothing outside its folder.
 - **argv** (Codex): as in section 1, then the access profile as `-c` permission settings,
   `-a never`, `--strict-config` and `project_doc_max_bytes=0` (repository instructions are read

@@ -167,8 +167,9 @@ rounds and the required reviewer set for `jst review check`.
 A reviewer reads everything, read-only, has the network, your full `PATH`, your proxy and CA
 settings, and its own provider's login. It cannot write outside its own temporary folder, read
 `~/.ssh`, `~/.aws`, `~/.config/gh` and the other credential folders, the keychain, the other
-reviewer's login, or any `.env` file, or see token-like environment variables other than its
-provider's. Codex and Claude Code get
+reviewer's login, or `.env` files (on Linux, Codex: those in and beside the checkout, at most 12
+folders deep, that exist when the run starts), or see token-like environment variables other than
+its provider's. Codex and Claude Code get
 the same profile; the [design](../design/review.md#34-the-run) lists it whole.
 
 `jst check` validates the section. Paths are read from the reviewed commit's tree.

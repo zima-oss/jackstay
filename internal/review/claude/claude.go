@@ -227,7 +227,8 @@ func Run(ctx context.Context, request runner.Request) runner.Result {
 	}
 	bounded, cancel := context.WithTimeout(ctx, request.Timeout)
 	defer cancel()
-	captured, err := supervise.Capture(bounded, result.Argv, request.Tree, environment(request.Environ, temporary), request.Prompt)
+	captured, err := supervise.CaptureTraced(bounded, result.Argv, access.RedactedArgv(result.Argv), request.Tree,
+		environment(request.Environ, temporary), request.Prompt)
 	result.Exit = captured.Status
 	switch {
 	case ctx.Err() != nil:
