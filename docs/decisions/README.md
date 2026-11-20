@@ -57,3 +57,4 @@ is added in a pull request.
 | [W-087](W-087-review-pinned-source.md) | Reviewers navigate pinned Git snapshots and read patches on demand |
 | [W-090](W-090-compatibility-of-0-6-0.md) | 0.6.0 compatibility: newer keys need `"jackstay_schema": 3` and an older pin is never handed one; internal limits are constants; Codex is the default reviewer again |
 | [W-090](W-090-agent-chat.md) | 0.6.0 chat: the agent chat follows Claude Code's messaging model and extends it: one store per account, repositories as channels, the engine's session ID, delivery over Claude Code's socket with hooks as the fallback |
+| [W-090](W-090-sandbox-writes-only-what-jst-needs.md) | 0.6.0 sandbox: `jst setup` lets the agent sandbox write only the folders jst needs from it; receipts, gate marks, review rounds and the run log stay read-only there |

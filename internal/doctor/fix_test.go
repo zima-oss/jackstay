@@ -23,7 +23,7 @@ func TestEveryProblemNamesItsFix(t *testing.T) {
 		"codesign-setting-unreadable", "codesign-uninspected", "config-error", "expected-never-called",
 		"expected-unreadable", "failed-open", "folder-incomplete", "guard-does-not-refuse",
 		"guard-never-called", "launcher-missing", "launcher-not-fixed", "layout-unreadable",
-		"link-missing", "lock-unwritable", "path-not-first", "sandbox-blocks-state", "version-mismatch",
+		"link-missing", "lock-unwritable", "path-not-first", "sandbox-blocks-state", "sandbox-writes-evidence", "version-mismatch",
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {

@@ -1188,7 +1188,10 @@ jst setup: plan and apply selected machine setup repairs
 usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
-POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
+POSIX shell profile, and let Claude Code's enabled sandbox write only the folders of the jackstay
+home jst writes from it (logs, locks, chat, jobs, the brief, ids, the trash), replacing an entry
+that names the whole home. Evidence (receipts, gate marks, review rounds, the run log) stays
+read-only to the sandbox; run jst test gate and jst review outside it.
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
   --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
@@ -1199,8 +1202,9 @@ POSIX shell profile and allow jackstay's state folder in Claude Code's enabled s
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
 terminal offers apply, show and skip. An existing profile is copied to a
-unique backup beside it before replacement. Unsupported shells and conflicting profiles are
-left for the owner. Open a new shell after applying a PATH repair.
+unique backup beside it before replacement; the settings file keeps its keys in order. A profile
+or settings file that is a symbolic link is named and left for the owner, as are unsupported
+shells and conflicting profiles. Open a new shell after applying a PATH repair.
 
 exit: 0 planned or applied; 1 an applicable repair failed; 2 the request is wrong.
 

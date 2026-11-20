@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -263,7 +264,7 @@ func TestSandbox(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			write(t, settings, tc.json)
-			blocked, fix := SandboxBlocks(settings, home)
+			blocked, fix := SandboxBlocks(settings, home, []string{"app"})
 			if got := blocked != ""; got != tc.blocks || (blocked != "") != (fix != "") {
 				t.Fatalf("blocks %v, want %v: %s; fix %q", got, tc.blocks, blocked, fix)
 			}
@@ -274,9 +275,58 @@ func TestSandbox(t *testing.T) {
 		folder, _ := os.MkdirTemp("/tmp", "jackstay-doctor.")
 		defer os.RemoveAll(folder)
 		write(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": ["/tmp/*"]}}}`)
-		if blocked, _ := SandboxBlocks(settings, folder); blocked != "" {
+		if blocked, _ := SandboxBlocks(settings, folder, nil); blocked != "" {
 			t.Fatalf("/tmp/* did not cover %s: %s", folder, blocked)
 		}
+	}
+}
+
+func TestSandboxGrantsAndEvidence(t *testing.T) {
+	home := filepath.Join(realPath(t.TempDir()), ".jackstay")
+	for _, folder := range []string{"app", ".all", ".trash", "node"} {
+		if err := os.MkdirAll(filepath.Join(home, folder), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projects := SandboxProjects(home, []string{"service", "app"})
+	if strings.Join(projects, ",") != "app,node,service" {
+		t.Fatalf("projects %v", projects)
+	}
+	grants := SandboxGrants(home, []string{"app"})
+	want := []string{".all/telemetry", ".all/procs", ".all/session-chat", ".all/context-brief", ".all/heavy-suite.lock",
+		".all/heavy-suite.lock.queue", ".trash", "app/telemetry", "app/outputs", "app/ids"}
+	if len(grants) != len(want) {
+		t.Fatalf("grants %v", grants)
+	}
+	for index, grant := range grants {
+		if grant != filepath.Join(home, want[index]) {
+			t.Fatalf("grant %d is %s, want %s", index, grant, want[index])
+		}
+	}
+	settings := filepath.Join(t.TempDir(), "settings.json")
+	quoted := func(paths []string) string {
+		encoded, _ := json.Marshal(paths)
+		return string(encoded)
+	}
+	write(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": `+quoted(grants)+`}}}`)
+	if blocked, _ := SandboxBlocks(settings, home, []string{"app"}); blocked != "" {
+		t.Fatalf("the grants were not enough: %s", blocked)
+	}
+	if exposed, _, _ := SandboxWritesEvidence(settings, home, []string{"app"}); exposed != "" {
+		t.Fatalf("the grants expose evidence: %s", exposed)
+	}
+	if blocked, _ := SandboxBlocks(settings, home, []string{"app", "service"}); !strings.Contains(blocked, filepath.Join(home, "service", "ids")) {
+		t.Fatalf("a new project's folders were not asked for: %q", blocked)
+	}
+	write(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": ["`+home+`"]}}}`)
+	exposed, fix, entries := SandboxWritesEvidence(settings, home, []string{"app"})
+	if !strings.Contains(exposed, filepath.Join(home, "app", "receipts")) || !strings.Contains(exposed, filepath.Join(home, ".all", "runs.jsonl")) ||
+		len(entries) != 1 || entries[0] != home || !strings.Contains(fix, "jst setup") {
+		t.Fatalf("the whole home: %q %q %v", exposed, fix, entries)
+	}
+	write(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": ["`+home+`"], "denyWrite": ["`+home+`/app/receipts", "`+home+`/app/gate-marks", "`+home+`/app/gate-bars", "`+home+`/app/reviews", "`+home+`/.all/runs.jsonl", "`+home+`/.all/reviews", "`+home+`/.all/review-pool", "`+home+`/.all/delivery", "`+home+`/.all/expected-projects"]}}}`)
+	if exposed, _, _ := SandboxWritesEvidence(settings, home, []string{"app"}); exposed != "" {
+		t.Fatalf("denied evidence counted as exposed: %s", exposed)
 	}
 }
 

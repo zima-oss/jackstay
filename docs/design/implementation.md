@@ -226,12 +226,18 @@ becomes `.all`, leaves the folder, or shares a folder with another.
 
 A log line is one JSON object appended in a single write, so lines of several processes never
 mix; a log that cannot be written never fails the tool that writes it (each tool says what it does
-instead). Claude Code's Bash sandbox writes only the folders in `sandbox.filesystem.allowWrite`, so
-`~/.jackstay` must be in that list for a run inside a sandboxed session to be recorded; `jst doctor`
-says so when it is not (section 7).
+instead). Claude Code's Bash sandbox writes only the folders in `sandbox.filesystem.allowWrite`.
+`jst setup` lists there only what jst writes from a sandboxed command (`doctor.SandboxGrants`): the
+journals, test outputs, the heavy-suite lock and its queue, `procs`, `session-chat`,
+`context-brief`, each project's `ids` and the trash. Evidence (receipts and failure notes, gate
+marks and bars, review rounds, the run log, the delivery record, the expected projects) stays
+read-only to the sandbox, so a sandboxed agent cannot forge a pass (#59); `jst test gate` and
+`jst review` run outside it. `jst doctor` reports a grant that is missing and an entry that exposes
+evidence (section 7).
 
-Everything in `~/.jackstay` may be written by every session of this account: receipts, step marks
-and the run record can be forged. That is a known limit, not a boundary (guard.md).
+Outside the sandbox every session of this account may still write all of `~/.jackstay`: receipts,
+step marks and the run record can be forged there. That is a known limit, not a boundary
+(guard.md).
 
 ### 3.2 The project file: `jackstay.json`
 
@@ -1546,8 +1552,12 @@ by a line `  fix: …`, or "nothing needs the owner".
 `denyWrite` of the account's `~/.claude/settings.json` only (a project's own settings may still
 allow it; the sentence says so). An entry is a path, `~/…` expanded from the account, or a pattern;
 a pattern's part before its first `*?[` is resolved as a real path and the rest matched per path
-element with `path.Match`, `**` standing for any number of elements. `denyWrite` covering
-`~/.jackstay` or a folder inside it wins.
+element with `path.Match`, `**` standing for any number of elements. Each grant, for each project
+folder in the home and each expected project, must be covered by `allowWrite` and by no
+`denyWrite` (`sandbox-blocks-state`); no evidence path may be covered by `allowWrite` unless a
+`denyWrite` covers it too (`sandbox-writes-evidence`). Setup removes only entries naming the home
+itself (with or without `/**`), never an owner's broader one, and makes each grant before naming
+it, so a sandbox that binds paths finds them.
 
 **`--expect NAME` / `--forget NAME`** change `~/.jackstay/.all/expected-projects` (one marker name
 per line, sorted) under `flock` on `expected-projects.lock` (waiting up to 30 s) and replace it by

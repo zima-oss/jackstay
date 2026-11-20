@@ -79,29 +79,36 @@ jst log --command guard --since 1h
 
 ## The sandbox
 
-Claude Code's Bash sandbox writes only the folders its settings allow. jackstay writes its state to
-`~/.jackstay`: run records, receipts, the trash, the journal, background process entries, counters.
-Allow it in the sandbox's `filesystem.allowWrite` list (in `~/.claude/settings.json`, or the
-project's settings), for example:
+Claude Code's Bash sandbox writes only the folders its settings allow. jackstay keeps two kinds of
+things in `~/.jackstay`. Some it writes while an agent's command runs in the sandbox; the rest is
+evidence it later trusts (receipts, gate marks, review rounds, the run log), which the sandbox may
+only read, so an agent cannot record a pass it did not run. `jst setup` adds exactly these to
+`sandbox.filesystem.allowWrite` in `~/.claude/settings.json`, one set per project it knows:
 
-```json
-{
-  "sandbox": {
-    "enabled": true,
-    "filesystem": {"allowWrite": ["~/.jackstay"]}
-  }
-}
-```
+| Path under `~/.jackstay` | Why jst writes it from a sandboxed command |
+|---|---|
+| `.all/telemetry`, `<project>/telemetry` | the journal |
+| `<project>/outputs` | test output, for `jst test last` |
+| `.all/heavy-suite.lock`, `.all/heavy-suite.lock.queue` | `jst lock` and heavy test runs |
+| `.all/procs` | `jst bg` and `jst procs` |
+| `.all/session-chat` | chat commands |
+| `.all/context-brief` | `jst brief save` |
+| `<project>/ids` | `jst id next` |
+| `.trash` | `jst discard` |
 
-`jst doctor` reads `~/.claude/settings.json` and reports `sandbox-blocks-state` when the sandbox is
-on and `~/.jackstay` is not writable. Some commands must still run outside the sandbox:
+`jst doctor` reports `sandbox-blocks-state` when one of them is not writable (a new project, say:
+run `jst setup` again) and `sandbox-writes-evidence` when an entry lets the sandbox write evidence,
+such as the whole `~/.jackstay` an earlier setup added; `jst setup` replaces that entry, keeping a
+backup of the settings. A command that records evidence runs outside the sandbox:
 
 | Command | Inside the sandbox |
 |---|---|
 | `jst review` with Codex | refused, exit 6: Codex must be able to write its login (`~/.codex`) |
 | `jst tidy --fix` | keeps every worktree: the sandbox hides other processes, so it cannot prove a worktree unused |
 | `jst procs stop`, a stop of something the sandbox did not start | refused by the system; jackstay names what to run outside |
-| `jst lock`, `jst test` with the lock | exit 2 when `~/.jackstay` is not writable |
+| `jst lock`, `jst test` with the lock | exit 2 when the lock is not writable |
+| `jst test gate`, `jst review` | they record evidence the sandbox may only read: run them outside |
+| `jst test SCOPE` | runs and keeps its output; the receipt is not stored, so the next run is not reused |
 
 `jst trash` exists because the system's Trash cannot be written from inside the sandbox.
 

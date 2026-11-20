@@ -12,7 +12,7 @@ walks through each:
 | Step | Where | Needed for |
 |---|---|---|
 | Put `~/.local/bin` on `PATH` | your shell's profile; the script prints the exact line when it is missing | running `jst` |
-| Let Claude Code's sandbox write `~/.jackstay` | `sandbox.filesystem.allowWrite` in `~/.claude/settings.json` | records of runs in sandboxed sessions ([Claude Code](claude-code.md#the-sandbox)) |
+| Let Claude Code's sandbox write jackstay's logs, locks, chat and jobs (`jst setup`) | `sandbox.filesystem.allowWrite` in `~/.claude/settings.json` | jst in sandboxed sessions; evidence stays read-only there ([Claude Code](claude-code.md#the-sandbox)) |
 | `jst adopt --apply`, then commit what it wrote | each project | the guard hook and the `AGENTS.md` block |
 | Accept Claude Code's trust dialog | the first session in each project | Claude Code loading the hook |
 | Optional: install Codex or Claude Code and authenticate | your terminal | Review rounds with the selected provider ([Reviews](review.md)) |
@@ -37,12 +37,10 @@ bash or zsh; for another shell, the folder); add it, open a new terminal, then:
 jst doctor
 ```
 
-If you use Claude Code with its sandbox on, allow `~/.jackstay` in `~/.claude/settings.json`, so
-runs inside sandboxed sessions are recorded (`jst doctor` reports `sandbox-blocks-state` until then):
-
-```json
-{"sandbox": {"filesystem": {"allowWrite": ["~/.jackstay"]}}}
-```
+If you use Claude Code with its sandbox on, run `jst setup`: it lets the sandbox write the folders
+of `~/.jackstay` jst needs there (logs, locks, chat, jobs) and keeps evidence such as receipts and
+gate marks read-only to it ([Claude Code](claude-code.md#the-sandbox)). `jst doctor` reports
+`sandbox-blocks-state` until then.
 
 To read the script first, or to install another way: [Install](install.md).
 
