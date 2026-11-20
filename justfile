@@ -83,19 +83,25 @@ darwin-smoke:
 # cmd/jst-sitelinks over every page the build wrote: the menus and the home page's buttons and cards
 # too, at the Pages address's path); and a guide page has the sidebar beside it on a desktop (the
 # guide is of type docs: Hextra's default type hides it, `hx:md:hidden`), its desktop list (not the
-# phone's menu, which lists the guide too) naming the current page and the guide's first
+# phone's menu, which lists the guide too) naming the current page and the guide's first; and
+# llms.txt lists every page's Markdown, llms-full.txt holds them
 docs:
     go test -count=1 -v ./internal/docs
     folder="$(mktemp -d)" && trap 'rm -r "$folder"' EXIT && \
     go run {{hugo}} --source site --panicOnWarning --baseURL {{site_address}} --destination "$folder/public" --quiet && \
     go run ./cmd/jst-sitelinks "$folder/public" {{site_address}} && \
-    page="$folder/public/guide/tests/index.html" && \
+    page="$folder/public/guide/daily-work/tests/index.html" && \
     sidebar="$(grep -o '<aside class="hextra-sidebar-container[^"]*"' "$page")" && \
     desktop="$(perl -0ne 'print $1 if /<ul class="[^"]*hx:max-md:hidden[^"]*">(.*?)<\/aside>/s' "$page")" && \
     if [[ "$sidebar" != *hx:md:sticky* || "$sidebar" == *hx:md:hidden* ]] || \
       [[ "$desktop" != *hextra-sidebar-active-item* ]] || \
-      [[ "$desktop" != *'href="/jackstay/guide/getting-started/"'* ]]; then \
+      [[ "$desktop" != *'href="/jackstay/guide/start/getting-started/"'* ]]; then \
       echo "FAILED: docs: the guide's sidebar is not shown on a desktop ($page)"; exit 1; fi && \
+    for page in $(cd "$folder/public" && find guide -name '*.md' ! -path guide/index.md | sort); do \
+      grep -qF "{{site_address}}$page" "$folder/public/llms.txt" || \
+        { echo "FAILED: docs: llms.txt does not list $page"; exit 1; }; done && \
+    grep -q '^Page: {{site_address}}guide/reference/configuration/$' "$folder/public/llms-full.txt" || \
+      { echo "FAILED: docs: llms-full.txt lacks the configuration reference"; exit 1; } && \
     echo "docs: the site builds"
 
 # The generated pages, written anew from the code: every command's help (internal/cli/testdata/help.txt),

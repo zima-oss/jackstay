@@ -1,0 +1,32 @@
+{{- /*
+  Adds one page made from one Markdown file, for a content adapter: its first line `# Title`
+  becomes the page's title (without backticks) and is left out of the body, as the theme prints
+  the title itself. The page keeps the file it was made from in `jackstay_source`, which the link
+  render hook resolves its links by.
+
+  Context: a dict with
+    adapter  the content adapter's context (its .AddPage)
+    file     the file, as mounted under assets: "docs/STYLE.md", "CONTRIBUTING.md"
+    path     the page's path in the site: "guide/contributing/style"
+    kind     "page" (the default) or "section"
+    weight   its place among the pages beside it (optional)
+    title    a title to use instead of the file's heading (optional)
+*/ -}}
+{{- $file := resources.Get .file -}}
+{{- if not $file }}{{ errorf "page-from-file: no file %s is mounted" .file }}{{ end -}}
+{{- $text := $file.Content -}}
+{{- $title := .title | default (path.Base .file) -}}
+{{- $body := $text -}}
+{{- with findRESubmatch `^# ([^\n]+)\n` $text 1 -}}
+  {{- if not $.title }}{{ $title = replace (index (index . 0) 1) "`" "" }}{{ end -}}
+  {{- $body = strings.TrimPrefix (index (index . 0) 0) $text -}}
+{{- end -}}
+{{- $page := dict
+  "kind" (.kind | default "page")
+  "path" .path
+  "title" $title
+  "params" (dict "jackstay_source" .file)
+  "content" (dict "mediaType" "text/markdown" "value" $body)
+-}}
+{{- with .weight }}{{ $page = merge $page (dict "weight" .) }}{{ end -}}
+{{- .adapter.AddPage $page -}}

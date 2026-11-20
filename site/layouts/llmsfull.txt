@@ -1,0 +1,17 @@
+{{- /* /llms-full.txt (llmstxt.org): every page of the guide as Markdown, in the sidebar's order,
+  each after a line naming its address. */ -}}
+# {{ site.Title }}
+
+> {{ site.Home.Description }}
+{{ with site.GetPage "/guide" }}{{ template "llms-full" . }}{{ end }}
+
+{{- define "llms-full" }}
+
+---
+Page: {{ .Permalink }}
+
+# {{ .Title }}
+
+{{ .RawContent | strings.TrimSpace }}
+{{- range .Pages.ByWeight }}{{ template "llms-full" . }}{{ end }}
+{{- end -}}
