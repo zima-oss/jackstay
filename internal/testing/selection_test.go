@@ -90,7 +90,7 @@ func TestSelectionRequiresBaseAndFallsBackForEmptyRange(t *testing.T) {
 	w.expectStatus(w.jst("plan", "auto"), statusRefused)
 	w.expectSaid("no known default ref")
 	w.expectStatus(w.jst("plan", "auto", "--base", "main"), 0)
-	if !strings.Contains(w.stdout.String(), "empty committed range -> gate") {
+	if !strings.Contains(w.stdout.String(), "no changed path -> gate") {
 		t.Fatal(w.stdout.String())
 	}
 	w.repo.Git("update-ref", "refs/remotes/origin/main", w.repo.Git("rev-parse", "main"))
@@ -102,13 +102,54 @@ func TestSelectionRequiresBaseAndFallsBackForEmptyRange(t *testing.T) {
 	}
 }
 
-func TestSelectionIgnoresUncommittedPaths(t *testing.T) {
+func TestSelectionCountsUncommittedAndUntrackedPathsInTheWorkingTree(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		change    func(*world)
+		wantScope string
+		wantPath  string
+	}{
+		{"untracked", func(w *world) { w.repo.Write(map[string]string{"assets/untracked.txt": "unknown\n"}) },
+			"gate", "unmatched: assets/untracked.txt -> gate"},
+		{"untracked in a new folder", func(w *world) { w.repo.Write(map[string]string{"Sources/new/a.swift": "let a = 1\n"}) },
+			"full", "Sources/new/a.swift"},
+		{"modified", func(w *world) { w.repo.Write(map[string]string{"Sources/a.swift": "let a = 3\n"}) },
+			"full", "Sources/a.swift"},
+		{"staged", func(w *world) {
+			w.repo.Write(map[string]string{"Sources/a.swift": "let a = 3\n"})
+			w.repo.Git("add", "Sources/a.swift")
+		}, "full", "Sources/a.swift"},
+		{"deleted", func(w *world) { w.repo.Git("rm", "--quiet", "Sources/a.swift") }, "full", "Sources/a.swift"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			w := newWorld(t, selectionSection(), nil)
+			w.repo.Commit("code", map[string]string{"Sources/a.swift": "let a = 2\n"})
+			base := w.repo.Git("rev-parse", "HEAD")
+			w.repo.Commit("docs", map[string]string{"docs/new.md": "new\n"})
+			test.change(w)
+			w.expectStatus(w.jst("plan", "auto", "--base", base), 0)
+			if !strings.Contains(w.stdout.String(), "selection: scope="+test.wantScope) || !strings.Contains(w.stdout.String(), test.wantPath) {
+				t.Fatalf("working-tree change not counted: %s", w.stdout.String())
+			}
+			w.expectStatus(w.jst("auto", "--base", base), 0)
+			if got := w.lastRecord("run").Text("scope"); got != test.wantScope {
+				t.Fatalf("ran scope %q, want %q", got, test.wantScope)
+			}
+		})
+	}
+}
+
+func TestSelectionOnACleanCopyIgnoresTheWorkingTree(t *testing.T) {
 	w := newWorld(t, selectionSection(), nil)
 	w.repo.Commit("docs", map[string]string{"docs/new.md": "new\n"})
 	w.repo.Write(map[string]string{"assets/uncommitted.txt": "unknown\n"})
-	w.expectStatus(w.jst("plan", "auto", "--base", "main"), 0)
+	w.expectStatus(w.jst("plan", "changed", "main..HEAD"), 0)
 	if !strings.Contains(w.stdout.String(), "selection: scope=quick") {
 		t.Fatal(w.stdout.String())
+	}
+	w.expectStatus(w.jst("auto", "--base", "main", "--commit", "HEAD"), 0)
+	if got := w.lastRecord("run").Text("scope"); got != "quick" {
+		t.Fatalf("clean copy chose %q, want quick", got)
 	}
 }
 
@@ -139,6 +180,18 @@ func TestSelectionStatusParser(t *testing.T) {
 	}
 	if _, err := changedPaths([]byte("R100\x00old\x00")); err == nil {
 		t.Fatal("accepted incomplete rename")
+	}
+}
+
+func TestSelectionWorkingTreeStatusParser(t *testing.T) {
+	paths, err := statusPaths([]byte(" M a file\x00?? new/b\x00D  gone\x00"))
+	if err != nil || strings.Join(paths, ",") != "a file,new/b,gone" {
+		t.Fatalf("paths=%q error=%v", paths, err)
+	}
+	for _, bad := range []string{" M a", "M\x00", "XYZpath\x00"} {
+		if _, err := statusPaths([]byte(bad)); err == nil {
+			t.Fatalf("accepted %q", bad)
+		}
 	}
 }
 

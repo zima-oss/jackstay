@@ -158,6 +158,22 @@ func (proj *project) selectScope() (selectionResult, error) {
 	if err != nil {
 		return selectionResult{}, refused("cannot read changed paths: " + err.Error())
 	}
+	if proj.options.commit == "" {
+		// The run uses the working tree, so its uncommitted and untracked paths count too.
+		porcelain, err := proj.git(proj.ctx, proj.root, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames")
+		if err != nil {
+			return selectionResult{}, refused("cannot read uncommitted paths: " + err.Error())
+		}
+		uncommitted, err := statusPaths(porcelain)
+		if err != nil {
+			return selectionResult{}, refused("cannot read uncommitted paths: " + err.Error())
+		}
+		for _, file := range uncommitted {
+			if !slices.Contains(paths, file) {
+				paths = append(paths, file)
+			}
+		}
+	}
 	result := selectionResult{scope: "gate", base: base}
 	order := textsOf(selection["order"])
 	chosenRank := -1
@@ -226,6 +242,24 @@ func changedPaths(status []byte) ([]string, error) {
 	return paths, nil
 }
 
+// statusPaths reads `git status --porcelain=v1 -z --no-renames`: one "XY path" entry per path.
+func statusPaths(status []byte) ([]string, error) {
+	if len(status) == 0 {
+		return nil, nil
+	}
+	if status[len(status)-1] != 0 {
+		return nil, fmt.Errorf("incomplete NUL-delimited Git status")
+	}
+	var paths []string
+	for _, entry := range strings.Split(string(status[:len(status)-1]), "\x00") {
+		if len(entry) < 4 || entry[2] != ' ' {
+			return nil, fmt.Errorf("unexpected Git status entry %q", entry)
+		}
+		paths = append(paths, entry[3:])
+	}
+	return paths, nil
+}
+
 func (proj *project) printSelection(choice selectionResult) {
 	fmt.Fprintf(proj.stdout, "selection: scope=%s base=%s\n", choice.scope, choice.base)
 	for _, rule := range choice.matches {
@@ -235,7 +269,7 @@ func (proj *project) printSelection(choice selectionResult) {
 		fmt.Fprintf(proj.stdout, "  unmatched: %s -> gate\n", file)
 	}
 	if len(choice.matches) == 0 && len(choice.unmatched) == 0 {
-		fmt.Fprintln(proj.stdout, "  empty committed range -> gate")
+		fmt.Fprintln(proj.stdout, "  no changed path -> gate")
 	}
 	if when := textOf(objectOf(objectOf(proj.section["scopes"])[choice.scope])["when"]); when != "" {
 		fmt.Fprintf(proj.stdout, "  when: %s\n", when)
