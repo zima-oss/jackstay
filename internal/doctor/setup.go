@@ -37,13 +37,11 @@ read-only to the sandbox; run jst test gate and jst review outside it.
   --answer ID=VALUE  keep this machine's answer to a question without being asked (repeatable)
 
 The questions, the recommended answer first. On a terminal setup asks them after the repairs and
-keeps the answers as this machine's defaults (` + "`<jackstay home>/.all/choices.json`" + `), which jst adopt
-offers first; a project's jackstay.json still decides:
+keeps the answers as this machine's defaults (` + "`<jackstay home>/.all/choices.json`" + `); a terminal
+jst adopt --apply offers them first, and a project's jackstay.json still decides:
   reviewer   codex, claude-code, or codex,claude-code: who runs jst review
-  autonomy   merge-when-green (the agent merges when the required checks pass; jackstay.json
-             and the listed paths need a person) or prepare (the agent prepares, a person merges);
-             kept for later: no command reads it yet, so jst gh pr-land still merges as before
   chat       off or on: the agent chat, which each repository still turns on in its jackstay.json
+How far the agent may land on its own is asked once the landing command reads it.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
@@ -337,9 +335,6 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	asked := choices.Defaults{}
 	for _, question := range machineQuestions() {
 		offered, _ := choices.Offered(question, "", false, defaults)
-		if question.Later() {
-			fmt.Fprintf(stdout, "(%s is kept for later: no command reads it yet)\n", question.ID)
-		}
 		answer, err := asker.Ask(question, offered)
 		if err != nil {
 			fmt.Fprintf(stderr, "jst setup: %s: %v; this machine's answers are unchanged\n", question.ID, err)
@@ -362,15 +357,16 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "jst setup: keeping this machine's answers: %v; run jst setup again\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "jst setup: kept this machine's answers in %s; jst adopt offers them first\n", store.Path)
+	fmt.Fprintf(stdout, "jst setup: kept this machine's answers in %s; a terminal jst adopt --apply offers them first\n", store.Path)
 	return status
 }
 
-// machineQuestions are the questions setup keeps a machine default for.
+// machineQuestions are the questions setup keeps a machine default for: those with one whose
+// answer some command reads now. The landing autonomy joins them once `land.autonomy` exists.
 func machineQuestions() []choices.Question {
 	var found []choices.Question
 	for _, question := range choices.All() {
-		if question.Machine {
+		if question.Machine && !question.Later() {
 			found = append(found, question)
 		}
 	}
@@ -385,9 +381,6 @@ func printMachineChoices(out io.Writer, defaults choices.Defaults, problem error
 	}
 	for _, question := range machineQuestions() {
 		value, from := choices.Offered(question, "", false, defaults)
-		if question.Later() {
-			from += "; kept for later: no command reads it yet"
-		}
 		fmt.Fprintf(out, "choice %s: %s (%s)\n", question.ID, value, from)
 	}
 }

@@ -1210,13 +1210,11 @@ read-only to the sandbox; run jst test gate and jst review outside it.
   --answer ID=VALUE  keep this machine's answer to a question without being asked (repeatable)
 
 The questions, the recommended answer first. On a terminal setup asks them after the repairs and
-keeps the answers as this machine's defaults (`<jackstay home>/.all/choices.json`), which jst adopt
-offers first; a project's jackstay.json still decides:
+keeps the answers as this machine's defaults (`<jackstay home>/.all/choices.json`); a terminal
+jst adopt --apply offers them first, and a project's jackstay.json still decides:
   reviewer   codex, claude-code, or codex,claude-code: who runs jst review
-  autonomy   merge-when-green (the agent merges when the required checks pass; jackstay.json
-             and the listed paths need a person) or prepare (the agent prepares, a person merges);
-             kept for later: no command reads it yet, so jst gh pr-land still merges as before
   chat       off or on: the agent chat, which each repository still turns on in its jackstay.json
+How far the agent may land on its own is asked once the landing command reads it.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a

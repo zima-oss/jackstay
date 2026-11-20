@@ -53,11 +53,56 @@ func TestAnOlderPinIsNotAskedAboutChat(t *testing.T) {
 	}
 }
 
-func TestAProfileValueIsNamedAsTheProfiles(t *testing.T) {
+func TestAnEmptyReviewerListIsTheProjectsChoice(t *testing.T) {
 	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "review": {"use": []}}`})
 	made := plan(t, optionsFor(root))
 	if made.Choices[0].From != "this project's jackstay.json" || made.Choices[0].Value != "" {
 		t.Fatalf("an empty review.use is the project's choice: %+v", made.Choices[0])
+	}
+}
+
+func TestAProfileValueIsNamedAsTheProfilesAndNotAsked(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`})
+	exampleProfile(t, root, `{"review": {"use": ["claude-code"]}}`, nil)
+	options := optionsFor(root)
+	options.Profile = "profiles/profile.json"
+	options.Ask = func(question choices.Question, offered string) (string, error) {
+		if question.ID == "reviewer" {
+			t.Fatal("the profile's reviewer was asked again")
+		}
+		return question.Recommended(), nil
+	}
+	made := plan(t, options)
+	if made.Choices[0].From != "the profile's defaults" || made.Choices[0].Value != "claude-code" {
+		t.Fatalf("reviewer %+v", made.Choices[0])
+	}
+}
+
+func TestThePlanNamesTheValueThatAppliesNotTheMachineOffer(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`})
+	options := optionsFor(root)
+	options.Defaults = choices.Defaults{"reviewer": "claude-code"}
+	reviewer := plan(t, options).Choices[0]
+	if reviewer.Value != "codex" || reviewer.Written || !strings.Contains(reviewer.From, "codex applies while review.use is absent") ||
+		!strings.Contains(reviewer.From, "offers claude-code (this machine's default (jst setup))") {
+		t.Fatalf("reviewer %+v", reviewer)
+	}
+}
+
+func TestChatIsNotAskedWhenThisApplyWritesAnOlderPin(t *testing.T) {
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`})
+	exampleProfile(t, root, `{}`, map[string]string{"check": "name: check\njobs: {}\n# @@jackstay_version@@\n"})
+	options := optionsFor(root)
+	options.Profile = "profiles/profile.json"
+	options.Ask = func(question choices.Question, _ string) (string, error) {
+		if question.ID == "chat" {
+			t.Fatal("chat was asked although this apply pins 0.5.0")
+		}
+		return question.Recommended(), nil
+	}
+	made := plan(t, options)
+	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "pinned to v0.5.0") {
+		t.Fatalf("chat %+v", chat)
 	}
 }
 

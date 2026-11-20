@@ -97,9 +97,8 @@ question and is written even over the project's value:
 jst adopt --apply --answer reviewer=codex,claude-code
 ```
 
-Two more of the owner's questions wait for keys this jackstay does not read yet: how far the agent
-may land a change on its own (`jst setup` already keeps a machine answer), and which test scopes
-CI runs.
+Two more questions wait for keys this jackstay does not read yet: how far the agent may land a
+change on its own, and which test scopes CI runs. Adopt and setup ask them once those keys exist.
 
 ### Conflicts
 

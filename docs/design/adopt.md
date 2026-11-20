@@ -74,7 +74,7 @@ setup` first; `--answer ID=VALUE` answers without asking and is written over the
 without a terminal nothing is written. The plan's `choices` give each question's key, value, where
 it came from (`--answer`, asked, the project's file, the profile's defaults) and whether it was
 written. The landing autonomy and each scope's CI split are asked once `land.autonomy` and a scope's
-`ci` exist; setup already keeps a machine answer for the autonomy.
+`ci` exist (`internal/choices` defines both already).
 
 ## 3. What `jst adopt` owns
 

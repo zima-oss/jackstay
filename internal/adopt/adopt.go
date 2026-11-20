@@ -425,9 +425,6 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 			setAdopt(document, "profile_sha256", strings.ToLower(planner.plan.ProfileSHA256))
 		}
 	}
-	if err := planner.choose(original, document); err != nil {
-		return err
-	}
 	planner.document = document
 	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
 	if planner.usesVersion(chosen) {
@@ -437,6 +434,11 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		}
 		setAdopt(document, "pin", pin)
 	}
+	// After the pin this apply writes, so a question it would refuse the answer to is not asked.
+	if err := planner.choose(original, document); err != nil {
+		return err
+	}
+	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
 	if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) == "1" {
 		for _, key := range config.Stage1Sections {
 			if _, present := document.Get(key); present {
@@ -501,10 +503,14 @@ func (planner *planner) choose(original, document *jsondoc.Object) error {
 			}
 			choice.Value, choice.From, choice.Written = asked, "asked", true
 		default:
-			offered, from := choices.Offered(question, "", false, planner.options.Defaults)
-			choice.Value = offered
-			choice.From = fmt.Sprintf("not written (%s applies, %s); choose with `jst adopt --apply --answer %s=VALUE` "+
-				"(%s) or run it in a terminal", offered, from, question.ID, question.Values())
+			// Nothing is written, so the key stays absent and its default applies; the machine's
+			// answer is only what a terminal apply would offer.
+			choice.Value = question.Recommended()
+			choice.From = fmt.Sprintf("not written: %s applies while %s is absent; choose with `jst adopt --apply --answer %s=VALUE` "+
+				"(%s) or run it in a terminal", choice.Value, question.Key.Name(), question.ID, question.Values())
+			if offered, from := choices.Offered(question, "", false, planner.options.Defaults); offered != choice.Value {
+				choice.From += fmt.Sprintf(", which offers %s (%s)", offered, from)
+			}
 		}
 		if choice.Written {
 			question.Key.Write(document, choice.Value)
