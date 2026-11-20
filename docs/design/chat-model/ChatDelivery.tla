@@ -148,8 +148,14 @@ ClosedRq == [state |-> "expired", notice |-> "owed"]
 ExpireRequest(r, dl) ==
     [ok |-> TRUE, rq |-> ClosedRq, d |-> IF dl.state \in Expirable THEN Expire(dl) ELSE dl]
 
+\* A closure writes the request's record, then the delivery's; a crash between them is repaired by
+\* the next step, before anything else, so a closed question is never claimed or announced.
 ApplyMessage(r, dl, ev) ==
-    IF dl.request /\ r.state = "open" /\ ev.overdue /\ ChecksDeadline(ev.kind)
+    IF dl.request /\ r.state = "expired" /\ dl.state \in Expirable
+    THEN LET repaired == Expire(dl)
+             after    == Apply(repaired, ev)
+         IN [ok |-> TRUE, rq |-> r, d |-> IF after.ok THEN after.d ELSE repaired]
+    ELSE IF dl.request /\ r.state = "open" /\ ev.overdue /\ ChecksDeadline(ev.kind)
     THEN LET closed == ExpireRequest(r, dl)
              after  == Apply(closed.d, ev)
          IN [ok |-> TRUE, rq |-> ClosedRq, d |-> IF after.ok THEN after.d ELSE closed.d]
@@ -171,6 +177,7 @@ Step(ev) ==
     IF /\ isRequest /\ ~SeparateRequestExpiry
        /\ ~(DeadlineSkipsRequest /\ ChecksDeadline(ev.kind))
        /\ ~(DeadlineNeedsPending /\ ~(d.state \in Expirable /\ (d.state = "pending" \/ NamesIt(ev.kind))))
+       /\ ~(FreezeLeavesDelivery /\ rq.state = "expired")
     THEN ApplyMessage(rq, d, ev)
     ELSE LET after == Apply(d, ev)
          IN [ok |-> after.ok, rq |-> rq, d |-> after.d,
@@ -363,7 +370,8 @@ SweepStale ==
 SweepExpiresRequest ==
     /\ overdue /\ isRequest /\ rq.state = "open"
     /\ IF SeparateRequestExpiry THEN SetMsg([rq |-> ClosedRq, d |-> d])
-       ELSE SetMsg(ExpireRequest(rq, d))
+       ELSE \/ SetMsg(ExpireRequest(rq, d))
+            \/ SetMsg([rq |-> ClosedRq, d |-> d])   \* a crash after the request's write
     /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>
 
@@ -386,7 +394,8 @@ RequestingMailboxFreezes ==
     /\ fromMailbox /\ rq.state = "open" /\ ~overdue
     /\ FreezeIgnoresPushes \/ d.state # "sending"   \* deliverystate.FreezeMayProceed
     /\ IF FreezeLeavesDelivery THEN SetMsg([rq |-> ClosedRq, d |-> d])
-       ELSE SetMsg(ExpireRequest(rq, d))
+       ELSE \/ SetMsg(ExpireRequest(rq, d))
+            \/ SetMsg([rq |-> ClosedRq, d |-> d])   \* a crash after the request's write
     /\ frozen' = TRUE
     /\ UNCHANGED <<writtenFrozen, isRequest, fromMailbox, engine, pass, hook, shown, handleKnown, idKnown, exposed,
                    pushedClosed, overdue, alive>>

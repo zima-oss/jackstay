@@ -24,7 +24,8 @@ mailbox). Concurrently, in every order:
 - the recipient's reads, `ids` reads, acks and answers, naming the delivery by what it knows;
 - another message of the thread carrying the bare message ID;
 - the sweep (a stale `sending`, deadlines nobody touched), the deadline itself, the recipient's end,
-  and the freeze of a mailbox, as recipient or as requester (waiting for a push of its questions).
+  and the freeze of a mailbox, as recipient or as requester (waiting for a push of its questions),
+  with a crash between a closure's two writes.
 
 A recipient learns a request's ID from what it was shown: a native or bridge frame, a hook's text,
 or a read that returned the message; only then can it answer.
@@ -35,7 +36,7 @@ machine crash loses a commit record whose folder could not be fsynced, `durable.
 recovery before anything is served and the store stopped while an entry cannot be resolved, the
 pusher, sessions registering near the store's limit (the capacity charges, scaled down), another
 answer or the deadline closing the request, the sweep of leftovers, and retention's removal of the
-message in two steps a crash can cut apart.
+message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 
 ## What is checked
 
@@ -58,11 +59,12 @@ message in two steps a crash can cut apart.
 | `MarkersComplete` | send | a committed send keeps every marker it was admitted with |
 | `Capacity` | send | the charges never pass the write limit |
 | `AcceptedIsDurable` | send | `accepted` is said only of a send no crash can undo |
+| `CommitHasFiles` | send | a commit record never stands for files that are gone |
 | `RequestAgrees` | send | the request a response answers is answered or closed once, never overwritten |
 
-TLC (2026.11 tools, Java 21) finds **30,480** distinct states for a delivery (152,377 generated,
-the temporal properties checked over the whole graph) and **283** for a send (495 generated) with
-no error. The Go exploration reaches the same 30,480 and 283 states, and its tests
+TLC (2026.11 tools, Java 21) finds **30,736** distinct states for a delivery (163,049 generated,
+the temporal properties checked over the whole graph) and **335** for a send (607 generated) with
+no error. The Go exploration reaches the same 30,736 and 335 states, and its tests
 fail if either count changes, so the two forms cannot drift apart unnoticed. With each constant below set
 TRUE, TLC and the Go test both report the same broken property.
 
@@ -78,12 +80,13 @@ gives this counterexample, and the Go test fails if it ever stops doing so.
 | `SeparateRequestExpiry` | 4.4 | the request and its delivery expire apart and the requester gets two notices. Fix: one step, one notice, on the request |
 | `DeadlineSkipsRequest` | 4.10 | the deadline passes; a pass's claim expires the request's delivery but not the request, and nobody owes the notice. Fix: every deadline check closes both |
 | `DeadlineNeedsPending` | 4.10 | (review round 1) the deadline passes; a read of a `delivered` request reads it and leaves the request open. Fix: a deadline check closes the request whatever its delivery's state |
-| `FreezeLeavesDelivery` | 9.1 | the requesting mailbox freezes; the closed question is still pushed to the author. Fix: the freeze expires the pending or held delivery with its request |
+| `FreezeLeavesDelivery` | 4.4, 9.1 | the requesting mailbox freezes (or a closure crashes between its two writes); the closed question is still pushed to the author. Fix: the freeze expires the delivery with its request, and every step first repairs a closed request's pending or held delivery |
 | `FreezeIgnoresPushes` | 9.1 | (review rounds 1 and 2) a pass claims a question; the mailbox freezes; the pass writes it to the author. Redesigned: the freeze waits until no question is `sending` |
 | `RecoveryIgnoresSync` | 7.2, 7.3 | the commit folder cannot be fsynced; recovery rolls forward anyway; a machine crash loses the commit; the answer it applied stands for nothing (and a retry is told `duplicate` of nothing). Fix: an unsynced commit stops the operation; recovery fsyncs before it rolls forward |
 | `DerivedChargedLate` | 7.4 | sessions fill the store; a send is admitted for its own records; rolling it forward drops its markers. Fix: a send is charged for every record it creates |
 | `KeptEntryLetsOthersGo` | 7.3 | (review rounds 1 and 2) a response's commit cannot be fsynced and its entry is kept; another response answers the request; recovery rolls the first forward and answers it again. The same rule let a retry become a second copy, and a session take a kept send's room. Redesigned: a failed fsync stops the store |
 | `DuplicateTrustsEntry` | 7.3 | (review round 2) retention removes a message's commit record and a crash stops it before the idempotency entry; a retry is told `duplicate` of nothing. Fix: `duplicate` only when the commit record exists; a stale entry is removed |
+| `CleanupBeforeUnlink` | 7.3 | (review round 3) retention unlinks a commit record and removes its files; a machine crash undoes the unsynced unlink; the record stands for files that are gone. Fix: the unlink's folder is fsynced before anything else is removed |
 
 One fault has no constant: a confirmed failure that returned a closed question to `pending` (section
 8.3). It needed a freeze during a push, which the freeze now waits out; the rule that expires such a

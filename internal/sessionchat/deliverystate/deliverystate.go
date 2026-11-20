@@ -479,6 +479,19 @@ func ExpireRequest(request Request, delivery Delivery) (Request, Delivery, error
 // expires one without the other, and a read past the deadline of a delivered request still closes
 // the request.
 func ApplyMessage(request Request, delivery Delivery, event Event) (Request, Delivery, error) {
+	// A request's closure writes two files, its commit record and then its delivery; a crash
+	// between them leaves the request closed and its delivery pending or held. Every step repairs
+	// that first, so a closed question is never claimed or announced.
+	if delivery.Request && request.State == Closed && Expirable(delivery.State) {
+		repaired, err := Apply(delivery, Event{Kind: CloseRequest})
+		if err != nil {
+			return request, delivery, err
+		}
+		if next, err := Apply(repaired, event); err == nil {
+			repaired = next
+		}
+		return request, repaired, nil
+	}
 	if delivery.Request && request.State == Open && event.Overdue && checksDeadline(event.Kind) {
 		closedRequest, closedDelivery, err := ExpireRequest(request, delivery)
 		if err != nil {

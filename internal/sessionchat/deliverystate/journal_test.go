@@ -17,6 +17,7 @@ type sendRules struct {
 	derivedChargedLate    bool // as written: the derived files are charged when step 4 makes them
 	keptEntryLetsOthersGo bool // rounds 0 to 2: operations go on beside an entry recovery must keep
 	duplicateTrustsEntry  bool // round 2: a retry trusts the idempotency entry without its commit
+	cleanupBeforeUnlink   bool // round 3: retention removes the files before the commit's unlink is fsynced
 }
 
 // Small charges with the shape of the real ones: a send's own records, its derived files, a session.
@@ -37,6 +38,9 @@ type message struct {
 	markers  bool // false while derived: the markers were refused for room
 	pushed   int
 	retired  bool // retention removed its commit record (the rest may follow later)
+	// unlinking: retention unlinked the commit record but has not fsynced its folder yet, so a
+	// machine crash brings it back
+	unlinking bool
 }
 
 type sendWorld struct {
@@ -99,7 +103,8 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 		if rules.derivedChargedLate {
 			charge = modelCore
 		}
-		committed := w.idempotency != 0 && w.messages[w.idempotency-1].commit != NoCommit
+		committed := w.idempotency != 0 && w.messages[w.idempotency-1].commit != NoCommit &&
+			!w.messages[w.idempotency-1].unlinking
 		retry := ResolveRetry(w.idempotency != 0, committed || rules.duplicateTrustsEntry)
 		switch {
 		case retry == Duplicate:
@@ -216,7 +221,7 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 
 	if w.lockFree(rules) {
 		for slot, message := range w.messages {
-			served := Served(message.commit, message.journal)
+			served := Served(message.commit, message.journal) && !message.unlinking
 			if rules.recoveryIgnoresSync {
 				served = message.commit != NoCommit && !message.journal
 			}
@@ -230,14 +235,20 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 				next.messages[slot].files, next.messages[slot].derived = false, false
 				add("the sweep removes leftovers", next)
 			}
-			// Retention removes a done message: the commit record first, then its other files and
-			// its idempotency entry; a crash may come between the two.
-			if !message.journal && message.commit == CommitDurable && message.pushed == 1 {
+			// Retention removes a done message: it unlinks the commit record and fsyncs its folder,
+			// then removes its other files and its idempotency entry; a crash may come between any two.
+			if !message.journal && message.commit == CommitDurable && message.pushed == 1 && !message.unlinking {
 				next := w
-				next.messages[slot].commit, next.messages[slot].retired, next.forgotten = NoCommit, true, true
-				add("retention removes the commit record", next)
+				next.messages[slot].unlinking, next.forgotten = true, true
+				add("retention unlinks the commit record", next)
 			}
-			if message.retired && message.files {
+			if message.unlinking {
+				next := w
+				next.messages[slot].unlinking = false
+				next.messages[slot].commit, next.messages[slot].retired = NoCommit, true
+				add("retention fsyncs the commits folder", next)
+			}
+			if (message.retired || rules.cleanupBeforeUnlink && message.unlinking) && message.files {
 				next := w
 				next.messages[slot].files, next.messages[slot].derived = false, false
 				if next.idempotency == slot+1 {
@@ -265,6 +276,7 @@ func sendSuccessors(w sendWorld, rules sendRules) []step2 {
 		if lost.messages[slot].commit == CommitWritten {
 			lost.messages[slot].commit = NoCommit
 		}
+		lost.messages[slot].unlinking = false // an unsynced unlink is undone
 	}
 	if w.phase != "idle" {
 		lost.phase, lost.answers[index] = "idle", "crashed"
@@ -303,6 +315,9 @@ func sendInvariant(w sendWorld) string {
 	for slot, message := range w.messages {
 		if message.followOn && message.commit == NoCommit && !message.journal && !message.retired {
 			return "FollowOnAgrees: an answer stands for a message that does not exist"
+		}
+		if message.commit != NoCommit && !message.unlinking && !message.files {
+			return "CommitHasFiles: a commit record stands for files that are gone"
 		}
 		if message.derived && !message.markers {
 			return "MarkersComplete: a committed send lost its markers for room"
@@ -373,6 +388,7 @@ func TestTheSendBeforeTheModelBreaksAProperty(t *testing.T) {
 		{"derived files charged after the commit (section 7.4)", sendRules{derivedChargedLate: true}, "MarkersComplete"},
 		{"operations beside a kept entry (section 7.3, review rounds 1 and 2)", sendRules{keptEntryLetsOthersGo: true}, "RequestAgrees"},
 		{"a duplicate trusting a stale entry (section 7.3, review round 2)", sendRules{duplicateTrustsEntry: true}, "DuplicateIsReal"},
+		{"cleanup before the commit's unlink is durable (section 7.3, review round 3)", sendRules{cleanupBeforeUnlink: true}, "CommitHasFiles"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {

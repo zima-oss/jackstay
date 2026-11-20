@@ -321,8 +321,12 @@ A request is a direct message (never to a channel) with a `request` object:
   (section 8.5), on the request's commit record, whatever its delivery's state. The request and its
   delivery share `expires_at` and expire **in one step**: whichever check finds the deadline (the
   sweep, a pusher's claim, a hook, a read, an ack, a response, section 4.10) closes the request and,
-  when the delivery is `pending` or `held`, expires the delivery in the same write, without a notice
-  of its own. So the requester is told once, never twice and never not at all;
+  when the delivery is `pending` or `held`, expires the delivery in the same locked step, without a
+  notice of its own. So the requester is told once, never twice and never not at all. The request's
+  commit record is written first and the delivery second; a crash between the two leaves a closed
+  request with a `pending` or `held` delivery, and every step that touches that delivery (a claim, a
+  hook, a read, the sweep) first expires it, so a closed question is never claimed or announced (the
+  model's third review found the gap);
 - a request closed early (its review mailbox froze, section 9.1) closes the same way: its delivery,
   if `pending` or `held`, expires with it; if it is `sending`, a confirmed failure or a `held` answer
   recorded later expires it instead of making it pushable again. A freeze waits for any push of its
@@ -1101,8 +1105,9 @@ at and skip (and, holding the exclusive lock, remove) a marker whose delivery is
 make reading fast; they are never the truth.
 
 **The sweep** (section 7.4) is a series of single-record changes and removals, each idempotent and
-rolled forward: there is nothing to roll back. A removal deletes the commit record first, so the
-message disappears at once, and then its other files; files of a message ID that has neither a commit
+rolled forward: there is nothing to roll back. A removal unlinks the commit record first and fsyncs its folder, so the
+message disappears at once and a machine crash cannot bring the record back over files already
+gone, and then removes its other files and its idempotency entry; files of a message ID that has neither a commit
 record nor a journal entry are leftovers, and the next sweep removes them.
 
 A push to an engine (section 8) happens **outside** the lock: the pusher records `sending` under the
@@ -1392,9 +1397,11 @@ rounds.
    pass that died is swept after 60 s), retrying under the lock, so no question is being written to
    the author when the freeze closes it. A pass that stalled past 60 s was swept to `delivered`
    (`unconfirmed`) and holds nothing; if it wakes and writes, it is the one late push section 4.2
-   already reports as `unconfirmed`. A hook announcement recorded before the freeze may still be
-   returned right after it; the snapshot shows that question as delivered. Then, all under one
-   exclusive lock:
+   already reports as `unconfirmed`. The freeze applies the sweep's 60-s rule to its own questions
+   itself, so its wait never passes 60 s, and while the store is stopped (section 7.3) the next round
+   does not start: `jst review` answers `store_busy`. A hook announcement recorded before the freeze
+   may still be returned right after it; the snapshot shows that question as delivered. Then, all
+   under one exclusive lock:
    1. it creates `journal/freeze-<mailbox hash>` holding the mailbox's key, the task, the round it
       belongs to, and the absolute path of the snapshot it will write in the next round's attempt
       folder; and sets the mailbox `gone`, so later sends are refused as `recipient_gone`;
@@ -1631,7 +1638,7 @@ narrower than the last, and review alone does not end that. The model is in
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  TLC and the tests reach the same states, 30,480 for a delivery and 283 for a send, and the tests
+  TLC and the tests reach the same states, 30,736 for a delivery and 335 for a send, and the tests
   fail if either count changes.
 
 Checked: every route pushes a message at most once; a native body is never visible before Claude
@@ -1662,7 +1669,10 @@ going on beside a journal entry recovery had to keep let a rival answer, the dea
 retry or a registration act on what the entry might still roll forward, and now a failed fsync stops
 the store (7.3); a freeze could close a question while a push of it was under way, and now it waits
 for the push (9.1). A confirmed failure that reopened a closed question (8.3) cannot happen once the
-freeze waits; the rule stays as a defence and has a unit test.
+freeze waits; the rule stays as a defence and has a unit test. The third round found two crash
+paths, both fixed and modelled: a crash between a closure's two writes left a closed question
+pushable (4.4), and retention removed a message's files before the unlink of its commit record was
+durable, so a machine crash could restore a record standing for nothing (7.3).
 
 ### 15.1 Unit tests (`go test ./internal/sessionchat/...`)
 

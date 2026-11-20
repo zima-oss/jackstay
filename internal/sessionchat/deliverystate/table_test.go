@@ -265,3 +265,13 @@ func TestAFreezeWaitsForAQuestionBeingPushed(t *testing.T) {
 		t.Fatal("a swept push still holds the freeze")
 	}
 }
+
+// Review round 3: a crash between a closure's two writes leaves the delivery pending; the next
+// step repairs it instead of pushing a closed question.
+func TestAClosureCutShortIsRepairedBeforeAnyPush(t *testing.T) {
+	closed := Request{State: Closed, Notice: NoticeOwed}
+	_, delivery, err := ApplyMessage(closed, New(Native, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+	if err != nil || delivery.State != Expired || delivery.Notice != NoNotice {
+		t.Fatalf("got %+v %v", delivery, err)
+	}
+}

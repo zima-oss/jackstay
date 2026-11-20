@@ -22,7 +22,8 @@ CONSTANTS
     RecoveryIgnoresSync,    \* section 7.2 before: recovery rolls a written commit forward unsynced
     DerivedChargedLate,     \* section 7.4 before: markers and the idempotency entry charged at step 4
     KeptEntryLetsOthersGo,  \* review rounds 1 and 2: operations go on beside an entry recovery keeps
-    DuplicateTrustsEntry    \* review round 2: a retry trusts the idempotency entry without its commit
+    DuplicateTrustsEntry,   \* review round 2: a retry trusts the idempotency entry without its commit
+    CleanupBeforeUnlink     \* review round 3: retention removes files before the commit's unlink is fsynced
 
 Messages == {1, 2}   \* 1: the send; 2: its retry, if it became a fresh send
 None == 0
@@ -56,8 +57,9 @@ Recover(commit, synced) ==
       [] OTHER                        -> "keep"
 
 Served(m) ==
-    IF RecoveryIgnoresSync THEN msg[m].commit # "none" /\ ~msg[m].journal
-    ELSE msg[m].commit = "durable" /\ ~msg[m].journal
+    /\ ~msg[m].unlinking
+    /\ IF RecoveryIgnoresSync THEN msg[m].commit # "none" /\ ~msg[m].journal
+       ELSE msg[m].commit = "durable" /\ ~msg[m].journal
 
 \* No process holds the lock, recovery has resolved what it can, and no entry it had to keep
 \* stops the store (deliverystate.Stopped); the old rule let operations go on beside a kept entry.
@@ -72,7 +74,7 @@ AnswerRequest ==
 Init ==
     /\ msg = [m \in Messages |-> [journal |-> FALSE, files |-> FALSE, commit |-> "none",
                                   followOn |-> FALSE, derived |-> FALSE, markers |-> TRUE,
-                                  pushed |-> 0, retired |-> FALSE]]
+                                  pushed |-> 0, retired |-> FALSE, unlinking |-> FALSE]]
     /\ idempotency = None /\ attempt = 0 /\ phase = "idle"
     /\ answer = [m \in Messages |-> "none"]
     /\ sessions = 0
@@ -86,6 +88,7 @@ SendAttempt ==
        \/ attempt = 1 /\ answer[1] \in {"uncertain", "crashed"}
     /\ LET slot      == attempt + 1
            committed == idempotency # None /\ msg[idempotency].commit # "none"
+                        /\ ~msg[idempotency].unlinking
            duplicate == idempotency # None /\ (committed \/ DuplicateTrustsEntry)
            charge    == IF DerivedChargedLate THEN Core ELSE Core + Derived
        IN /\ attempt' = slot
@@ -183,20 +186,28 @@ SweepsLeftovers ==
          /\ msg' = [msg EXCEPT ![m].files = FALSE, ![m].derived = FALSE]
     /\ UNCHANGED <<idempotency, attempt, phase, answer, request, requestChanges>> /\ UNCHANGED Rest
 
-\* Retention removes a done message: its commit record first, then the rest and its idempotency
-\* entry; a crash may come between the two.
-RetentionRemovesCommit ==
+\* Retention removes a done message: it unlinks the commit record and fsyncs its folder, then
+\* removes the rest and the idempotency entry; a crash may come between any two.
+RetentionUnlinks ==
     /\ LockFree
     /\ \E m \in Messages :
-         /\ ~msg[m].journal /\ msg[m].commit = "durable" /\ msg[m].pushed = 1
-         /\ msg' = [msg EXCEPT ![m].commit = "none", ![m].retired = TRUE]
+         /\ ~msg[m].journal /\ msg[m].commit = "durable" /\ msg[m].pushed = 1 /\ ~msg[m].unlinking
+         /\ msg' = [msg EXCEPT ![m].unlinking = TRUE]
     /\ forgotten' = TRUE
     /\ UNCHANGED <<idempotency, attempt, phase, answer, request, requestChanges, sessions, phantom>>
+
+RetentionSyncs ==
+    /\ LockFree
+    /\ \E m \in Messages :
+         /\ msg[m].unlinking
+         /\ msg' = [msg EXCEPT ![m].unlinking = FALSE, ![m].commit = "none", ![m].retired = TRUE]
+    /\ UNCHANGED <<idempotency, attempt, phase, answer, request, requestChanges>> /\ UNCHANGED Rest
 
 RetentionRemovesRest ==
     /\ LockFree
     /\ \E m \in Messages :
-         /\ msg[m].retired /\ msg[m].files
+         /\ msg[m].retired \/ (CleanupBeforeUnlink /\ msg[m].unlinking)
+         /\ msg[m].files
          /\ msg' = [msg EXCEPT ![m].files = FALSE, ![m].derived = FALSE]
          /\ idempotency' = IF idempotency = m THEN None ELSE idempotency
     /\ UNCHANGED <<attempt, phase, answer, request, requestChanges>> /\ UNCHANGED Rest
@@ -214,17 +225,18 @@ SessionRegisters ==
 
 \* A machine crash: what was never fsynced is gone, and so is the process holding the lock.
 MachineCrashes ==
-    /\ \/ \E m \in Messages : msg[m].commit = "written"
+    /\ \/ \E m \in Messages : msg[m].commit = "written" \/ msg[m].unlinking
        \/ phase # "idle"
-    /\ msg' = [m \in Messages |-> IF msg[m].commit = "written" THEN [msg[m] EXCEPT !.commit = "none"]
-                                  ELSE msg[m]]
+    /\ msg' = [m \in Messages |-> [msg[m] EXCEPT
+                 !.commit = IF msg[m].commit = "written" THEN "none" ELSE @,
+                 !.unlinking = FALSE]]   \* an unsynced unlink is undone
     /\ IF phase # "idle" THEN phase' = "idle" /\ answer' = [answer EXCEPT ![attempt] = "crashed"]
        ELSE UNCHANGED <<phase, answer>>
     /\ UNCHANGED <<idempotency, attempt, request, requestChanges>> /\ UNCHANGED Rest
 
 Next ==
     \/ SendAttempt \/ Proceed \/ ProcessCrashes \/ Recovers \/ Pushes \/ SweepsLeftovers
-    \/ RetentionRemovesCommit \/ RetentionRemovesRest \/ RequestClosesElsewhere
+    \/ RetentionUnlinks \/ RetentionSyncs \/ RetentionRemovesRest \/ RequestClosesElsewhere
     \/ SessionRegisters \/ MachineCrashes
 
 Spec == Init /\ [][Next]_vars
@@ -252,6 +264,9 @@ AtMostOncePerKey == forgotten \/ msg[1].pushed + msg[2].pushed <= 1
 \* request as it was).
 FollowOnAgrees ==
     \A m \in Messages : msg[m].followOn => (msg[m].commit # "none" \/ msg[m].journal \/ msg[m].retired)
+
+\* A commit record never stands for files that are gone.
+CommitHasFiles == \A m \in Messages : (msg[m].commit # "none" /\ ~msg[m].unlinking) => msg[m].files
 
 \* A committed send keeps every marker it was admitted with.
 MarkersComplete == \A m \in Messages : msg[m].derived => msg[m].markers

@@ -59,8 +59,8 @@ var passNames = [2]string{"pass-1", "pass-2"}
 
 // The distinct states TLC finds for the two modules (docs/design/chat-model/README.md).
 const (
-	deliveryStates = 30480
-	sendStates     = 283
+	deliveryStates = 30736
+	sendStates     = 335
 )
 
 func initialWorlds(rules variant) []world {
@@ -129,6 +129,7 @@ func (w *world) setRequest(next Request) {
 func (w world) apply(event Event, rules variant) (world, bool) {
 	next := w
 	plain := rules.separateRequestExpiry || !w.isRequest ||
+		rules.freezeLeavesDelivery && w.request.State == Closed ||
 		rules.deadlineSkipsRequest && checksDeadline(event.Kind) ||
 		rules.deadlineNeedsPending && (!Expirable(w.delivery.State) ||
 			w.delivery.State != Pending && !namesTheDelivery(event.Kind))
@@ -317,6 +318,9 @@ func successors(w world, rules variant) []step {
 				closed.setRequest(request)
 				closed.setDelivery(delivery)
 				add("sweep expires the request with its delivery", closed)
+				cut := w
+				cut.setRequest(request)
+				add("the sweep crashes after the request's write", cut)
 			}
 		}
 		if !w.isRequest || rules.separateRequestExpiry || w.request.State != Open {
@@ -348,6 +352,12 @@ func successors(w world, rules variant) []step {
 			frozen.setDelivery(delivery)
 		}
 		add("the requesting mailbox freezes", frozen)
+		if !rules.freezeLeavesDelivery {
+			cut := w
+			cut.frozen = true
+			cut.setRequest(Request{State: Closed, Notice: NoticeOwed})
+			add("the freeze crashes after the request's write", cut)
+		}
 	}
 
 	if w.alive {
