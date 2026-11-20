@@ -338,16 +338,17 @@ func sameReviewers(runs []ReviewerRun, names []string) bool {
 }
 
 // Blocks is the one predicate of section 4: whether a finding blocks a round while it is open.
-func (settings Settings) Blocks(severity, likelihood, consequence string) bool {
+func (settings Settings) Blocks(severity, likelihood, consequence, ordinaryPath string) bool {
 	if !slices.Contains(settings.Blocking, severity) {
 		return false
 	}
-	return !settings.Triage || !IsRare(likelihood, consequence)
+	return !settings.Triage || !IsRare(likelihood, consequence, ordinaryPath)
 }
 
-// IsRare is W-048's rare: unlikely in ordinary work and mild.
-func IsRare(likelihood, consequence string) bool {
-	return likelihood == "unusual" && consequence == "mild"
+// IsRare is W-048's rare, as W-094 amends it: unlikely in ordinary work, and either mild or severe
+// with no ordinary-work path named by which its setup arises by accident.
+func IsRare(likelihood, consequence, ordinaryPath string) bool {
+	return likelihood == "unusual" && (consequence == "mild" || strings.TrimSpace(ordinaryPath) == "")
 }
 
 // LongestTimeout is the longest timeout of the reviewers named, in minutes.
