@@ -6,7 +6,7 @@ hand-written `until …; do sleep 1; done` loop with one command that has a dead
 
 ## `jst bg`
 
-```sh
+```text
 jst bg [--for MINUTES] [--name NAME] [--keep] -- COMMAND ...
 ```
 
@@ -39,7 +39,7 @@ start; 127 it was not found.
 
 ## `jst procs`
 
-```sh
+```text
 jst procs [--all] [--json]          # what jst bg supervises: this session's, or every one
 jst procs stop [--all] ID|NAME...   # TERM, 5 seconds, then KILL
 ```
@@ -64,7 +64,7 @@ Exit of `stop`: 0 stopped; 1 a task was not stopped or cleanup could not be conf
 
 ## `jst wait`
 
-```sh
+```text
 jst wait --pid PID                    # until the process has ended
 jst wait --file PATH [--nonempty]     # until the file exists (and holds something)
 jst wait --gone PATH                  # until the file or folder is gone

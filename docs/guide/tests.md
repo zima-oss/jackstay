@@ -31,7 +31,7 @@ The command cannot start: 127.
 
 ## `jst test -- COMMAND`: any command
 
-```sh
+```text
 jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]
 ```
 
@@ -39,14 +39,14 @@ Runs any command, recorded. It needs no `jackstay.json`; without one, a run that
 `exited-0`, never `passed`. To make it count, list the command in `receipts.commands` with an
 `evidence` pattern (below).
 
-```sh
+```text
 jst test -- go test ./...
 jst test last                # the last run again: outcome, what went wrong, where the output is
 ```
 
 ## Scopes: `jst test <scope>`
 
-```sh
+```text
 jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock] [--resume] [--keep-going] [--commit REV]
 jst test list [--project NAME]       # the scopes, what each runs, when the project runs it
 jst test plan SCOPE [ARGS...]        # the words a scope would run, step by step; runs nothing
@@ -380,7 +380,7 @@ and ends `reused`.
   such a branch; a receipt is used for `max_age_hours` (default 72).
 - `--no-reuse` (or `JACKSTAY_NO_REUSE`) runs anyway.
 
-```sh
+```text
 jst receipts key -- python3 -m pytest -q    # the key here, what went into it, whether it would be reused
 jst receipts list [--project NAME]          # the stored receipts
 jst receipts stats [--project NAME] [--json]   # runs, reuses and seconds saved
@@ -410,7 +410,7 @@ nothing about uncommitted inputs.
 
 ## The machine-wide lock: `jst lock`
 
-```sh
+```text
 jst lock [--project NAME] [--wait SECONDS] [--also-hold PATH=VARIABLE]... [--note-words WORDS] -- COMMAND [ARG ...]
 jst lock status [--json]
 ```
@@ -434,7 +434,7 @@ other. The lock is advisory: a command run without it is not stopped.
 
 ## `jst check` and `jst patterns`
 
-```sh
+```text
 jst check [DIR]        # exit 0 usable (perhaps with warnings), 2 a problem or no jackstay.json
 jst patterns [DIR...]  # exit 0 every pattern is RE2, 1 some are not, 2 a file is missing or not JSON
 ```
@@ -444,7 +444,7 @@ slow step (over 60 s, by the recorded median) before a fast one (under 10 s).
 
 ## Measuring: `jst baseline`
 
-```sh
+```text
 jst baseline --repo . --since 2026-11-01 --until 2026-11-14 [--json]
 ```
 

@@ -206,7 +206,7 @@ hooks name `jst-guard` then run without the guard.
 
 ## The commands
 
-```sh
+```text
 jst install [--prefix DIR] [--checkout DIR | --binary FILE]
 jst uninstall [--prefix DIR]
 jst version                     # jackstay <version> (<commit>)
@@ -227,7 +227,7 @@ It signs only a binary you built; a release's binary, already signed and notaris
 |---|---|
 | `jst: command not found` | `~/.local/bin` (or your prefix's `bin`) is not on `PATH`. |
 | Refused: the commit is `unknown` or `+changes` | The binary does not name a commit, or the checkout has uncommitted changes. Commit them, or install from a release or `go install …@vX.Y.Z`. |
-| Refused: going back | The live version is newer. Uninstall first if you really want an older one. |
+| Refused: going back | The live version is newer. Uninstall first if you want an older one. |
 | Refused: a command or `lib/jackstay` is not jackstay's | Something else is at that path. jackstay never overwrites what it did not write; move it away. |
 | Refused: another install or uninstall is running | Wait for it to finish. |
 | The guard does nothing in a session | `jst doctor` in the project says whether its hook runs `jst-guard`. If you installed under another prefix, change the hook's command in `.claude/settings.json` to that prefix's `bin/jst-guard`. |

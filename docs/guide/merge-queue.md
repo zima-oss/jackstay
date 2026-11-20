@@ -13,7 +13,7 @@ Enable the queue in `jackstay.json` with a full ref for the target branch:
 `refs/remotes/origin/main`. Fetch it yourself before preparing a candidate; jackstay does not
 fetch or change a ref. A head must also be a full local or remote-tracking branch ref.
 
-```sh
+```text
 jst queue add --head refs/heads/my-change
 jst queue prepare
 jst queue test
