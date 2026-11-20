@@ -23,7 +23,9 @@ test that runs twice on one commit in CI is waste.
 - **Simple behaviour, written limits.** Every mechanism has a rule a reader can check and a list of
   what it does not see. Where a place keeps drawing findings, it is narrowed, or a solved approach
   is adopted, instead of growing more machinery.
-- **No test runs twice on one commit in CI.** A scope runs in at most one CI job per system.
+- **No test runs twice on one commit in CI.** jackstay runs each scope at most once per system in
+  CI. It cannot see inside a command, so a project keeps the tests of its CI scopes on one system
+  disjoint: one scope does not rerun another's tests.
 
 ## Consequences
 
@@ -31,5 +33,11 @@ The [landing design](../design/land.md) section 7 is the specification. `jacksta
 `deps`, `inputs` and `cache` beside `ci` and `systems`, with schema 3; a schema-2 `steps` list is
 read as `deps`, so existing projects keep their order. The gate's step marks and bars, `--resume`,
 the `resumed` and `refused` outcomes and receipts reuse for scopes go; a cached pass reads `passed`,
-because it was counted for identical inputs. Whether a cached pass may cross between a person's
-machine and CI is left open; the design works with no crossing.
+because it was counted for identical inputs, and a scope's `requires` still run before every cache
+lookup. Two questions are left open, and the design works under the recommended answer to each:
+whether a cached pass may cross between a person's machine and CI (recommended: no crossing), and
+how scopes become CI jobs (recommended: one graph job per system).
+
+A follow-up for jackstay itself: its `x-go` and `x-integration` scopes both run the untagged Go
+tests in CI, so those tests run twice on one commit. The integration scope should run only the
+tests behind the `integration` tag, or CI should run one of the two scopes.
