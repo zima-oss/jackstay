@@ -137,3 +137,23 @@ func TestAnEventOfAFolderTakenByAnotherReviewNamesNoReport(t *testing.T) {
 type refusingPublisher struct{}
 
 func (refusingPublisher) Publish(context.Context, chatevent.Event) error { return errors.New("full") }
+
+func TestTheCommandLinePointsAtThisRequestsOwnOutcome(t *testing.T) {
+	repository := testrepo.New(t, map[string]string{"jackstay.json": `{"jackstay_schema":3,"project":"cli-next"}`, "a.txt": "a\n"})
+	repository.Commit("change", map[string]string{"a.txt": "b\n"})
+	inFolder(t, repository.Root)
+	original := launchDetached
+	launchDetached = func([]string, string, string) (int, int64, <-chan struct{}, error) {
+		done := make(chan struct{})
+		close(done)
+		return 0, 0, done, nil
+	}
+	t.Cleanup(func() { launchDetached = original })
+	var stdout, stderr bytes.Buffer
+	if status := runReview([]string{"--background", "--task", "t", "--reviewer", "codex", "HEAD^..HEAD"}, nil, &stdout, &stderr); status != 0 {
+		t.Fatalf("exit %d: %s", status, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "jst review last") || !strings.Contains(stdout.String(), "the end of the log") {
+		t.Fatalf("the next step could show an older round: %s", stdout.String())
+	}
+}

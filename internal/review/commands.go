@@ -214,7 +214,10 @@ func submitBackground(ctx context.Context, found opened, options Options, stdout
 	if subscriber != "" {
 		fmt.Fprintln(stdout, "jst review: next: the result comes to this session as a chat event (review.finished)")
 	} else {
-		fmt.Fprintf(stdout, "jst review: next: `jst review last --task %s` once `jst procs` no longer lists it\n", request.Task)
+		// The log ends with the run's own outcome lines; `jst review last` alone could show an older
+		// round when this run ended before it made an attempt (a refused environment, say).
+		fmt.Fprintf(stdout, "jst review: next: once `jst procs` no longer lists it, read the end of the log above: it says the outcome of this request (%s..%s) and its report\n",
+			short(request.Base), short(request.Head))
 	}
 	return 0
 }

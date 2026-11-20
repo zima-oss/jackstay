@@ -17,6 +17,10 @@ import (
 // systemSender is the sender of jackstay's own events; no client session can have it as an ID.
 const systemSender = "jackstay"
 
+// legacySystemSender sent review results before 0.6.0 (a development build's reviewer pool); its
+// unacknowledged messages are kept as jackstay's own are.
+const legacySystemSender = "review-pool"
+
 func init() {
 	chatevent.Register(publisher{})
 	chatevent.RegisterIdentifier(identify)
