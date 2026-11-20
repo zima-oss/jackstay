@@ -1060,8 +1060,7 @@ and gets `duplicate`.
 
 **A `duplicate` names a message that exists.** A retry is answered `duplicate` only when the message
 its idempotency entry names still has its commit record. An entry whose message is gone (removed by
-retention, or by a removal that a crash cut short between the commit record and the entry) is a
-leftover: it is removed and the send is fresh. So a key is remembered as long as its message is
+retention) is a leftover: it is removed and the send is fresh. So a key is remembered as long as its message is
 kept, no longer (the model's second review found the phantom `duplicate`).
 
 **Nothing is served before it is durable.** A message is served (steered, rung for, returned by a
@@ -1075,10 +1074,15 @@ at and skip (and, holding the exclusive lock, remove) a marker whose delivery is
 make reading fast; they are never the truth.
 
 **The sweep** (section 7.4) is a series of single-record changes and removals, each idempotent and
-rolled forward: there is nothing to roll back. A removal unlinks the commit record first and fsyncs its folder, so the
-message disappears at once and a machine crash cannot bring the record back over files already
-gone, and then removes its other files and its idempotency entry; files of a message ID that has neither a commit
-record nor a journal entry are leftovers, and the next sweep removes them.
+rolled forward: there is nothing to roll back. A removal unlinks a message's files in the reverse of
+the order its send made them: its markers, its deliveries, the request index, the idempotency entry
+if it names the message, the body, the envelope, and the commit record last, then fsyncs the commit
+records' folder (the owner's ruling after the reads' review: an ordering rule, not a journal of
+removals). Each step is idempotent: a file already gone counts as done, and any other error stops
+the removal. So a removal cut short anywhere leaves the commit record, and the next sweep finds it. A
+commit record whose envelope is gone, or whose message lacks a delivery (a send writes every delivery
+before its commit), is a **removal under way**: readers take the message as absent, and the sweep
+finishes the removal, whatever retention says.
 
 A push to an engine (section 8) happens **outside** the lock: the pusher records `sending` under the
 lock, releases it, pushes, then takes the lock again to record the outcome.
@@ -1124,6 +1128,15 @@ if room is still short, removes **done** messages oldest first before their 7 da
 removes a message that is not done, so a body a recipient may still fetch, or an owed notice, is
 never lost to make room;
 if room is still short, the send is refused with `capacity`.
+
+**What removal does not promise.** The removal order covers a process stopped between any two of its
+steps. It does not cover a stopped process followed by a machine crash before the folders it
+touched are fsynced: only the commit records' folder is fsynced, so the crash can bring back some of
+the files the removal had unlinked. When what comes back still reads as a removal under way (a commit
+record without its envelope or a delivery), the sweep finishes it; otherwise the restored files stay
+until retention removes them again, charged meanwhile. A restored idempotency entry can answer one
+retry `duplicate` of a message being removed. No message whose commit record is durable is lost,
+and none is served twice.
 
 Events are messages, but they are stored only while the store stays under 90% of each bound; an
 event that does not fit is not stored, and `Publish` reports it (section 10). So a full store refuses

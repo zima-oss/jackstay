@@ -6,9 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/sessionchat/deliverystate"
 )
 
@@ -55,9 +55,6 @@ func (transaction *transaction) sweepIfDue() error {
 // notice whose pusher died, an idle subscription past its `until`), then removes the messages and
 // sessions past their retention. Each change is single-record and idempotent.
 func (transaction *transaction) sweep() error {
-	if err := transaction.removeLeftovers(); err != nil {
-		return err
-	}
 	ids, err := listNames(transaction.place.commits())
 	if err != nil {
 		return err
@@ -65,6 +62,12 @@ func (transaction *transaction) sweep() error {
 	for _, name := range ids {
 		id := name[:len(name)-len(".json")]
 		if !messageIDPattern.MatchString(id) {
+			continue
+		}
+		if underway, err := transaction.removalUnderway(id); underway || err != nil {
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		found, err := transaction.message(id)
@@ -184,49 +187,108 @@ func (transaction *transaction) heldByMailbox(envelope Envelope) bool {
 	return false
 }
 
-// removeMessage removes a message: its commit record first, its folder fsynced, so it disappears
-// at once and a crash cannot bring the record back over files already gone; then everything else
-// and its idempotency entry (section 7.3).
-func (transaction *transaction) removeMessage(envelope Envelope) (int64, error) {
+// removalStep is one file of a message's removal: its path, and what its charge frees.
+type removalStep struct {
+	path   string
+	charge int64
+	folder bool // a folder, removed with whatever is left in it
+}
+
+// removalSteps are a message's files in the reverse of the order a send made them (section 7.3):
+// its markers, its deliveries, the request index, the idempotency entry if it names this message,
+// the body, the envelope, and the commit record last. So a removal cut short anywhere leaves the
+// commit record, and the next sweep finds the message and finishes it.
+func (transaction *transaction) removalSteps(envelope Envelope) ([]removalStep, error) {
 	place := transaction.place
 	id := envelope.ID
-	if err := os.Remove(place.commit(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return 0, err
-	}
-	if err := transaction.store.syncFolder(place.commits()); err != nil {
-		return 0, err
-	}
-	freed := deliverystate.CommitCharge + deliverystate.EnvelopeCharge + int64(envelope.BodyBytes)
+	var steps []removalStep
 	for _, hash := range envelope.Recipients {
-		if exists(place.delivery(id, hash)) {
-			freed += deliverystate.DeliveryCharge
-		}
-		if removeIfThere(filepath.Join(place.inbox(hash), id)) {
-			freed += deliverystate.MarkerCharge
-		}
+		steps = append(steps, removalStep{path: filepath.Join(place.inbox(hash), id), charge: deliverystate.MarkerCharge})
 	}
-	if removeIfThere(filepath.Join(place.outbox(hashKey(envelope.From)), id)) {
-		freed += deliverystate.MarkerCharge
+	steps = append(steps, removalStep{path: filepath.Join(place.outbox(hashKey(envelope.From)), id), charge: deliverystate.MarkerCharge})
+	for _, hash := range envelope.Recipients {
+		steps = append(steps, removalStep{path: place.delivery(id, hash), charge: deliverystate.DeliveryCharge})
+	}
+	steps = append(steps, removalStep{path: place.deliveries(id), folder: true})
+	if envelope.Request != nil {
+		steps = append(steps, removalStep{path: place.requestIndex(envelope.Request.RequestID), charge: deliverystate.MarkerCharge})
 	}
 	if envelope.IdempotencyKey != "" {
 		path := place.idempotencyEntry(envelope.From, envelope.IdempotencyKey)
-		if data, err := os.ReadFile(path); err == nil && string(data) == id { // #nosec G304 -- the store's own entry
-			if removeIfThere(path) {
-				freed += deliverystate.IdempotencyCharge
-			}
+		data, err := durable.ReadLimited(path, 64)
+		switch {
+		case err == nil && string(data) == id:
+			steps = append(steps, removalStep{path: path, charge: deliverystate.IdempotencyCharge})
+		case err != nil && !errors.Is(err, os.ErrNotExist):
+			return nil, err
 		}
 	}
-	if envelope.Request != nil && removeIfThere(place.requestIndex(envelope.Request.RequestID)) {
-		freed += deliverystate.MarkerCharge
-	}
-	if err := transaction.removeMessageFiles(id); err != nil {
-		return 0, err
-	}
-	return freed, nil
+	return append(steps, bareRemovalSteps(place, id, int64(envelope.BodyBytes))...), nil
 }
 
-func removeIfThere(path string) bool {
-	return os.Remove(path) == nil
+// bareRemovalSteps are the last steps of a removal: what is left once the envelope is gone.
+func bareRemovalSteps(place layout, id string, bodyBytes int64) []removalStep {
+	return []removalStep{
+		{path: place.deliveries(id), folder: true},
+		{path: place.body(id), charge: bodyBytes},
+		{path: place.envelope(id), charge: deliverystate.EnvelopeCharge},
+		{path: place.commit(id), charge: deliverystate.CommitCharge},
+	}
+}
+
+// removeMessage removes a message, step by step in removalSteps' order, then fsyncs the commits
+// folder. Each step is idempotent: a file already gone counts as done, and any other error stops
+// the removal, for the next sweep to finish. It returns the charges it freed.
+func (transaction *transaction) removeMessage(envelope Envelope) (int64, error) {
+	steps, err := transaction.removalSteps(envelope)
+	if err != nil {
+		return 0, err
+	}
+	return transaction.runRemoval(steps)
+}
+
+func (transaction *transaction) runRemoval(steps []removalStep) (int64, error) {
+	var freed int64
+	for _, step := range steps {
+		if step.folder {
+			if err := os.RemoveAll(step.path); err != nil {
+				return freed, err
+			}
+			continue
+		}
+		err := os.Remove(step.path)
+		switch {
+		case err == nil:
+			freed += step.charge
+		case !errors.Is(err, os.ErrNotExist):
+			return freed, err
+		}
+	}
+	return freed, transaction.store.syncFolder(transaction.place.commits())
+}
+
+// removalUnderway finishes a removal a stop cut short (section 7.3): a commit record whose envelope
+// is gone, or whose message lacks a delivery a send always writes before its commit. It reports
+// whether it found one.
+func (transaction *transaction) removalUnderway(id string) (bool, error) {
+	var envelope Envelope
+	err := readRecord(transaction.place.envelope(id), envelopeBound, &envelope)
+	if errors.Is(err, os.ErrNotExist) {
+		_, err := transaction.runRemoval(bareRemovalSteps(transaction.place, id, 0))
+		transaction.store.log("removal-finished", id)
+		return true, err
+	}
+	if err != nil {
+		return false, nil // an envelope it cannot read is left as it is
+	}
+	for _, hash := range envelope.Recipients {
+		if _, err := os.Stat(transaction.place.delivery(id, hash)); errors.Is(err, os.ErrNotExist) {
+			_, err := transaction.removeMessage(envelope)
+			transaction.store.log("removal-finished", id)
+			return true, err
+		}
+	}
+	return false, nil
 }
 
 // removeSession removes a session gone for 7 days, with its inbox markers.
@@ -300,36 +362,4 @@ func (transaction *transaction) done(found message) bool {
 		request = found.commit.request()
 	}
 	return deliverystate.MessageDone(deliveries, whole, request)
-}
-
-// removeLeftovers removes the files of every message ID that has neither a commit record nor a
-// journal entry (section 7.3): what a removal stopped after its commit's unlink left behind. Such
-// files were never served and nothing refers to them.
-func (transaction *transaction) removeLeftovers() error {
-	names, err := listNames(transaction.place.messages())
-	if err != nil {
-		return err
-	}
-	for _, name := range names {
-		id := strings.TrimSuffix(name, ".json")
-		if !messageIDPattern.MatchString(id) || exists(transaction.place.commit(id)) ||
-			exists(filepath.Join(transaction.place.journal(), id)) {
-			continue
-		}
-		var envelope Envelope
-		if err := readRecord(transaction.place.envelope(id), envelopeBound, &envelope); err == nil {
-			for _, hash := range envelope.Recipients {
-				removeIfThere(filepath.Join(transaction.place.inbox(hash), id))
-			}
-			removeIfThere(filepath.Join(transaction.place.outbox(hashKey(envelope.From)), id))
-			if envelope.Request != nil {
-				removeIfThere(transaction.place.requestIndex(envelope.Request.RequestID))
-			}
-		}
-		if err := transaction.removeMessageFiles(id); err != nil {
-			return err
-		}
-		transaction.store.log("leftover-removed", id)
-	}
-	return nil
 }

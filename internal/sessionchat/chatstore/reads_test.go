@@ -1,6 +1,7 @@
 package chatstore
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1124,22 +1125,73 @@ func TestAReceiptCutShortBeforeItsArmingStillFiresOnTheNextIdle(t *testing.T) {
 	}
 }
 
-func TestTheSweepFinishesARemovalStoppedAfterItsUnlink(t *testing.T) {
+// A removal stopped after any of its steps is finished by the next sweep, and frees every charge.
+func TestTheSweepFinishesARemovalStoppedAfterAnyStep(t *testing.T) {
+	setUp := func(t *testing.T) (*fixture, Envelope, []removalStep, int64) {
+		f := newFixture(t)
+		f.session("cc:a", "a", alpha, StateIdle)
+		f.session("cc:b", "b", alpha, StateIdle)
+		f.session("cc:c", "c", alpha, StateIdle)
+		empty := f.measured().Bytes
+		sent := f.send("cc:a", SendInput{To: "b", Message: "decide", Request: &RequestInput{Expects: "decision"},
+			IdempotencyKey: "key-0001"})
+		var envelope Envelope
+		if err := readRecord(f.store.place.envelope(sent.MessageID), envelopeBound, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		var steps []removalStep
+		if err := f.store.update(f.ctx, func(transaction *transaction) error {
+			var err error
+			steps, err = transaction.removalSteps(envelope)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return f, envelope, steps, empty
+	}
+	_, _, all, _ := setUp(t)
+	for done := 1; done < len(all); done++ {
+		t.Run(fmt.Sprintf("after step %d", done), func(t *testing.T) {
+			f, envelope, steps, empty := setUp(t)
+			for _, step := range steps[:done] { // the process is killed after these
+				if err := os.RemoveAll(step.path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			f.clock.advance(30 * 24 * time.Hour)
+			if err := f.store.Sweep(f.ctx); err != nil {
+				t.Fatal(err)
+			}
+			for _, step := range steps {
+				if exists(step.path) {
+					t.Fatalf("%s is left after the sweep", step.path)
+				}
+			}
+			if exists(f.store.place.commit(envelope.ID)) {
+				t.Fatal("the commit record is left")
+			}
+			if after := f.measured().Bytes; after != empty {
+				t.Fatalf("every charge is freed: %d left over %d", after, empty)
+			}
+		})
+	}
+}
+
+// A machine crash can bring back a commit record whose files a removal already unlinked; the sweep
+// takes it for a removal under way and finishes it, whatever retention says.
+func TestACommitRecordLeftAloneIsARemovalUnderWay(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:b", "b", alpha, StateIdle)
 	sent := f.send("cc:a", SendInput{To: "b", Message: "half removed"})
-	if err := os.Remove(f.store.place.commit(sent.MessageID)); err != nil { // stopped right after the unlink
+	if err := os.Remove(f.store.place.envelope(sent.MessageID)); err != nil {
 		t.Fatal(err)
 	}
-	before := f.measured().Bytes
 	if err := f.store.Sweep(f.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if exists(f.store.place.envelope(sent.MessageID)) || exists(f.store.place.body(sent.MessageID)) {
-		t.Fatal("the leftover files are removed")
-	}
-	if after := f.measured().Bytes; after >= before {
-		t.Fatalf("their charge is freed: %d then %d", before, after)
+	if exists(f.store.place.commit(sent.MessageID)) || exists(f.store.place.body(sent.MessageID)) ||
+		exists(f.store.place.deliveries(sent.MessageID)) {
+		t.Fatal("the removal is finished")
 	}
 }
