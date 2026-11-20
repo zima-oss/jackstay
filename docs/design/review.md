@@ -490,15 +490,19 @@ with the Bash tool's background flag; the session is told when the call ends and
   A request ends when its run finishes, whatever the outcome; when its launch fails (the sessions
   that joined meanwhile are told too); or, lost, when its process is found gone — by a new
   submission of the task, by `review.status`, or when any session's chat looks for what it is owed.
-  Recovery has one rule: a request with an end is over, so a crash after the end was written and
-  before the request was removed tells the saved outcome, never a second one.
+  Recovery has one rule: a request with an end is over — it cannot be joined, and a crash after the
+  end was written and before the request was removed tells the saved outcome, never a second one.
+  An end's next step is cut to 2 KiB, so it always fits its file.
 - **Telling the sessions.** Each session's `review.finished` event is made from the end (outcome
   word, round, report path, next step, `jst:review/<task>/<round>`), keyed by request and session,
   and given to the chat's publisher (`internal/chatevent`, [chat.md](chat.md) section 10); each one
   the chat stored is recorded in the end. What it did not take is pulled when that session's chat
   next reads its inbox or reaches its hook; a repeat stores nothing new. An older end of the task
   whose sessions were all told is removed when a newer one is written. `review.status` shows the
-  latest end, the running request and the newest round with its commits.
+  latest end, the running request and the newest round with its commits. A request records its
+  repository (the Git common folder); two clones that share a project's review store each see only
+  their own requests and ends. Rounds are kept by project and task and pinned to commits, so a round
+  read there names the commits it reviewed.
 
 ## 7. Commands
 

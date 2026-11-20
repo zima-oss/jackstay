@@ -294,3 +294,76 @@ func TestACrashAfterTheEndWasWrittenTellsTheSameOutcomeAgain(t *testing.T) {
 		t.Fatalf("a late finish told a second outcome: %+v, %v", published.events, err)
 	}
 }
+
+func TestASessionCannotJoinARequestThatHasEnded(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	store := h.background.Store
+	// A launcher saved its launch failure's end and died before removing the young request.
+	young := Request{ID: "0123456789abcdef", Task: "feature/x", Worktree: "/work/repository", Head: "c1", Reviewers: []string{"codex"},
+		Subscribers: []string{"s1"}, Created: h.now.Format(time.RFC3339)}
+	if err := durable.MakeFolder(store.requestsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(store.RequestPath("feature/x"), young); err != nil {
+		t.Fatal(err)
+	}
+	if err := durable.MakeFolder(store.endsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(store.endPath("feature/x", young.ID), End{Request: young, Status: ExitUsage, Outcome: "refused",
+		Next: "could not start", Ended: h.now.Format(endedLayout)}); err != nil {
+		t.Fatal(err)
+	}
+	joined, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s2"})
+	if err != nil || joined.Joined || joined.Request.ID == young.ID || len(h.launched) != 1 {
+		t.Fatalf("a session joined an ended request: %+v, %v", joined, err)
+	}
+	if end, found, _ := store.LatestEnd("feature/x"); !found || end.Request.ID != young.ID && end.Request.ID != joined.Request.ID {
+		t.Fatalf("ends: %+v", end)
+	}
+}
+
+func TestAnEndAlwaysFitsItsFile(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := strings.Repeat("redesign, do not patch: a place named at length; ", 4000)
+	if err := h.background.Store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitRedesign, Next: long}, &recording{}); err != nil {
+		t.Fatal(err)
+	}
+	end, found, err := h.background.Store.LatestEnd("feature/x")
+	if err != nil || !found || len(end.Next) > maximumNextBytes || end.Outcome != "redesign due" {
+		t.Fatalf("end: %d bytes of next, %v, %v", len(end.Next), found, err)
+	}
+	if _, found, _ := h.background.Store.ReadRequest("feature/x"); found {
+		t.Fatal("the request outlived its end")
+	}
+}
+
+func TestTwoClonesSharingAStoreSeeOnlyTheirOwnRequests(t *testing.T) {
+	h := newBackgroundHarness(t)
+	h.background.Repository = "/clones/first/.git"
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := h.background
+	other.Repository = "/clones/second/.git"
+	if status, err := other.StatusOf("feature/x"); err != nil || status.Running != nil {
+		t.Fatalf("another clone sees this one's running request: %+v, %v", status, err)
+	}
+	if err := h.background.Store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitClear}, &recording{}); err != nil {
+		t.Fatal(err)
+	}
+	if status, err := other.StatusOf("feature/x"); err != nil || status.Last != nil {
+		t.Fatalf("another clone sees this one's end: %+v, %v", status, err)
+	}
+	if status, err := h.background.StatusOf("feature/x"); err != nil || status.Last == nil {
+		t.Fatalf("the clone does not see its own end: %+v, %v", status, err)
+	}
+}

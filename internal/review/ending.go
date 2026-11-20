@@ -41,6 +41,21 @@ type End struct {
 	Delivered []string `json:"delivered,omitempty"` // the sessions whose event the chat has stored
 }
 
+// endedLayout is fixed-width, so ends sort by their time as text.
+const endedLayout = "2006-01-02T15:04:05.000000000Z"
+
+// maximumNextBytes bounds an end's next step (a redesign names every place), so an end always fits
+// its file with room for the sessions told.
+const maximumNextBytes = 2 << 10
+
+// bounded cuts text to at most limit bytes at a UTF-8 boundary, saying it was cut.
+func bounded(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return strings.ToValidUTF8(text[:limit-len(" …")], "") + " …"
+}
+
 func (store Store) endsPath() string { return filepath.Join(store.Root, ".ends") }
 
 func (store Store) endPath(task, id string) string {
@@ -87,12 +102,12 @@ func (store Store) endRequest(ctx context.Context, task string, match func(Reque
 	end, err := readEnd(endPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		end = build(request)
-		end.Request, end.Outcome = request, OutcomeWord(end.Status)
+		end.Request, end.Outcome, end.Next = request, OutcomeWord(end.Status), bounded(end.Next, maximumNextBytes)
 		if end.Lost {
 			end.Outcome = "lost"
 		}
 		if end.Ended == "" {
-			end.Ended = time.Now().UTC().Format(time.RFC3339Nano)
+			end.Ended = time.Now().UTC().Format(endedLayout)
 		}
 		var encoded []byte
 		if encoded, err = json.MarshalIndent(end, "", "  "); err == nil {

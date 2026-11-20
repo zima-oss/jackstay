@@ -41,7 +41,8 @@ type Request struct {
 	ID          string   `json:"id"`
 	Task        string   `json:"task"`
 	Worktree    string   `json:"worktree"`
-	Base        string   `json:"base,omitempty"` // "" when the round takes the chain's base or the first parent
+	Repository  string   `json:"repository,omitempty"` // its Git common folder
+	Base        string   `json:"base,omitempty"`       // "" when the round takes the chain's base or the first parent
 	Head        string   `json:"head"`
 	Reviewers   []string `json:"reviewers"`
 	Fresh       bool     `json:"fresh,omitempty"`
@@ -98,12 +99,15 @@ func DetachedLaunch(argv []string, folder, log string) (int, int64, <-chan struc
 // Background submits reviews of one project.
 type Background struct {
 	RepositoryRoot string
-	Settings       Settings
-	Repo           Repository
-	Store          Store
-	Executable     string
-	Launch         Launch
-	Now            func() time.Time
+	// Repository is the Git common folder of RepositoryRoot: the repository a request belongs to, so
+	// two clones that share a project's review store see only their own requests. "" is any.
+	Repository string
+	Settings   Settings
+	Repo       Repository
+	Store      Store
+	Executable string
+	Launch     Launch
+	Now        func() time.Time
 	// Alive says whether the process of a request still runs; nil uses the process table.
 	Alive func(pid int, start int64) (alive, known bool)
 	// Started waits for a new request to be taken by its run; nil does not wait.
@@ -167,7 +171,7 @@ func (background Background) Submit(ctx context.Context, submission Submission) 
 		return Submitted{}, errors.New("--focus is one line of at most 2000 bytes")
 	}
 	now := background.Now()
-	asked := Request{Task: task, Worktree: background.RepositoryRoot, Base: base, Head: head, Reviewers: names,
+	asked := Request{Task: task, Worktree: background.RepositoryRoot, Repository: background.Repository, Base: base, Head: head, Reviewers: names,
 		Fresh: submission.Fresh, PastLimit: submission.PastLimit, Focus: submission.Focus,
 		Created: now.UTC().Format(time.RFC3339),
 		// The backstop of `jst bg` is the review's own budget and a minute more.
@@ -281,6 +285,12 @@ func (background Background) waitStarted(ctx context.Context, request Request, d
 }
 
 func (background Background) live(request Request) bool {
+	if request.ID != "" {
+		// A request with an end is over, whatever its process: its launcher died after ending it.
+		if _, err := os.Stat(background.Store.endPath(request.Task, request.ID)); err == nil {
+			return false
+		}
+	}
 	if request.PID <= 0 {
 		// Not launched yet, or its launch failed before it was recorded: live while young.
 		created, err := time.Parse(time.RFC3339, request.Created)
@@ -297,6 +307,11 @@ func (background Background) live(request Request) bool {
 	return err == nil && background.Now().Before(deadline)
 }
 
+// ours says whether request was made in this background's repository.
+func (background Background) ours(request Request) bool {
+	return background.Repository == "" || request.Repository == background.Repository
+}
+
 func processAlive(pid int, start int64) (bool, bool) {
 	row, found, err := procs.Row(pid)
 	if err != nil {
@@ -306,7 +321,8 @@ func processAlive(pid int, start int64) (bool, bool) {
 }
 
 func (request Request) sameReview(other Request) bool {
-	return request.Task == other.Task && request.Worktree == other.Worktree && request.Base == other.Base &&
+	return request.Task == other.Task && request.Worktree == other.Worktree && request.Repository == other.Repository &&
+		request.Base == other.Base &&
 		request.Head == other.Head && slices.Equal(request.Reviewers, other.Reviewers) && request.Fresh == other.Fresh &&
 		request.PastLimit == other.PastLimit && request.Focus == other.Focus
 }
@@ -408,8 +424,12 @@ func BackgroundAt(folder, executable string) (Background, error) {
 	if err != nil {
 		return Background{}, err
 	}
-	return Background{RepositoryRoot: found.Root, Settings: settings, Repo: RepositoryAt(found.Root), Store: store,
-		Executable: executable, Launch: DetachedLaunch, Now: time.Now, Started: 10 * time.Second}, nil
+	repository, err := (gitRepository{root: found.Root}).CommonDir(context.Background())
+	if err != nil {
+		return Background{}, err
+	}
+	return Background{RepositoryRoot: found.Root, Repository: repository, Settings: settings, Repo: RepositoryAt(found.Root),
+		Store: store, Executable: executable, Launch: DetachedLaunch, Now: time.Now, Started: 10 * time.Second}, nil
 }
 
 // Status is where a task's reviews stand: the request running in the background, if any, and the
@@ -433,18 +453,21 @@ func (background Background) StatusOf(task string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	if found && background.live(request) {
+	if found && background.live(request) && background.ours(request) {
 		status.Running = &request
 	}
 	if err := background.ReapLost(context.Background()); err != nil {
 		return Status{}, err
 	}
-	last, found, err := background.Store.LatestEnd(task)
+	ends, err := background.Store.ends(task)
 	if err != nil {
 		return Status{}, err
 	}
-	if found {
-		status.Last = &last
+	for index := len(ends) - 1; index >= 0; index-- {
+		if background.ours(ends[index].Request) {
+			status.Last = &ends[index]
+			break
+		}
 	}
 	entries, err := background.Store.Entries(task)
 	if err != nil || len(entries) == 0 {
