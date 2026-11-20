@@ -523,14 +523,17 @@ shape (`range`).
   downloads the pinned jackstay release with its checksums, and runs
   `jst lint pr --event "$GITHUB_EVENT_PATH"`. It is a workflow of its own, so an edit of the
   description restarts only this check. It runs only for branches of the same repository.
-- **Not locally, before a merge**: `jst land` judges no Card line itself. The `card-line`
-  workflow above judges the description and the tree's rules on the merge with the base, and the
-  base's rules require it: CI is the gate (W-092). An edit of the description runs it again, and
-  `jst land` reads the required checks afresh just before it merges.
+- **Before a merge, locally**: `jst land`, where the base's `cards.unit` is `pr`, judges the
+  description exactly as it sends it for the merge commit's message, against the files of the
+  in-memory merge (`git merge-tree`) of the head with the base commit it judged, by the base's
+  `cards` section; the recheck before the merge stops if the description changes. The tree's
+  rules are the `card-line` workflow's, a required check (W-092): no local gate on the tree.
 - **When `jst land` opens the pull request**: `--card ID` (repeatable; `--card none --reason TEXT`)
-  adds the line to the description it writes. `--card` for a pull request that is open already is
-  refused: its description is edited on the host. A base whose Card line is in the description
-  refuses `land.method: rebase`, which lands no description.
+  adds the line to the description it writes. Where the base asks for the line, it opens no pull
+  request whose description it cannot judge first (no `--card` and no `--body-file`) or whose
+  description fails the rules on the merge with the base's tip; it stops before the push. `--card`
+  for a pull request that is open already is refused. A base whose Card line is in the
+  description refuses `land.method: rebase`, which lands no description.
 - **Before a push to the branch itself**: the guard refuses a `git push` that would move
   `cards.branch` unless every commit it adds has valid lines (`cards-push`), and refuses what it
   cannot read about such a push (`card-push-unreadable-config`): [guard.md](guard.md)

@@ -244,7 +244,7 @@ any failing check stopped `pr-land`.
 |---|---|
 | `jst checks`: set github.account in jackstay.json | No account configured. |
 | Exit 2: the login is not the account | `gh` holds a token under a stale name; sign in again. |
-| `jst land` refuses before pushing | You are on the default branch, the tree is dirty, or a new change request has no `--title`. With `--card`, the line is written into the description; whether it is valid is the required `card-line` check's to say ([records](records.md)). |
+| `jst land` refuses before pushing | You are on the default branch, the tree is dirty, or a new change request has no `--title`. Where the base asks for a `Card:` line, the description has none or fails its rules on the merge with the base ([records](records.md)). |
 | `jst land: ready for a person` | The change touches a human path, the project is `prepare`, or the base requires no check. A person merges it on the host or with `jst land --confirm`. |
 | `jst land: pending` after `--confirm` queued it | The host's merge queue holds the change; the branch is kept. |
 | `jst checks wait` exit 4 | Someone pushed while you waited. Wait again, or use `--any-head`. |

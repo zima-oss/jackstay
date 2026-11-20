@@ -343,10 +343,6 @@ func (work *session) run() (int, error) {
 	if !open && work.options.title == "" {
 		return 0, failf(exitInvalid, "a new change request needs --title")
 	}
-	body, err := work.newDescription(open, line)
-	if err != nil {
-		return 0, err
-	}
 	if work.remoteName, err = work.pushRemote(); err != nil {
 		return 0, err
 	}
@@ -362,7 +358,13 @@ func (work *session) run() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if err := cardsNeedAMergeCommit(methodOf(basePolicy), cardsInDescription(work.fileAt("refs/remotes/"+work.remoteName+"/"+work.base))); err != nil {
+	baseTip := "refs/remotes/" + work.remoteName + "/" + work.base
+	cards := cardsSectionOf(work.fileAt(baseTip))
+	if err := cardsNeedAMergeCommit(methodOf(basePolicy), cards != nil); err != nil {
+		return 0, err
+	}
+	body, err := work.newDescription(open, line, cards, baseTip)
+	if err != nil {
 		return 0, err
 	}
 	work.printPlan(open, ahead, rules, basePolicy, baseHasPolicy)

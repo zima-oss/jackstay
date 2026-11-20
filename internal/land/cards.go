@@ -6,12 +6,13 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/hosting"
+	"github.com/zima-oss/jackstay/internal/lint"
 )
 
-// jst land writes a Card line; it does not judge one. The Card line and the tree's rules are
-// judged by `jst lint pr` in CI (the workflow adopt writes), on the merge with the base, as a
-// required check: CI is the gate (W-092), and a description edited later runs that check again,
-// which the recheck reads.
+// The Card line is pr-land's safety check, kept: jst land judges the exact description it writes
+// or merges with, against the files of the in-memory merge of the head with the base, by the
+// base's `cards` section (as `jst lint pr` does). CI's lint judges the tree's rules; it is read by
+// commit, so it cannot vouch for one version of the description: this judgement can.
 
 // cardLine is the `Card:` line --card asks for ("" without one).
 func cardLine(ids []string, reason string) (string, error) {
@@ -51,19 +52,52 @@ func withLine(body, line string) string {
 	return strings.TrimRight(body, "\n") + "\n\n" + line + "\n"
 }
 
-// cardsInDescription says whether a jackstay.json (as bytes) puts the Card line in the change
-// request's description (`cards.unit` `pr`, the default).
-func cardsInDescription(data []byte) bool {
+// cardsSectionOf is the `cards` section of a jackstay.json (as bytes) when it puts the Card line
+// in the change request's description (`cards.unit` `pr`, the default), else nil.
+func cardsSectionOf(data []byte) map[string]any {
 	loaded, err := config.Parse(data)
 	if err != nil {
-		return false
+		return nil
 	}
 	section := loaded.Section("cards")
 	if section == nil {
-		return false
+		return nil
 	}
-	unit, _ := section["unit"].(string)
-	return unit == "" || unit == "pr"
+	if unit, _ := section["unit"].(string); unit != "" && unit != "pr" {
+		return nil
+	}
+	return section
+}
+
+func cardExempt(section map[string]any, branch string) bool {
+	exempt, _ := section["exempt_branches"].([]any)
+	return slices.ContainsFunc(exempt, func(item any) bool { return item == branch })
+}
+
+// judgeDescription judges a description's Card line by a base's `cards` section (nil: none to
+// judge) against the files of the in-memory merge of head with base.
+func (work *session) judgeDescription(cards map[string]any, base, head, body string) error {
+	if cards == nil || cardExempt(cards, work.branch) {
+		return nil
+	}
+	out, err := work.git.Run(work.ctx, "merge-tree", "--write-tree", base, head)
+	tree, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	if err != nil || tree == "" {
+		return failf(exitRefused, "the merge of %s with %s cannot be made here to judge the Card line (%v)", short(head, 10), short(base, 10), err)
+	}
+	found, err := lint.CardLines(cards, lint.RevisionFiles(work.ctx, tree, work.git), body)
+	if err != nil {
+		return failf(exitRefused, "the Card line cannot be checked: %v", err)
+	}
+	if len(found) == 0 {
+		return nil
+	}
+	problems := make([]string, 0, len(found))
+	for _, finding := range found {
+		problems = append(problems, finding.Text)
+	}
+	return failf(exitRefused, "the description fails the Card line's rules:\n- %s\n"+
+		"(--card ID adds the line; --card none --reason TEXT for a change that is no card's work)", strings.Join(problems, "\n- "))
 }
 
 // cardsNeedAMergeCommit refuses `land.method: rebase` where the base's file puts the Card line in

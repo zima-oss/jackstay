@@ -17,8 +17,8 @@ type policy struct {
 	baseSHA  string
 	headSHA  string
 	agentMay bool
-	// cardsInDescription: the base's file puts the Card line in the description.
-	cardsInDescription bool
+	// cards is the base's `cards` section where it puts the Card line in the description, else nil.
+	cards map[string]any
 	// reasons say why the change is a person's.
 	reasons []string
 }
@@ -80,7 +80,7 @@ func (work *session) judgePolicy(change hosting.Change) (policy, error) {
 	if decision.base, decision.hasBase, err = work.policyAt(change.BaseSHA); err != nil {
 		return policy{}, err
 	}
-	decision.cardsInDescription = cardsInDescription(work.fileAt(change.BaseSHA))
+	decision.cards = cardsSectionOf(work.fileAt(change.BaseSHA))
 	changed, hasChanged, err := work.policyAt(change.HeadSHA)
 	if err != nil {
 		return policy{}, err

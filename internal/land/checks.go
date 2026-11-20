@@ -131,7 +131,7 @@ func movedError(before, now hosting.Change) error {
 // waitChecks is step 3: wait until the required checks pass (exit 0, with the change the checks
 // were read for), one fails (refused), the deadline passes (pending), or the head moves (moved).
 // With no gate it waits for every check to settle and reports them.
-func (work *session) waitChecks(number int, headSHA string, required []hosting.RequiredCheck, deadline time.Time) (hosting.Change, int, error) {
+func (work *session) waitChecks(number int, headSHA, baseSHA string, required []hosting.RequiredCheck, deadline time.Time) (hosting.Change, int, error) {
 	started := work.deps.Clock.Now()
 	announced := false
 	for {
@@ -155,6 +155,10 @@ func (work *session) waitChecks(number int, headSHA string, required []hosting.R
 			return hosting.Change{}, 0, movedError(before, after)
 		}
 		settledRead := sameIdentity(before, after)
+		if settledRead && after.BaseSHA != baseSHA {
+			// The base moved: its policy and required checks are judged again before any check.
+			return after, exitLanded, nil
+		}
 		judged := judge(checks, required)
 		if len(judged.failed) > 0 && settledRead {
 			work.report(checks, judged)
@@ -308,7 +312,7 @@ func (work *session) prepareLanding(number int, deadline time.Time) (ready, int,
 				"without jackstay's policy: a person queues it (on the host's page, or with --confirm)")
 		}
 		// Step 3.
-		checked, code, err := work.waitChecks(number, change.HeadSHA, required, deadline)
+		checked, code, err := work.waitChecks(number, change.HeadSHA, decision.baseSHA, required, deadline)
 		if err != nil || code != exitLanded {
 			return ready{}, code, err
 		}

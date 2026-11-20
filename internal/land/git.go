@@ -149,12 +149,14 @@ func (work *session) haveBase(change hosting.Change) error {
 }
 
 // newDescription is the new change request's description: --body-file's, with the --card line
-// added; without either, one from the branch's commits. --card is refused for an open change.
-func (work *session) newDescription(open bool, line string) (string, error) {
+// added; without either, one from the branch's commits. Where the base's file puts the Card line
+// in the description, it is judged before anything is pushed, on the merge with the base's tip.
+// --card is refused for an open change.
+func (work *session) newDescription(open bool, line string, cards map[string]any, baseTip string) (string, error) {
 	if open {
 		if line != "" {
 			return "", failf(exitInvalid, "--card is for the description of a new change request; this one is open already: "+
-				"edit its description on the host (CI's lint of it runs again)")
+				"edit its description on the host (it is judged again before the merge)")
 		}
 		return "", nil
 	}
@@ -168,6 +170,15 @@ func (work *session) newDescription(open bool, line string) (string, error) {
 	}
 	if line != "" {
 		body, given = withLine(body, line), true
+	}
+	if cards != nil && !cardExempt(cards, work.branch) {
+		if !given {
+			return "", failf(exitRefused, "the base asks for a `Card:` line in the description: pass --card ID "+
+				"(or --card none --reason TEXT), or a --body-file that has one")
+		}
+		if err := work.judgeDescription(cards, baseTip, "refs/heads/"+work.branch, body); err != nil {
+			return "", err
+		}
 	}
 	if !given {
 		return work.filled(), nil

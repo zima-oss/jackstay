@@ -392,9 +392,9 @@ const cardSettings = `{"jackstay_schema": 3, "github": {"account": "someone", "r
 
 var firstCard = map[string]string{"cards/APP-1-x.md": "---\n{\"id\": \"APP-1\", \"state\": \"active\"}\n---\n# APP-1\n"}
 
-// jst land writes the Card line and leaves judging it to CI: a card added to the base after the
-// branch split is CI's to find on the merge, so jst land opens the change with --card and lands it.
-func TestACardIsWrittenNotJudgedLocally(t *testing.T) {
+// The Card line is judged on the merge with the base's tip: a card added to the base after the
+// branch split is found, at the opening and before the merge.
+func TestACardAddedToTheBaseAfterTheSplitIsFound(t *testing.T) {
 	land := newLandRepo(t, cardSettings, firstCard, nil)
 	place := land.side()
 	land.GitIn(place, "checkout", "-q", "main")
@@ -508,6 +508,48 @@ func TestADescriptionEditedAfterTheChecksIsMoved(t *testing.T) {
 	out := land.expect(4, "moved", "--title", "a feature")
 	contains(t, out, "description of #7 was edited")
 	land.noMerge()
+}
+
+// A description edited before jst land read it, to a Card line no card file backs, is refused
+// before the merge however green the checks read by commit are: the description sent is the one
+// judged.
+func TestAnEditedDescriptionIsJudgedAsItIsSent(t *testing.T) {
+	land := newLandRepo(t, cardSettings, firstCard, nil)
+	land.Git("push", "-q", "-u", "origin", "feat")
+	land.host.change = land.host.template
+	land.host.change.Body = "What it does.\n\nCard: APP-9\n"
+	land.host.opened = true
+	out := land.expect(1, "refused")
+	contains(t, out, "APP-9")
+	land.noMerge()
+}
+
+// A retarget while the base's tip is read is seen by the last read before the write.
+func TestARetargetDuringTheTipReadIsMoved(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	land.host.tip = func(branch string) string {
+		land.host.change.Base = "release"
+		return land.remoteBranch(branch)
+	}
+	out := land.expect(4, "moved", "--title", "a feature")
+	contains(t, out, "retargeted from main to release")
+	land.noMerge()
+}
+
+// A base that moves during the check wait, dropping a required check, is judged again with its
+// own requirements instead of waiting for the old one to the deadline.
+func TestABaseMovingDuringTheWaitIsJudgedWithItsOwnRules(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	moved := land.advanceMain("c.txt")
+	both := hosting.Rules{ChecksRead: true, Required: required("test", "old"), MethodsRead: true, Methods: []hosting.Method{hosting.Squash}}
+	land.host.rules = []hosting.Rules{requiresTest, both, requiresTest}
+	land.host.beforeRead = func(host *fakeHost, read int) {
+		if read == 3 {
+			host.change.BaseSHA = moved
+		}
+	}
+	land.expect(0, "landed", "--title", "a feature", "--timeout", "120")
+	land.mergedOnceAt(land.Git("rev-parse", "feat"))
 }
 
 // --- checks ------------------------------------------------------------------------------------

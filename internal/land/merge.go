@@ -38,26 +38,31 @@ func (work *session) finish(landing ready, deadline time.Time) (int, error) {
 	return work.write(landing, change, body, deadline)
 }
 
-// localChecks are what this checkout judges before the recheck: no commit here left behind, and a
-// merge method the repository allows (and, where the base's Card line is in the description, one
-// that lands it). It returns the merge commit's message: the description as read.
+// localChecks are what this checkout judges before the recheck: no commit here left behind, a merge
+// method the repository allows (and, where the base's Card line is in the description, one that
+// lands it), and the description's Card line. It returns the merge commit's message.
 func (work *session) localChecks(landing ready) (string, error) {
 	change := landing.change
 	if err := work.nothingLeftBehind(change.Number, change.HeadSHA); err != nil {
 		return "", err
 	}
 	method := methodOf(landing.base)
-	if err := cardsNeedAMergeCommit(method, landing.cardsInDescription); err != nil {
+	if err := cardsNeedAMergeCommit(method, landing.cards != nil); err != nil {
 		return "", err
 	}
 	if landing.rules.MethodsRead && !slices.Contains(landing.rules.Methods, method) {
 		return "", failf(exitRefused, "the repository does not allow a %s merge (`land.method`); it allows: %v", method, landing.rules.Methods)
 	}
+	// The description is the merge commit's message: judged here, exactly as it is sent, and the
+	// recheck stops if it changes before the write.
+	if err := work.judgeDescription(landing.cards, change.BaseSHA, change.HeadSHA, change.Body); err != nil {
+		return "", err
+	}
 	return change.Body, nil
 }
 
-// recheck is step 5: the change, the rules and the required checks read again, then the change
-// once more, and last the base branch's tip as the host has it now. Anything moved stops with
+// recheck is step 5: the change, the rules and the required checks read again, the base branch's
+// tip as the host has it now, and last the change once more. Anything moved stops with
 // `moved`; the next run starts at step 2. It returns the change as last read: the write uses it.
 func (work *session) recheck(landing ready) (hosting.Change, error) {
 	now, err := work.readChange(landing.change.Number)
@@ -79,20 +84,21 @@ func (work *session) recheck(landing ready) (hosting.Change, error) {
 			return hosting.Change{}, err
 		}
 	}
+	tip, err := work.host.BranchTip(work.ctx, now.Base)
+	if err != nil {
+		return hosting.Change{}, fmt.Errorf("the tip of %s: %w", now.Base, err)
+	}
+	if tip != landing.change.BaseSHA {
+		return hosting.Change{}, failf(exitMoved, "%s is at %s on the host, not at %s where #%d was judged; run it again",
+			now.Base, short(tip, 8), short(landing.change.BaseSHA, 8), now.Number)
+	}
+	// The last read before the write: its base, head and description are what the write binds to.
 	last, err := work.readChange(now.Number)
 	if err != nil {
 		return hosting.Change{}, err
 	}
 	if !sameIdentity(now, last) {
 		return hosting.Change{}, movedError(now, last)
-	}
-	tip, err := work.host.BranchTip(work.ctx, last.Base)
-	if err != nil {
-		return hosting.Change{}, fmt.Errorf("the tip of %s: %w", last.Base, err)
-	}
-	if tip != landing.change.BaseSHA {
-		return hosting.Change{}, failf(exitMoved, "%s is at %s on the host, not at %s where #%d was judged; run it again",
-			last.Base, short(tip, 8), short(landing.change.BaseSHA, 8), last.Number)
 	}
 	return last, nil
 }
