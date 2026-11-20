@@ -31,7 +31,7 @@ The command cannot start: 127.
 
 ## `jst test -- COMMAND`: any command
 
-```sh
+```text
 jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]
 ```
 
@@ -39,7 +39,7 @@ Runs any command, recorded. It needs no `jackstay.json`; without one, a run that
 `exited-0`, never `passed`. To make it count, list the command in `receipts.commands` with an
 `evidence` pattern (below).
 
-```sh
+```text
 jst test -- go test ./...
 jst test last                # the last run again: outcome, what went wrong, where the output is
 ```
@@ -443,7 +443,7 @@ slow step (over 60 s, by the recorded median) before a fast one (under 10 s).
 
 ## Measuring: `jst baseline`
 
-```sh
+```text
 jst baseline --repo . --since 2026-11-01 --until 2026-11-14 [--json]
 ```
 

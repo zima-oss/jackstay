@@ -130,9 +130,18 @@ func TestNoFiller(t *testing.T) {
 	}
 }
 
-// helpTexts reads internal/cli/testdata/help.txt, every command's --help as jst prints it (cmd/jst's
-// TestEveryCommandHelp keeps it current): the commands' names, each with its help.
-func helpTexts(t *testing.T, root string) map[string]string {
+// commandHelp is what one command's --help says it takes.
+type commandHelp struct {
+	// flags are every long flag the help names.
+	flags []string
+	// actions are the words a command's usage lines all start with (`jst review pool inspect`), each
+	// with the flags of its own usage lines; none when the usage has no such word.
+	actions map[string][]string
+}
+
+// commandHelps reads internal/cli/testdata/help.txt, every command's --help as jst prints it (cmd/jst's
+// TestEveryCommandHelp keeps it current): what each command takes.
+func commandHelps(t *testing.T, root string) map[string]commandHelp {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(root, "internal", "cli", "testdata", "help.txt"))
 	if err != nil {
@@ -148,7 +157,59 @@ func helpTexts(t *testing.T, root string) map[string]string {
 		texts[name] += line
 	}
 	delete(texts, "")
-	return texts
+	helps := map[string]commandHelp{}
+	for name, text := range texts {
+		helps[name] = parseHelp(name, text)
+	}
+	return helps
+}
+
+// parseHelp reads a command's flags and actions from its --help.
+func parseHelp(name, text string) commandHelp {
+	help := commandHelp{flags: flagNames(text)}
+	actions := map[string][]string{}
+	usage, every := false, true
+	for line := range strings.Lines(text) {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "usage: ") {
+			usage, trimmed = true, strings.TrimPrefix(trimmed, "usage: ")
+		} else if usage && trimmed == "" {
+			break
+		}
+		if !usage {
+			continue
+		}
+		rest, found := strings.CutPrefix(trimmed, "jst "+name+" ")
+		if !found {
+			continue // a line continuing the one before
+		}
+		word, _, _ := strings.Cut(rest, " ")
+		if !actionWord.MatchString(word) {
+			every = false
+			continue
+		}
+		actions[word] = append(actions[word], flagNames(rest)...)
+	}
+	if every && len(actions) > 1 {
+		help.actions = actions
+	}
+	return help
+}
+
+var (
+	// actionWord is a literal word of a usage line: an action, not a flag or a placeholder.
+	actionWord = regexp.MustCompile(`^[a-z][a-z-]*$`)
+	// flagWord is a long flag of a command, whole.
+	flagWord = regexp.MustCompile(`(?:^|[\s\[(=|,])(--[a-z][a-z0-9-]*)`)
+)
+
+// flagNames are the long flags named in a text, whole.
+func flagNames(text string) []string {
+	var flags []string
+	for _, match := range flagWord.FindAllStringSubmatch(text, -1) {
+		flags = append(flags, match[1])
+	}
+	return flags
 }
 
 var (
@@ -158,12 +219,9 @@ var (
 	outputLine = regexp.MustCompile(`^jst [a-z-]+( [a-z-]+)?:( |$)`)
 	// inlineCommand is a jst command written as inline code in a sentence.
 	inlineCommand = regexp.MustCompile("`(jst [^`]*)`")
-	// flagWord is a long flag of a command.
-	flagWord = regexp.MustCompile(`(?:^|[\s\[(=])(--[a-z][a-z0-9-]*)`)
-	// placeholder is a word a reader must replace: <name>, or a word in capitals (COMMAND, PATH).
-	placeholder = regexp.MustCompile(`<[^>]+>|(^|[^$\w])[A-Z][A-Z_]{2,}\b|…`)
-	// separator splits a shell line into the commands it runs.
-	separator = regexp.MustCompile(`&&|\|\||;|\|`)
+	// placeholder is what a reader must replace or choose: <name>, a word in capitals (NAME, ID),
+	// an ellipsis, or an optional part in brackets ([--all]).
+	placeholder = regexp.MustCompile(`<[^>]+>|(^|[^$\w])[A-Z][A-Z_]+\b|…|\.\.\.|\[[^\]]*\]`)
 )
 
 // notPlaceholders are words in capitals that are values, not names to replace.
@@ -172,7 +230,11 @@ var notPlaceholders = []string{"HEAD", "FETCH_HEAD", "ORIG_HEAD", "JSON", "UTC"}
 // placeholderIn returns the first placeholder in a command, or "".
 func placeholderIn(command string) string {
 	for _, found := range placeholder.FindAllString(command, -1) {
-		if word := strings.TrimLeftFunc(found, notWordStart); !slices.Contains(notPlaceholders, word) {
+		word := strings.TrimLeftFunc(found, notWordStart)
+		if trimmed := strings.TrimLeft(word, "."); trimmed != "" {
+			word = trimmed // ..HEAD: the dots are a range's, not an ellipsis
+		}
+		if !slices.Contains(notPlaceholders, word) {
 			return word
 		}
 	}
@@ -180,20 +242,41 @@ func placeholderIn(command string) string {
 }
 
 // notWordStart says whether a rune is the character before a placeholder that the pattern matched.
-func notWordStart(r rune) bool { return r != '<' && r != '…' && (r < 'A' || r > 'Z') }
+func notWordStart(r rune) bool {
+	return r != '<' && r != '…' && r != '.' && r != '[' && (r < 'A' || r > 'Z')
+}
+
+// splitCommands splits a shell line into the commands it runs, at &&, ||, ; and |, but not at a |
+// inside brackets or parentheses, where it separates the choices of a synopsis.
+func splitCommands(line string) []string {
+	var parts []string
+	depth, start := 0, 0
+	for index := 0; index < len(line); index++ {
+		switch character := line[index]; {
+		case character == '[' || character == '(':
+			depth++
+		case character == ']' || character == ')':
+			depth = max(depth-1, 0)
+		case depth == 0 && (character == ';' || character == '|' || character == '&' && index+1 < len(line) && line[index+1] == '&'):
+			parts = append(parts, line[start:index])
+			if index+1 < len(line) && (line[index+1] == '|' || line[index+1] == '&') {
+				index++
+			}
+			start = index + 1
+		}
+	}
+	return append(parts, line[start:])
+}
 
 // globalFlags are the flags jst takes in place of a command.
 var globalFlags = []string{"--help", "--version"}
 
 // checkCommand returns what is wrong with one jst command (its words after "jst"), or "".
-func checkCommand(command string, helps map[string]string, names []string) string {
+func checkCommand(command string, helps map[string]commandHelp, names []string) string {
 	command = strings.TrimSpace(command)
 	before, _, _ := strings.Cut(command, " -- ") // what follows -- is another program's
 	words := strings.Fields(before)
-	if len(words) < 2 {
-		return ""
-	}
-	if slices.Contains(globalFlags, words[1]) {
+	if len(words) < 2 || slices.Contains(globalFlags, words[1]) {
 		return ""
 	}
 	name := ""
@@ -210,22 +293,61 @@ func checkCommand(command string, helps map[string]string, names []string) strin
 		}
 		return "no command " + strings.Join(words[:2], " ")
 	}
-	for _, match := range flagWord.FindAllStringSubmatch(before, -1) {
-		flag := match[1]
-		if slices.Contains(globalFlags, flag) {
-			continue
+	help := helps[name]
+	actionFlags := []string(nil)
+	if next := 1 + len(strings.Fields(name)); help.actions != nil && next < len(words) && !slices.Contains(globalFlags, words[next]) {
+		flags, known := help.actions[words[next]]
+		if !known {
+			return "jst " + name + " has no action " + words[next]
 		}
-		if !regexp.MustCompile(regexp.QuoteMeta(flag) + `\b`).MatchString(helps[name]) {
+		actionFlags = flags
+	}
+	for _, flag := range flagNames(before) {
+		switch {
+		case slices.Contains(globalFlags, flag):
+		case !slices.Contains(help.flags, flag):
 			return "jst " + name + " has no " + flag
+		case actionFlags != nil && !slices.Contains(actionFlags, flag) && inAnyAction(help.actions, flag):
+			return "jst " + name + " " + words[1+len(strings.Fields(name))] + " takes no " + flag
 		}
 	}
 	return ""
 }
 
+// inAnyAction says whether a flag belongs to one of a command's actions (rather than to them all).
+func inAnyAction(actions map[string][]string, flag string) bool {
+	for _, flags := range actions {
+		if slices.Contains(flags, flag) {
+			return true
+		}
+	}
+	return false
+}
+
+// joinContinuations joins each code line ending in a backslash with the lines it continues, so a
+// command is checked whole: the joined line keeps the number of its first, and the lines it took in
+// are left empty and marked as no code.
+func joinContinuations(lines []string, kinds []lineKind) ([]string, []lineKind) {
+	joined, joinedKinds := slices.Clone(lines), slices.Clone(kinds)
+	for n := 0; n < len(lines); n++ {
+		if kinds[n] == prose || kinds[n] == fenceMarker {
+			continue
+		}
+		last := n
+		for strings.HasSuffix(strings.TrimSpace(joined[n]), `\`) && last+1 < len(lines) && kinds[last+1] == kinds[n] {
+			last++
+			joined[n] = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(joined[n]), `\`)) + " " + strings.TrimSpace(lines[last])
+			joined[last], joinedKinds[last] = "", fenceMarker
+		}
+		n = last
+	}
+	return joined, joinedKinds
+}
+
 // TestCommandExamplesRun: docs/STYLE.md rule 6.
 func TestCommandExamplesRun(t *testing.T) {
 	root := repoRoot(t)
-	helps := helpTexts(t, root)
+	helps := commandHelps(t, root)
 	names := make([]string, 0, len(helps))
 	for name := range helps {
 		names = append(names, name)
@@ -237,35 +359,33 @@ func TestCommandExamplesRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		lines := strings.Split(string(data), "\n")
-		kinds := classify(lines)
+		original := strings.Split(string(data), "\n")
+		lines, kinds := joinContinuations(original, classify(original))
 		for n, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if kinds[n] == fenceMarker {
-				continue
-			}
-			code := kinds[n] == runnableCode || kinds[n] == otherCode
 			var commands []string
-			if code {
-				trimmed = strings.TrimPrefix(trimmed, "$ ")
+			switch kinds[n] {
+			case fenceMarker:
+				continue
+			case runnableCode, otherCode:
+				trimmed := strings.TrimPrefix(strings.TrimSpace(line), "$ ")
 				if !commandLine.MatchString(trimmed) || outputLine.MatchString(trimmed) {
 					continue
 				}
 				shell, _, _ := strings.Cut(trimmed, " #") // a comment
-				for _, part := range separator.Split(shell, -1) {
+				for _, part := range splitCommands(shell) {
 					if part = strings.TrimSpace(part); strings.HasPrefix(part, "jst ") || part == "jst" {
 						commands = append(commands, part)
 						if found := placeholderIn(part); found != "" && kinds[n] == runnableCode {
-							t.Errorf("%s:%d: %q is a placeholder in a code block; write a value that runs (docs/STYLE.md rule 6)", file, n+1, found)
+							t.Errorf("%s:%d: %q is a placeholder in an sh block; write a value that runs, or tag the block text (docs/STYLE.md rule 6)", file, n+1, found)
 						}
 					}
 				}
-			} else {
+			default:
 				for _, match := range inlineCommand.FindAllStringSubmatch(line, -1) {
 					if outputLine.MatchString(match[1]) {
 						continue
 					}
-					for _, part := range separator.Split(match[1], -1) {
+					for _, part := range splitCommands(match[1]) {
 						if part = strings.TrimSpace(part); strings.HasPrefix(part, "jst ") {
 							commands = append(commands, part)
 						}
@@ -282,23 +402,57 @@ func TestCommandExamplesRun(t *testing.T) {
 }
 
 func TestCheckCommand(t *testing.T) {
-	helps := map[string]string{
-		"test":      "usage: jst test [--commit REV] SCOPE\n",
-		"test last": "usage: jst test last [--json]\n",
+	helps := map[string]commandHelp{
+		"test":      parseHelp("test", "usage: jst test [--commit REV] [--no-lock] SCOPE\n"),
+		"test last": parseHelp("test last", "usage: jst test last [--json]\n"),
+		"review pool": parseHelp("review pool", "usage: jst review pool list [--json]\n"+
+			"       jst review pool inspect [--json]\n       jst review pool prune [--apply] [--json]\n\nmore\n"),
 	}
-	names := []string{"test last", "test"}
+	names := []string{"test last", "review pool", "test"}
 	for command, want := range map[string]string{
-		"jst test gate --commit HEAD":   "",
-		"jst test last --json":          "",
-		"jst test gate --from STEP":     "jst test has no --from",
-		"jst land --apply":              "no command jst land",
-		"jst COMMAND --help":            "",
-		"jst --version":                 "",
-		"jst test -- go test --race ./": "",
-		"jst test last --commit HEAD":   "jst test last has no --commit",
+		"jst test gate --commit HEAD":        "",
+		"jst test last --json":               "",
+		"jst test gate --from STEP":          "jst test has no --from",
+		"jst test gate --no":                 "jst test has no --no",
+		"jst land --apply":                   "no command jst land",
+		"jst COMMAND --help":                 "",
+		"jst --version":                      "",
+		"jst test -- go test --race ./":      "",
+		"jst test last --commit HEAD":        "jst test last has no --commit",
+		"jst review pool inspect --json":     "",
+		"jst review pool prune --apply":      "",
+		"jst review pool inspec":             "jst review pool has no action inspec",
+		"jst review pool inspect --apply":    "jst review pool inspect takes no --apply",
+		"jst review pool --help":             "",
+		"jst test [--no-lock | --lock] gate": "jst test has no --lock",
 	} {
 		if got := checkCommand(command, helps, names); got != want {
 			t.Errorf("checkCommand(%q) = %q, want %q", command, got, want)
 		}
+	}
+}
+
+func TestPlaceholdersAndSplitting(t *testing.T) {
+	for command, want := range map[string]string{
+		"jst procs stop --all ID":       "ID",
+		"jst test [--no-reuse] gate":    "[--no-reuse]",
+		"jst test gate ...":             "...",
+		"jst test gate --commit HEAD":   "",
+		"jst wait --timeout 30 --for X": "",
+		"jst log --session NAME":        "NAME",
+	} {
+		if got := placeholderIn(command); got != want {
+			t.Errorf("placeholderIn(%q) = %q, want %q", command, got, want)
+		}
+	}
+	got := splitCommands("jst test [--lock | --no-lock] gate && jst test last | head; jst doctor")
+	want := []string{"jst test [--lock | --no-lock] gate ", " jst test last ", " head", " jst doctor"}
+	if !slices.Equal(got, want) {
+		t.Errorf("splitCommands = %q, want %q", got, want)
+	}
+	lines := []string{"```sh", `jst receipts verify-ci \`, "  --repositroy x", "```"}
+	joined, kinds := joinContinuations(lines, classify(lines))
+	if joined[1] != "jst receipts verify-ci --repositroy x" || kinds[2] != fenceMarker {
+		t.Errorf("joinContinuations = %q %v", joined, kinds)
 	}
 }

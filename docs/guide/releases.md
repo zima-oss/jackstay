@@ -51,7 +51,7 @@ An entry may carry a type and an audience; in a project with `release` it must:
 | `fix`, `security` | patch |
 | `note` | none |
 
-```sh
+```text
 jst changes new --slug widget-builder --type breaking --audience consumer \
   --title 'WidgetForm takes its rows as a builder' \
   --migration 'Replace WidgetForm(rows:) with WidgetForm { … }'

@@ -165,7 +165,7 @@ shell call. A project quiet for more than three days is a note, not a problem.
 
 ## `jst owner`
 
-```sh
+```text
 jst owner [--session S|all] [--kind typed|queued|widget|declined] [--grep RE] [--since D] [--max-chars N]
 jst owner --stats [--session S]
 ```

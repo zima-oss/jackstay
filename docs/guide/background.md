@@ -39,7 +39,7 @@ start; 127 it was not found.
 
 ## `jst procs`
 
-```sh
+```text
 jst procs [--all] [--json]          # what jst bg supervises: this session's, or every one
 jst procs stop [--all] ID|NAME...   # TERM, 5 seconds, then KILL
 ```
