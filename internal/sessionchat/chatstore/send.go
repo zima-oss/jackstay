@@ -540,22 +540,10 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 		}
 		return result, nil
 	}
-	// Usage counts the send before its entry goes, so no exit between them undercounts it; a marker
-	// a delivery never gets (one created dropped) is not counted.
-	for _, delivery := range deliveries {
-		if !deliverystate.Unread(deliverystate.State(delivery.State)) {
-			charge -= deliverystate.MarkerCharge
-		}
-	}
-	transaction.usage.Messages++
-	transaction.usage.Bytes += charge
 	if err := transaction.applyCommitted(entry, envelope); err != nil {
 		return uncertain(err)
 	}
 	if err := transaction.writeDerived(entry, envelope); err != nil {
-		return uncertain(err)
-	}
-	if err := transaction.saveUsage(); err != nil {
 		return uncertain(err)
 	}
 	if err := transaction.removeJournal(id); err != nil {
@@ -576,14 +564,19 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 	return result, nil
 }
 
-// makeRoom admits a send's charge and the account's message count (section 7.4).
+// makeRoom admits a send's charge and the account's message count (section 7.4), measured from the
+// folders now.
 func (transaction *transaction) makeRoom(plan planned, charge int64) error {
-	limit := int64(deliverystate.WriteLimit)
+	limit := transaction.store.writeLimit
 	messages := maxLiveMessages
 	if plan.kind == "event" {
-		limit, messages = deliverystate.EventLimit, maxLiveMessages/10*9
+		limit, messages = transaction.store.eventLimit, maxLiveMessages/10*9
 	}
-	if transaction.usage.Messages < messages && transaction.admit(charge, limit) {
+	measured, err := transaction.measure()
+	if err != nil {
+		return err
+	}
+	if measured.Messages < messages && deliverystate.Admit(measured.Bytes, charge, limit) {
 		return nil
 	}
 	return refuse(ReasonCapacity, "the chat store is full; wait for its sweep to free room")
@@ -659,10 +652,7 @@ func (transaction *transaction) writeDelivery(id, hash string, delivery Delivery
 		return err
 	}
 	if !deliverystate.Unread(deliverystate.State(delivery.State)) {
-		err := os.Remove(filepath.Join(transaction.place.inbox(hash), id))
-		if err == nil {
-			transaction.usage.Bytes = max(0, transaction.usage.Bytes-deliverystate.MarkerCharge)
-		} else if !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(filepath.Join(transaction.place.inbox(hash), id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}
@@ -713,12 +703,22 @@ func (transaction *transaction) duplicateOf(senderKey, key string) (SendResult, 
 		return SendResult{}, false, err
 	}
 	id := string(data)
-	answer := deliverystate.ResolveRetry(true, messageIDPattern.MatchString(id) && exists(transaction.place.commit(id)))
-	if answer != deliverystate.Duplicate {
+	committed := false
+	if messageIDPattern.MatchString(id) {
+		// Only a commit record known to be absent makes the entry a leftover; any other answer of
+		// the disk stops the send, so a retry is never taken for fresh by mistake.
+		_, lookupErr := os.Lstat(transaction.place.commit(id))
+		switch {
+		case lookupErr == nil:
+			committed = true
+		case !errors.Is(lookupErr, os.ErrNotExist):
+			return SendResult{}, false, lookupErr
+		}
+	}
+	if deliverystate.ResolveRetry(true, committed) != deliverystate.Duplicate {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return SendResult{}, false, err
 		}
-		transaction.usage.Bytes -= deliverystate.IdempotencyCharge
 		return SendResult{}, false, nil
 	}
 	var envelope Envelope

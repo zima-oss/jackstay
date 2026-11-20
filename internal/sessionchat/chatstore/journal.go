@@ -92,7 +92,7 @@ func (transaction *transaction) removeJournal(id string) error {
 }
 
 // recover resolves every journal entry before the caller's own work: it returns the entries it
-// resolved, whose files the caller removes once usage is saved, and how many it had to keep (the
+// resolved, whose entries the caller removes, and how many it had to keep (the
 // store is then stopped).
 func (transaction *transaction) recover() (resolved []string, kept int, err error) {
 	names, err := listNames(transaction.place.journal())
@@ -186,8 +186,8 @@ func (transaction *transaction) rollBack(entry journalEntry) error {
 			return err
 		}
 	}
-	// The removals are made durable before usage, which no longer counts them, is saved and the entry
-	// goes: a crash cannot bring the files back under a usage that left them out.
+	// The removals are made durable before the entry goes: a crash cannot bring files back that no
+	// entry would remove again.
 	place := transaction.place
 	for _, folder := range []string{place.bodies(), place.messages(), filepath.Dir(place.deliveries(entry.ID)), place.requests(), place.idempotency()} {
 		if err := transaction.store.syncFolder(folder); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -213,7 +213,7 @@ func (transaction *transaction) removeMessageFiles(id string) error {
 }
 
 // rollForward applies what follows from a durable commit (the rest of step 3) and writes the derived
-// files (step 4); the caller removes the entry (step 5) once usage is saved. Every part is
+// files (step 4); the caller removes the entry (step 5). Every part is
 // idempotent, and a part found done already has its folder fsynced again, since the write that did
 // it may have been renamed into place without its folder synced.
 func (transaction *transaction) rollForward(entry journalEntry) error {

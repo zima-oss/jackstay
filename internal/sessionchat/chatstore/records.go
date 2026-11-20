@@ -23,7 +23,6 @@ const (
 	commitBound   = 1 << 10
 	sessionBound  = 64 << 10
 	channelBound  = 16 << 10
-	usageBound    = 4 << 10
 	journalBound  = 8 << 10
 	// MaxBodyBytes is the largest body, in bytes of UTF-8.
 	MaxBodyBytes = 32 << 10
@@ -239,7 +238,6 @@ func (place layout) commit(id string) string       { return filepath.Join(place.
 func (place layout) inbox(hash string) string      { return filepath.Join(place.root, "inbox", hash) }
 func (place layout) outbox(hash string) string     { return filepath.Join(place.root, "outbox", hash) }
 func (place layout) idempotency() string           { return filepath.Join(place.root, "idempotency") }
-func (place layout) usage() string                 { return filepath.Join(place.root, "usage.json") }
 func (place layout) requests() string              { return filepath.Join(place.root, "requests") }
 func (place layout) requestIndex(id string) string { return filepath.Join(place.root, "requests", id) }
 func (place layout) delivery(id, hash string) string {

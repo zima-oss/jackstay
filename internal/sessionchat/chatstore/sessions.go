@@ -153,13 +153,11 @@ func (transaction *transaction) newSession(registration Registration, hash, mome
 	if live >= transaction.store.liveLimit {
 		return Session{}, refuse(ReasonCapacity, "the account has %d live chat sessions; wait for one to end", transaction.store.liveLimit)
 	}
-	if !transaction.admit(deliverystate.SessionCharge, deliverystate.WriteLimit) {
+	if fits, err := transaction.admit(deliverystate.SessionCharge, transaction.store.writeLimit); err != nil || !fits {
+		if err != nil {
+			return Session{}, err
+		}
 		return Session{}, refuse(ReasonCapacity, "the chat store is full; wait for the sweep to free room")
-	}
-	transaction.usage.Bytes += deliverystate.SessionCharge
-	// The charge is saved before the record exists, so no exit between them leaves it uncounted.
-	if err := transaction.saveUsage(); err != nil {
-		return Session{}, err
 	}
 	name := registration.Name
 	if name == "" {
@@ -331,12 +329,11 @@ func (transaction *transaction) ensureChannel(channel Channel) error {
 		return nil
 	case err == nil:
 	case errors.Is(err, os.ErrNotExist):
-		if !transaction.admit(deliverystate.ChannelCharge, deliverystate.WriteLimit) {
+		if fits, err := transaction.admit(deliverystate.ChannelCharge, transaction.store.writeLimit); err != nil || !fits {
+			if err != nil {
+				return err
+			}
 			return refuse(ReasonCapacity, "the chat store is full; wait for the sweep to free room")
-		}
-		transaction.usage.Bytes += deliverystate.ChannelCharge
-		if err := transaction.saveUsage(); err != nil {
-			return err
 		}
 	default:
 		return err

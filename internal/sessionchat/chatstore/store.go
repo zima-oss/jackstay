@@ -42,8 +42,9 @@ type Store struct {
 	// record; a test makes them fail as a disk that cannot make a write durable does.
 	writeCommitFile func(path string, data []byte, mode os.FileMode, limit int) error
 	syncFolder      func(folder string) error
-	// liveLimit is the bound on live sessions (section 6.4); a test lowers it.
-	liveLimit int
+	// liveLimit, writeLimit and eventLimit are the bounds of sections 6.4 and 7.4; a test lowers them.
+	liveLimit              int
+	writeLimit, eventLimit int64
 }
 
 // Options replace the clock and the source of random bits; a test sets them.
@@ -57,7 +58,8 @@ type Options struct {
 // Open is the store rooted at folder (the v1 folder of section 7.1).
 func Open(folder string, options Options) *Store {
 	store := &Store{place: layout{root: folder}, now: options.Now, random: options.Random, logger: options.Log,
-		writeCommitFile: durable.WriteAtomic, syncFolder: durable.SyncFolder, liveLimit: maxLiveSessions}
+		writeCommitFile: durable.WriteAtomic, syncFolder: durable.SyncFolder, liveLimit: maxLiveSessions,
+		writeLimit: deliverystate.WriteLimit, eventLimit: deliverystate.EventLimit}
 	if store.now == nil {
 		store.now = time.Now
 	}
@@ -136,10 +138,9 @@ type transaction struct {
 	store *Store
 	place layout
 	now   time.Time
-	usage usage
 }
 
-// update runs change under the store's lock, after recovery, and saves the usage it changed.
+// update runs change under the store's lock, after recovery.
 func (store *Store) update(ctx context.Context, change func(*transaction) error) error {
 	if err := makeFolder(store.place.root); err != nil {
 		return err
@@ -160,62 +161,25 @@ func (store *Store) update(ctx context.Context, change func(*transaction) error)
 	if deliverystate.Stopped(kept) {
 		return errStopped
 	}
-	loaded, err := transaction.loadUsage()
-	if err != nil {
-		return err
-	}
-	if !loaded || len(resolved) > 0 {
-		if err := transaction.rebuildUsage(); err != nil {
-			return err
-		}
-	}
-	// An entry goes only once the usage that counts its files is saved (section 7.4).
 	for _, id := range resolved {
 		if err := transaction.removeJournal(id); err != nil {
 			return err
 		}
 	}
-	before := transaction.usage
-	if err := change(transaction); err != nil {
-		if transaction.usage != before {
-			_ = transaction.saveUsage()
-		}
-		return err
-	}
-	if transaction.usage != before {
-		return transaction.saveUsage()
-	}
-	return nil
+	return change(transaction)
 }
 
-// usage is usage.json: the charges of the records that exist (section 7.4).
+// usage is the charges of the records that exist (section 7.4). It is never stored: every admission
+// measures it from the folders, under the lock it already holds, so no crash, failed write or
+// removal can leave it counting files that are not there or missing files that are.
 type usage struct {
-	V        int   `json:"v"`
-	Bytes    int64 `json:"bytes"`
-	Messages int   `json:"messages"`
+	Bytes    int64
+	Messages int
 }
 
-func (transaction *transaction) loadUsage() (bool, error) {
-	var record usage
-	err := readRecord(transaction.place.usage(), usageBound, &record)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, nil // rebuilt from the folders
-	}
-	transaction.usage = record
-	return true, nil
-}
-
-func (transaction *transaction) saveUsage() error {
-	transaction.usage.V = 1
-	return writeRecord(transaction.place.usage(), transaction.usage, usageBound)
-}
-
-// rebuildUsage counts the charges of every record by listing the folders: usage is a function of
-// which files exist (section 7.4).
-func (transaction *transaction) rebuildUsage() error {
+// measure counts the charges of every record by listing the folders: usage is a function of which
+// files exist (section 7.4).
+func (transaction *transaction) measure() (usage, error) {
 	place := transaction.place
 	var total usage
 	charge := func(folder string, each int64) (int, error) {
@@ -236,40 +200,40 @@ func (transaction *transaction) rebuildUsage() error {
 		return nil
 	}
 	if _, err := charge(place.sessions(), deliverystate.SessionCharge); err != nil {
-		return err
+		return total, err
 	}
 	if _, err := charge(filepath.Join(place.root, "bindings"), deliverystate.BindingCharge); err != nil {
-		return err
+		return total, err
 	}
 	if _, err := charge(place.channels(), deliverystate.ChannelCharge); err != nil {
-		return err
+		return total, err
 	}
 	messages, err := charge(place.messages(), deliverystate.EnvelopeCharge)
 	if err != nil {
-		return err
+		return total, err
 	}
 	total.Messages = messages
 	if _, err := charge(place.commits(), deliverystate.CommitCharge); err != nil {
-		return err
+		return total, err
 	}
 	if _, err := charge(place.idempotency(), deliverystate.IdempotencyCharge); err != nil {
-		return err
+		return total, err
 	}
 	if err := nested(filepath.Join(place.root, "deliveries"), deliverystate.DeliveryCharge); err != nil {
-		return err
+		return total, err
 	}
 	if err := nested(filepath.Join(place.root, "inbox"), deliverystate.MarkerCharge); err != nil {
-		return err
+		return total, err
 	}
 	if err := nested(filepath.Join(place.root, "outbox"), deliverystate.MarkerCharge); err != nil {
-		return err
+		return total, err
 	}
 	if _, err := charge(place.requests(), deliverystate.MarkerCharge); err != nil {
-		return err
+		return total, err
 	}
 	bodies, err := listNames(place.bodies())
 	if err != nil {
-		return err
+		return total, err
 	}
 	for _, name := range bodies {
 		info, err := os.Lstat(filepath.Join(place.bodies(), name))
@@ -277,13 +241,16 @@ func (transaction *transaction) rebuildUsage() error {
 			total.Bytes += info.Size()
 		}
 	}
-	transaction.usage = total
-	return transaction.saveUsage()
+	return total, nil
 }
 
-// admit reports whether records of the given charge fit under limit (section 7.4).
-func (transaction *transaction) admit(charge, limit int64) bool {
-	return deliverystate.Admit(transaction.usage.Bytes, charge, limit)
+// admit reports whether records of the given charge fit under limit (section 7.4), measured now.
+func (transaction *transaction) admit(charge, limit int64) (bool, error) {
+	measured, err := transaction.measure()
+	if err != nil {
+		return false, err
+	}
+	return deliverystate.Admit(measured.Bytes, charge, limit), nil
 }
 
 // listNames lists a folder's entries, without the temporary files of durable writes and the

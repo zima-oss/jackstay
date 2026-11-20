@@ -803,41 +803,40 @@ func TestAFullStoreRefusesASend(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:b", "b", alpha, StateIdle)
-	if err := writeRecord(f.store.place.usage(), usage{V: 1, Bytes: 63 << 20}, usageBound); err != nil {
-		t.Fatal(err)
-	}
+	f.store.writeLimit = f.measured().Bytes + 1000
 	_, err := f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "b", Message: "no room"})
 	f.refused(err, ReasonCapacity)
-	if err := os.Remove(f.store.place.usage()); err != nil {
-		t.Fatal(err)
-	}
-	f.send("cc:a", SendInput{To: "b", Message: "room again: usage is rebuilt from the folders"})
+	f.store.writeLimit = 63 << 20
+	f.send("cc:a", SendInput{To: "b", Message: "room again"})
 }
 
-func TestUsageIsAFunctionOfTheFiles(t *testing.T) {
+func (f *fixture) measured() usage {
+	f.t.Helper()
+	var result usage
+	if err := f.store.update(f.ctx, func(transaction *transaction) error {
+		measured, err := transaction.measure()
+		result = measured
+		return err
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+	return result
+}
+func TestUsageIsMeasuredFromTheFiles(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:b", "b", alpha, StateIdle)
+	before := f.measured()
 	f.send("cc:a", SendInput{To: "b", Message: "count me", IdempotencyKey: "count-key"})
-	var counted usage
-	if err := readRecord(f.store.place.usage(), usageBound, &counted); err != nil {
-		t.Fatal(err)
+	after := f.measured()
+	want := deliverystate.SendCharge(len("count me"), 1, true)
+	if after.Messages != before.Messages+1 || after.Bytes-before.Bytes != want {
+		t.Fatalf("before %+v, after %+v, want a charge of %d", before, after, want)
 	}
-	if err := os.Remove(f.store.place.usage()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.Sessions(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	var rebuilt usage
-	if err := readRecord(f.store.place.usage(), usageBound, &rebuilt); err != nil {
-		t.Fatal(err)
-	}
-	if rebuilt != counted || rebuilt.Messages != 1 {
-		t.Fatalf("counted %+v, rebuilt %+v", counted, rebuilt)
+	if exists(filepath.Join(f.store.place.root, "usage.json")) {
+		t.Fatal("usage is never stored")
 	}
 }
-
 func TestCheckRelatedNamesEachProblem(t *testing.T) {
 	channels := []Channel{alpha, beta, {ID: strings.Repeat("d", 64), Name: "beta"}}
 	problems := CheckRelated([]string{"#alpha", "#beta", "#delta", "web", "#common"}, channels)
@@ -994,9 +993,6 @@ func TestARollbackKeepsItsEntryUntilItsRemovalsAreDurable(t *testing.T) {
 		t.Fatal(err)
 	}
 	deliveries := filepath.Dir(f.store.place.deliveries(id))
-	if err := os.Remove(f.store.place.usage()); err != nil {
-		t.Fatal(err)
-	}
 	f.store.syncFolder = func(folder string) error {
 		if folder == deliveries {
 			return errors.New("the disk refused")
@@ -1009,9 +1005,6 @@ func TestARollbackKeepsItsEntryUntilItsRemovalsAreDurable(t *testing.T) {
 	if !exists(filepath.Join(f.store.place.journal(), id)) {
 		t.Fatal("the entry stays until the removals are durable")
 	}
-	if exists(f.store.place.usage()) {
-		t.Fatal("no usage is saved over removals that are not durable")
-	}
 	f.store.syncFolder = durable.SyncFolder
 	if _, err := f.store.Sessions(f.ctx); err != nil {
 		t.Fatal(err)
@@ -1019,10 +1012,8 @@ func TestARollbackKeepsItsEntryUntilItsRemovalsAreDurable(t *testing.T) {
 	if exists(filepath.Join(f.store.place.journal(), id)) || exists(f.store.place.envelope(id)) {
 		t.Fatal("the next recovery finishes the rollback")
 	}
-	var rebuilt usage
-	if err := readRecord(f.store.place.usage(), usageBound, &rebuilt); err != nil || rebuilt.Messages != 0 ||
-		rebuilt.Bytes != 2*deliverystate.SessionCharge+deliverystate.ChannelCharge {
-		t.Fatalf("usage is rebuilt from what is left: %+v %v", rebuilt, err)
+	if left := f.measured(); left.Messages != 0 || left.Bytes != 2*deliverystate.SessionCharge+deliverystate.ChannelCharge {
+		t.Fatalf("usage is measured from what is left: %+v", left)
 	}
 }
 
@@ -1078,33 +1069,27 @@ func TestAFailureAfterTheCommitIsUncertainWithTheIDs(t *testing.T) {
 	}
 }
 
-func TestUsageMatchesTheFilesAfterAResponse(t *testing.T) {
+func TestAnIdempotencyLookupTheDiskCannotAnswerKeepsTheKey(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:b", "b", alpha, StateIdle)
-	asked := f.send("cc:a", SendInput{To: "b", Message: "decide", Request: &RequestInput{Expects: "decision"}})
-	f.session("cc:a", "", alpha, StateGone)
-	if _, err := f.store.Respond(f.ctx, "cc:b", RespondInput{RequestID: asked.RequestID, Decision: "approve"}); err != nil {
+	first := f.send("cc:a", SendInput{To: "b", Message: "once only", IdempotencyKey: "kept-key"})
+	if err := os.Chmod(f.store.place.commits(), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	var counted, rebuilt usage
-	if err := readRecord(f.store.place.usage(), usageBound, &counted); err != nil {
+	_, lookupErr := f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "b", Message: "once only", IdempotencyKey: "kept-key"})
+	if err := os.Chmod(f.store.place.commits(), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(f.store.place.usage()); err != nil {
-		t.Fatal(err)
+	if lookupErr == nil {
+		t.Skip("this account can search a folder without permission (root)")
 	}
-	if _, err := f.store.Sessions(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := readRecord(f.store.place.usage(), usageBound, &rebuilt); err != nil {
-		t.Fatal(err)
-	}
-	if counted.Bytes != rebuilt.Bytes {
-		t.Fatalf("counted %d, files %d", counted.Bytes, rebuilt.Bytes)
+	f.clock.advance(2 * time.Minute) // past the repeat window: only the key can tell the retry
+	retry := f.send("cc:a", SendInput{To: "b", Message: "once only", IdempotencyKey: "kept-key"})
+	if retry.Outcome != OutcomeDuplicate || retry.MessageID != first.MessageID {
+		t.Fatalf("the key survived the failed lookup: %+v", retry)
 	}
 }
-
 func TestAResumedSessionCountsAgainstTheLiveBound(t *testing.T) {
 	f := newFixture(t)
 	f.store.liveLimit = 2
