@@ -160,3 +160,13 @@ func Open(ledger []LedgerFinding) []LedgerFinding {
 	}
 	return open
 }
+
+// ledgerBlocks says whether an open finding of ledger blocks, by today's predicate.
+func ledgerBlocks(settings Settings, ledger []LedgerFinding) bool {
+	for _, finding := range Open(ledger) {
+		if settings.Blocks(finding.Severity, finding.Likelihood, finding.Consequence, finding.OrdinaryPath) {
+			return true
+		}
+	}
+	return false
+}

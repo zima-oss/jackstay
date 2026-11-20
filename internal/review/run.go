@@ -260,7 +260,9 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, set
 		planned.number = record.Round + 1
 		planned.chain = record.Chain
 	}
-	if newest != nil && newest.Round >= round.Settings.RoundLimit && newest.Outcome.Blocks && !options.PastLimit {
+	// Whether the newest round still blocks is read from its ledger by today's predicate, not from
+	// the flag it saved: a rule that changed since (W-094) applies to it as `jst review check` does.
+	if newest != nil && newest.Round >= round.Settings.RoundLimit && ledgerBlocks(round.Settings, newest.Outcome.Ledger) && !options.PastLimit {
 		result := Result{Status: ExitOwner, Next: fmt.Sprintf(
 			"round %d reached the limit of %d and still blocks: the owner decides; a further round needs --past-limit after the owner's word",
 			newest.Round, round.Settings.RoundLimit)}

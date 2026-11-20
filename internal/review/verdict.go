@@ -97,7 +97,7 @@ func ReadAnswer(path string) (Answer, string, string) {
 var (
 	answerMembers  = map[string]string{"verdict": "string", "summary": "string", "findings": "array", "prior": "array"}
 	findingMembers = map[string]string{"id": "string", "place": "string", "severity": "string", "likelihood": "string",
-		"consequence": "string", "title": "string", "detail": "string", "repeats": "array"}
+		"consequence": "string", "title": "string", "detail": "string", "ordinary_path": "string", "repeats": "array"}
 	priorMembers = map[string]string{"id": "string", "status": "string"}
 )
 

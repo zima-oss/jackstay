@@ -1,6 +1,9 @@
 package review
 
 import (
+	"context"
+	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -121,5 +124,22 @@ func TestAnUnusualSevereFindingWithoutAnOrdinaryPathDoesNotHoldARound(t *testing
 	outcome = Advance(s, nil, nil, map[string]Answer{"codex": {Verdict: "changes", Findings: []AnswerFinding{accidental}}}, s.RoundLimit, "c1")
 	if !outcome.Blocks || outcome.Ledger[0].OrdinaryPath == "" {
 		t.Fatalf("a severe accident with its ordinary path did not block: %+v", outcome)
+	}
+}
+
+func TestARoundAtTheLimitIsReadByTodaysPredicate(t *testing.T) {
+	h := newHarness(t, Answer{Verdict: "approve", Summary: "clear"})
+	settings := h.round.Settings
+	// A round saved before W-094: at the limit, blocking only by an unusual, severe finding with no path.
+	handBuilt := LedgerFinding{ID: "r6-codex-F1", Reviewer: "codex", Place: "a.go: run", PlaceKey: "a.go: run", Severity: "blocker",
+		Likelihood: "unusual", Consequence: "severe", Title: "t", Detail: "d", Status: StatusOpen, OpenedRound: settings.RoundLimit}
+	record := RoundRecord{Task: "feature/x", Round: settings.RoundLimit, Attempt: settings.RoundLimit, Chain: 1, Base: "c0", Commit: "c1",
+		Policy: settings.policyID(), Runs: []ReviewerRun{{Reviewer: "codex", Outcome: "done"}},
+		Outcome: Outcome{Blocks: true, Ledger: []LedgerFinding{handBuilt}}}
+	if err := writeJSON(filepath.Join(h.round.Store.TaskPath("feature/x"), fmt.Sprintf("round-%d", settings.RoundLimit), RecordName), record); err != nil {
+		t.Fatal(err)
+	}
+	if result := h.round.Run(context.Background(), Options{Revision: "c0..c2", Fresh: true}); result.Status == ExitOwner {
+		t.Fatalf("a saved flag held the task at the limit although nothing blocks by today's rule: %+v", result)
 	}
 }
