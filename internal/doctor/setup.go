@@ -191,18 +191,20 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		case "--chat":
 			chat = true
 		case "--select", "--prefix", "--autonomy":
-			if index+1 >= len(args) {
+			option, rest := args[index], args[index+1:]
+			if len(rest) == 0 {
 				fmt.Fprintln(stderr, setupUsage)
 				return 2
 			}
+			value := rest[0]
 			index++
-			switch args[index-1] {
+			switch option {
 			case "--select":
-				selected[args[index]] = true
+				selected[value] = true
 			case "--prefix":
-				prefix = args[index]
+				prefix = value
 			default:
-				autonomy = args[index]
+				autonomy = value
 			}
 		default:
 			fmt.Fprintln(stderr, setupUsage)
