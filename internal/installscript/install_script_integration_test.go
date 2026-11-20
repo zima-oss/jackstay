@@ -28,7 +28,8 @@ import (
 // ran it with, or no file when it was never run. Run as `jst install --prefix P …`, it also puts
 // itself at P/bin/jst, as an install does, so which jst a PATH runs can be asked.
 const fakeJst = "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$JST_RECORD\"\n" +
-	"if [ \"$1 $2\" = 'install --prefix' ]; then mkdir -p \"$3/bin\" && cp \"$0\" \"$3/bin/jst\"; fi\n"
+	"if [ \"$1 $2\" = 'install --prefix' ]; then mkdir -p \"$3/bin\" && cp \"$0\" \"$3/bin/jst\"; fi\n" +
+	"if [ \"$1\" = setup ] && [ \"$2\" != --help ]; then echo 'fake machine setup started' >&2; fi\n"
 
 // release is a fake GitHub releases page: /latest redirects to the newest tag, and
 // /download/vX.Y.Z/NAME serves the files of that release. It also serves install.sh itself, at
@@ -490,7 +491,9 @@ func TestInstalledSetupRunsOnlyWithATerminal(t *testing.T) {
 		t.Fatalf("terminal install: exit %d, arguments %q, want %q\n%s",
 			interactive.exit, interactive.record, want, interactive.stderr)
 	}
-	if output := interactive.stdout + interactive.stderr; !strings.Contains(output, "a terminal is here, so machine setup starts now") {
+	output := interactive.stdout + interactive.stderr
+	notice, started := strings.Index(output, "a terminal is here, so machine setup starts now"), strings.Index(output, "fake machine setup started")
+	if notice < 0 || started < 0 || notice > started {
 		t.Fatalf("a terminal install did not say setup starts before starting it:\n%s", output)
 	}
 }
