@@ -169,7 +169,6 @@ type Delivery struct {
 	At          string `json:"at"`
 	Reason      string `json:"reason,omitempty"`
 	Pusher      string `json:"pusher,omitempty"`
-	Handle      string `json:"handle,omitempty"`
 	Attempts    int    `json:"attempts,omitempty"`
 	Whole       bool   `json:"whole,omitempty"`
 	NextAttempt string `json:"next_attempt,omitempty"`

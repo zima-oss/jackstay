@@ -477,11 +477,6 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 		state := deliverystate.New(routeOf(recipient), plan.request != nil, plan.gone[hash])
 		delivery := Delivery{V: 1, ID: id, Key: recipient.Key, At: moment}.withTable(state, moment)
 		delivery.At = moment
-		if state.Route == deliverystate.Native {
-			if delivery.Handle, err = newHandle(transaction.store.random); err != nil {
-				return SendResult{}, err
-			}
-		}
 		deliveries[index] = delivery
 	}
 	charge := deliverystate.SendCharge(len(plan.body), len(deliveries), plan.idempotencyKey != "")

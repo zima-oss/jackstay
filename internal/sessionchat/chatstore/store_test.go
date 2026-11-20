@@ -104,13 +104,6 @@ func TestMessageIDsCarryTheirTimeAndMatchThePatterns(t *testing.T) {
 	if got, ok := messageTime(id); !ok || !got.Equal(moment) {
 		t.Fatalf("time %v, want %v", got, moment)
 	}
-	handle, err := newHandle(strings.NewReader(strings.Repeat("\xff", 8)))
-	if err != nil || !handlePattern.MatchString(id+"."+handle) {
-		t.Fatalf("handle %q, %v", handle, err)
-	}
-	if id, handle, ok := splitReference(id + "." + handle); !ok || handle == "" || !messageIDPattern.MatchString(id) {
-		t.Fatalf("split %q %q %v", id, handle, ok)
-	}
 	request, err := newRequestID(strings.NewReader(strings.Repeat("\xff", 16)))
 	if err != nil || !requestIDPattern.MatchString(request) {
 		t.Fatalf("request ID %q, %v", request, err)
@@ -232,7 +225,7 @@ func TestADirectSendIsStoredWholeWithItsMarkers(t *testing.T) {
 	if err != nil || string(body) != "first line\nsecond" {
 		t.Fatalf("body %q %v", body, err)
 	}
-	if delivery := f.delivery(result.MessageID, "cc:b"); delivery.Route != "hooks" || delivery.State != "pending" || delivery.Handle != "" {
+	if delivery := f.delivery(result.MessageID, "cc:b"); delivery.Route != "hooks" || delivery.State != "pending" {
 		t.Fatalf("%+v", delivery)
 	}
 	for _, marker := range []string{
@@ -260,7 +253,7 @@ func mustStamp(t *testing.T, text string) time.Time {
 	return moment
 }
 
-func TestANativeDeliveryGetsItsHandle(t *testing.T) {
+func TestANativeDeliveryTakesTheNativeRoute(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	if _, err := f.store.Register(f.ctx, Registration{Key: "cc:n", KeySource: SourceEngine, Engine: EngineClaudeCode,
@@ -269,7 +262,7 @@ func TestANativeDeliveryGetsItsHandle(t *testing.T) {
 	}
 	result := f.send("cc:a", SendInput{To: "n", Message: "hello"})
 	delivery := f.delivery(result.MessageID, "cc:n")
-	if delivery.Route != "native" || len(delivery.Handle) != 13 {
+	if delivery.Route != "native" || delivery.State != "pending" {
 		t.Fatalf("%+v", delivery)
 	}
 }

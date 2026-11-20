@@ -10,13 +10,12 @@ import (
 	"time"
 )
 
-// alphabet is Crockford's base 32 in lower case, the alphabet of message IDs and handles
+// alphabet is Crockford's base 32 in lower case, the alphabet of message and request IDs
 // (docs/design/chat.md section 5.1).
 const alphabet = "0123456789abcdefghjkmnpqrstvwxyz"
 
 var (
 	messageIDPattern = regexp.MustCompile(`^msg_[0-9a-hjkmnp-tv-z]{26}$`)
-	handlePattern    = regexp.MustCompile(`^msg_([0-9a-hjkmnp-tv-z]{26})\.([0-9a-hjkmnp-tv-z]{13})$`)
 	requestIDPattern = regexp.MustCompile(`^req_([0-9a-hjkmnp-tv-z]{26})$`)
 )
 
@@ -29,15 +28,6 @@ func newMessageID(now time.Time, random io.Reader) (string, error) {
 		return "", fmt.Errorf("random message ID: %w", err)
 	}
 	return "msg_" + encode(bits[:], 26), nil
-}
-
-// newHandle is the 64 random bits of a native delivery's handle (section 4.10), 13 characters.
-func newHandle(random io.Reader) (string, error) {
-	var bits [8]byte
-	if _, err := io.ReadFull(random, bits[:]); err != nil {
-		return "", fmt.Errorf("random handle: %w", err)
-	}
-	return encode(bits[:], 13), nil
 }
 
 // encode writes the bits of data, most significant first, as count base-32 characters; the
@@ -94,18 +84,6 @@ func newRequestID(random io.Reader) (string, error) {
 		return "", fmt.Errorf("random request ID: %w", err)
 	}
 	return "req_" + encode(bits[:], 26), nil
-}
-
-// splitReference splits a message reference (section 5.1) into the message ID and, for a native
-// delivery's handle, its 13 random characters.
-func splitReference(reference string) (id, handle string, ok bool) {
-	if messageIDPattern.MatchString(reference) {
-		return reference, "", true
-	}
-	if match := handlePattern.FindStringSubmatch(reference); match != nil {
-		return "msg_" + match[1], match[2], true
-	}
-	return "", "", false
 }
 
 // hashKey is the hex SHA-256 of a session key: its file name and the start of its ref.

@@ -255,7 +255,7 @@ func (transaction *transaction) applyCommitted(entry journalEntry, envelope Enve
 	if err := readRecord(path, deliveryBound, &delivery); err != nil {
 		return fmt.Errorf("the request's delivery of %s: %w", entry.ID, err)
 	}
-	next, err := deliverystate.Apply(delivery.table(true), deliverystate.Event{Kind: deliverystate.AckActed, Named: deliverystate.ByHandle})
+	next, err := deliverystate.Apply(delivery.table(true), deliverystate.Event{Kind: deliverystate.AckActed})
 	if err != nil || string(next.State) == delivery.State {
 		return transaction.store.syncFolder(transaction.place.deliveries(entry.Request))
 	}

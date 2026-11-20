@@ -163,7 +163,7 @@ func (transaction *transaction) admitResponse(envelope Envelope, commit *Commit,
 	}
 	deadline, _ := parseStamp(envelope.ExpiresAt)
 	overdue := !transaction.now.Before(deadline)
-	nextRequest, nextDelivery, err := deliverystate.Respond(request, table, overdue, deliverystate.ByHandle)
+	nextRequest, nextDelivery, err := deliverystate.Respond(request, table, overdue)
 	switch {
 	case errors.Is(err, deliverystate.ErrAlreadyAnswered):
 		return refuse(ReasonAlreadyAnswered, "%s is already answered", envelope.Request.RequestID)
