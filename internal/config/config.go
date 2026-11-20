@@ -68,9 +68,6 @@ func Schema3Keys(config Config) []string {
 			found = append(found, key)
 		}
 	}
-	if has(objectOf(config["review"]), "pool") {
-		found = append(found, "review.pool")
-	}
 	if has(objectOf(config["adopt"]), "profile_sha256") {
 		found = append(found, "adopt.profile_sha256")
 	}
@@ -470,7 +467,6 @@ var Table = object(
 		"use", texts(), "brief", text(), "template", text(), "cite", texts(), "severities", texts(), "blocking", texts(),
 		"triage", boolean(), "repeat_rounds", integer(), "repeat_severities", texts(), "round_limit", integer(),
 		"max_concurrent", integer(), "queue_minutes", integer(), "store", text(), "keep_days", integer(),
-		"pool", object("accepting", boolean()),
 	),
 	// docs/design/implementation.md, section 8.1: the account jackstay acts as on GitHub; the meaning checks are
 	// githubProblems'.

@@ -877,18 +877,6 @@
           "description": "Lets this project's reviews hold at most this many reviewer runs at once on the machine (default 4).",
           "type": "integer"
         },
-        "pool": {
-          "additionalProperties": false,
-          "description": "Configures this repository's requests to the machine's reviewer queue (`jst review pool`).",
-          "properties": {
-            "accepting": {
-              "default": true,
-              "description": "Accepts new review jobs from this repository (default true); existing jobs can still be queried, retried and processed. Accept new review jobs from this repository. Existing jobs remain available for processing and retry.",
-              "type": "boolean"
-            }
-          },
-          "type": "object"
-        },
         "queue_minutes": {
           "description": "Waits at most this many minutes for a source view, reviewer slots and the start lock, 1 to 120 (default 15).",
           "type": "integer"

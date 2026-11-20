@@ -136,8 +136,6 @@ var keyDescriptions = map[string]string{
 	"review.cite":                          "Lists files and folders (trailing `/`) the reviewer is told to read as the measure; each must exist in the reviewed tree (default `AGENTS.md` when it exists).",
 	"review.keep_days":                     "Removes a task whose newest round is older than this many days, 1 to 3650 (default 30).",
 	"review.max_concurrent":                "Lets this project's reviews hold at most this many reviewer runs at once on the machine (default 4).",
-	"review.pool":                          "Configures this repository's requests to the machine's reviewer queue (`jst review pool`).",
-	"review.pool.accepting":                "Accepts new review jobs from this repository (default true); existing jobs can still be queried, retried and processed.",
 	"review.queue_minutes":                 "Waits at most this many minutes for a source view, reviewer slots and the start lock, 1 to 120 (default 15).",
 	"review.repeat_rounds":                 "Says a place is to be redesigned once it draws a finding this many rounds running, at least 2 (default 2).",
 	"review.repeat_severities":             "Lists the severities that count as repeats for redesign (default every severity but the last).",

@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:ee12d6d88616 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:9870075752a9 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,
@@ -59,10 +59,9 @@ the same rules hold.
 - **When the guard refuses** a command, run what it names instead, never a workaround. Read a
   `jst guard let this command run, with a warning` line before going on.
 - **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`
-  or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.
-- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
-  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
-  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.
+  or `codex,claude-code` for others); `--background` returns at once and the result comes as a chat
+  event; `jst review check BASE..REV --task NAME` says if it is clear.
+  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.
 - **Numbers** come from `jst id next SERIES`, never by hand.
 - **After a surprising failure**, read `jst log --session ID` (or `--trace ID`) and
   `jst stats REPORT` before asking.

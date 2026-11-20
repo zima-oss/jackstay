@@ -2,6 +2,8 @@ package review
 
 const reviewHelp = `usage: jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] [--focus TEXT]
                  [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
+       jst review [REV | BASE..REV] --background [--task NAME] [--reviewer NAME,...] [--focus TEXT]
+                 [--fresh] [--past-limit]
 
 REV alone is reviewed against its first parent (default HEAD). An empty review.use needs
 --reviewer. Give a revision named like a subcommand after --.
@@ -15,10 +17,15 @@ REV alone is reviewed against its first parent (default HEAD). An empty review.u
   --timeout MIN       minutes per run, for this call
   --past-limit        a round past review.round_limit, after the owner's word
   --json              the result as one JSON object instead of the summary
+  --background        start the round under jst bg (pinned to the commits now) and return; the
+                      result comes to this session as a review.finished chat event when chat is
+                      on, else read it with jst review last. An equal review already running is
+                      joined; a different one of the same task is refused until it ends
 
 exit: 0 the round does not block; 1 it blocks; 2 usage or configuration; 3 a place is due for
 redesign; 4 the round limit is reached, the owner decides; 5 a reviewer gave no usable answer;
-6 the environment refuses (a sandbox, no login, reviewer unavailable).
+6 the environment refuses (a sandbox, no login, reviewer unavailable). With --background: 0 started
+or joined; 2 refused.
 
 example: jst review origin/main..HEAD --task parser-fix --reviewer codex
 `

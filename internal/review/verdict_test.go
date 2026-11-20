@@ -74,3 +74,26 @@ func TestSchemaIsStrict(t *testing.T) {
 		t.Fatal("severities not in the schema")
 	}
 }
+
+func TestAFindingMustCarryItsOrdinaryPath(t *testing.T) {
+	folder := t.TempDir()
+	read := func(finding string) string {
+		path := filepath.Join(folder, "answer.json")
+		answer := `{"verdict":"changes","summary":"s","findings":[` + finding + `],"prior":[]}`
+		if err := os.WriteFile(path, []byte(answer), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, outcome, _ := ReadAnswer(path)
+		return outcome
+	}
+	base := `"id":"F1","place":"a.go: x","severity":"major","likelihood":"unusual","consequence":"severe","title":"t","detail":"d","repeats":[]`
+	if outcome := read(`{` + base + `}`); outcome == "done" {
+		t.Error("a finding without ordinary_path was read")
+	}
+	if outcome := read(`{` + base + `,"ordinary_path":null}`); outcome == "done" {
+		t.Error("a null ordinary_path was read")
+	}
+	if outcome := read(`{` + base + `,"ordinary_path":""}`); outcome != "done" {
+		t.Errorf("an empty ordinary_path was refused: %s", outcome)
+	}
+}

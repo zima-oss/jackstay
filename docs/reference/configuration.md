@@ -233,8 +233,6 @@ Configures `jst review`: the reviewers, what they are told, and how findings dec
 | `cite` | list of strings | Lists files and folders (trailing `/`) the reviewer is told to read as the measure; each must exist in the reviewed tree (default `AGENTS.md` when it exists). |
 | `keep_days` | integer | Removes a task whose newest round is older than this many days, 1 to 3650 (default 30). |
 | `max_concurrent` | integer | Lets this project's reviews hold at most this many reviewer runs at once on the machine (default 4). |
-| `pool` | object | Configures this repository's requests to the machine's reviewer queue (`jst review pool`). |
-| `pool.accepting` | boolean | Accepts new review jobs from this repository (default true); existing jobs can still be queried, retried and processed. Default `true`. |
 | `queue_minutes` | integer | Waits at most this many minutes for a source view, reviewer slots and the start lock, 1 to 120 (default 15). |
 | `repeat_rounds` | integer | Says a place is to be redesigned once it draws a finding this many rounds running, at least 2 (default 2). |
 | `repeat_severities` | list of strings | Lists the severities that count as repeats for redesign (default every severity but the last). |
