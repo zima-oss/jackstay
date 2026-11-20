@@ -7,7 +7,7 @@ a release pull request open, and landing that pull request makes the release.
 
 ## Changelog entries: `jst changes`
 
-```sh
+```text
 jst changes new --slug SLUG [--type TYPE] [--audience AUDIENCE] [--title TEXT] [--migration TEXT] [--card ID]
 jst changes check [--json]
 jst changes view [--version V] [--date D] [--audience AUDIENCE]
@@ -51,7 +51,7 @@ An entry may carry a type and an audience; in a project with `release` it must:
 | `fix`, `security` | patch |
 | `note` | none |
 
-```sh
+```text
 jst changes new --slug widget-builder --type breaking --audience consumer \
   --title 'WidgetForm takes its rows as a builder' \
   --migration 'Replace WidgetForm(rows:) with WidgetForm { … }'
@@ -84,7 +84,7 @@ How a release happens:
 
 Before 1.0, a breaking change bumps the minor version. 1.0 comes only by override.
 
-```sh
+```text
 jst release prepare [--json]                        # the next release as the workflow would make it
 jst release notes [VERSION] [--format FORMAT] [--audience AUDIENCE]   # markdown, text, testflight, sparkle-html
 jst release override --version V --reason TEXT      # a version by hand, as a file for a pull request
@@ -93,7 +93,7 @@ jst release pr [--dry-run]                          # the workflow's step
 jst release publish [--dry-run]                     # the workflow's step
 ```
 
-```sh
+```text
 jst release prepare
 jst release notes 1.3.0 --format text
 jst release override --version 1.0.0 --reason 'the API is stable'
@@ -119,7 +119,7 @@ The workflow downloads the jackstay release pinned in `adopt.pin`.
 
 ## `jst lint pr`
 
-```sh
+```text
 jst lint pr (--event FILE | --pr N | --body-file F) [--rev REV] [--base B] [--head H] [--head-branch NAME]
 ```
 

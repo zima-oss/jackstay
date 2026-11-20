@@ -5,28 +5,34 @@
   "description": "Project configuration for jackstay. Run jst check for semantic and cross-field validation.",
   "properties": {
     "$schema": {
+      "description": "Points editors at the JSON Schema of one jackstay release, for completion and early diagnostics; `jst check` stays the judge.",
       "pattern": "\\S",
       "type": "string"
     },
     "adopt": {
       "additionalProperties": false,
+      "description": "Holds what `jst adopt` keeps in the project's file: the workflows' pin, the profile and the conflicts kept on purpose.",
       "properties": {
         "exceptions": {
           "additionalProperties": {
             "pattern": "\\S",
             "type": "string"
           },
+          "description": "Keeps adoption conflicts on purpose, each by its ID with the reason the project gives.",
           "type": "object"
         },
         "pin": {
+          "description": "Names the jst release the generated workflows download, moved only by `jst adopt --pin`.",
           "pattern": "\\S",
           "type": "string"
         },
         "profile": {
+          "description": "Names the profile `jst adopt` and `jst doctor` read, relative to the project's root unless it starts with `/` or `~/`.",
           "pattern": "\\S",
           "type": "string"
         },
         "profile_sha256": {
+          "description": "Pins the profile bundle to this SHA-256 digest (64 hex digits), so a later plan or apply refuses a changed bundle.",
           "pattern": "^[0-9a-fA-F]{64}$",
           "type": "string"
         }
@@ -35,24 +41,29 @@
     },
     "baseline": {
       "additionalProperties": false,
+      "description": "Says what `jst baseline` counts when it measures the project's test runs, merges and destructive commands.",
       "properties": {
         "branch": {
+          "description": "Names the branch whose merges `jst baseline` counts.",
           "pattern": "\\S",
           "type": "string"
         },
         "kinds": {
+          "description": "Lists the kinds of test run `jst baseline` counts; a Bash call takes the first kind one of its simple commands matches.",
           "items": {
             "additionalProperties": false,
             "properties": {
               "gate": {
+                "description": "Marks the kind as one that stands before a merge, so `jst baseline` measures its overlap with other gate runs.",
                 "type": "boolean"
               },
               "name": {
+                "description": "Names the kind in the report; two kinds cannot share a name.",
                 "pattern": "\\S",
                 "type": "string"
               },
               "pattern": {
-                "description": "Go RE2 regular expression; validate with jst check.",
+                "description": "Matches one simple command of this kind (RE2). Go RE2 regular expression; validate with jst check.",
                 "minLength": 1,
                 "type": "string"
               }
@@ -62,6 +73,7 @@
           "type": "array"
         },
         "merge_unit": {
+          "description": "Tells `jst baseline` what a merge is: `pr` counts first-parent subjects ending in `(#N)`, `commit` counts the branch's commits.",
           "enum": [
             "pr",
             "commit"
@@ -70,6 +82,7 @@
           "type": "string"
         },
         "transcripts": {
+          "description": "Names the Claude Code session folders `jst baseline` reads, as patterns over folder names without `/`.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -81,10 +94,11 @@
     },
     "brief": {
       "additionalProperties": false,
+      "description": "Sets the defaults of `jst brief`.",
       "properties": {
         "max_age_hours": {
           "default": 168,
-          "description": "Hours a saved brief stays fresh when jst brief save is given no --max-age.",
+          "description": "Keeps a saved brief fresh for this many hours when `jst brief save` is given no `--max-age` (1 to 720, default 168). Hours a saved brief stays fresh when jst brief save is given no --max-age.",
           "maximum": 720,
           "minimum": 1,
           "type": "integer"
@@ -94,16 +108,20 @@
     },
     "cards": {
       "additionalProperties": false,
+      "description": "Turns on the `Card:` line: which commits must name their cards, where the cards are, and from when the rule holds.",
       "properties": {
         "branch": {
+          "description": "Names the branch whose history `jst cards` reads and whose pushes the guard checks for `Card:` lines (default `main`).",
           "pattern": "\\S",
           "type": "string"
         },
         "dir": {
+          "description": "Names the folder of card files, written from the repository's root.",
           "pattern": "\\S",
           "type": "string"
         },
         "exempt_branches": {
+          "description": "Lists head branches whose pull requests are judged by the tree's rules only, without `Card:` lines (a bot's branch).",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -111,23 +129,27 @@
           "type": "array"
         },
         "first_new": {
+          "description": "Names the first card number under the new rules: cards numbered from it up keep `\"commits\": []`.",
           "pattern": "\\S",
           "type": "string"
         },
         "id": {
-          "description": "Go RE2 regular expression; validate with jst check.",
+          "description": "Matches a card ID (RE2, without inline flags). Go RE2 regular expression; validate with jst check.",
           "minLength": 1,
           "type": "string"
         },
         "since": {
+          "description": "Reads commits dated on or after this day (YYYY-MM-DD) strictly, and earlier ones loosely.",
           "pattern": "\\S",
           "type": "string"
         },
         "snapshots": {
+          "description": "Names the folder where `jst cards snapshot --write` keeps what landed, for after a history rewrite.",
           "pattern": "\\S",
           "type": "string"
         },
         "unit": {
+          "description": "Says where `Card:` lines are written: `pr` in the pull request's description, `commit` in each commit's message.",
           "enum": [
             "pr",
             "commit"
@@ -140,24 +162,30 @@
     },
     "changes": {
       "additionalProperties": false,
+      "description": "Keeps the changelog as one entry file per change, collected into the changelog at release.",
       "properties": {
         "dir": {
+          "description": "Names the folder of changelog entry files, written from the repository's root.",
           "pattern": "\\S",
           "type": "string"
         },
         "heading": {
+          "description": "Gives the heading of each released section; it holds `{version}` and may hold `{date}`.",
           "pattern": "\\S",
           "type": "string"
         },
         "internal_into": {
+          "description": "Names the file that internal entries are collected into; without it they go only into the release commit's message and the release pull request.",
           "pattern": "\\S",
           "type": "string"
         },
         "into": {
+          "description": "Names the changelog file that entries are collected into.",
           "pattern": "\\S",
           "type": "string"
         },
         "newest": {
+          "description": "Puts the newest section `first` or `last` in the changelog (default `last`).",
           "enum": [
             "first",
             "last"
@@ -166,6 +194,7 @@
           "type": "string"
         },
         "template": {
+          "description": "Names the file `jst changes new` copies for a new entry, with `{card}` and `{slug}` filled in.",
           "pattern": "\\S",
           "type": "string"
         }
@@ -205,6 +234,7 @@
           }
         }
       ],
+      "description": "Turns on session chat between agent sessions of this repository.",
       "if": {
         "properties": {
           "codex_bridge": {
@@ -225,8 +255,10 @@
       "properties": {
         "claude_code": {
           "additionalProperties": false,
+          "description": "Configures the Claude Code hook that announces pending chat messages at the next boundary.",
           "properties": {
             "enabled": {
+              "description": "Lets `jst chat claude-hook` announce pending messages to Claude Code; it needs `chat.enabled`.",
               "type": "boolean"
             }
           },
@@ -234,14 +266,17 @@
         },
         "codex_bridge": {
           "additionalProperties": false,
+          "description": "Configures the bridge that delivers chat messages into a managed Codex turn.",
           "properties": {
             "enabled": {
+              "description": "Lets `jst chat codex-bridge` deliver messages to a running Codex turn; it needs `chat.enabled`.",
               "type": "boolean"
             }
           },
           "type": "object"
         },
         "enabled": {
+          "description": "Turns session chat on for this repository; chat commands refuse to run without it.",
           "type": "boolean"
         }
       },
@@ -259,30 +294,38 @@
     },
     "github": {
       "additionalProperties": false,
+      "description": "Says which GitHub account, remote and repository jackstay uses, and how long its GitHub commands wait.",
       "properties": {
         "account": {
+          "description": "Names the GitHub login jackstay acts as outside GitHub Actions, whatever account `gh` has active.",
           "pattern": "\\S",
           "type": "string"
         },
         "remote": {
+          "description": "Names the remote that `jst sync`, `jst start`, `jst tidy` and `jst gh` use; without it they take `origin`, else the remote `main` (then `master`) tracks, else the only remote.",
           "pattern": "\\S",
           "type": "string"
         },
         "repository": {
+          "description": "Names the repository as `owner/name` when it is not to be read from the remote's URL.",
           "pattern": "\\S",
           "type": "string"
         },
         "wait": {
           "additionalProperties": false,
+          "description": "Sets the defaults of `jst gh ci-wait`, `run-wait` and `pr-land`; their flags still win.",
           "properties": {
             "interval_seconds": {
+              "description": "Waits this many seconds between looks at GitHub (default 20).",
               "exclusiveMinimum": 0,
               "type": "number"
             },
             "log_lines": {
+              "description": "Shows this many lines of a failed step's log (default 25).",
               "type": "integer"
             },
             "timeout_seconds": {
+              "description": "Gives up waiting on GitHub after this many seconds (default 1800).",
               "exclusiveMinimum": 0,
               "type": "number"
             }
@@ -294,13 +337,15 @@
     },
     "guard": {
       "additionalProperties": false,
+      "description": "Adapts the guard to the project: extra regenerable folders, the project's own rules, and each built-in rule's level.",
       "properties": {
         "deny": {
+          "description": "Adds the project's own rules, each refusing commands its patterns match and shown as `project:\u003cid\u003e`.",
           "items": {
             "additionalProperties": false,
             "properties": {
               "command": {
-                "description": "Go RE2 regular expression; validate with jst check.",
+                "description": "Refuses a command whose words, joined by spaces, match this pattern (RE2). Go RE2 regular expression; validate with jst check.",
                 "minLength": 1,
                 "type": "string"
               },
@@ -310,22 +355,26 @@
                   "minLength": 1,
                   "type": "string"
                 },
+                "description": "Applies the rule only when each named environment variable's whole value matches its pattern (RE2), or cannot be known.",
                 "type": "object"
               },
               "id": {
+                "description": "Names the rule in refusals as `project:\u003cid\u003e` (default `rule`).",
                 "pattern": "\\S",
                 "type": "string"
               },
               "instead": {
+                "description": "Tells the agent what to run instead (default \"ask the owner\").",
                 "pattern": "\\S",
                 "type": "string"
               },
               "unless": {
-                "description": "Go RE2 regular expression; validate with jst check.",
+                "description": "Lets a command through when its words, joined by spaces, match this pattern (RE2). Go RE2 regular expression; validate with jst check.",
                 "minLength": 1,
                 "type": "string"
               },
               "why": {
+                "description": "Says why the rule refuses (default \"this project refuses it (jackstay.json)\").",
                 "pattern": "\\S",
                 "type": "string"
               }
@@ -335,6 +384,7 @@
           "type": "array"
         },
         "regenerable": {
+          "description": "Adds folder names that may always be deleted inside the project, beside the built-in ones (`.build`, `node_modules`, …); `jst tidy` reads them too.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -344,8 +394,10 @@
         "rules": {
           "additionalProperties": {
             "additionalProperties": false,
+            "description": "Sets one built-in rule's level and, for `rm-recursive` and `find-delete`, its path exceptions.",
             "properties": {
               "level": {
+                "description": "Makes the rule `refuse`, `warn` (the command runs and the agent is told) or `off` (default `refuse`, `warn` for `zsh-glob`).",
                 "enum": [
                   "refuse",
                   "warn",
@@ -355,6 +407,7 @@
                 "type": "string"
               },
               "paths": {
+                "description": "Allows a recursive delete under these folders, written below the project's top or below `~/` (only `rm-recursive` and `find-delete`).",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -364,6 +417,7 @@
             },
             "type": "object"
           },
+          "description": "Sets the level and path exceptions of built-in guard rules, by rule id.",
           "type": "object"
         }
       },
@@ -372,8 +426,10 @@
     "ids": {
       "additionalProperties": {
         "additionalProperties": false,
+        "description": "Defines one number series: where its files are and how its numbers are written.",
         "properties": {
           "also_in": {
+            "description": "Names files whose numbers of this series also count as taken (an old ledger's rows), written from the repository's root.",
             "items": {
               "pattern": "\\S",
               "type": "string"
@@ -381,18 +437,22 @@
             "type": "array"
           },
           "files": {
+            "description": "Gives the path pattern of the series' files, with `{n}` once in the file's name where the number is.",
             "pattern": "\\S",
             "type": "string"
           },
           "width": {
+            "description": "Pads the number with zeros to this many digits, 1 to 9 (default 1).",
             "type": "integer"
           }
         },
         "type": "object"
       },
+      "description": "Declares the number series that `jst id` hands out, by series name.",
       "type": "object"
     },
     "jackstay_schema": {
+      "description": "Says which jackstay the file was written for (1 to 3), so an older jackstay refuses keys it does not know instead of half-reading them.",
       "enum": [
         1,
         2,
@@ -402,16 +462,20 @@
     },
     "lock": {
       "additionalProperties": false,
+      "description": "Turns on the machine-wide lock that heavy test runs take in turn.",
       "properties": {
         "also_hold": {
+          "description": "Names older lock files that a locked run holds together with the shared lock.",
           "items": {
             "additionalProperties": false,
             "properties": {
               "held_env": {
+                "description": "Names the environment variable set for the command while the older lock is held, so the older script does not wait for itself.",
                 "pattern": "\\S",
                 "type": "string"
               },
               "path": {
+                "description": "Gives the older lock's file, an absolute path or one beginning `~/`.",
                 "pattern": "\\S",
                 "type": "string"
               }
@@ -421,6 +485,7 @@
           "type": "array"
         },
         "enabled": {
+          "description": "Makes `jst test` take the machine-wide lock for this project (off by default; `--lock` and `--no-lock` decide one call).",
           "type": "boolean"
         }
       },
@@ -428,12 +493,15 @@
     },
     "procs": {
       "additionalProperties": false,
+      "description": "Sets the deadlines of `jst bg`.",
       "properties": {
         "default_minutes": {
+          "description": "Stops a `jst bg` command after this many minutes when `--for` is not given (default 30).",
           "exclusiveMinimum": 0,
           "type": "number"
         },
         "max_minutes": {
+          "description": "Caps any `jst bg` deadline at this many minutes (default 240).",
           "exclusiveMinimum": 0,
           "type": "number"
         }
@@ -441,11 +509,13 @@
       "type": "object"
     },
     "project": {
+      "description": "Names the project; without it the name is the main checkout's folder name.",
       "pattern": "\\S",
       "type": "string"
     },
     "queue": {
       "additionalProperties": false,
+      "description": "Turns on the local merge candidate queue and says what it lands on.",
       "if": {
         "properties": {
           "enabled": {
@@ -458,16 +528,20 @@
       },
       "properties": {
         "base_ref": {
+          "description": "Names the full ref the queue merges onto (`refs/heads/main`, or a fetched `refs/remotes/…`); required when the queue is enabled.",
           "pattern": "\\S",
           "type": "string"
         },
         "enabled": {
+          "description": "Turns on `jst queue` for this repository.",
           "type": "boolean"
         },
         "require_pull_request": {
+          "description": "Refuses a handoff that has no pull request: `jst queue add` then needs `--pr`.",
           "type": "boolean"
         },
         "review_task": {
+          "description": "Requires a current, clear `jst review` round of this task for the pinned base-to-head range before handoff.",
           "pattern": "\\S",
           "type": "string"
         }
@@ -481,12 +555,15 @@
     },
     "receipts": {
       "additionalProperties": false,
+      "description": "Says what goes into a tree's key and which commands may reuse a receipt of a pass instead of running again.",
       "properties": {
         "commands": {
+          "description": "Lists commands that `jst test -- COMMAND` judges, keys and may reuse, matched by their words.",
           "items": {
             "additionalProperties": false,
             "properties": {
               "argv": {
+                "description": "Matches the command by all its words exactly; reuse needs it.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -494,6 +571,7 @@
                 "type": "array"
               },
               "argv_prefix": {
+                "description": "Matches every command that begins with these words, the longest match winning; it cannot be reused.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -501,14 +579,16 @@
                 "type": "array"
               },
               "empty_exit": {
+                "description": "Reads this exit status (1 to 125) as no tests collected when the JUnit report confirms zero cases (`junit` only).",
                 "type": "integer"
               },
               "evidence": {
-                "description": "Go RE2 regular expression; validate with jst check.",
+                "description": "Counts the tests a run passed from the lines this pattern matches (RE2, one group for the number); without a count no run is `passed`. Go RE2 regular expression; validate with jst check.",
                 "minLength": 1,
                 "type": "string"
               },
               "judge": {
+                "description": "Judges the run by a structured report: `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json`.",
                 "enum": [
                   "go-json",
                   "junit",
@@ -520,6 +600,7 @@
                 "type": "string"
               },
               "merge_bases": {
+                "description": "Adds the merge base of HEAD with each of these refs to this command's key.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -527,6 +608,7 @@
                 "type": "array"
               },
               "refs": {
+                "description": "Adds the commit each of these refs names to this command's key.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -534,10 +616,12 @@
                 "type": "array"
               },
               "report": {
+                "description": "Names the report file a file-based judge reads from the run's private report folder.",
                 "pattern": "\\S",
                 "type": "string"
               },
               "reports": {
+                "description": "Names several report files instead of `report`: up to 32 for `junit`, or `summary.json` and `tests.json` for `xcresult-json`.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -545,14 +629,16 @@
                 "type": "array"
               },
               "reuse": {
+                "description": "Prints a stored receipt and runs nothing when this command already passed on the same key.",
                 "type": "boolean"
               },
               "veto": {
-                "description": "Go RE2 regular expression; validate with jst check.",
+                "description": "Fails a run that ended 0 when a line of its output matches this pattern (RE2). Go RE2 regular expression; validate with jst check.",
                 "minLength": 1,
                 "type": "string"
               },
               "xcresult_bundles": {
+                "description": "Names every unit test bundle an `xcresult-json` report must show.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -565,6 +651,7 @@
           "type": "array"
         },
         "env": {
+          "description": "Puts the environment variables whose names match these names or patterns (`APP_*`) into the key; reuse needs it written out, even empty.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -572,6 +659,7 @@
           "type": "array"
         },
         "exclude": {
+          "description": "Leaves files matching these patterns, written from the root, out of the key's inputs.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -579,6 +667,7 @@
           "type": "array"
         },
         "extra_files": {
+          "description": "Adds these files to the key, each one readable file, also ones git ignores.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -586,9 +675,11 @@
           "type": "array"
         },
         "include_head": {
+          "description": "Adds HEAD's commit to the key.",
           "type": "boolean"
         },
         "inputs": {
+          "description": "Names the paths whose files make the key: the tracked ones and the untracked ones the committed `.gitignore` files do not ignore; without it there is no key.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -596,10 +687,12 @@
           "type": "array"
         },
         "max_age_hours": {
+          "description": "Uses a receipt for at most this many hours (default 72).",
           "exclusiveMinimum": 0,
           "type": "number"
         },
         "merge_bases": {
+          "description": "Adds the merge base of HEAD with each of these refs to every command's key.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -607,6 +700,7 @@
           "type": "array"
         },
         "no_reuse_branches": {
+          "description": "Always runs the command on these branches and on the commits they point at (default `main` and `master`).",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -614,6 +708,7 @@
           "type": "array"
         },
         "refs": {
+          "description": "Adds the commit each of these refs names to every command's key.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -621,6 +716,7 @@
           "type": "array"
         },
         "toolchain": {
+          "description": "Adds what each of these commands prints (`[[\"go\", \"version\"]]`) to the key; reuse and scope steps need it written out, even empty.",
           "items": {
             "items": {
               "pattern": "\\S",
@@ -636,12 +732,15 @@
     "records": {
       "additionalProperties": {
         "additionalProperties": false,
+        "description": "Defines where one series' record files live and how `jst view` shows them; the series needs an `ids` entry of the same name.",
         "properties": {
           "before": {
+            "description": "Names the series' old ledger file, kept frozen: `jst lint tree` refuses a new row in it.",
             "pattern": "\\S",
             "type": "string"
           },
           "columns": {
+            "description": "Lists the front matter fields `jst view` shows as columns (default `id`).",
             "items": {
               "pattern": "\\S",
               "type": "string"
@@ -649,38 +748,46 @@
             "type": "array"
           },
           "dir": {
+            "description": "Names the folder of the series' record files, written from the repository's root.",
             "pattern": "\\S",
             "type": "string"
           },
           "template": {
+            "description": "Names the file `jst new` copies for a new record.",
             "pattern": "\\S",
             "type": "string"
           }
         },
         "type": "object"
       },
+      "description": "Keeps the records of these series as one file each, rendered by `jst view`.",
       "type": "object"
     },
     "release": {
       "additionalProperties": false,
+      "description": "Turns on releases made by a release pull request: versions, tag and changelog are written by `jst release`.",
       "properties": {
         "base": {
+          "description": "Names the branch releases are made from and land on (default `cards.branch`, else `main`).",
           "pattern": "\\S",
           "type": "string"
         },
         "branch": {
+          "description": "Names the release pull request's head branch (default `jackstay/release`).",
           "pattern": "\\S",
           "type": "string"
         },
         "build": {
           "additionalProperties": false,
+          "description": "Names an app's build number file and its pattern, with one named group `build`.",
           "properties": {
             "match": {
-              "description": "Go RE2 regular expression; validate with jst check.",
+              "description": "Finds the build number in the file (RE2, multi-line, one group named `build`). Go RE2 regular expression; validate with jst check.",
               "minLength": 1,
               "type": "string"
             },
             "path": {
+              "description": "Names the build number file, written from the repository's root.",
               "pattern": "\\S",
               "type": "string"
             }
@@ -688,15 +795,17 @@
           "type": "object"
         },
         "files": {
+          "description": "Lists the version files a release rewrites; at least one is required.",
           "items": {
             "additionalProperties": false,
             "properties": {
               "match": {
-                "description": "Go RE2 regular expression; validate with jst check.",
+                "description": "Finds the version in the file (RE2, multi-line, one group named `version`). Go RE2 regular expression; validate with jst check.",
                 "minLength": 1,
                 "type": "string"
               },
               "path": {
+                "description": "Names the version file, written from the repository's root.",
                 "pattern": "\\S",
                 "type": "string"
               }
@@ -706,14 +815,17 @@
           "type": "array"
         },
         "first": {
+          "description": "Gives the version the version files hold when the section is added; tags at or below it are history jackstay does not read.",
           "pattern": "\\S",
           "type": "string"
         },
         "merge": {
+          "description": "Says who merges the release pull request: `owner` (it opens as a draft) or `agents` (default `owner`).",
           "pattern": "\\S",
           "type": "string"
         },
         "tag": {
+          "description": "Names the release tag, holding `{version}` once (default `v{version}`).",
           "pattern": "\\S",
           "type": "string"
         }
@@ -722,8 +834,10 @@
     },
     "review": {
       "additionalProperties": false,
+      "description": "Configures `jst review`: the reviewers, what they are told, and how findings decide a round.",
       "properties": {
         "blocking": {
+          "description": "Lists the severities that fail a round (default `blocker`).",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -731,9 +845,11 @@
           "type": "array"
         },
         "brief": {
+          "description": "Names the project's standing brief, read from the reviewed tree and put at the top of every prompt.",
           "type": "string"
         },
         "cite": {
+          "description": "Lists files and folders (trailing `/`) the reviewer is told to read as the measure; each must exist in the reviewed tree (default `AGENTS.md` when it exists).",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -741,29 +857,35 @@
           "type": "array"
         },
         "keep_days": {
+          "description": "Removes a task whose newest round is older than this many days, 1 to 3650 (default 30).",
           "type": "integer"
         },
         "max_concurrent": {
+          "description": "Lets this project's reviews hold at most this many reviewer runs at once on the machine (default 4).",
           "type": "integer"
         },
         "pool": {
           "additionalProperties": false,
+          "description": "Configures this repository's requests to the machine's reviewer queue (`jst review pool`).",
           "properties": {
             "accepting": {
               "default": true,
-              "description": "Accept new review jobs from this repository. Existing jobs remain available for processing and retry.",
+              "description": "Accepts new review jobs from this repository (default true); existing jobs can still be queried, retried and processed. Accept new review jobs from this repository. Existing jobs remain available for processing and retry.",
               "type": "boolean"
             }
           },
           "type": "object"
         },
         "queue_minutes": {
+          "description": "Waits at most this many minutes for a source view, reviewer slots and the start lock, 1 to 120 (default 15).",
           "type": "integer"
         },
         "repeat_rounds": {
+          "description": "Says a place is to be redesigned once it draws a finding this many rounds running, at least 2 (default 2).",
           "type": "integer"
         },
         "repeat_severities": {
+          "description": "Lists the severities that count as repeats for redesign (default every severity but the last).",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -773,15 +895,19 @@
         "reviewers": {
           "additionalProperties": {
             "additionalProperties": false,
+            "description": "Overrides one built-in reviewer's command, model, effort, deadline and isolation flags.",
             "properties": {
               "command": {
+                "description": "Runs the reviewer as this program, a name on `PATH` or an absolute path (default `codex` for Codex, `claude` for Claude Code).",
                 "pattern": "\\S",
                 "type": "string"
               },
               "effort": {
+                "description": "Sets the reviewer's reasoning effort; empty passes none (default `medium` for Codex, the CLI's own for Claude Code).",
                 "type": "string"
               },
               "isolation": {
+                "description": "Replaces Codex's default isolation flags with these words; words jackstay owns are refused, and Claude Code takes none.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -789,20 +915,25 @@
                 "type": "array"
               },
               "model": {
+                "description": "Passes this model to the reviewer; empty keeps the CLI's own default.",
                 "type": "string"
               },
               "timeout_minutes": {
+                "description": "Stops one reviewer run after this many minutes, 1 to 120 (default 20).",
                 "type": "integer"
               }
             },
             "type": "object"
           },
+          "description": "Overrides the built-in reviewers' settings, by name: `codex` or `claude-code`.",
           "type": "object"
         },
         "round_limit": {
+          "description": "Stops after this round and asks the owner, at least 2 (default 6).",
           "type": "integer"
         },
         "severities": {
+          "description": "Lists the severity words a finding may carry, most severe first (default `blocker`, `major`, `minor`).",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -810,15 +941,19 @@
           "type": "array"
         },
         "store": {
+          "description": "Keeps review results in this folder, an absolute path or one beginning `~/`; empty keeps them under `~/.jackstay/\u003cproject\u003e/reviews`.",
           "type": "string"
         },
         "template": {
+          "description": "Replaces jackstay's prompt template with this file (Go `text/template`), read from the reviewed tree.",
           "type": "string"
         },
         "triage": {
+          "description": "Sorts each finding by likelihood and consequence, so only realistic ones block; off, every finding of a blocking severity blocks (default true).",
           "type": "boolean"
         },
         "use": {
+          "description": "Lists the reviewers a round runs when `--reviewer` is absent, and those `jst review check` requires (default `codex`).",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -830,9 +965,10 @@
     },
     "status": {
       "additionalProperties": false,
+      "description": "Sets the defaults of `jst status`.",
       "properties": {
         "repos": {
-          "description": "Repositories `jst status` reads when none are named: paths relative to this file's folder, or absolute.",
+          "description": "Lists the repositories `jst status` reads when none are named: paths relative to this file's folder, or absolute.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -844,8 +980,10 @@
     },
     "telemetry": {
       "additionalProperties": false,
+      "description": "Sets how long the local journal is kept and how command text is recorded in it.",
       "properties": {
         "commands": {
+          "description": "Records command text `masked` (secrets hidden) or as a `skeleton` (only its shape) (default `masked`).",
           "enum": [
             "masked",
             "skeleton"
@@ -854,9 +992,11 @@
           "type": "string"
         },
         "compress_after_days": {
+          "description": "Gzips a journal day file older than this many days, 1 to 3650 (default 14).",
           "type": "integer"
         },
         "keep_days": {
+          "description": "Deletes a journal day file older than this many days, 1 to 3650 and not below `compress_after_days` (default 180).",
           "type": "integer"
         }
       },
@@ -864,8 +1004,10 @@
     },
     "test": {
       "additionalProperties": false,
+      "description": "Declares the project's test scopes and steps, their judges and timeouts, run by `jst test \u003cscope\u003e`.",
       "properties": {
         "expect": {
+          "description": "Lists the engines (`xctest`, `swift-testing`) every `swift-test` scope must show markers of, unless the scope sets its own (default `xctest`).",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -873,6 +1015,7 @@
           "type": "array"
         },
         "judge": {
+          "description": "Judges every scope and step that sets no judge of its own (default `exit`).",
           "enum": [
             "swift-test",
             "steps",
@@ -887,13 +1030,16 @@
           "type": "string"
         },
         "leftovers": {
+          "description": "Lists file globs a test run must not leave behind.",
           "items": {
             "additionalProperties": false,
             "properties": {
               "fail": {
+                "description": "Fails the run when its leftovers match the glob; false lists them.",
                 "type": "boolean"
               },
               "glob": {
+                "description": "Matches leftover files; `~`, `$TMPDIR`, `{run_id}` and `{run_tmp}` are expanded, and a glob holding the run's token is attributed exactly.",
                 "pattern": "\\S",
                 "type": "string"
               }
@@ -905,33 +1051,40 @@
         "scopes": {
           "additionalProperties": {
             "additionalProperties": false,
+            "description": "Defines one scope: the command it runs or the steps it lists, how it is judged, and when the project runs it.",
             "properties": {
               "base": {
+                "description": "Gives the ref that `{base}` in the words stands for; `--base REF` overrides it.",
                 "pattern": "\\S",
                 "type": "string"
               },
               "cwd": {
+                "description": "Runs the command in this folder of the checkout instead of its root.",
                 "pattern": "\\S",
                 "type": "string"
               },
               "durations": {
+                "description": "Records each test class's seconds for `{slow}` (default on for `full` and `display` under `swift-test`).",
                 "type": "boolean"
               },
               "empty_exit": {
+                "description": "Reads this exit status (1 to 125) as no tests collected when the JUnit report confirms zero cases (`junit` only).",
                 "type": "integer"
               },
               "env": {
                 "additionalProperties": {
                   "type": "string"
                 },
+                "description": "Sets these environment variables for the run; they are recorded.",
                 "type": "object"
               },
               "evidence": {
-                "description": "Go RE2 regular expression; validate with jst check.",
+                "description": "Counts the tests a run passed from the lines this pattern matches (RE2, one group for the number); the `steps` judge needs it. Go RE2 regular expression; validate with jst check.",
                 "minLength": 1,
                 "type": "string"
               },
               "expect": {
+                "description": "Lists the engines (`xctest`, `swift-testing`) whose markers a `swift-test` run must show (default `test.expect`, else `xctest`).",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -939,6 +1092,7 @@
                 "type": "array"
               },
               "judge": {
+                "description": "Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`).",
                 "enum": [
                   "swift-test",
                   "steps",
@@ -953,17 +1107,21 @@
                 "type": "string"
               },
               "lock": {
+                "description": "Takes the machine-wide lock when `lock.enabled` is true (default true, false for `focused` and `quick`).",
                 "type": "boolean"
               },
               "lock_wait": {
+                "description": "Gives up waiting for the lock after this many seconds (default the scope's timeout).",
                 "exclusiveMinimum": 0,
                 "type": "number"
               },
               "report": {
+                "description": "Names the report file a file-based judge reads; `{report}` in the words gives its path.",
                 "pattern": "\\S",
                 "type": "string"
               },
               "reports": {
+                "description": "Names several report files instead of `report`: up to 32 for `junit`, or `summary.json` and `tests.json` for `xcresult-json`.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -971,10 +1129,12 @@
                 "type": "array"
               },
               "requires": {
+                "description": "Lists checks run first; one that fails or times out makes the outcome `not-started` and nothing runs.",
                 "items": {
                   "additionalProperties": false,
                   "properties": {
                     "run": {
+                      "description": "Runs these words as the check.",
                       "items": {
                         "pattern": "\\S",
                         "type": "string"
@@ -982,10 +1142,12 @@
                       "type": "array"
                     },
                     "timeout": {
+                      "description": "Stops the check after this many seconds (default 60).",
                       "exclusiveMinimum": 0,
                       "type": "number"
                     },
                     "why": {
+                      "description": "Says what the run reports when the check fails.",
                       "pattern": "\\S",
                       "type": "string"
                     }
@@ -995,9 +1157,11 @@
                 "type": "array"
               },
               "resume": {
+                "description": "Lets `jst test gate --resume` skip this step after a pass on the same tree; false always runs it (default true).",
                 "type": "boolean"
               },
               "run": {
+                "description": "Runs these words, with placeholders such as `{tests}`, `{base}`, `{slow}` and `{report}` filled in.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -1005,6 +1169,7 @@
                 "type": "array"
               },
               "selector": {
+                "description": "Expands one test ID into the runner's filter: `go-test` or `jest-test`, for a `focused` or `x-` scope.",
                 "enum": [
                   "go-test",
                   "jest-test"
@@ -1014,12 +1179,15 @@
               },
               "slow": {
                 "additionalProperties": false,
+                "description": "Defines which test classes `{slow}` skips, from their recorded durations.",
                 "properties": {
                   "case_seconds": {
+                    "description": "Skips a class whose median slowest case takes at least this many seconds.",
                     "exclusiveMinimum": 0,
                     "type": "number"
                   },
                   "class_seconds": {
+                    "description": "Skips a class whose median total takes at least this many seconds.",
                     "exclusiveMinimum": 0,
                     "type": "number"
                   }
@@ -1027,6 +1195,7 @@
                 "type": "object"
               },
               "steps": {
+                "description": "Runs these steps or scopes in order instead of `run`, stopping at the first that does not pass.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -1034,19 +1203,22 @@
                 "type": "array"
               },
               "timeout": {
+                "description": "Stops the whole process tree after this many seconds of the command's run (default `test.timeout`).",
                 "exclusiveMinimum": 0,
                 "type": "number"
               },
               "veto": {
-                "description": "Go RE2 regular expression; validate with jst check.",
+                "description": "Fails a run when a line of its output matches this pattern (RE2), whatever its status. Go RE2 regular expression; validate with jst check.",
                 "minLength": 1,
                 "type": "string"
               },
               "when": {
+                "description": "Says when the project runs this scope, one line that `jst test list` prints.",
                 "pattern": "\\S",
                 "type": "string"
               },
               "xcresult_bundles": {
+                "description": "Names every unit test bundle an `xcresult-json` report must show.",
                 "items": {
                   "pattern": "\\S",
                   "type": "string"
@@ -1056,12 +1228,15 @@
             },
             "type": "object"
           },
+          "description": "Declares the scopes `jst test \u003cscope\u003e` runs: `focused`, `changed`, `quick`, `full`, `display`, `gate`, or `x-` extras.",
           "type": "object"
         },
         "selection": {
           "additionalProperties": false,
+          "description": "Lets `jst test changed` choose a scope from the paths changed since a base.",
           "properties": {
             "order": {
+              "description": "Orders the scopes from least to most strict, ending with `gate`; the strictest scope any rule picks wins.",
               "items": {
                 "pattern": "\\S",
                 "type": "string"
@@ -1069,14 +1244,17 @@
               "type": "array"
             },
             "rules": {
+              "description": "Maps changed paths to scopes; a path no rule matches selects `gate`.",
               "items": {
                 "additionalProperties": false,
                 "properties": {
                   "glob": {
+                    "description": "Matches changed paths, written from the repository's root; `**` stands for whole path segments.",
                     "pattern": "\\S",
                     "type": "string"
                   },
                   "scope": {
+                    "description": "Names the scope a matching path selects, one of `test.selection.order`.",
                     "pattern": "\\S",
                     "type": "string"
                   }
@@ -1091,6 +1269,7 @@
         "steps": {
           "additionalProperties": {
             "additionalProperties": false,
+            "description": "Defines one step: the command it runs or the steps it lists, and how it is judged.",
             "properties": {
               "base": {
                 "pattern": "\\S",
@@ -1238,9 +1417,11 @@
             },
             "type": "object"
           },
+          "description": "Declares the steps a scope's `steps` lists, with the same keys as a scope.",
           "type": "object"
         },
         "timeout": {
+          "description": "Stops a scope or step without a timeout of its own after this many seconds.",
           "exclusiveMinimum": 0,
           "type": "number"
         }
@@ -1249,8 +1430,10 @@
     },
     "trash": {
       "additionalProperties": false,
+      "description": "Sets how `jst trash` keeps what it removes.",
       "properties": {
         "keep_days": {
+          "description": "Keeps a trash entry for this many days (default 7).",
           "type": "integer"
         }
       },

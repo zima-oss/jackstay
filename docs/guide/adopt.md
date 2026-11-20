@@ -6,7 +6,7 @@ it will not decide for you.
 
 ## `jst adopt`
 
-```sh
+```text
 jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
 jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
