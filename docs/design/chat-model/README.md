@@ -64,13 +64,13 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | `CommitHasFiles` | send | a commit record never stands for files that are gone |
 | `RequestAgrees` | send | the request a response answers is answered or closed once, never overwritten |
 
-The Go exploration reaches **7,104** distinct states for a delivery and **335** for a send, with no
-error, and its tests fail if either count changes. Before W-095, when the native route still pushed
-the text, TLC (2026.11 tools, Java 21) and the Go exploration both reached 30,736 delivery states;
-the doorbell model is the same world with the native push, the engine's hold and the hooks'
-announcement taken out. TLC's count for it is recorded here once a machine with Java runs
-`just tla`; until then the two forms agree by construction, operator for operator, and the Go
-tests check every property. With each constant below set
+TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **7,104** distinct states for a delivery (32,181
+generated, the temporal properties checked over the whole graph) and **335** for a send (607
+generated) with no error. The Go exploration reaches the same 7,104 and 335 states, and its tests
+fail if either count changes, so the two forms cannot drift apart unnoticed. Before W-095, when the
+native route still pushed the text, both reached 30,736 delivery states; the doorbell model is the
+same world with the native push, the engine's hold and the hooks' announcement taken out.
+With each constant below set
 TRUE, TLC and the Go test both report the same broken property.
 
 ## What the model found

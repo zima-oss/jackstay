@@ -1573,9 +1573,8 @@ narrower than the last, and review alone does not end that. The model is in
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  They reach 7,104 states for a delivery and 335 for a send, and fail if either count changes; TLC
-  reached the same before W-095 (30,736 and 335), and its count for the doorbell model is recorded
-  in the model's README once `just tla` runs where Java is installed.
+  TLC and the tests reach the same states, 7,104 for a delivery and 335 for a send (30,736 for a
+  delivery before W-095), and the tests fail if either count changes.
 
 Checked: the bridge steers a message at most once, and every other route shows its text only
 through the inbox read (W-095); a crash never makes a steer look not made; final states are never
