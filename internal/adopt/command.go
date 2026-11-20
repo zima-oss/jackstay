@@ -18,31 +18,27 @@ const usage = `usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--p
        jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
-Brings the project around DIR (default: here) to jackstay's reference: jackstay.json, the AGENTS block
-between its markers, the guard hook in .claude/settings.json, the workflows jackstay writes. It never
-changes anything else; what it must not decide is a conflict (docs/design/adopt.md).
-
+Works on the project around DIR (default: here) and changes nothing else; what it must not decide
+is a conflict.
   --plan           what would change and the conflicts left; writes nothing (the default)
   --apply          write the changes; with a conflict left, nothing is written
-  --accept ID      with --apply: let jackstay overwrite what the conflict ID protects (repeatable;
-                   only for the conflicts whose settlement says --accept)
-  --pin            with --apply: move adopt.pin, the jst release the workflows download, to this jackstay
-  --settings-only  plan or write jackstay.json alone (its conflicts alone block). Rule D0 lands a
-                   change of jackstay.json in a pull request of its own: land it first, then run
-                   --apply again on the merged base for the other files
-  --profile PATH   an organisation's profile; recorded in jackstay.json by --apply, used later without
-                   the flag
-  --profile-sha256 DIGEST  pin the exact portable bundle bytes; recorded for future adoption
+  --accept ID      with --apply: overwrite what conflict ID protects, when its settlement says
+                   --accept (repeatable)
+  --pin            with --apply: set adopt.pin, the jst release the workflows download, to this one
+  --settings-only  plan or write jackstay.json alone; land it in its own pull request, then
+                   --apply again on the merged base
+  --profile PATH   an organisation's profile; --apply records it in jackstay.json
+  --profile-sha256 DIGEST  the exact bundle bytes to accept; recorded by --apply
   --json           the plan as one JSON object
-  --block          print the AGENTS block this project gets; nothing is written
+  --block          print the AGENTS block this project gets; writes nothing
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
 2 usage, or jackstay.json or the profile cannot be read; 3 (--plan) changes pending, no conflict.
 
-example: jst adopt --plan --profile ../profiles/ours/profile.json`
+example: jst adopt --plan --json`
 
 func init() {
-	cli.Register(cli.Command{Name: "adopt", Summary: "bring this project to jackstay's reference: jackstay.json, the AGENTS block, the guard hook, workflows",
+	cli.Register(cli.Command{Name: "adopt", Summary: "bring jackstay.json, the AGENTS block, the guard hook and workflows to jackstay's reference",
 		Usage: usage, Run: Run})
 }
 

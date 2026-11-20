@@ -20,7 +20,7 @@ import (
 )
 
 func init() {
-	cli.Register(cli.Command{Name: "guard", Summary: "the Claude Code hook that refuses destructive commands; `check [--cwd DIR] -- COMMAND`",
+	cli.Register(cli.Command{Name: "guard", Summary: "the Claude Code hook that refuses destructive commands",
 		Usage: help, Run: command})
 }
 
