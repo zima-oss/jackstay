@@ -4,7 +4,8 @@
   page's HTML runs the link render hook (_markup/render-link.html), which resolves and checks each
   link as Goldmark parsed it (inline, with a title, or by reference) and records the address it
   gave each destination. Each destination is then replaced where Markdown writes one: after `](`
-  in an inline link, after `]: ` in a reference definition.
+  (or `](<`) in an inline link, after `]: ` in a reference definition. A reference definition split
+  over two lines stops the build, so no form slips through with a link relative to the repository.
 
   Context: a dict with
     page  the page whose Markdown it is
@@ -15,7 +16,11 @@
 {{- range $destination, $href := $page.Store.Get "jackstay_links" -}}
   {{- $text = replace $text (printf "](%s)" $destination) (printf "](%s)" $href) -}}
   {{- $text = replace $text (printf "](%s " $destination) (printf "](%s " $href) -}}
+  {{- $text = replace $text (printf "](<%s>" $destination) (printf "](<%s>" $href) -}}
   {{- $quoted := replaceRE `([.\\+*?()|\[\]{}^$])` `\$1` $destination -}}
   {{- $text = replaceRE (printf `(?m)^( {0,3}\[[^\]]+\]:[ \t]*)%s([ \t]|$)` $quoted) (printf "${1}%s${2}" $href) $text -}}
+  {{- if findRE (printf `(?m)^ {0,3}\[[^\]]+\]:[ \t]*\n[ \t]*<?%s` $quoted) $text -}}
+    {{- errorf "%s: the reference definition of %q is split over two lines; write it on one line, so the Markdown served to agents gets its address too" ($page.Params.jackstay_source | default $page.Path) $destination -}}
+  {{- end -}}
 {{- end -}}
 {{- return $text -}}
