@@ -11,7 +11,7 @@ can still ask it about any command with `jst guard check`.
 
 ## `jst guard`
 
-```sh
+```text
 jst guard                                   # the hook: a tool call as JSON on standard input
 jst guard check [--cwd DIR] -- 'COMMAND'    # judge COMMAND as the hook would
 ```
@@ -113,7 +113,7 @@ The full table, with every allowance: [the guard's design](../design/guard.md).
 
 ## `jst discard`
 
-```sh
+```text
 jst discard [--] PATH...
 ```
 
@@ -133,7 +133,7 @@ Exit: 0 done; 1 a path could not be put back (the message says which, and where 
 
 ## `jst trash`
 
-```sh
+```text
 jst trash PATH...                     # move each into jackstay's trash
 jst trash list [--json]               # the entries, newest first
 jst trash restore ENTRY [--to PATH]   # put an item back (refused when something is there)
@@ -156,7 +156,7 @@ Exit: 0 done; 1 a path could not be moved, or no such entry; 2 a bad request.
 
 ## What can go wrong
 
-- **A refusal for a command you meant**: read its `Instead`. If you really mean it, run it in your
+- **A refusal for a command you meant**: read its `Instead`. If you mean it, run it in your
   own terminal. To loosen a rule for a whole project, set its level in `guard.rules`.
 - **A `zsh-glob` warning on a pattern that will match later** (a folder that is empty now): quote
   the word; the warning is about the shell, not about danger.
