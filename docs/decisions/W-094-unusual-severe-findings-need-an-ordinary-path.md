@@ -19,6 +19,10 @@ accidents, not an adversary (W-017): a setup no ordinary work produces is rare, 
 - A finding carries `ordinary_path`: the ordinary work by which an unusual setup arises by accident,
   empty when none does. An `unusual` finding with it empty is rare, however severe: deferred, never
   blocking. The reviewer's prompt says so.
+- A transient read or write error of the local disk during an ordinary call is a rare hardware fault,
+  whatever its path; the code need only pass the error to its caller, never taken as an outcome. A
+  process killed between two writes (a session stopped, Ctrl-C, sleep, a reboot) is ordinary: a
+  finding when, after restart and recovery, the state stays wrong or a message is lost or doubled.
 - The session checks every rating, the path included, before it calls a finding a blocker or asks
   for a round past the limit; the next step `jst review` prints for a blocking round says so, and so
   does the agents' guidance. W-019 is unchanged.
