@@ -43,6 +43,11 @@ from a verified release.
 - [Claude Code](claude-code.md) covers the project guard hook, sandbox and reviewer setup.
 - [Codex](codex.md) covers the optional reviewer and guard hook.
 
+## Reference
+
+[Commands](../reference/commands.md) and [configuration](../reference/configuration.md): every flag,
+exit code and `jackstay.json` key, generated from the code.
+
 ## Terms used here
 
 A **project** is a Git repository whose root has a `jackstay.json`. **jackstay home** is the

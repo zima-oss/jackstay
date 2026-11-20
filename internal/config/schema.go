@@ -19,6 +19,7 @@ func JSONSchema() ([]byte, error) {
 	root["description"] = "Project configuration for jackstay. Run jst check for semantic and cross-field validation."
 	root["required"] = []string{"jackstay_schema"}
 	setSchemaHints(root)
+	describeSchema(root, "")
 	content, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("marshal jackstay JSON Schema: %w", err)
@@ -114,5 +115,37 @@ func setSchemaHints(root map[string]any) {
 			}
 		}
 		node["enum"] = values
+	}
+}
+
+// describeSchema gives each key of the schema its description from keyDescriptions, so an editor
+// shows what the configuration reference says; a description the hints already set comes after it.
+func describeSchema(node map[string]any, path string) {
+	if text := keyDescriptions[path]; text != "" {
+		if hint, ok := node["description"].(string); ok && hint != text {
+			text += " " + hint
+		}
+		node["description"] = text
+	}
+	join := func(name string) string {
+		if path == "" {
+			return name
+		}
+		return path + "." + name
+	}
+	if properties, ok := node["properties"].(map[string]any); ok {
+		for key, child := range properties {
+			describeSchema(child.(map[string]any), join(key))
+		}
+	}
+	if entry, ok := node["additionalProperties"].(map[string]any); ok && isContainer(entry) {
+		if _, same := sameKeysAs[path]; !same {
+			describeSchema(entry, join("*"))
+		}
+	}
+	if item, ok := node["items"].(map[string]any); ok && isObject(item) {
+		for key, child := range item["properties"].(map[string]any) {
+			describeSchema(child.(map[string]any), path+"[]."+key)
+		}
 	}
 }
