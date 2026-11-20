@@ -130,42 +130,48 @@ func testCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	state, err := service.Prepare(context.Background())
+	return service.testGate(context.Background(), scopes.PinnedGate, stdout, stderr)
+}
+
+func (service Service) testGate(ctx context.Context, runGate func(string, io.Writer, io.Writer) (string, int), stdout, stderr io.Writer) int {
+	prepared, err := service.Prepare(ctx)
 	if err != nil {
 		return queueError(stderr, err)
 	}
-	paths := receipts.RunLogPaths()
-	before := len(receipts.ReadRecords(paths))
-	if status := scopes.Command([]string{"gate", "--commit", state.Candidate}, nil, stdout, stderr); status != 0 {
+	state, err := service.beginGate(ctx, prepared)
+	if err != nil {
+		return queueError(stderr, err)
+	}
+	gateID, status := runGate(state.Candidate, stdout, stderr)
+	if status != 0 {
 		return queueError(stderr, fmt.Errorf("gate did not pass (exit %d)", status))
 	}
-	records := receipts.ReadRecords(paths)
-	if len(records) <= before {
-		return queueError(stderr, fmt.Errorf("the gate wrote no durable run record"))
-	}
-	var gateID string
-	for _, record := range records[before:] {
-		if record.Text("event") == receipts.EventGate && record.Text("project") == service.Project &&
-			record.Text("outcome") == receipts.OutcomePassed && record.Text("head") == state.Candidate {
-			gateID = record.Text("gate_run_id")
+	records := receipts.ReadRecords(receipts.RunLogPaths())
+	pinnedPass := false
+	for _, record := range records {
+		if gateID != "" && record.Text("gate_run_id") == gateID && record.Text("event") == receipts.EventGate &&
+			record.Text("project") == service.Project && record.Text("outcome") == receipts.OutcomePassed &&
+			record.Text("head") == state.Candidate && record.Text("pinned_candidate") == state.Candidate {
+			pinnedPass = true
+			break
 		}
 	}
-	if gateID == "" {
-		return queueError(stderr, fmt.Errorf("no passed gate record for candidate %s", state.Candidate))
+	if !pinnedPass {
+		return queueError(stderr, fmt.Errorf("no passed pinned gate record for candidate %s", state.Candidate))
 	}
 	var evidence []Evidence
-	for _, record := range records[before:] {
+	for _, record := range records {
 		if record.Text("event") != receipts.EventRun || record.Text("project") != service.Project ||
 			record.Text("gate_run_id") != gateID || record.Text("head") != state.Candidate ||
 			record.Text("outcome") != receipts.OutcomePassed {
 			continue
 		}
 		count, ok := record.Number("evidence_count")
-		key := record.Text("key")
-		if !ok || count <= 0 || !objectID(key) {
+		key, runID := record.Text("key"), record.Text("run_id")
+		if !ok || count <= 0 || record["stored"] != true || !objectID(key) || runID == "" {
 			continue
 		}
-		data, err := exportReceipt(key)
+		data, err := receipts.ExportForRun(key, runID)
 		if err != nil || !validEvidence(data, state.Candidate, key) {
 			continue
 		}
@@ -174,7 +180,7 @@ func testCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if len(evidence) == 0 {
 		return queueError(stderr, fmt.Errorf("gate passed but no counted receipt for candidate %s was exportable", state.Candidate))
 	}
-	if _, err := service.recordGate(context.Background(), state.Candidate, gateID, evidence); err != nil {
+	if _, err := service.recordGate(ctx, state, gateID, evidence); err != nil {
 		return queueError(stderr, err)
 	}
 	fmt.Fprintf(stdout, "queue candidate %s: gate %s passed, %d counted receipt(s) saved\n", state.Candidate, gateID, len(evidence))
@@ -216,7 +222,7 @@ func queueStatus(state *State) string {
 	if !state.HandoffAt.IsZero() {
 		return "handed-off"
 	}
-	if state.GateRunID != "" {
+	if state.GateClaim != "" && state.GateRunID != "" {
 		return "tested"
 	}
 	if state.Candidate != "" {

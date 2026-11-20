@@ -3,6 +3,7 @@ package mergequeue
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,9 +93,7 @@ func TestMissingCandidateStartsNewAttemptAndClearsGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.recordGate(ctx, old.Candidate, "old-gate", []Evidence{{Key: strings.Repeat("a", 64), SHA256: strings.Repeat("b", 64)}}); err != nil {
-		t.Fatal(err)
-	}
+	recordFixtureGate(t, service, old, "old-gate")
 	gitCommand(t, repository, "prune", "--expire=now")
 	newCandidate, err := service.Prepare(ctx)
 	if err != nil {
@@ -159,12 +158,16 @@ func TestMovedHeadInvalidatesAndRejectsOldGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	old, err = service.beginGate(ctx, old)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(repository, "next.txt"), []byte("next\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	gitCommand(t, repository, "add", "next.txt")
 	gitCommand(t, repository, "commit", "-m", "advance head")
-	if _, err := service.recordGate(ctx, old.Candidate, "old-gate", []Evidence{{Key: strings.Repeat("a", 64), SHA256: strings.Repeat("b", 64)}}); err == nil {
+	if _, err := service.recordGate(ctx, old, "old-gate", fixtureEvidence()); err == nil {
 		t.Fatal("old gate attached to changed head")
 	}
 	newCandidate, err := service.Prepare(ctx)
@@ -204,6 +207,105 @@ func TestOnlyFullBranchRefsAreAllowed(t *testing.T) {
 		if _, err := service.Enqueue(context.Background(), ref); err == nil {
 			t.Fatalf("accepted non-branch head %q", ref)
 		}
+	}
+}
+
+func fixtureEvidence() []Evidence {
+	return []Evidence{{Key: strings.Repeat("a", 64), SHA256: strings.Repeat("b", 64)}}
+}
+
+func recordFixtureGate(t *testing.T, service Service, prepared *State, gateID string) *State {
+	t.Helper()
+	ctx := context.Background()
+	claimed, err := service.beginGate(ctx, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tested, err := service.recordGate(ctx, claimed, gateID, fixtureEvidence())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tested
+}
+
+func TestFailedRetestClearsEvidenceBeforeTheGateRuns(t *testing.T) {
+	service, _ := fixture(t)
+	old := testedHandoff(t, service)
+	ctx := context.Background()
+	checked, err := service.Handoff(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var diagnostics bytes.Buffer
+	status := service.testGate(ctx, func(candidate string, _, _ io.Writer) (string, int) {
+		current, err := service.Status(ctx)
+		if err != nil || candidate != old.Candidate || current.GateClaim == old.GateClaim || current.GateClaim == "" ||
+			current.GateRunID != "" || len(current.Receipts) != 0 {
+			t.Fatalf("gate began with previous evidence still eligible: %+v, %v", current, err)
+		}
+		if _, err := service.Handoff(ctx); err == nil {
+			t.Fatal("handoff accepted evidence during the retest")
+		}
+		if _, err := service.recordHandoff(ctx, checked); err == nil {
+			t.Fatal("a handoff checked before the retest was recorded after it started")
+		}
+		return "", 1
+	}, io.Discard, &diagnostics)
+	if status != 1 || !strings.Contains(diagnostics.String(), "gate did not pass") {
+		t.Fatalf("failed retest returned %d: %s", status, diagnostics.String())
+	}
+	if _, err := service.Handoff(ctx); err == nil {
+		t.Fatal("failed retest left the candidate eligible for handoff")
+	}
+}
+
+func TestOnlyTheLatestTestOfTheSameCandidateCanRecordEvidence(t *testing.T) {
+	service, _ := fixture(t)
+	prepared := testedHandoff(t, service)
+	ctx := context.Background()
+	older, err := service.beginGate(ctx, prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := service.beginGate(ctx, prepared)
+	if err != nil || latest.GateClaim == older.GateClaim || latest.Candidate != older.Candidate || latest.Attempt != older.Attempt {
+		t.Fatalf("retest did not supersede the same candidate: %+v, %v", latest, err)
+	}
+	if _, err := service.recordGate(ctx, older, "older-gate", fixtureEvidence()); err == nil {
+		t.Fatal("superseded test published during its replacement")
+	}
+	if _, err := service.recordGate(ctx, latest, "latest-gate", fixtureEvidence()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.recordGate(ctx, older, "older-gate", fixtureEvidence()); err == nil {
+		t.Fatal("superseded test overwrote the latest result")
+	}
+	if checked, err := service.Handoff(ctx); err != nil || checked.GateRunID != "latest-gate" {
+		t.Fatalf("latest evidence was not eligible for handoff: %+v, %v", checked, err)
+	}
+}
+
+func TestLegacyEvidenceRequiresRetestingBeforeNewHandoff(t *testing.T) {
+	service, _ := fixture(t)
+	legacy := testedHandoff(t, service)
+	ctx := context.Background()
+	place, _, err := service.place(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.GateClaim = ""
+	if err := save(place, legacy); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Handoff(ctx); err == nil {
+		t.Fatal("legacy evidence without a pinned gate was eligible for handoff")
+	}
+	if current, err := service.Status(ctx); err != nil || queueStatus(current) != "prepared" {
+		t.Fatalf("legacy queue should still be readable and prepared: %+v, %v", current, err)
+	}
+	recordFixtureGate(t, service, legacy, "pinned-gate")
+	if _, err := service.Handoff(ctx); err != nil {
+		t.Fatalf("legacy queue could not be retested with pinned evidence: %v", err)
 	}
 }
 

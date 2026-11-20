@@ -80,42 +80,61 @@ func exportEvidence(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, exportUsage)
 		return StatusUnusable
 	}
-	runner, err := newTester(stdout, stderr)
+	data, err := readEvidence(args[0], "")
 	if err != nil {
 		return evidenceError(stderr, err)
 	}
-	root, loaded, err := config.Load(runner.here, Needs)
-	if err != nil {
-		return evidenceError(stderr, err)
-	}
-	if root == "" {
-		return evidenceError(stderr, fmt.Errorf("no %s at or above this folder", config.Name))
-	}
-	projectName := config.ProjectName(root, loaded, runner.here)
-	store, err := OpenStore(projectName, Section(loaded), runner.clock)
-	if err != nil {
-		return evidenceError(stderr, err)
-	}
-	receipt, why := store.Read(args[0])
-	if receipt == nil {
-		return evidenceError(stderr, fmt.Errorf("no exportable receipt: %s", why))
-	}
-	evidence := portableEvidence{Schema: evidenceSchema, Jackstay: receipt.Jackstay, Head: receipt.Head,
-		Key: receipt.Key, Manifest: receipt.Material.Manifest, Outcome: receipt.Outcome,
-		Count: receipt.EvidenceCount, Ended: fromEpoch(receipt.EndedEpoch).UTC().Format(time.RFC3339Nano)}
-	if !receipt.matchesMaterial() || receipt.Project != projectName || !evidence.valid() {
-		return evidenceError(stderr, fmt.Errorf("the receipt has inconsistent key material or no counted pass tied to a checkout"))
-	}
-	data, err := json.Marshal(evidence)
-	if err != nil {
-		return evidenceError(stderr, err)
-	}
-	data = append(data, '\n')
 	if _, err := stdout.Write(data); err != nil {
 		return evidenceError(stderr, err)
 	}
 	fmt.Fprintln(stderr, "jst receipts: sha256", sha256Text(data))
 	return 0
+}
+
+// ExportForRun returns the same portable evidence as receipts export when the
+// stored receipt came from the given local run. The run ID stays in the store.
+func ExportForRun(key, runID string) ([]byte, error) {
+	if !fullHex(key, 64) || runID == "" {
+		return nil, fmt.Errorf("a receipt key and run ID are required")
+	}
+	return readEvidence(key, runID)
+}
+
+func readEvidence(key, runID string) ([]byte, error) {
+	runner, err := newTester(io.Discard, io.Discard)
+	if err != nil {
+		return nil, err
+	}
+	root, loaded, err := config.Load(runner.here, Needs)
+	if err != nil {
+		return nil, err
+	}
+	if root == "" {
+		return nil, fmt.Errorf("no %s at or above this folder", config.Name)
+	}
+	projectName := config.ProjectName(root, loaded, runner.here)
+	store, err := OpenStore(projectName, Section(loaded), runner.clock)
+	if err != nil {
+		return nil, err
+	}
+	receipt, why := store.Read(key)
+	if receipt == nil {
+		return nil, fmt.Errorf("no exportable receipt: %s", why)
+	}
+	if runID != "" && receipt.RunID != runID {
+		return nil, fmt.Errorf("the stored receipt belongs to a different run")
+	}
+	evidence := portableEvidence{Schema: evidenceSchema, Jackstay: receipt.Jackstay, Head: receipt.Head,
+		Key: receipt.Key, Manifest: receipt.Material.Manifest, Outcome: receipt.Outcome,
+		Count: receipt.EvidenceCount, Ended: fromEpoch(receipt.EndedEpoch).UTC().Format(time.RFC3339Nano)}
+	if !receipt.matchesMaterial() || receipt.Project != projectName || !evidence.valid() {
+		return nil, fmt.Errorf("the receipt has inconsistent key material or no counted pass tied to a checkout")
+	}
+	data, err := json.Marshal(evidence)
+	if err != nil {
+		return nil, err
+	}
+	return append(data, '\n'), nil
 }
 
 func verifyEvidence(args []string, _ io.Reader, stdout, stderr io.Writer) int {

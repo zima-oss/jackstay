@@ -633,6 +633,15 @@ func restoreItem(source, target string, expected *Replaced) error {
 	return install(candidate)
 }
 
+// InstallDiscardReplacement installs a privately staged worktree file only where
+// discard expects absence or an exact existing replacement.
+func InstallDiscardReplacement(source, target string, expected Replaced) error {
+	if expected.Kind == "none" {
+		return renameAbsent(source, target)
+	}
+	return restoreOverReplacement(source, target, expected)
+}
+
 // restoreOverReplacement checks the displaced file after exchange. The trash copy
 // stays recoverable throughout, including if another editor changes the destination.
 func restoreOverReplacement(source, target string, expected Replaced) error {

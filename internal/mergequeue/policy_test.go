@@ -78,9 +78,7 @@ func TestPRHandoffRequiresCurrentProviderEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.recordGate(ctx, state.Candidate, "gate-17", []Evidence{{Key: strings.Repeat("a", 64), SHA256: strings.Repeat("b", 64)}}); err != nil {
-		t.Fatal(err)
-	}
+	recordFixtureGate(t, service, state, "gate-17")
 	mergeSHA := strings.Repeat("c", 40)
 	fake := &fakeProvider{
 		pull: githubapi.PullRequest{Number: 17, State: "open", Author: "author", HeadSHA: state.Head,
@@ -159,9 +157,7 @@ func TestLocalOnlyAndRequiredPRModes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.recordGate(context.Background(), state.Candidate, "local-gate", []Evidence{{Key: strings.Repeat("a", 64), SHA256: strings.Repeat("b", 64)}}); err != nil {
-		t.Fatal(err)
-	}
+	recordFixtureGate(t, service, state, "local-gate")
 	if _, err := service.Handoff(context.Background()); err != nil {
 		t.Fatal(err)
 	}

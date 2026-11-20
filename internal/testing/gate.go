@@ -439,6 +439,11 @@ func (proj *project) gate(name string) int {
 		proj.notLogged("the start of this gate")
 	}
 	state := &gateState{}
+	if problem := proj.pinnedProblem(); problem != "" {
+		proj.say("%s", problem)
+		state.fail(receipts.OutcomeUnjudged, receipts.StatusUnjudged, "checkout validation")
+		return proj.gateLine(name, gateID, began, state)
+	}
 	checked := map[string]string{}
 	for _, path := range paths {
 		ended, stop := proj.gateStep(path, gateID, resume, checked, state)
@@ -448,6 +453,10 @@ func (proj *project) gate(name string) int {
 		if stop {
 			break
 		}
+	}
+	if problem := proj.pinnedProblem(); problem != "" {
+		proj.say("%s", problem)
+		state.fail(receipts.OutcomeUnjudged, receipts.StatusUnjudged, "checkout validation")
 	}
 	if state.outcome == "" {
 		state.outcome = outcomeResumed
@@ -501,6 +510,9 @@ func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked
 				break
 			}
 		}
+	}
+	if problem := proj.pinnedProblem(); problem != "" {
+		whyNot = problem
 	}
 	if whyNot != "" {
 		proj.say("step %s: not started (%s)", path.name, whyNot)
@@ -659,8 +671,18 @@ func (proj *project) gateLine(name, gateID string, began time.Time, state *gateS
 	if why != "" {
 		fields["why"] = why
 	}
+	pinnedPass := proj.pin != nil && state.outcome == receipts.OutcomePassed
+	if pinnedPass {
+		fields["pinned_candidate"] = proj.pin.commit
+	}
 	if !proj.log(receipts.EventGate, []string{name}, "", fields) {
 		proj.notLogged("this gate")
+		if pinnedPass {
+			state.outcome, state.status = receipts.OutcomeUnjudged, receipts.StatusUnjudged
+			why = "could not record the pinned gate"
+		}
+	} else if pinnedPass {
+		proj.pin.runID = gateID
 	}
 	each := make([]string, 0, len(steps))
 	for _, entry := range steps {

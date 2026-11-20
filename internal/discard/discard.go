@@ -283,6 +283,26 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 	if err := repo.recheck(ctx, each, each.disk); err != nil {
 		return 0, err
 	}
+	var staged string
+	replacement := trash.Replaced{Kind: "none"}
+	if each.head != nil && (each.keepDisk || each.keepIndex) {
+		parent, err := stagingParent(place)
+		if err != nil {
+			return 0, fmt.Errorf("preparing the replacement: %w", err)
+		}
+		folder, err := os.MkdirTemp(parent, ".jackstay-discard-")
+		if err != nil {
+			return 0, fmt.Errorf("preparing the replacement: %w", err)
+		}
+		defer func() { _ = os.RemoveAll(folder) }()
+		staged, replacement, err = repo.stageReplacement(ctx, each, folder)
+		if err != nil {
+			return 0, fmt.Errorf("preparing the replacement: %w", err)
+		}
+		if err := repo.recheck(ctx, each, each.disk); err != nil {
+			return 0, err
+		}
+	}
 	var entries []string
 	if each.keepIndex {
 		data, err := repo.git(ctx, "cat-file", "blob", each.index.blob)
@@ -307,18 +327,21 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		run.say("%s: what was on disk kept as %s (`jst trash restore %s`)", each.path, entry.ID, entry.ID)
 	}
 	var err error
+	expected := each.disk
+	if each.keepDisk {
+		expected = trash.Replaced{Kind: "none"}
+	}
 	if len(entries) > 0 {
-		expected := each.disk
-		if each.keepDisk {
-			expected = trash.Replaced{Kind: "none"}
-		}
 		err = repo.recheck(ctx, each, expected)
 	}
 	if err == nil {
-		if each.head != nil {
-			_, err = repo.git(ctx, "restore", "--source="+each.source, "--staged", "--worktree", "--", each.path)
-		} else {
+		switch {
+		case each.head == nil:
 			_, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path)
+		case staged == "":
+			_, err = repo.git(ctx, "restore", "--source="+each.source, "--staged", "--worktree", "--", each.path)
+		default:
+			err = repo.restoreStaged(ctx, each, staged, place, expected)
 		}
 	}
 	if err != nil {
@@ -331,16 +354,100 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 	if !each.keepDisk && !each.keepIndex {
 		run.say("%s: written back from HEAD (nothing to keep)", each.path)
 	}
-	written, err := trash.Describe(place)
-	if err != nil {
-		return len(entries), err
-	}
 	for _, id := range entries {
-		if err := trash.Mark(run.Trash, id, "discard", written); err != nil {
+		if err := trash.Mark(run.Trash, id, "discard", replacement); err != nil {
 			return len(entries), err
 		}
 	}
 	return len(entries), nil
+}
+
+func (repo repository) restoreStaged(ctx context.Context, each change, staged, place string, expected trash.Replaced) error {
+	if err := repo.ensureParent(each.path); err != nil {
+		return err
+	}
+	if _, err := repo.git(ctx, "restore", "--source="+each.source, "--staged", "--", each.path); err != nil {
+		return err
+	}
+	if link := linkInside(repo.top, each.path); link != "" {
+		return fmt.Errorf("the index was restored, but the worktree path is now reached through the link %s", link)
+	}
+	if err := installReplacement(staged, place, expected); err != nil {
+		return fmt.Errorf("the index was restored, but the worktree replacement could not be installed: %w", err)
+	}
+	return nil
+}
+
+// installReplacement is replaced in a test to model an editor save during discard.
+var installReplacement = trash.InstallDiscardReplacement
+
+// stagingParent stays on the destination volume even when some directories are missing.
+func stagingParent(place string) (string, error) {
+	for parent := filepath.Dir(place); ; parent = filepath.Dir(parent) {
+		info, err := os.Lstat(parent)
+		if err == nil {
+			if !info.IsDir() {
+				return "", fmt.Errorf("%s is not a directory", parent)
+			}
+			return parent, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) || filepath.Dir(parent) == parent {
+			return "", err
+		}
+	}
+}
+
+func (repo repository) ensureParent(path string) error {
+	root, err := os.OpenRoot(repo.top)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.MkdirAll(filepath.Dir(path), 0o755)
+}
+
+// stageReplacement lets Git apply the worktree's conversions once, without writing
+// the destination. The captured identity belongs to the file actually installed.
+func (repo repository) stageReplacement(ctx context.Context, each change, folder string) (string, trash.Replaced, error) {
+	indexPath, err := repo.git(ctx, "rev-parse", "--path-format=absolute", "--git-path", "index")
+	if err != nil {
+		return "", trash.Replaced{}, err
+	}
+	index := filepath.Join(folder, "index")
+	if err := copyIndex(strings.TrimSuffix(string(indexPath), "\n"), index); err != nil {
+		return "", trash.Replaced{}, err
+	}
+	git := gitcli.Git{Dir: repo.top, Env: append(gitcli.WithoutRepository(os.Environ()), "GIT_INDEX_FILE="+index)}
+	if _, err := runGit(ctx, git, "restore", "--source="+each.source, "--staged", "--", each.path); err != nil {
+		return "", trash.Replaced{}, err
+	}
+	prefix := filepath.Join(folder, "checkout") + string(filepath.Separator)
+	if _, err := runGit(ctx, git, "checkout-index", "--prefix="+prefix, "--", each.path); err != nil {
+		return "", trash.Replaced{}, err
+	}
+	staged := filepath.Join(prefix, each.path)
+	replacement, err := trash.Describe(staged)
+	if err == nil && replacement.Kind != "file" && replacement.Kind != "link" {
+		err = errors.New("the pinned replacement could not be materialized")
+	}
+	return staged, replacement, err
+}
+
+func copyIndex(source, target string) error {
+	input, err := os.Open(source) // #nosec G304 -- Git supplies this checkout's index path
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = input.Close() }()
+	output, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(output, input)
+	return errors.Join(copyErr, output.Close())
 }
 
 // recheck detects changes between planning and applying a path, including a file that reappears
@@ -386,8 +493,12 @@ func topOf(ctx context.Context, folder string) (string, error) {
 type repository struct{ top string }
 
 func (repo repository) git(ctx context.Context, args ...string) ([]byte, error) {
+	return runGit(ctx, gitcli.Git{Dir: repo.top}, args...)
+}
+
+func runGit(ctx context.Context, git gitcli.Git, args ...string) ([]byte, error) {
 	full := append([]string{"-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "--literal-pathspecs"}, args...)
-	return gitcli.Git{Dir: repo.top}.Run(ctx, full...)
+	return git.Run(ctx, full...)
 }
 
 func (repo repository) source(ctx context.Context) string {

@@ -65,6 +65,9 @@ func (result checkResult) passed() bool {
 // runCheck runs a `requires` check in a session of its own, stopped whole at its timeout like a
 // run's command (jst test's own requests to stop reach it too).
 func (proj *project) runCheck(each check, cwd string, env []string) checkResult {
+	if problem := proj.pinnedProblem(); problem != "" {
+		return checkResult{status: statusRefused, tail: []string{problem}}
+	}
 	kept := &tail{}
 	spec := supervise.Spec{Argv: each.run, Env: env, Dir: cwd, Mode: supervise.Session, Output: kept,
 		Grace: supervise.SessionGrace, Settle: settle, Say: proj.stderr, Who: "jst test", Clock: proj.clock, System: proj.system,
@@ -82,6 +85,10 @@ func (proj *project) runCheck(each check, cwd string, env []string) checkResult 
 	}
 	if ran.outcome.StoppedBy != 0 {
 		result.asked = ran.outcome.StoppedBy
+	}
+	if problem := proj.pinnedProblem(); problem != "" {
+		result.status = statusRefused
+		result.tail = append(result.tail, problem)
 	}
 	return result
 }

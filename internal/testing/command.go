@@ -38,6 +38,9 @@ type ran struct {
 // command runs the leaf's words in a session of their own, judges and records the run, and
 // stores a receipt for a counted pass of a keyed tree.
 func (run *leafRun) command(asked time.Time, held *flock.Held) result {
+	if problem := run.pinnedProblem(); problem != "" {
+		return run.notStarted(problem)
+	}
 	did := &ran{leafRun: run}
 	if run.keyErr == nil && run.storeOK {
 		// The command is about to run for this key: its receipt stops speaking for the tree now.
@@ -211,6 +214,9 @@ func (did *ran) judged(launchedRun launched, reader *judge.Reader, seen *leftove
 		end.Signal = supervise.SignalName(first)
 	}
 	verdict := reader.Verdict(end)
+	if problem := did.pinnedProblem(); problem != "" && !asked {
+		verdict = judge.Verdict{Outcome: judge.Unjudged, Why: problem}
+	}
 	more := map[string]any{"status": status, "counted": nil}
 	if verdict.Counting {
 		// evidence_count too: the run log's readers (stats, would-hit) count passes by it.

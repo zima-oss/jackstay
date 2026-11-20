@@ -30,12 +30,16 @@ changing a branch or the checkout. If the base or head moves before handoff, `st
 and `prepare` starts a new attempt with its prior evidence cleared. A recorded handoff holds
 the tested attempt for reconciliation.
 
-`test` runs the configured `gate` on a clean copy of that exact candidate with
-`jst test gate --commit`. It accepts the result only when the gate passes, the run log names that
-candidate, and at least one counted step has an exportable portable receipt. Configure
-`receipts.inputs` to cover the files the gate tests; a gate can pass without an exportable receipt,
-but the queue then refuses handoff. `handoff` exports the saved receipts again and checks their
-digests and candidate IDs, as well as current base and head refs. It prints the tested candidate,
+`test` runs the configured `gate` on a clean copy of the exact candidate. It checks the candidate
+commit, index and tracked files around gate steps and prerequisites. Tests can write untracked
+build output. Starting a test clears the lane's earlier gate evidence. Only the current test run
+can record new evidence, and a failed or interrupted retest leaves handoff unavailable. Retest a
+candidate with evidence saved by an older Jackstay version before handing it off. An existing
+recorded handoff can still be reconciled.
+
+The queue requires a passing result from that exact run and at least one exportable counted
+receipt. Configure `receipts.inputs` to cover the files the gate tests. `handoff` exports the saved
+receipts again and checks their digests and candidate IDs, as well as current base and head refs. It prints the tested candidate,
 tree, gate run and receipt identities for a person to inspect before merging. A successful
 handoff also saves that exact tested attempt so a later process can reconcile the outcome.
 

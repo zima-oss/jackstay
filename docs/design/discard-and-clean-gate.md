@@ -80,11 +80,10 @@ is in: a failure after the move leaves the file missing from the working copy an
 trash, so `jst trash restore ENTRY` puts it back); 2 when refused before anything was done.
 
 **Restore.** An entry records, besides `jst trash`'s fields, `via: "discard"` and `replaced`: what
-`jst discard` wrote back — its kind (file, link, none), its executable bit, and the SHA-256 of its
-content or of the link's target (read with `Lstat`/`Readlink`, never followed). `jst trash restore
-ENTRY` puts the item back as now; and when the target exists, it replaces it **only** when the
-target's kind, executable bit and SHA-256 all equal `replaced` (nothing changed since the discard,
-and what is replaced is HEAD's version, which git still has). Otherwise it refuses ("is
+`jst discard` prepared from HEAD — its kind (file, link, none), executable bit, and the SHA-256 of
+its contents or link target. Discard takes this identity from the prepared replacement before
+installing it. `jst trash restore ENTRY` can replace an occupied destination only when the target's
+kind, executable bit and SHA-256 all equal that recorded identity. Otherwise it refuses ("is
 there already … use --to PATH"). To replace a known target, restore exchanges a checked copy
 with the destination, then verifies the displaced file. A concurrent change is put back where
 possible. Recovered versions remain available if that exchange cannot be reversed safely. An
