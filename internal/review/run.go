@@ -238,6 +238,9 @@ type plan struct {
 	follows                      int
 	ledger                       []LedgerFinding
 	streaks                      map[string]int
+	// limitCleared: the newest round reached the limit and nothing of it blocks by today's rule,
+	// so the rounds after it need no owner's word.
+	limitCleared bool
 }
 
 func (round Round) plan(ctx context.Context, task, commit, givenBase string, settings Settings, options Options) (plan, *Result) {
@@ -262,6 +265,9 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, set
 	}
 	// Whether the newest round still blocks is read from its ledger by today's predicate, not from
 	// the flag it saved: a rule that changed since (W-094) applies to it as `jst review check` does.
+	if newest != nil && newest.Round >= round.Settings.RoundLimit && !ledgerBlocks(round.Settings, newest.Outcome.Ledger) {
+		planned.limitCleared = true
+	}
 	if newest != nil && newest.Round >= round.Settings.RoundLimit && ledgerBlocks(round.Settings, newest.Outcome.Ledger) && !options.PastLimit {
 		result := Result{Status: ExitOwner, Next: fmt.Sprintf(
 			"round %d reached the limit of %d and still blocks: the owner decides; a further round needs --past-limit after the owner's word",
@@ -420,7 +426,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		record.Summaries[name] = answers[position].Summary
 	}
 	record.Outcome = Advance(settings, planned.ledger, planned.streaks, answered, planned.number, planned.commit)
-	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit
+	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit && !planned.limitCleared
 	status, next := Disposition(settings, record)
 	if options.PoolAttempt != "" {
 		record.PoolExit = &status

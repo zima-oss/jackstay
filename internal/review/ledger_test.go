@@ -139,7 +139,11 @@ func TestARoundAtTheLimitIsReadByTodaysPredicate(t *testing.T) {
 	if err := writeJSON(filepath.Join(h.round.Store.TaskPath("feature/x"), fmt.Sprintf("round-%d", settings.RoundLimit), RecordName), record); err != nil {
 		t.Fatal(err)
 	}
-	if result := h.round.Run(context.Background(), Options{Revision: "c0..c2", Fresh: true}); result.Status == ExitOwner {
+	result := h.round.Run(context.Background(), Options{Revision: "c0..c2", Fresh: true})
+	if result.Status != ExitClear || result.Record == nil || result.Record.OverLimit {
 		t.Fatalf("a saved flag held the task at the limit although nothing blocks by today's rule: %+v", result)
+	}
+	if reasons, _ := CheckReasons(settings, h.round.Store, "feature/x", "c0", "c2"); len(reasons) != 0 {
+		t.Fatalf("the clear follow-up does not pass the check: %v", reasons)
 	}
 }

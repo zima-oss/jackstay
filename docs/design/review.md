@@ -223,6 +223,7 @@ embedded one with this project's severity words), so its last message is one JSO
       "consequence": "severe",
       "title": "one line",
       "detail": "what, where, why, and the smallest fix",
+      "ordinary_path": "",
       "repeats": ["r2-codex-F3"]
     }
   ],
