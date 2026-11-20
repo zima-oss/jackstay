@@ -3,11 +3,14 @@ package doctor
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/zima-oss/jackstay/internal/adopt"
+	"github.com/zima-oss/jackstay/internal/adopt/templates"
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/hosting"
 )
 
@@ -29,12 +32,17 @@ func landProject(t *testing.T, text string, rules hosting.Rules, connectErr erro
 
 func landProjectWith(t *testing.T, text string, lintWorkflow string, rules hosting.Rules, connectErr error) func() (LandProject, bool) {
 	t.Helper()
+	return landProjectRead(t, text, lintWorkflow, "", rules, connectErr)
+}
+
+func landProjectRead(t *testing.T, text, lintWorkflow, lintUnread string, rules hosting.Rules, connectErr error) func() (LandProject, bool) {
+	t.Helper()
 	parsed, err := config.Parse([]byte(text))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return func() (LandProject, bool) {
-		return LandProject{Config: parsed, LintWorkflow: lintWorkflow, Connect: func(context.Context) (hosting.Host, string, error) {
+		return LandProject{Config: parsed, LintWorkflow: lintWorkflow, LintUnread: lintUnread, Connect: func(context.Context) (hosting.Host, string, error) {
 			if connectErr != nil {
 				return nil, "", connectErr
 			}
@@ -68,7 +76,7 @@ func TestLandChecks(t *testing.T) {
 		connectErr      error
 		problems, notes string
 	}{
-		{"healthy", land(""), read, nil, "", ""},
+		{"healthy", land(""), read, nil, "", "land-lint-forks"},
 		{"invalid section", `{"jackstay_schema":3,"land":{"autonomy":"always"}}`, read, nil, "land-invalid", ""},
 		{"no account", land(""), read, errors.New("no token"), "land-account", ""},
 		{"rules unread, no checks", land(""), unread, nil, "land-rules-unread", "land-lint-unverified,land-method"},
@@ -76,10 +84,10 @@ func TestLandChecks(t *testing.T) {
 		{"rules require none, no checks", land(""), none, nil, "land-lint-not-required,land-no-required-checks", ""},
 		{"rules require none, checks listed", land(`,"checks":["build"]`), none, nil, "land-lint-not-required", "land-no-required-checks"},
 		{"lint not required", land(""), noLint, nil, "land-lint-not-required", ""},
-		{"method not allowed", land(`,"method":"rebase"`), read, nil, "land-method", ""},
-		{"queue required", land(""), queued, nil, "", "land-queue"},
-		{"guard off", `{"jackstay_schema":3,"guard":{"rules":{"gh-pr-merge":{"level":"off"}}},"land":{"autonomy":"prepare"}}`, read, nil, "land-guard", ""},
-		{"guard warns", `{"jackstay_schema":3,"guard":{"rules":{"gh-pr-merge":{"level":"warn"}}},"land":{"autonomy":"prepare"}}`, read, nil, "", "land-guard"},
+		{"method not allowed", land(`,"method":"rebase"`), read, nil, "land-method", "land-lint-forks"},
+		{"queue required", land(""), queued, nil, "", "land-lint-forks,land-queue"},
+		{"guard off", `{"jackstay_schema":3,"guard":{"rules":{"gh-pr-merge":{"level":"off"}}},"land":{"autonomy":"prepare"}}`, read, nil, "land-guard", "land-lint-forks"},
+		{"guard warns", `{"jackstay_schema":3,"guard":{"rules":{"gh-pr-merge":{"level":"warn"}}},"land":{"autonomy":"prepare"}}`, read, nil, "", "land-guard,land-lint-forks"},
 	} {
 		report := landReport(t, testCase.file, testCase.rules, testCase.connectErr)
 		if got := kinds(report.Problems); got != testCase.problems {
@@ -125,20 +133,80 @@ func TestTheLintCheckIsAdoptsCardLine(t *testing.T) {
 		rules           hosting.Rules
 		problems, notes string
 	}{
-		{"managed and required", adopt.LintWorkflowManaged, requires("build", "card-line"), "", ""},
+		{"managed and required: forks need a person", adopt.LintWorkflowManaged, requires("build", "card-line"), "", "land-lint-forks"},
 		{"managed, not required", adopt.LintWorkflowManaged, requires("build"), "land-lint-not-required", ""},
 		{"managed, rules unread", adopt.LintWorkflowManaged, hosting.Rules{MethodsRead: true, Methods: []hosting.Method{hosting.Squash}},
 			"land-rules-unread", "land-lint-unverified"},
 		{"edited or the project's own", adopt.LintWorkflowOwn, requires("card-line"), "", "land-lint-unverified"},
 		{"missing", adopt.LintWorkflowMissing, requires("card-line"), "land-lint-missing", ""},
+		{"the default branch unread", "", requires("card-line"), "", "land-lint-unverified"},
 	} {
 		report := Report{Facts: map[string]any{}, Problems: []Finding{}, Notes: []Finding{}}
-		checkLand(&report, Inputs{Land: landProjectWith(t, file, testCase.state, testCase.rules, nil)})
+		unread := ""
+		if testCase.state == "" {
+			unread = "no fetched default branch"
+		}
+		checkLand(&report, Inputs{Land: landProjectRead(t, file, testCase.state, unread, testCase.rules, nil)})
 		if got := kinds(report.Problems); got != testCase.problems {
 			t.Errorf("%s: problems %q, want %q (%+v)", testCase.name, got, testCase.problems, report.Problems)
 		}
 		if got := kinds(report.Notes); got != testCase.notes {
 			t.Errorf("%s: notes %q, want %q (%+v)", testCase.name, got, testCase.notes, report.Notes)
 		}
+	}
+}
+
+// gitIn runs git in dir for a test.
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	output, err := gitcli.Git{Dir: dir}.Run(context.Background(), args...)
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(output))
+}
+
+// The managed workflow is judged as the fetched default branch has it, not the checkout: a pristine
+// local card-line.yml does not vouch for an edited one on the base.
+func TestTheLintWorkflowIsReadFromTheFetchedDefaultBranch(t *testing.T) {
+	root := t.TempDir()
+	gitIn(t, root, "init", "-q", "-b", "main")
+	gitIn(t, root, "config", "user.email", "test@example.com")
+	gitIn(t, root, "config", "user.name", "Test")
+	gitIn(t, root, "config", "commit.gpgsign", "false")
+	settings := `{"jackstay_schema":3,"project":"p","land":{"autonomy":"prepare"},"adopt":{"pin":"v0.6.0"}}`
+	write(t, filepath.Join(root, "jackstay.json"), settings)
+	parsed, err := config.Parse([]byte(settings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pristine string
+	for _, template := range templates.Embedded() {
+		if template.Name == "card-line" {
+			body, err := templates.Render(template.Text, map[string]string{"jackstay_version": "v0.6.0",
+				"jackstay_repository": templates.Repository, "release_base": "main"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			pristine = templates.Marked(template.Name, body)
+		}
+	}
+	workflow := filepath.Join(root, ".github", "workflows", "card-line.yml")
+	write(t, workflow, pristine+"# edited on the base\n")
+	gitIn(t, root, "add", ".")
+	gitIn(t, root, "commit", "-q", "-m", "base")
+	gitIn(t, root, "remote", "add", "origin", "https://example.com/example/widgets.git")
+	gitIn(t, root, "update-ref", "refs/remotes/origin/main", gitIn(t, root, "rev-parse", "HEAD"))
+	write(t, workflow, pristine)
+	if local := adopt.LintWorkflowState(root, parsed); local != adopt.LintWorkflowManaged {
+		t.Fatalf("the checkout's file: %s", local)
+	}
+	ctx := context.Background()
+	if state, unread := lintWorkflowAtDefault(ctx, gitcli.Git{Dir: root}, nil); state != adopt.LintWorkflowOwn || unread != "" {
+		t.Fatalf("the base's edited file: %q, %q", state, unread)
+	}
+	gitIn(t, root, "update-ref", "-d", "refs/remotes/origin/main")
+	if state, unread := lintWorkflowAtDefault(ctx, gitcli.Git{Dir: root}, nil); state != "" || unread == "" {
+		t.Fatalf("no fetched default branch: %q, %q", state, unread)
 	}
 }

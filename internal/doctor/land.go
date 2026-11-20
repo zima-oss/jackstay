@@ -22,9 +22,9 @@ import (
 type LandProject struct {
 	// Config is the project's jackstay.json, which has a `land` section.
 	Config config.Config
-	// LintWorkflow is the state of the checkout's card-line.yml, which runs `jst lint pr`
-	// (adopt.LintWorkflowState).
-	LintWorkflow string
+	// LintWorkflow is the state of card-line.yml, which runs `jst lint pr`, on the fetched default
+	// branch (adopt.LintWorkflowState); LintUnread says why that branch could not be read ("": read).
+	LintWorkflow, LintUnread string
 	// Connect is the project's host and its repository (owner/name), as `jst land` connects.
 	Connect func(ctx context.Context) (hosting.Host, string, error)
 }
@@ -54,7 +54,7 @@ func realLandProject() (LandProject, bool) {
 	if _, ok := parsed["land"]; !ok {
 		return LandProject{}, false
 	}
-	return LandProject{Config: parsed, LintWorkflow: adopt.LintWorkflowState(root, parsed), Connect: func(ctx context.Context) (hosting.Host, string, error) {
+	project := LandProject{Config: parsed, Connect: func(ctx context.Context) (hosting.Host, string, error) {
 		repository, err := remote.RepositoryOf(ctx, gitcli.Git{Dir: root}, parsed.Section("github"))
 		if err != nil {
 			return nil, "", fmt.Errorf("which repository this is cannot be told: %w", err)
@@ -62,7 +62,51 @@ func realLandProject() (LandProject, bool) {
 		settings, _ := parsed.GitHub()
 		host, _, err := gh.Connect(ctx, settings.Account, repository.String())
 		return host, repository.String(), err
-	}}, true
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), landTimeout)
+	defer cancel()
+	project.LintWorkflow, project.LintUnread = lintWorkflowAtDefault(ctx, gitcli.Git{Dir: root}, parsed.Section("github"))
+	return project, true
+}
+
+// lintWorkflowAtDefault is the state of card-line.yml on the remote's default branch as last
+// fetched (nothing is fetched), judged with that revision's jackstay.json; unread says why it could
+// not be read.
+func lintWorkflowAtDefault(ctx context.Context, git gitcli.Git, github map[string]any) (state, unread string) {
+	name, err := remote.Name(ctx, git, remote.ConfiguredRemote(github))
+	if err != nil {
+		return "", err.Error()
+	}
+	branch, err := remote.FetchedDefault(ctx, git, name)
+	if err != nil {
+		return "", err.Error()
+	}
+	prefix, err := git.Run(ctx, "rev-parse", "--show-prefix")
+	if err != nil {
+		return "", err.Error()
+	}
+	folder := strings.TrimSpace(string(prefix))
+	settings, err := git.Run(ctx, "show", branch.Ref+":"+folder+config.Name)
+	if err != nil {
+		return "", fmt.Sprintf("%s has no readable %s", branch.Ref, config.Name)
+	}
+	parsed, err := config.Parse(settings)
+	if err != nil {
+		return "", fmt.Sprintf("%s's %s: %v", branch.Ref, config.Name, err)
+	}
+	path := folder + ".github/workflows/card-line.yml"
+	listed, err := git.Run(ctx, "ls-tree", "--name-only", branch.Ref, "--", path)
+	if err != nil {
+		return "", err.Error()
+	}
+	if strings.TrimSpace(string(listed)) == "" {
+		return adopt.LintWorkflowStateOf("", false, parsed), ""
+	}
+	text, err := git.Run(ctx, "show", branch.Ref+":"+path)
+	if err != nil {
+		return "", fmt.Sprintf("%s:%s cannot be read", branch.Ref, path)
+	}
+	return adopt.LintWorkflowStateOf(string(text), true, parsed), ""
 }
 
 // checkLand reports a project's landing policy (docs/design/land.md section 5): the section valid,
@@ -136,7 +180,7 @@ func checkLandRules(report *Report, facts map[string]any, project LandProject, l
 		}
 		facts["required_checks"] = names
 	}
-	checkLintRequired(report, base, rules, project.LintWorkflow)
+	checkLintRequired(report, base, rules, project.LintWorkflow, project.LintUnread)
 	switch {
 	case !rules.MethodsRead:
 		report.note("land-method", "the merge methods the repository allows cannot be read: whether `%s` is allowed is known at the merge", land.Method)
@@ -166,10 +210,12 @@ func checkLandGuard(report *Report, project config.Config) {
 
 // checkLintRequired reports whether the base's rules require the check of adopt's card-line
 // workflow, which runs `jst lint pr` and keeps a change of jackstay.json alone in its pull request
-// (rule D0, section 3.3). Only the workflow adopt manages is judged: jackstay reads no other
+// (rule D0, section 3.3), as the fetched default branch has it. Only the workflow adopt manages is judged: jackstay reads no other
 // workflow to learn what it runs, so the project's own is left to a person (a note).
-func checkLintRequired(report *Report, base string, rules hosting.Rules, state string) {
+func checkLintRequired(report *Report, base string, rules hosting.Rules, state, unread string) {
 	switch {
+	case unread != "":
+		report.note("land-lint-unverified", "D0 unverified: the default branch could not be inspected (%s): `git fetch` first", unread)
 	case state == adopt.LintWorkflowMissing:
 		report.problem("land-lint-missing", "there is no .github/workflows/card-line.yml, which runs `jst lint pr`: rule D0 is not enforced, "+
 			"and a change of jackstay.json can land with other files",
@@ -184,5 +230,8 @@ func checkLintRequired(report *Report, base string, rules hosting.Rules, state s
 		report.problem("land-lint-not-required", fmt.Sprintf("the rules of %s do not require `%s`, the check of card-line.yml, which runs "+
 			"`jst lint pr`: a change of jackstay.json can land with other files, past rule D0", base, adopt.LintCheck),
 			"require the `"+adopt.LintCheck+"` check in the branch's rules on the host")
+	default:
+		report.note("land-lint-forks", "the `%s` check runs only on pull requests from this repository's branches: a fork's "+
+			"pull request skips it, and a skipped required check passes, so a person looks at D0 on a fork's pull request", adopt.LintCheck)
 	}
 }

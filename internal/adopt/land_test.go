@@ -484,3 +484,25 @@ func TestTheLintWorkflowStateIsAdoptsOwnFileOnly(t *testing.T) {
 		t.Fatalf("the project's own: %s", got)
 	}
 }
+
+// Any workflow the project keeps needs the confirmation, also one that never names jackstay: it may
+// run a script or an action that downloads it.
+func TestAKeptWorkflowThatNeverNamesJackstayNeedsTheConfirmation(t *testing.T) {
+	files := map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.6.0"}}`,
+		".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n",
+		".github/workflows/build.yml": "name: build\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: ./ci.sh\n"}
+	root := project(t, files)
+	apply(t, landOptions(root, ""))
+	made := plan(t, landOptions(root, ""))
+	if made.AsksAutonomy() || len(made.Blockers) != 1 || !strings.Contains(made.Blockers[0], ".github/workflows/build.yml") ||
+		!strings.Contains(made.Blockers[0], ConfirmWorkflows) {
+		t.Fatalf("unconfirmed: changes %v, blockers %v", changeIDs(made.Changes), made.Blockers)
+	}
+	if err := os.WriteFile(filepath.Join(root, "jackstay.json"), []byte(`{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.6.0", `+
+		`"exceptions": {"upgrade:workflows": "build.yml runs ci.sh, which downloads no jackstay"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if made := plan(t, landOptions(root, "")); !made.AsksAutonomy() || len(made.Blockers) != 0 {
+		t.Fatalf("confirmed: blockers %v", made.Blockers)
+	}
+}

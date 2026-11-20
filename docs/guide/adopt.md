@@ -133,9 +133,11 @@ of `jst adopt --plan` name them and the one due:
    (`--settings-only` keeps it to `jackstay.json`; the AGENTS block follows in the next apply).
 
 Each plan holds only the step that is due: a later step is planned once the earlier one has merged.
-If you keep workflows of your own (or by an exception) that download jackstay, step 3 waits for
-you to confirm that each downloads 0.6.0 or later, which jackstay does not read from them: add
-`"upgrade:workflows": "release.yml downloads v0.6.0"` (your own words) to `adopt.exceptions`.
+If you keep any workflow of your own (or one kept by an exception), step 3 waits for you to
+confirm that none still downloads a jackstay older than 0.6.0, directly or through a script or an
+action, which jackstay does not read from them: add
+`"upgrade:workflows": "release.yml downloads v0.6.0; build.yml downloads none"` (your own words)
+to `adopt.exceptions`.
 Until then the plan lists a blocker naming the files, `--apply` prints it and `jst doctor` reports
 the project as not up to date. Record a profile's digest (`--profile-sha256`) in step 3 or after
 the upgrade: before step 3 it is refused, since it needs schema 3.

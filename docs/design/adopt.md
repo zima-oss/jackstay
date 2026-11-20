@@ -92,10 +92,10 @@ project's: `jst adopt` reads it to find conflicts and never changes it.
   schema this plan would raise (without a pin no workflow downloads jackstay yet, and the file
   moves to schema 3 at once); a key needing schema 3 (`adopt.profile_sha256` from `--profile-sha256`,
   say) is refused before step 3. Step 2 is done when the whole plan, its exceptions and accepts
-  applied, writes and settles no workflow, and, when the project keeps workflows of its own (or by
-  an exception) that may download jackstay, a person has confirmed they download 0.6.0 or later
-  with the exception `upgrade:workflows` in `adopt.exceptions`: jackstay does not read those files
-  to find out. Until then the plan lists a blocker naming the files and the exception (`blockers`
+  applied, writes and settles no workflow, and, when the project keeps any workflow adopt does not
+  manage (its own, or kept by an exception), a person has confirmed with the exception
+  `upgrade:workflows` in `adopt.exceptions` that none still downloads a jackstay older than 0.6.0,
+  directly or through a script or an action: jackstay does not read those files to find out. Until then the plan lists a blocker naming the files and the exception (`blockers`
   in `--json`, exit 3), `--apply` prints it, and `jst doctor` reports the project as not up to date.
 - **The profile's defaults** (section 6, `jackstay_json.defaults`) added where the project has no value:
   a missing section is added whole; inside an existing object only missing keys are added,

@@ -167,15 +167,15 @@ func (planner *planner) pinStepKeepsSchema(original *jsondoc.Object) error {
 	return nil
 }
 
-// ConfirmWorkflows is the exception by which a person confirms that every workflow the project
-// keeps (its own, or kept by an exception) downloads jackstay 0.6.0 or later: jackstay does not read
-// those files to find out.
+// ConfirmWorkflows is the exception by which a person confirms that no workflow the project keeps
+// (its own, or kept by an exception) still downloads a jackstay older than 0.6.0, directly or
+// through a script or an action: jackstay does not read those files to find out.
 const ConfirmWorkflows = "upgrade:workflows"
 
 // stepTwoLeft is what keeps the upgrade's second step from being done, read from a whole plan with
-// its settlements and exceptions: a managed workflow still to write or settle (pending), and the
-// workflows the project keeps that download jackstay, while nobody has confirmed with the exception
-// ConfirmWorkflows that they download 0.6.0 or later (a blocker naming them).
+// its settlements and exceptions: a managed workflow still to write or settle (pending), and any
+// workflow the project keeps while nobody has confirmed them with the exception ConfirmWorkflows
+// (a blocker naming them).
 func (planner *planner) stepTwoLeft(confirmed bool) (pending bool, blockers []string) {
 	for _, change := range planner.plan.Changes {
 		pending = pending || strings.HasPrefix(change.ID, "workflow:")
@@ -183,17 +183,12 @@ func (planner *planner) stepTwoLeft(confirmed bool) (pending bool, blockers []st
 	for _, conflict := range planner.plan.Conflicts {
 		pending = pending || strings.HasPrefix(conflict.ID, "workflow:")
 	}
-	var kept []string
-	for _, path := range planner.retained {
-		input, err := readInput(planner.root, path)
-		// A file that cannot be read may download jackstay: it counts.
-		if err != nil || !input.exists || strings.Contains(strings.ToLower(input.text), "jackstay") {
-			kept = append(kept, path)
-		}
-	}
-	if len(kept) > 0 && !confirmed {
-		blockers = append(blockers, fmt.Sprintf("step 3 is not offered: the project keeps %s, which may download jackstay; "+
-			"once each downloads %s or later, confirm it in jackstay.json: \"adopt\": {\"exceptions\": {\"%s\": \"<which and how>\"}}",
+	if len(planner.retained) > 0 && !confirmed {
+		kept := slices.Clone(planner.retained)
+		slices.Sort(kept)
+		blockers = append(blockers, fmt.Sprintf("step 3 is not offered: the project keeps %s, which jst adopt does not manage; "+
+			"once you have checked that none still downloads a jackstay older than %s (directly, or through a script or an action), "+
+			"confirm it in jackstay.json: \"adopt\": {\"exceptions\": {\"%s\": \"<what you checked>\"}}",
 			strings.Join(kept, ", "), config.Schema3Release, ConfirmWorkflows))
 	}
 	return pending, blockers
@@ -316,10 +311,16 @@ func LintWorkflowState(root string, project config.Config) string {
 	if err != nil {
 		return LintWorkflowOwn
 	}
-	if !input.exists {
+	return LintWorkflowStateOf(input.text, input.exists, project)
+}
+
+// LintWorkflowStateOf is LintWorkflowState of card-line.yml's text (exists false: no such file)
+// and the jackstay.json of the same revision.
+func LintWorkflowStateOf(text string, exists bool, project config.Config) string {
+	if !exists {
 		return LintWorkflowMissing
 	}
-	marked, name, intact := templates.Header(input.text)
+	marked, name, intact := templates.Header(text)
 	if !marked || !intact || name != "card-line" {
 		return LintWorkflowOwn
 	}
@@ -333,7 +334,7 @@ func LintWorkflowState(root string, project config.Config) string {
 			continue
 		}
 		body, err := templates.Render(template.Text, values)
-		if err == nil && templates.Marked(template.Name, body) == input.text {
+		if err == nil && templates.Marked(template.Name, body) == text {
 			return LintWorkflowManaged
 		}
 	}
