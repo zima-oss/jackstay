@@ -135,11 +135,11 @@ func chatText(chat ChatStatus) string {
 
 func backgroundText(jobs BackgroundStatus) string {
 	text := jobs.Status
-	if jobs.Status == "listed" {
+	if len(jobs.Jobs) > 0 {
 		text = fmt.Sprintf("%d job(s)", len(jobs.Jobs))
 	}
 	if jobs.Elsewhere > 0 {
-		text += fmt.Sprintf("; %d more on this machine (`jst procs --all`)", jobs.Elsewhere)
+		text += fmt.Sprintf("; %d more entries saved on this machine (`jst procs --all`)", jobs.Elsewhere)
 	}
 	return text
 }

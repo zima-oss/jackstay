@@ -12,6 +12,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/contextbrief"
 	"github.com/zima-oss/jackstay/internal/gitcli"
+	"github.com/zima-oss/jackstay/internal/procs/background"
 )
 
 func TestStatusWithoutPathsIsThisRepositoryInDetail(t *testing.T) {
@@ -204,7 +205,7 @@ func TestJobsAreAttributedByTheRepositoryRecordedAtLaunch(t *testing.T) {
 	}
 	var text bytes.Buffer
 	writeText(&text, report, time.Now())
-	if !strings.Contains(text.String(), "2 job(s); 3 more on this machine (`jst procs --all`)") {
+	if !strings.Contains(text.String(), "2 job(s); 3 more entries saved on this machine (`jst procs --all`)") {
 		t.Fatalf("the other jobs are not shown:\n%s", &text)
 	}
 }
@@ -217,5 +218,17 @@ func TestAnUnreadableJobStoreIsUnknownNotEmpty(t *testing.T) {
 	report := readBoard(root)
 	if report.Repositories[0].Background.Status != "unknown" || !report.Partial {
 		t.Fatalf("background %+v", report.Repositories[0].Background)
+	}
+}
+
+func TestAJobHereInAnUnknownStateLeavesTheSourceUnknown(t *testing.T) {
+	found := checkout{Inode: "inode:here"}
+	placed := placeJobs(found, []background.Job{{ID: "1", Repository: "inode:here", State: "unknown"},
+		{ID: "2", Repository: "inode:here", State: "running"}, {ID: "3", Repository: "inode:there", State: "unknown"}})
+	if placed.Status != "unknown" || len(placed.Jobs) != 2 || placed.Elsewhere != 1 || !strings.Contains(placed.Error, "1 job(s)") {
+		t.Fatalf("placed %+v", placed)
+	}
+	if placed := placeJobs(found, []background.Job{{ID: "2", Repository: "inode:here", State: "running"}}); placed.Status != "listed" {
+		t.Fatalf("a known state: %+v", placed)
 	}
 }

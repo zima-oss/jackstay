@@ -24,8 +24,11 @@ With no path, `jst status` covers the repository you are in (or, with one path, 
 - **chat**: the number of chat sessions and pending messages, when chat is enabled.
 - **background**: the `jst bg` jobs started in the repository and their states. A job is placed by
   the repository `jst bg` recorded when it started (its Git folder's device and inode), so a
-  renamed folder, a moved worktree or a renamed checkout does not hide it. Every other job on this
-  machine is counted beside them, so none is hidden; `jst procs --all` lists them all.
+  renamed folder, a moved worktree or a renamed checkout does not hide it. Every other saved job
+  entry on this machine is counted beside them, so none is hidden. `jst procs --all` lists them;
+  it also removes the entries of jobs that have ended and stops an orphan past its deadline, so
+  its list can be shorter than the count. A job here whose state cannot be told (the process table
+  cannot be read) leaves the background source `unknown`.
 - **gate** and **receipt**: the last recorded gate and stored passed run of this checkout, and
   whether each is for its HEAD (`current`) or an older commit (`stale`).
 - **cards**: the active cards and their states, when the project uses cards.

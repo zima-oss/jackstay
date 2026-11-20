@@ -213,6 +213,11 @@ func readBackground(found checkout) BackgroundStatus {
 	if err != nil {
 		return BackgroundStatus{Status: stateUnknown, Error: err.Error()}
 	}
+	return placeJobs(found, jobs)
+}
+
+// placeJobs sorts the machine's jobs into this repository's and the count of the others.
+func placeJobs(found checkout, jobs []background.Job) BackgroundStatus {
 	result := BackgroundStatus{Status: stateNone}
 	for _, job := range jobs {
 		switch {
@@ -226,6 +231,19 @@ func readBackground(found checkout) BackgroundStatus {
 	}
 	if len(result.Jobs) > 0 {
 		result.Status = "listed"
+	}
+	// A job of this repository whose state cannot be told (the process table cannot be read) may
+	// still run: the jobs stay listed and the source is unknown, so the report is partial.
+	unknown := 0
+	for _, job := range result.Jobs {
+		if job.State == "unknown" {
+			unknown++
+		}
+	}
+	if unknown > 0 {
+		result.Status = stateUnknown
+		result.Error = fmt.Sprintf("the state of %d job(s) here cannot be told (the process table cannot be read): "+
+			"they may still run", unknown)
 	}
 	return result
 }
