@@ -1,6 +1,7 @@
 # Agent chat (0.6.0)
 
-Status: specified, not built. It records [W-090](../decisions/W-090-agent-chat.md) and replaces the
+Status: specified, not built; its open questions were decided in W-091 (section 16). It records
+[W-090](../decisions/W-090-agent-chat.md) and replaces the
 contract in [the roadmap note](../roadmap/session-chat.md) and the 0.5.x
 [guide page](../guide/session-chat.md), which describe the code in `internal/sessionchat` today. It
 follows [W-008](../decisions/W-008-state-in-dot-jackstay.md) (state in `~/.jackstay`, `.all` for
@@ -34,7 +35,7 @@ events from jackstay itself.
 13. [Trust](#13-trust)
 14. [Deferred after 0.6.0](#14-deferred-after-060)
 15. [Test plan](#15-test-plan)
-16. [Open questions](#16-open-questions)
+16. [Decided (W-091)](#16-decided-w-091)
 17. [Sources](#17-sources)
 
 ## 1. What changes from 0.5.x
@@ -109,8 +110,7 @@ breaking halfway, and both are narrow:
 
 The same set decides which channels' history a session may read (section 5.2, `chat.thread`).
 Without `chat.related` a session may send to, and read, every channel and session of the account. The
-list limits what a repository's sessions send. It does not filter what they receive (an open
-question for the maintainer, section 16).
+list limits what a repository's sessions send. It does not filter what they receive (W-091).
 
 ## 3. Identity, names and liveness
 
@@ -335,7 +335,7 @@ still `accepted`: the message is kept as the channel's history with no deliverie
 reads the past with `chat.thread` by channel (section 5.2), within what section 2 allows.
 
 At registration a session is subscribed to its own repository's channel; every other subscription
-is its own choice (whether even this default should go is an open question, section 16). Sending to a
+is its own choice (W-091). Sending to a
 channel needs no subscription; the related list (section 2) decides.
 
 ### 4.6 Expiry and priority
@@ -435,7 +435,8 @@ hooks and every push. A body is **visible to its recipient** only when the deliv
 So on the native route the recipient's engine decides first, as it would for any peer's message: a
 native delivery that is `pending`, `sending`, `held`, `refused`, or `delivered` with `unconfirmed`
 shows the recipient only its count ("2 messages wait for your engine's decision"), never its sender,
-summary or body. The other routes have no engine policy to defer to (an open question, section 16).
+summary or body. The other routes have no engine policy to defer to, and jackstay does not imitate
+`crossSessionInbound` there: the frame's "not consent" line protects them (W-091).
 A channel message is visible to a session that is not its recipient (through `chat.thread`) when
 the session may read that channel (section 2); its deliveries to others do not change that.
 
@@ -956,23 +957,19 @@ Folders are `0700`, files `0600`, as in 0.5.x. Markers and indexes are derived f
 records and can always be rebuilt from them. Marker folders make `inbox` and `outbox` proportional to
 the session's own messages, not to the store.
 
-### 7.2 What chat needs from `internal/durable`
+### 7.2 What chat takes from `internal/durable`
 
-The shared durable package is being built for 0.6.0 by separate work; chat relies on these
-properties and adapts to its API:
+Chat builds on the shared durable package (`internal/durable`), and adds only what is particular
+to it:
 
-1. **Atomic replace**: a temporary file in the same folder, written, `fsync`ed, renamed over the
-   target, and the folder `fsync`ed; a reader sees the old file or the new one.
-2. **A lock with modes**: exclusive for writers, shared for readers, with a deadline. Chat waits at
-   most 2 s in a hook (and then does nothing, so a turn is never held up by chat) and 5 s in a tool
-   (and then answers `store_busy`).
-3. **A bounded read**: a file larger than its record's bound (section 6.4) is an error, never read
-   whole.
-4. **Create-exclusive** for markers, journal entries and idempotency entries.
-5. **Capacity accounting**: a running total of bytes and record counts that a writer checks before
-   growing the store, and that recovery can rebuild from the folders.
-6. **Upgrading a reader**: a shared holder that finds work to repair can release and take the
-   exclusive lock, then re-check.
+| chat needs | from `internal/durable` | chat adds |
+|---|---|---|
+| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | nothing |
+| a bounded read: a file past its record's bound (section 6.4) is an error | `ReadLimited` (`ErrTooLarge`) | nothing |
+| one lock for the store, with a deadline | `LockFile` on `lock`, waited for with the caller's context | its deadlines: at most 2 s in a hook (then the hook does nothing, so a turn is never held up by chat), 5 s in a tool (then `store_busy`) |
+| a shared mode for readers | not offered: `LockFile` is exclusive | readers take the same exclusive lock for their short read. A shared mode, if it is added to `internal/durable` later, changes nothing else here: section 7.3 never relies on readers running together |
+| create-exclusive for markers, journal entries and idempotency entries | not offered | `O_CREATE\|O_EXCL` then `SyncFolder`, under the store's lock |
+| capacity accounting | not offered | `usage.json`, written with `WriteAtomic` under the store's lock and rebuilt from the folders (section 7.4) |
 
 ### 7.3 Writes, commit and recovery
 
@@ -1144,7 +1141,7 @@ the pass:
      `next_attempt` 5 s, 30 s, then 2 min later. On the fourth confirmed failure the route becomes
      `hooks` in the same write, so no native pass picks it up again. (A socket that cannot be reached
      at all says the session has no usable inbox; the hooks route has no engine policy to apply,
-     which section 16 asks about);
+     as section 4.10 says);
    - **an unknown outcome**, when the line was written but no answer came, or one jackstay cannot
      parse: `delivered` with `unconfirmed`, and no retry.
 
@@ -1154,8 +1151,7 @@ The same pass also fires idle subscriptions and pushes owed notices to native se
 **The token.** The socket accepts an optional first line `{"type":"auth","token":…}` with
 `CLAUDE_CODE_MESSAGING_TOKEN`, which marks the writer as the session's own child. jackstay does
 **not** send it and does not store the token, so the recipient's inbound policy
-(`crossSessionInbound`) applies to jackstay's messages as to any peer's. This is an open question for
-the maintainer (section 16).
+(`crossSessionInbound`) applies to jackstay's messages as to any peer's (W-091).
 
 **The line format is not documented.** Only the auth line is. So the native route is built behind a
 contract:
@@ -1301,7 +1297,9 @@ round is deferred (section 14).
 
 An interactive Codex session uses the same MCP server (registered by setup) and polls with
 `chat.inbox`. Its key is its thread ID when the app-server bridge runs for it, otherwise its token,
-otherwise ephemeral (Codex gives an MCP server no thread ID that jackstay can rely on; section 16).
+otherwise ephemeral (W-091: the thread ID when it can be read, otherwise the launch token). Whether
+Codex exposes its thread ID to an MCP server or a hook is checked before 0.6.0; until it is, an
+unbridged Codex session needs a launch token for a stable identity.
 
 The 0.5.x app-server bridge (`jst chat codex-bridge`) stays for a running Codex turn, with two
 changes:
@@ -1396,8 +1394,9 @@ Under `jackstay_schema: 3` the `chat` section of `jackstay.json` has two keys:
 }
 ```
 
-- `enabled` (default `true` once setup has registered chat on the machine): `false` keeps this
-  repository's sessions out of chat: the tools answer `chat_disabled` and the hooks do nothing.
+- `enabled` (default `false`): chat is enabled per repository, here, never by setup (W-091). In a
+  repository without `"enabled": true` the tools answer `chat_disabled` and the hooks do nothing for
+  chat; a session outside any repository (`#common`) can use chat once setup has registered it.
 - `related` (default absent: unrestricted): the list of section 2, at most 32 channel addresses.
 
 The 0.5.x keys (`max_message_bytes`, `max_pending`, `max_pending_per_session`, `max_sessions`,
@@ -1427,6 +1426,9 @@ confirmation (`--apply` without asking; `--plan` only shows):
 - **The sandbox.** The hooks and the MCP server run outside Claude Code's Bash sandbox; producers
   of events run inside it. Setup therefore adds `~/.jackstay/.all/chat` to the sandbox's writable
   folders (W-090's rule: only the subfolders jst must write).
+- **Chat is enabled per repository.** Setup registers the server and the hooks for the machine, and
+  says plainly that a repository's sessions take part only once its `jackstay.json` sets
+  `"chat": {"enabled": true}` (section 11); it never sets that key itself.
 - **Channels** are added only with `--claude-channels` (section 8.6).
 - **After writing**, setup runs `claude mcp get jackstay` and asks the new server for its tool list
   over stdio, and reports either the chat tools it found or what is missing.
@@ -1462,8 +1464,8 @@ confirmation (`--apply` without asking; `--plan` only shows):
 ## 14. Deferred after 0.6.0
 
 - A live dialogue with a reviewer during its round (steering a running Codex review turn).
-- Waking an idle session without the socket (an `asyncRewake` hook), unless the pilot shows it is
-  reliable.
+- Waking an idle session without the socket (an `asyncRewake` hook), after 0.6.0 and only if the
+  pilot shows a need (W-091).
 - Sessions on other machines and cloud sessions (Claude Code reaches them through its servers;
   jackstay's store is local).
 - Broadcast to every session; rooms beyond repositories and `#common`.
@@ -1477,6 +1479,25 @@ confirmation (`--apply` without asking; `--plan` only shows):
 
 Every fix comes with the test that failed without it, and no test depends on timing (W-013): time
 is an injected clock, and waits are on store changes (`jst wait`), never sleeps.
+
+### 15.0 Before code: the formal model
+
+The implementation plan's first deliverable, before any code of sections 4.2, 4.10, 7.3 and 8, is a
+formal model of the delivery state machine (W-091). Four review rounds kept finding races there, each
+narrower than the last, and review alone does not end that. The model:
+
+- covers one message to one recipient on each route, with the pusher, a concurrent reader, the
+  recipient's ack and response, the sweep and expiry, and a crash at every step of section 7.3;
+- checks at least these properties: a non-bridge route pushes a message at most once; a native body is
+  never visible to the recipient before Claude Code accepted it (section 4.10); final states are never
+  left; a crash never makes a delivery look not pushed when it may have been; every `refused`,
+  `dropped` or `expired` delivery owes exactly one notice; a request and its response always agree;
+- is either a TLA+ specification checked with TLC in CI, or a property-based Go test that drives the
+  transition table through random interleavings and crash points. Its results go into the pull request
+  that lands the store.
+
+A first TLA+ sketch is in [`chat-model/`](chat-model/README.md). It models the native and hooks
+routes for one delivery and states the first three properties; it has not been run through TLC yet.
 
 ### 15.1 Unit tests (`go test ./internal/sessionchat/...`)
 
@@ -1579,38 +1600,22 @@ Pass: every step's states as listed, no message shown twice to a model, no hook 
 tool output over its budget, and the store's usage back under its bounds after the sweep. The pilot's
 record goes into the pull request that lands the native layer.
 
-## 16. Open questions
+## 16. Decided (W-091)
 
-These need the maintainer's ruling; the spec states a default for each, which stands until ruled
-otherwise.
+The questions this spec left open were decided by the maintainer in W-091. Each answer is now part
+of the body:
 
-1. **Does the related list also filter what a repository's sessions receive?** Default: no; it limits
-   only what they send (the ruling's words), with replies and responses always allowed back.
-2. **Is a session subscribed to its own repository's channel by default?** Default: yes; all other
-   channels are explicit.
-3. **Should native delivery present `CLAUDE_CODE_MESSAGING_TOKEN`?** Default: no, so the recipient's
-   inbound policy applies to jackstay's messages like to any peer's; with the token they would pass
-   as the session's own child.
-4. **Is `chat.enabled` on by default under schema 3 once setup has run?** Default: yes, and a
-   repository opts out with `false`.
-5. **How does a Codex session that is not bridged get a stable key?** Default: a token from its
-   launcher, otherwise ephemeral. Whether Codex exposes its thread ID to an MCP server or a hook
-   should be checked before 0.6.0.
-6. **Is the `asyncRewake` wake worth adding as a second fallback** if the pilot shows it works?
-   Default: deferred.
-7. **Is "at most once, possibly unconfirmed" the right promise for native delivery?** Claude Code
-   gives no way to deduplicate a repeated write, so the spec never retries a write whose answer was
-   lost and reports it as `unconfirmed`. The alternative, retrying, risks showing a request twice.
-   Default: never retry.
-8. **Should the hooks and poll routes honour Claude Code's `crossSessionInbound`?** On the native
-   route the engine applies the recipient's inbound policy; on the other routes jackstay has no engine
-   to ask. Default: they do not, and the frame's "not consent" line is the protection; reading the
-   recipient's settings to imitate the policy is possible but would copy logic jackstay does not own.
-9. **How is the delivery state machine proven before it is built?** Four review rounds kept finding
-   races in the same places (receipts, recovery, capacity, the native route), each narrower than the
-   last. Default: before implementation, model sections 4.2, 4.10, 7.3 and 8 as a small formal model
-   (TLA+ or a property-based test of the transition table under crash and concurrency) rather than
-   by further review rounds alone.
+| question | decided | where |
+|---|---|---|
+| Does the related list filter what a repository's sessions receive? | No: it limits sending only | section 2 |
+| Is a session subscribed to its own repository's channel? | Yes; every other channel is explicit | section 4.5 |
+| Is Claude Code's messaging token presented on the socket? | No | sections 8.3, 13 |
+| Is chat on by default once setup has run? | No: chat is enabled per repository in `jackstay.json`, and setup says so | sections 11, 12 |
+| A Codex session's identity without the bridge | Its thread ID when it can be read, otherwise a launch token; whether Codex exposes the thread ID is checked before 0.6.0 | sections 3.1, 9.2 |
+| The `asyncRewake` wake | After 0.6.0, if the pilot shows a need | sections 8.4, 14 |
+| The delivery promise | At most once, no retry; a lost answer is reported as `unconfirmed` | sections 4.2, 8.3 |
+| Imitating `crossSessionInbound` on the hooks and poll routes | No; the frame's "not consent" line protects them | section 4.10 |
+| Proving the delivery state machine | A formal model before code | section 15.0 |
 
 ## 17. Sources
 
