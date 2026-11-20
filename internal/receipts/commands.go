@@ -107,10 +107,8 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, TestUsage)
 		return 0
 	}
-	if folder, writable := evidenceWritable(); !writable {
-		Say(stderr, "jst test records evidence (the run log, receipts, gate marks) in %s, which cannot be written here: "+
-			"inside Claude Code's sandbox it is read-only, so a run could neither be found again nor undo an earlier pass. "+
-			"Run it outside the sandbox.", folder)
+	if path := UnwritableEvidence(""); path != "" {
+		Say(stderr, "%s", EvidenceRefusal(path))
 		Say(stderr, "outcome=not-started (nothing was run)")
 		return StatusUnusable
 	}
@@ -131,26 +129,58 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return runner.raw(asked)
 }
 
-// evidenceWritable says a file can be made and removed beside the run log (the folder made first
-// if missing): what Claude Code's sandbox refuses once setup has left jackstay's evidence read-only
-// there (#59), whatever the folder's permissions say. Every jst test that runs something writes
-// the run log, and most also receipts or gate marks beside it, so it runs outside the sandbox.
-func evidenceWritable() (string, bool) {
+// UnwritableEvidence is the first piece of a project's evidence this process cannot write, "" when
+// it can write them all: the run log (opened for appending, nothing written), and the project's
+// receipts, gate marks and bars (a file made and removed in each, the folder made first if missing).
+// Claude Code's sandbox refuses them once setup has left evidence read-only there (#59), and so may
+// an owner's deny rule; a run that cannot write them could neither be found again nor, failing, undo
+// an earlier pass, so every jst test that runs something checks them first. project "" checks the
+// run log alone.
+func UnwritableEvidence(project string) string {
 	path, err := RunLogPath()
 	if err != nil {
-		return "", false
+		return "the run log"
 	}
-	folder := filepath.Dir(path)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return path
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600) // #nosec G304 -- jackstay's own run log
+	if err != nil {
+		return path
+	}
+	if err := file.Close(); err != nil {
+		return path
+	}
+	if project == "" {
+		return ""
+	}
+	for _, name := range []string{"receipts", "gate-marks", "gate-bars"} {
+		folder, err := StateFolder(project, name)
+		if err != nil || !writableFolder(folder) {
+			return folder
+		}
+	}
+	return ""
+}
+
+// writableFolder says a file can be made and removed in folder, made first if missing.
+func writableFolder(folder string) bool {
 	if err := os.MkdirAll(folder, 0o700); err != nil {
-		return folder, false
+		return false
 	}
 	probe, err := os.CreateTemp(folder, ".jackstay-write-probe-*")
 	if err != nil {
-		return folder, false
+		return false
 	}
 	name := probe.Name()
 	closeErr := probe.Close()
-	return folder, os.Remove(name) == nil && closeErr == nil
+	return os.Remove(name) == nil && closeErr == nil
+}
+
+// EvidenceRefusal is what a run that cannot write its evidence says.
+func EvidenceRefusal(path string) string {
+	return fmt.Sprintf("jst test records evidence (the run log, receipts, gate marks) and cannot write %s here: inside Claude "+
+		"Code's sandbox it is read-only, so a run could neither be found again nor undo an earlier pass. Run it outside the sandbox.", path)
 }
 
 func receiptsCommand(_ []string, _ io.Reader, _, stderr io.Writer) int {

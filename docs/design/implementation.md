@@ -226,13 +226,15 @@ becomes `.all`, leaves the folder, or shares a folder with another.
 
 A log line is one JSON object appended in a single write, so lines of several processes never
 mix; a log that cannot be written never fails the tool that writes it (each tool says what it does
-instead). Claude Code's Bash sandbox writes only the folders in `sandbox.filesystem.allowWrite`.
+instead), except `jst test`, which checks first that it can write the run log and its evidence. Claude Code's Bash sandbox writes only the folders in `sandbox.filesystem.allowWrite`.
 `jst setup` lists there only what jst writes from a sandboxed command (`doctor.SandboxGrants`): the
 journals, the heavy-suite lock with its queue and holder note, `procs`, `session-chat`,
 `context-brief`, each project's `ids` and the trash. Evidence (receipts and failure notes, gate
 marks and bars, review rounds, the run log, the delivery record, the expected projects) stays
-read-only to the sandbox, so a sandboxed agent cannot forge a pass (#59); `jst test gate` and
-`jst review` run outside it. `jst doctor` reports a grant that is missing and an entry that exposes
+read-only to the sandbox, so a sandboxed agent cannot forge a pass (#59). `jst test` (every form
+that runs something) and `jst review` therefore run outside it: before running, `jst test` opens
+the run log for appending and makes and removes a file in the project's receipts, gate marks and
+bars (`receipts.UnwritableEvidence`), and runs nothing when one fails. `jst doctor` reports a grant that is missing and an entry that exposes
 evidence (section 7).
 
 Outside the sandbox every session of this account may still write all of `~/.jackstay`: receipts,

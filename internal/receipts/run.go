@@ -123,6 +123,9 @@ func (base *tester) raw(asked request) int {
 	if run.project = asked.project; run.project == "" {
 		run.project = config.ProjectName(root, loaded, run.here)
 	}
+	if path := UnwritableEvidence(run.project); path != "" {
+		return run.notStarted(EvidenceRefusal(path))
+	}
 	run.entry = CommandEntry(run.section, asked.argv)
 	evidence, err := NewEvidence(run.entry)
 	if err != nil {

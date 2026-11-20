@@ -202,6 +202,9 @@ func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bo
 	if err != nil {
 		return proj.notStarted(err.Error())
 	}
+	if path := receipts.UnwritableEvidence(proj.name); path != "" {
+		return proj.notStarted(receipts.EvidenceRefusal(path))
+	}
 	run := &leafRun{project: proj, leaf: chosen, words: found, gate: gate,
 		runCwd: filepath.Clean(filepath.Join(proj.root, chosen.cwd))}
 	if info, statErr := os.Stat(run.runCwd); statErr != nil || !info.IsDir() {

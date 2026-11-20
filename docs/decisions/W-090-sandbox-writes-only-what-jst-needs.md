@@ -35,6 +35,8 @@ an agent inside the sandbox could write a gate mark and get a green gate without
 
 ## Consequences
 
-An agent in the sandbox can no longer forge evidence, and must ask to run the gate and reviews
-outside it. A new project's journal and ids need one more `jst setup` before sandboxed commands
+An agent in the sandbox can no longer forge evidence, and must ask to run every `jst test` that
+runs something (raw, a scope, the gate) and `jst review` outside it. `jst test` checks the run log
+and the project's receipts, gate marks and bars where they are, so an owner's deny rule on one of
+them stops it too. A new project's journal and ids need one more `jst setup` before sandboxed commands
 write them; until then the journal loses those spans and `jst id next` fails, and doctor says so.

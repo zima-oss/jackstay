@@ -158,3 +158,33 @@ func TestTestRunsNothingWhereItCannotRecordItsEvidence(t *testing.T) {
 		t.Fatal("the command ran")
 	}
 }
+
+// An owner's deny rule on one piece of evidence, with the run log's folder writable, still stops
+// a run: each piece is checked where it is.
+func TestUnwritableEvidenceNamesEachProtectedPiece(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	if path := UnwritableEvidence("demo"); path != "" {
+		t.Fatalf("a writable home: %s", path)
+	}
+	for _, name := range []string{"receipts", "gate-marks", "gate-bars"} {
+		folder := filepath.Join(home, "demo", name)
+		if err := os.Chmod(folder, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		if path := UnwritableEvidence("demo"); path != folder {
+			t.Errorf("%s protected: %q", name, path)
+		}
+		if err := os.Chmod(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runLog := filepath.Join(home, ".all", "runs.jsonl")
+	if err := os.Chmod(runLog, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(runLog, 0o600) })
+	if path := UnwritableEvidence(""); path != runLog {
+		t.Fatalf("a read-only run log in a writable folder: %q", path)
+	}
+}

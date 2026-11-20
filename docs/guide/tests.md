@@ -427,7 +427,7 @@ jst lock status                               # who runs, who waits
 ```
 
 Exit: the command's own status; 2 the lock or `jackstay.json` cannot be used (inside an agent
-sandbox that cannot write `~/.jackstay`, for one); 75 gave up waiting; 127 the command cannot start.
+sandbox that does not grant the lock, for one: `jst setup` grants it); 75 gave up waiting; 127 the command cannot start.
 `--also-hold` also holds a project's older lock file, so its old script and jackstay exclude each
 other. The lock is advisory: a command run without it is not stopped.
 
