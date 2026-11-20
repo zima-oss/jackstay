@@ -78,10 +78,15 @@ round, inspect `previous/`. The `changes/` directory holds changed-path indexes 
 on demand. The first prompt holds instructions and references; the provider receives source
 excerpts when the reviewer reads them during the session.
 
-Source is limited to tracked Git objects at the selected revisions: files from your working
-checkout and submodule contents are left out, and a symlink appears as a plain file holding its
-target. Claude Code uses its `Read`, `Glob` and `Grep` tools; Codex can use read-only shell
-navigation and search. Managed Claude Code policies, managed hooks included, still apply.
+The snapshot holds tracked Git objects at the selected revisions: submodule contents are left
+out, and a symlink appears as a plain file holding its target. Beyond it, a reviewer may read the
+rest of the machine, read-only, and use the network, your full `PATH`, your proxy and CA settings
+and its own provider's login. It cannot write outside its own temporary folder, read `~/.ssh`,
+`~/.aws`, `~/.config/gh` and the other credential folders, the keychain, the other reviewer's login
+or `.env` files (on Linux, Codex can read `.env` files: that part waits for a redesign), or see token-like environment variables other than its
+provider's. Claude Code uses `Read`, `Glob`, `Grep`, `WebFetch` and `WebSearch`; Codex has
+read-only shell navigation and search. Managed Claude Code policies, managed hooks included, still
+apply. The [design](../design/review.md#34-the-run) lists the profile whole.
 
 jackstay keeps each round under `~/.jackstay/<project>/reviews/`. If Git reports missing objects in
 a partial clone, fetch the history and objects needed before retrying. A projection error or an
@@ -137,6 +142,9 @@ any `review` section. Add the section to choose the default reviewers and tune t
 - `repeat_rounds` (2): how many rounds running a place must draw a finding before it is due for
   redesign.
 - `keep_days`: how long rounds are kept; `jst review prune` removes older tasks now.
+- `reviewers.<name>.mcp_servers`: MCP servers you give back to a reviewer, for example a
+  documentation server: `{"docs": {"command": "docs-mcp", "args": ["--stdio"]}}`. Your own servers,
+  hooks and rules stay off.
 
 `jst check` validates the section. Paths are read from the reviewed commit's tree.
 
