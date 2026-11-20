@@ -167,8 +167,14 @@ func TestUnwritableEvidenceNamesEachProtectedPiece(t *testing.T) {
 	if path := UnwritableEvidence("demo"); path != "" {
 		t.Fatalf("a writable home: %s", path)
 	}
+	if entries, _ := os.ReadDir(home); len(entries) != 0 {
+		t.Fatalf("the check left something behind: %v", entries)
+	}
 	for _, name := range []string{"receipts", "gate-marks", "gate-bars"} {
 		folder := filepath.Join(home, "demo", name)
+		if err := os.MkdirAll(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.Chmod(folder, 0o500); err != nil {
 			t.Fatal(err)
 		}
@@ -180,7 +186,10 @@ func TestUnwritableEvidenceNamesEachProtectedPiece(t *testing.T) {
 		}
 	}
 	runLog := filepath.Join(home, ".all", "runs.jsonl")
-	if err := os.Chmod(runLog, 0o400); err != nil {
+	if err := os.MkdirAll(filepath.Dir(runLog), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runLog, nil, 0o400); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(runLog, 0o600) })

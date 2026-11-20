@@ -46,7 +46,8 @@ func (run *leafRun) command(asked time.Time, held *flock.Held) result {
 		// The command is about to run for this key: its receipt stops speaking for the tree now.
 		removed, err := run.store.Remove(run.key.Value)
 		if err != nil {
-			run.say("%v", err)
+			// A failure could not undo this receipt: the run does not start.
+			return run.notStarted(err.Error())
 		}
 		did.setAside = removed
 	}

@@ -91,7 +91,9 @@ func TestAReceiptStandsInForTheRun(t *testing.T) {
 	}
 }
 
-func TestAReuseThatCannotBeLoggedDoesNotHappen(t *testing.T) {
+// A run whose run log cannot be written does not start, not even to reuse a receipt: it could not
+// be found again (#59).
+func TestARunThatCannotBeLoggedDoesNotStart(t *testing.T) {
 	w := newWorld(t, reuseConfig)
 	w.fake = passing("3")
 	w.test("--", "make", "test")
@@ -103,16 +105,11 @@ func TestAReuseThatCannotBeLoggedDoesNotHappen(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.fake = passing("3")
-	if status := w.test("--", "make", "test"); status != 0 || w.fake.calls != 1 {
+	if status := w.test("--", "make", "test"); status != StatusUnusable || w.fake.calls != 0 {
 		t.Fatalf("status %d calls %d", status, w.fake.calls)
 	}
-	said := w.stderr.String()
-	if !strings.Contains(said, "the reuse could not be logged") || !strings.Contains(said, "WARNING: the log could not be written") {
+	if said := w.stderr.String(); !strings.Contains(said, "Run it outside the sandbox.") || !strings.Contains(said, "outcome=not-started") {
 		t.Fatalf("said %s", said)
-	}
-	lines := strings.Split(strings.TrimSpace(said), "\n")
-	if !strings.HasPrefix(lines[len(lines)-2], "jst test: WARNING") || !strings.HasPrefix(w.lastLine(), "jst test: outcome=passed") {
-		t.Fatalf("the warning is not just before the outcome line: %s", said)
 	}
 }
 

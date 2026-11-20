@@ -3,8 +3,10 @@ package receipts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -131,7 +133,7 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // UnwritableEvidence is the first piece of a project's evidence this process cannot write, "" when
 // it can write them all: the run log (opened for appending, nothing written), and the project's
-// receipts, gate marks and bars (a file made and removed in each, the folder made first if missing).
+// receipts, gate marks and bars (a file made and removed in each, or where it would be made).
 // Claude Code's sandbox refuses them once setup has left evidence read-only there (#59), and so may
 // an owner's deny rule; a run that cannot write them could neither be found again nor, failing, undo
 // an earlier pass, so every jst test that runs something checks them first. project "" checks the
@@ -141,14 +143,15 @@ func UnwritableEvidence(project string) string {
 	if err != nil {
 		return "the run log"
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return path
-	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600) // #nosec G304 -- jackstay's own run log
-	if err != nil {
-		return path
-	}
-	if err := file.Close(); err != nil {
+	if _, statErr := os.Stat(path); statErr == nil {
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0) // #nosec G304 -- jackstay's own run log
+		if err != nil {
+			return path
+		}
+		if err := file.Close(); err != nil {
+			return path
+		}
+	} else if !canCreateIn(filepath.Dir(path)) {
 		return path
 	}
 	if project == "" {
@@ -156,17 +159,32 @@ func UnwritableEvidence(project string) string {
 	}
 	for _, name := range []string{"receipts", "gate-marks", "gate-bars"} {
 		folder, err := StateFolder(project, name)
-		if err != nil || !writableFolder(folder) {
+		if err != nil || !canCreateIn(folder) {
 			return folder
 		}
 	}
 	return ""
 }
 
-// writableFolder says a file can be made and removed in folder, made first if missing.
-func writableFolder(folder string) bool {
-	if err := os.MkdirAll(folder, 0o700); err != nil {
-		return false
+// canCreateIn says a file can be made and removed in folder or, while it does not exist, in the
+// nearest folder above it that does (where it would be made): nothing is left behind.
+func canCreateIn(folder string) bool {
+	for {
+		info, err := os.Stat(folder)
+		if err == nil {
+			if !info.IsDir() {
+				return false
+			}
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+		parent := filepath.Dir(folder)
+		if parent == folder {
+			return false
+		}
+		folder = parent
 	}
 	probe, err := os.CreateTemp(folder, ".jackstay-write-probe-*")
 	if err != nil {

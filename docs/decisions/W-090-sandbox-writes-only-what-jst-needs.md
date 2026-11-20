@@ -20,10 +20,12 @@ an agent inside the sandbox could write a gate mark and get a green gate without
   and the expected projects are never granted. Granting the negative records (failure notes, bars)
   would not do: write access also deletes them, which re-opens an earlier pass to reuse.
 - So `jst test` and `jst review` run outside the sandbox. Every `jst test` that runs something
-  writes the run log, and most also receipts or gate marks, so `jst test` first checks it can write
-  beside the run log and, inside the sandbox, runs nothing and says to run it outside. A failed run
-  can then never leave an earlier pass standing, and `jst test last` always finds the newest run.
-  The AGENTS block says so.
+  writes the run log, and most also receipts or gate marks. Before running, it opens the run log for
+  appending and checks it can make a file in the project's receipts, gate marks and bars; it then
+  removes the receipt or mark the run would replace. When any of that fails, inside the sandbox or
+  under an owner's deny rule, it runs nothing and says to run it outside the sandbox. A run whose
+  log line still cannot be written at the end (a full disk) prints its output path instead of
+  pointing at `jst test last`. The AGENTS block says so.
 - Per-project grants are written for each project folder in the home and each expected project,
   as plain paths (glob support differs between Claude Code's macOS and Linux sandboxes). Doctor
   reports a project whose grants are missing; running setup again adds them.
