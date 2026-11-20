@@ -526,8 +526,10 @@ shape (`range`).
 - **Before a merge, locally**: `jst land`, where the base's `cards.unit` is `pr`, judges the
   description exactly as it sends it for the merge commit's message, against the files of the
   in-memory merge (`git merge-tree`) of the head with the base commit it judged, by the base's
-  `cards` section; the recheck before the merge stops if the description changes. The tree's
-  rules are the `card-line` workflow's, a required check (W-092): no local gate on the tree.
+  `cards` section, and, where the base has `changes`, its changelog rule (D1: an entry or a
+  `Changes: none (reason)` line); the recheck before the merge stops if the description changes.
+  The tree's rules are the `card-line` workflow's, a required check (W-092): no local gate on the
+  tree.
 - **When `jst land` opens the pull request**: `--card ID` (repeatable; `--card none --reason TEXT`)
   adds the line to the description it writes. Where the base asks for the line, it opens no pull
   request whose description it cannot judge first (no `--card` and no `--body-file`) or whose

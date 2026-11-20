@@ -552,6 +552,34 @@ func TestABaseMovingDuringTheWaitIsJudgedWithItsOwnRules(t *testing.T) {
 	land.mergedOnceAt(land.Git("rev-parse", "feat"))
 }
 
+const changesSettings = `{"jackstay_schema": 3, "github": {"account": "someone", "repository": "owner/checkout"},
+ "land": {"autonomy": "merge-when-green"},
+ "changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version} — {date}"}}`
+
+// D1 is judged on the exact description sent: an edit that removed its `Changes: none` line before
+// jst land read it is refused however green the checks read by commit are; with the line, it lands.
+func TestTheChangelogLineIsJudgedOnTheDescriptionSent(t *testing.T) {
+	for _, each := range []struct {
+		body  string
+		code  int
+		state string
+	}{
+		{"What it does.\n", 1, "refused"},
+		{"What it does.\n\nChanges: none (a test)\n", 0, "landed"},
+	} {
+		land := newLandRepo(t, changesSettings, map[string]string{"CHANGELOG.md": "# Changelog\n"}, nil)
+		land.Git("push", "-q", "-u", "origin", "feat")
+		land.host.change = land.host.template
+		land.host.change.Body = each.body
+		land.host.opened = true
+		out := land.expect(each.code, each.state)
+		if each.code == 1 {
+			contains(t, out, "fails the changelog rule")
+			land.noMerge()
+		}
+	}
+}
+
 // --- checks ------------------------------------------------------------------------------------
 
 func TestRulesUnreadWithListedChecksRequireOnlyThose(t *testing.T) {

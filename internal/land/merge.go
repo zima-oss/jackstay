@@ -40,7 +40,8 @@ func (work *session) finish(landing ready, deadline time.Time) (int, error) {
 
 // localChecks are what this checkout judges before the recheck: no commit here left behind, a merge
 // method the repository allows (and, where the base's Card line is in the description, one that
-// lands it), and the description's Card line. It returns the merge commit's message.
+// lands it), and the description's Card line and changelog line. It returns the merge commit's
+// message.
 func (work *session) localChecks(landing ready) (string, error) {
 	change := landing.change
 	if err := work.nothingLeftBehind(change.Number, change.HeadSHA); err != nil {
@@ -56,6 +57,9 @@ func (work *session) localChecks(landing ready) (string, error) {
 	// The description is the merge commit's message: judged here, exactly as it is sent, and the
 	// recheck stops if it changes before the write.
 	if err := work.judgeDescription(landing.cards, change.BaseSHA, change.HeadSHA, change.Body); err != nil {
+		return "", err
+	}
+	if err := work.judgeChangesLine(landing.baseFile, change); err != nil {
 		return "", err
 	}
 	return change.Body, nil

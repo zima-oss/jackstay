@@ -19,6 +19,8 @@ type policy struct {
 	agentMay bool
 	// cards is the base's `cards` section where it puts the Card line in the description, else nil.
 	cards map[string]any
+	// baseFile is the base's jackstay.json as judged (nil: none).
+	baseFile []byte
 	// reasons say why the change is a person's.
 	reasons []string
 }
@@ -80,7 +82,8 @@ func (work *session) judgePolicy(change hosting.Change) (policy, error) {
 	if decision.base, decision.hasBase, err = work.policyAt(change.BaseSHA); err != nil {
 		return policy{}, err
 	}
-	decision.cards = cardsSectionOf(work.fileAt(change.BaseSHA))
+	decision.baseFile = work.fileAt(change.BaseSHA)
+	decision.cards = cardsSectionOf(decision.baseFile)
 	changed, hasChanged, err := work.policyAt(change.HeadSHA)
 	if err != nil {
 		return policy{}, err
