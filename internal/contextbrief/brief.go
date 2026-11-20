@@ -193,3 +193,29 @@ func (store Store) Freshness(record Record, current Identity) string {
 	}
 	return "current"
 }
+
+// Summary is what another command may show of a worktree's brief: its task id and freshness,
+// never its text.
+type Summary struct {
+	TaskID    string    `json:"task_id,omitempty"`
+	Freshness string    `json:"freshness"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
+}
+
+// SummaryOf reads the brief of the worktree at root without writing anything. Freshness is
+// "absent" when no brief is saved.
+func SummaryOf(root string) (Summary, error) {
+	store, err := StoreFor(root)
+	if err != nil {
+		return Summary{}, err
+	}
+	record, err := store.Load()
+	if err != nil {
+		return Summary{}, err
+	}
+	if record.Brief == nil {
+		return Summary{Freshness: "absent"}, nil
+	}
+	identity, _ := gitIdentity(root)
+	return Summary{TaskID: record.Brief.TaskID, Freshness: store.Freshness(record, identity), UpdatedAt: record.UpdatedAt}, nil
+}

@@ -286,7 +286,11 @@ embedded one with this project's severity words), so its last message is one JSO
 `severe` (lost work or data, an unnoticed wrong decision) or `mild`. `repeats` names ledger
 findings this one continues; `ordinary_path` names, for an `unusual` finding, the ordinary work by
 which its setup arises by accident (empty when none does, and for an `ordinary` finding); `prior`
-answers every open finding, `fixed` or `open`. The schema
+answers every open finding, `fixed` or `open`. A transient local disk error in an ordinary call is
+rare (the error need only reach the caller); a process killed between two writes is `ordinary`, a
+finding when recovery leaves the state wrong or a message lost or doubled (W-094). A finding that
+only asks to cover more exotic cases (`unusual`, with an empty `ordinary_path`) never takes a
+blocking severity (W-096). The schema
 sets `additionalProperties: false` and every member required (`[]` where empty).
 
 jackstay reads `answer.json` with `internal/strictjson` (one value, no member twice, no unknown member, 1

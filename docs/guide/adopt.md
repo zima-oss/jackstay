@@ -32,6 +32,21 @@ git add jackstay.json AGENTS.md CLAUDE.md .claude/settings.json
 git commit -m "Adopt jackstay"
 ```
 
+From jackstay 0.6.0, `jst adopt` also writes the `land` section, which says who merges a change
+(see [branches and GitHub](branches-and-github.md#the-land-section)). Before it does, `--apply` asks
+one question at the terminal:
+
+```text
+Who merges this project's changes (land.autonomy)?
+  1) The agent merges when the required checks pass; `jackstay.json` and the listed paths need a person (recommended)
+  2) The agent prepares; a person merges.
+Answer [1]:
+```
+
+Without a terminal, give the answer as `--autonomy merge-when-green` or `--autonomy prepare`;
+`--apply` without it exits 2. An answer the file already has is kept: adopt never changes it. Answer
+once per machine with `jst setup` and adopt offers that answer first.
+
 `jst adopt` owns four places and changes nothing else:
 
 | Place | What jackstay writes |
@@ -106,6 +121,26 @@ moving the pin takes two pull requests:
 2. then, on the merged base, `jst adopt --apply`: the workflows for the new pin, merged as usual.
 
 Between the two, `jst adopt --plan` lists the files still to write.
+
+The upgrade from 0.5.x to 0.6.0 takes three pull requests, each merged by a person, and the notes
+of `jst adopt --plan` name them and the one due:
+
+1. the pin: `jst adopt --apply --pin --settings-only`; `jackstay.json` stays schema 2, which 0.6.0
+   reads;
+2. the workflows that download 0.6.0, with `card-line.yml`, which runs `jst lint pr` for the
+   coming `land` section: `jst adopt --apply` on the merged base;
+3. schema 3 with the `land` section: `jst adopt --apply` on the merged base, which asks who merges
+   (`--settings-only` keeps it to `jackstay.json`; the AGENTS block follows in the next apply).
+
+Each plan holds only the step that is due: a later step is planned once the earlier one has merged.
+If you keep any workflow of your own (or one kept by an exception), step 3 waits for you to
+confirm that none still downloads a jackstay older than 0.6.0, directly or through a script or an
+action, which jackstay does not read from them: add
+`"upgrade:workflows": "release.yml downloads v0.6.0; build.yml downloads none"` (your own words)
+to `adopt.exceptions`.
+Until then the plan lists a blocker naming the files, `--apply` prints it and `jst doctor` reports
+the project as not up to date. Record a profile's digest (`--profile-sha256`) in step 3 or after
+the upgrade: before step 3 it is refused, since it needs schema 3.
 
 The generated `card-line.yml` and `release.yml` download the pinned Linux archive and check
 `checksums.txt`. For releases with build attestations, set the repository variable
@@ -190,7 +225,7 @@ pin. The schema cannot express rules about paths, other fields or Go regular exp
 | `changes`, `release` | changelog entries, versions and the release workflow | [releases](releases.md) |
 | `adopt` | the workflows' pin, the profile, kept exceptions | here |
 | `brief` | `max_age_hours`: how long a saved brief stays fresh (default 168, 1 to 720) | `jst brief save --help` |
-| `status` | `repos`: the repositories the overview reads when none are named | `jst workspace board --help` |
+| `status` | `repos`: the repositories `jst status` reads when none are named | `jst status --help` |
 | `chat` | session chat | [session chat](session-chat.md) |
 | `telemetry` | the journal's retention and how command text is recorded | [observability](observability.md) |
 

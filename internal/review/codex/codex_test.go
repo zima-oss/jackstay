@@ -172,12 +172,20 @@ func TestPinnedSourceUsesTheReviewerAccessProfile(t *testing.T) {
 	}
 	home := homedir.AccountHome()
 	temporary, _ := canonicalPath(Temporary(request))
-	for _, want := range []string{`":root"="read"`, strconv.Quote(filepath.Join(home, ".ssh")) + `="none"`,
-		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`, globKey(request, home, ".env"), globKey(request, home, ".env.*"),
-		strconv.Quote(temporary) + `="write"`} {
+	wants := []string{`":root"="read"`, strconv.Quote(filepath.Join(home, ".ssh")) + `="none"`,
+		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`,
+		strconv.Quote(temporary) + `="write"`}
+	roots := envGlobRoots(request, home)
+	for _, root := range roots {
+		wants = append(wants, globKey(root, ".env"), globKey(root, ".env.*"))
+	}
+	for _, want := range wants {
 		if !strings.Contains(filesystem, want) {
 			t.Errorf("the filesystem table lacks %s: %s", want, filesystem)
 		}
+	}
+	if len(roots) == 0 && strings.Contains(filesystem, "/**/.env") {
+		t.Errorf("this platform denies no .env pattern, yet the table has one: %s", filesystem)
 	}
 	if strings.Count(filesystem, `="write"`) != 1 {
 		t.Fatalf("the reviewer may write somewhere besides its own folder: %s", filesystem)
@@ -409,9 +417,8 @@ func TestTheProjectsInheritWinsAndEveryKeyIsOnce(t *testing.T) {
 	}
 }
 
-// globKey is the profile's entry denying files named name under the first root of this platform.
-func globKey(request Request, home, name string) string {
-	root := envGlobRoots(request, home)[0]
+// globKey is the profile's entry denying files named name under root.
+func globKey(root, name string) string {
 	if resolved, err := canonicalPath(root); err == nil {
 		root = resolved
 	}

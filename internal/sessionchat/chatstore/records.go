@@ -75,27 +75,29 @@ type SessionNotice struct {
 
 // Session is a session record (section 6.1).
 type Session struct {
-	V              int             `json:"v"`
-	Key            string          `json:"key"`
-	Ref            string          `json:"ref"`
-	Name           string          `json:"name"`
-	Engine         string          `json:"engine"`
-	KeySource      string          `json:"key_source"`
-	ChannelID      string          `json:"channel_id"`
-	Mailbox        bool            `json:"mailbox,omitempty"`
-	Worktree       string          `json:"worktree,omitempty"`
-	Parent         string          `json:"parent,omitempty"`
-	State          string          `json:"state"`
-	Since          string          `json:"since"`
-	LastSeen       string          `json:"last_seen"`
-	Registered     string          `json:"registered"`
-	Delivery       string          `json:"delivery,omitempty"`
-	Subscriptions  []string        `json:"subscriptions,omitempty"`
-	IdleWatchers   []IdleWatcher   `json:"idle_watchers,omitempty"`
-	IdleGeneration int             `json:"idle_generation,omitempty"`
-	Notices        []SessionNotice `json:"notices,omitempty"`
-	StopBlocks     int             `json:"stop_blocks,omitempty"`
-	Exchange       map[string]int  `json:"exchange,omitempty"`
+	V              int           `json:"v"`
+	Key            string        `json:"key"`
+	Ref            string        `json:"ref"`
+	Name           string        `json:"name"`
+	Engine         string        `json:"engine"`
+	KeySource      string        `json:"key_source"`
+	ChannelID      string        `json:"channel_id"`
+	Mailbox        bool          `json:"mailbox,omitempty"`
+	Worktree       string        `json:"worktree,omitempty"`
+	Parent         string        `json:"parent,omitempty"`
+	State          string        `json:"state"`
+	Since          string        `json:"since"`
+	LastSeen       string        `json:"last_seen"`
+	Registered     string        `json:"registered"`
+	Delivery       string        `json:"delivery,omitempty"`
+	Subscriptions  []string      `json:"subscriptions,omitempty"`
+	IdleWatchers   []IdleWatcher `json:"idle_watchers,omitempty"`
+	IdleGeneration int           `json:"idle_generation,omitempty"`
+	// IdleAt is when the idle that advanced idle_generation was observed (section 4.9).
+	IdleAt     string          `json:"idle_at,omitempty"`
+	Notices    []SessionNotice `json:"notices,omitempty"`
+	StopBlocks int             `json:"stop_blocks,omitempty"`
+	Exchange   map[string]int  `json:"exchange,omitempty"`
 }
 
 // channelRecord is a channel's identity and name (section 7.1). Its subscribers are the sessions
