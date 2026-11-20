@@ -5,6 +5,7 @@
 package block
 
 import (
+	"maps"
 	"slices"
 	"strings"
 
@@ -47,6 +48,9 @@ func hasSection(name string) func(map[string]any) bool {
 
 var items = []item{
 	{id: "test", commands: []string{"test", "test list", "test last"}, wanted: always, first: true, text: testText},
+	{id: "test-split", commands: []string{"test", "test uncovered"}, wanted: func(config map[string]any) bool {
+		return len(coveredScopes(config)) > 0
+	}, first: true, text: splitText},
 	{id: "checks", commands: []string{"checks"}, wanted: func(config map[string]any) bool {
 		account, _ := section(config, "github")["account"].(string)
 		return account != ""
@@ -134,13 +138,101 @@ func testText(config map[string]any) string {
 	text := "- **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`\n" +
 		"  (`jst test list` names them and when each is due). Only `passed` is a pass: read the last\n" +
 		"  `jst test:` line. After a failure, `jst test last`, not a rerun."
-	if _, gate := scopes["gate"]; gate {
+	if _, gate := scopes["gate"]; gate && len(coveredScopes(config)) == 0 {
 		text += "\n  Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit)."
 	}
 	if section(section(config, "test"), "selection") != nil {
 		text += "\n  Preview path-based selection with `jst test plan changed --base REF`."
 	}
 	return text + " No scope fits: `jst test -- COMMAND`."
+}
+
+// systemNames are the systems a scope's `ci` names, as people call them.
+var systemNames = map[string]string{"linux": "Linux", "darwin": "macOS"}
+
+// textsOf is a list of strings of the config, as encoding/json or a Go literal gives it.
+func textsOf(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		var out []string
+		for _, element := range typed {
+			if text, ok := element.(string); ok {
+				out = append(out, text)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// coveredScopes are the scopes whose `ci` names a system, each with those systems.
+func coveredScopes(config map[string]any) map[string][]string {
+	covered := map[string][]string{}
+	for name, raw := range section(section(config, "test"), "scopes") {
+		scope, _ := raw.(map[string]any)
+		if systems := textsOf(scope["ci"]); len(systems) > 0 {
+			covered[name] = systems
+		}
+	}
+	return covered
+}
+
+// splitText states where tests run (docs/design/land.md section 7.4): what CI runs, on which
+// systems, and what an agent runs before a pull request and before an install or a tag.
+func splitText(config map[string]any) string {
+	covered := coveredScopes(config)
+	var order []string
+	groups := map[string][]string{}
+	for _, name := range slices.Sorted(maps.Keys(covered)) {
+		var words []string
+		for _, system := range covered[name] {
+			word, known := systemNames[system]
+			if !known {
+				word = system
+			}
+			words = append(words, word)
+		}
+		where := strings.Join(words, " and ")
+		if _, seen := groups[where]; !seen {
+			order = append(order, where)
+		}
+		groups[where] = append(groups[where], name)
+	}
+	parts := make([]string, 0, len(order))
+	for _, where := range order {
+		parts = append(parts, strings.Join(groups[where], ", ")+" on "+where)
+	}
+	return wrap("- **Where tests run**: CI runs " + strings.Join(parts, "; ") + " and is the gate. " +
+		"Before a pull request: `jst test changed`. Before an install or a tag: `jst test uncovered`.")
+}
+
+// wrap breaks an item's text at spaces outside code spans into lines of at most 100 characters,
+// the later ones indented by two spaces.
+func wrap(text string) string {
+	var words []string
+	for _, field := range strings.Fields(text) {
+		if last := len(words) - 1; last >= 0 && strings.Count(words[last], "`")%2 == 1 {
+			words[last] += " " + field
+			continue
+		}
+		words = append(words, field)
+	}
+	var lines []string
+	line := ""
+	for _, word := range words {
+		switch {
+		case line == "":
+			line = word
+		case len(line)+1+len(word) > 100:
+			lines = append(lines, line)
+			line = "  " + word
+		default:
+			line += " " + word
+		}
+	}
+	return strings.Join(append(lines, line), "\n")
 }
 
 func guardText(config map[string]any) string {

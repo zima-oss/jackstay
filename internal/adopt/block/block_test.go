@@ -37,6 +37,10 @@ func TestTheBlockGolden(t *testing.T) {
 		"land-prepare": {Config: map[string]any{"jackstay_schema": 3, "github": map[string]any{"account": "someone"},
 			"land": map[string]any{"autonomy": "prepare"}}, Has: everyCommand},
 		"no-section": {Config: map[string]any{"jackstay_schema": 1, "project": "bare"}, Has: everyCommand},
+		"test-split": {Config: map[string]any{"jackstay_schema": 3, "test": map[string]any{"scopes": map[string]any{
+			"x-go": map[string]any{"ci": []any{"linux"}}, "x-docs": map[string]any{"ci": []any{"linux"}},
+			"x-ui": map[string]any{"ci": []any{"darwin", "linux"}}, "x-ios": map[string]any{"systems": []any{"darwin"}},
+			"gate": map[string]any{}}}}, Has: everyCommand},
 		"scopes-no-gate": {Config: map[string]any{"test": map[string]any{"scopes": map[string]any{"quick": map[string]any{}}}},
 			Has: everyCommand},
 		"profile": {Config: everySection, Has: everyCommand,
