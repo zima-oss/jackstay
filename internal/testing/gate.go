@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/receipts"
 	"github.com/zima-oss/jackstay/internal/version"
@@ -326,14 +327,7 @@ func (proj *project) writeMark(key, step string, ended result, head string, adap
 		err = os.MkdirAll(folder, 0o700)
 	}
 	if err == nil {
-		place := proj.markPath(key)
-		partial := fmt.Sprintf("%s.%d.partial", place, proj.pid)
-		if err = os.WriteFile(partial, data, 0o600); err == nil {
-			err = os.Rename(partial, place)
-		}
-		if err != nil {
-			_ = os.Remove(partial)
-		}
+		err = durable.WriteAtomic(proj.markPath(key), data, 0o600, 0)
 	}
 	if err != nil {
 		proj.say("the mark of step %s could not be written (%v); a later --resume runs it again", step, err)

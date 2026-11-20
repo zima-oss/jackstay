@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
@@ -741,7 +741,7 @@ func (pool Pool) edit(ctx context.Context, change func(*state) error) error {
 }
 
 func (pool Pool) editWhen(ctx context.Context, change func(*state) (bool, error)) error {
-	lock, err := flock.WaitFile(ctx, pool.lockPath())
+	lock, err := durable.LockFile(ctx, pool.lockPath())
 	if err != nil {
 		return err
 	}
@@ -759,24 +759,15 @@ func (pool Pool) editWhen(ctx context.Context, change func(*state) (bool, error)
 }
 
 func (pool Pool) load() (state, error) {
-	file, err := os.OpenFile(pool.statePath(), os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0) // #nosec G304 -- jackstay-owned queue state
+	data, err := durable.ReadLimited(pool.statePath(), maximumStateBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return state{Version: currentStateVersion}, nil
 	}
-	if err != nil {
-		return state{}, err
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return state{}, errors.New("review pool state must be a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maximumStateBytes+1))
-	if err != nil {
-		return state{}, err
-	}
-	if len(data) > maximumStateBytes {
+	if errors.Is(err, durable.ErrTooLarge) {
 		return state{}, errors.New("review pool state exceeds size limit")
+	}
+	if err != nil {
+		return state{}, err
 	}
 	var saved state
 	if err := strictjson.Unmarshal(data, &saved); err != nil {
@@ -802,30 +793,10 @@ func (pool Pool) save(saved state) error {
 	if len(data) > maximumStateBytes {
 		return errors.New("review pool state exceeds size limit")
 	}
-	if err := os.MkdirAll(pool.Root, 0o700); err != nil {
+	if err := durable.MakeFolder(pool.Root, 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(pool.Root, ".review-pool-")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(temporary.Name()) }()
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if _, err := temporary.Write(append(data, '\n')); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporary.Name(), pool.statePath())
+	return durable.WriteAtomic(pool.statePath(), append(data, '\n'), 0o600, 0)
 }
 
 // ReviewersText is the stable reviewer choice passed to jst review.

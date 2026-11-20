@@ -2,22 +2,20 @@
 package contextbrief
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 )
 
@@ -87,27 +85,15 @@ func validateBrief(brief Brief) error {
 }
 
 func (store Store) read() (Record, error) {
-	file, err := os.OpenFile(store.path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	encoded, err := durable.ReadLimited(store.path, maxBriefBytes+1024)
 	if errors.Is(err, os.ErrNotExist) {
 		return Record{Schema: 1}, nil
 	}
-	if err != nil {
-		return Record{}, err
-	}
-	defer func() { _ = file.Close() }()
-	information, err := file.Stat()
-	if err != nil {
-		return Record{}, err
-	}
-	if !information.Mode().IsRegular() {
-		return Record{}, errors.New("brief state is not a regular file")
-	}
-	encoded, err := io.ReadAll(io.LimitReader(file, maxBriefBytes+1025))
-	if err != nil {
-		return Record{}, err
-	}
-	if len(encoded) > maxBriefBytes+1024 {
+	if errors.Is(err, durable.ErrTooLarge) {
 		return Record{}, errors.New("brief state exceeds limit")
+	}
+	if err != nil {
+		return Record{}, err
 	}
 	var record Record
 	if json.Unmarshal(encoded, &record) != nil {
@@ -160,56 +146,26 @@ func (store Store) Clear(expected uint64) (Record, error) {
 }
 
 func (store Store) update(expected uint64, change func(*Record) error) (Record, error) {
-	folder := filepath.Dir(store.path)
-	if err := os.MkdirAll(folder, 0o700); err != nil {
-		return Record{}, err
-	}
-	lockFile, err := os.OpenFile(store.path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	var record Record
+	err := durable.Update(context.Background(), store.path, 0o600, maxBriefBytes+1024, func([]byte) ([]byte, error) {
+		var err error
+		record, err = store.read()
+		if err != nil {
+			return nil, err
+		}
+		if record.Revision != expected {
+			return nil, fmt.Errorf("brief revision conflict: current revision %d", record.Revision)
+		}
+		if record.Revision == math.MaxUint64 {
+			return nil, errors.New("brief revision exhausted")
+		}
+		if err := change(&record); err != nil {
+			return nil, err
+		}
+		record.Revision++
+		return json.Marshal(record)
+	})
 	if err != nil {
-		return Record{}, err
-	}
-	defer func() { _ = lockFile.Close() }()
-	if err := unix.Flock(int(lockFile.Fd()), unix.LOCK_EX); err != nil {
-		return Record{}, err
-	}
-	defer func() { _ = unix.Flock(int(lockFile.Fd()), unix.LOCK_UN) }()
-	record, err := store.read()
-	if err != nil {
-		return Record{}, err
-	}
-	if record.Revision != expected {
-		return Record{}, fmt.Errorf("brief revision conflict: current revision %d", record.Revision)
-	}
-	if record.Revision == math.MaxUint64 {
-		return Record{}, errors.New("brief revision exhausted")
-	}
-	if err := change(&record); err != nil {
-		return Record{}, err
-	}
-	record.Revision++
-	encoded, err := json.Marshal(record)
-	if err != nil {
-		return Record{}, err
-	}
-	temporary, err := os.CreateTemp(folder, "brief-*.tmp")
-	if err != nil {
-		return Record{}, err
-	}
-	defer func() { _ = os.Remove(temporary.Name()) }()
-	defer func() { _ = temporary.Close() }()
-	if err := temporary.Chmod(0o600); err != nil {
-		return Record{}, err
-	}
-	if _, err := temporary.Write(encoded); err != nil {
-		return Record{}, err
-	}
-	if err := temporary.Sync(); err != nil {
-		return Record{}, err
-	}
-	if err := temporary.Close(); err != nil {
-		return Record{}, err
-	}
-	if err := os.Rename(temporary.Name(), store.path); err != nil {
 		return Record{}, err
 	}
 	return record, nil

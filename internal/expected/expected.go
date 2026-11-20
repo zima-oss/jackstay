@@ -13,17 +13,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/zima-oss/jackstay/internal/flock"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 )
 
 // FileName is the list's name under `<jackstay home>/.all`.
 const FileName = "expected-projects"
-
-// lockWait is the longest a change waits for another change's lock.
-const lockWait = 30 * time.Second
 
 // Path is the list's path.
 func Path() (string, error) { return homedir.SharedPath(FileName) }
@@ -70,9 +66,7 @@ func Change(change func(names map[string]bool)) ([]string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), lockWait)
-	defer cancel()
-	held, err := flock.WaitFile(ctx, path+".lock")
+	held, err := durable.Lock(context.Background(), path)
 	if err != nil {
 		return nil, err
 	}
@@ -91,29 +85,7 @@ func Change(change func(names map[string]bool)) ([]string, error) {
 	for _, name := range list {
 		text.WriteString(name + "\n")
 	}
-	return list, writeAtomically(path, text.String())
-}
-
-func writeAtomically(path, text string) error {
-	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.partial")
-	if err != nil {
-		return err
-	}
-	partial := file.Name()
-	_, err = file.WriteString(text)
-	if syncErr := file.Sync(); err == nil {
-		err = syncErr
-	}
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
-	if err == nil {
-		err = os.Rename(partial, path)
-	}
-	if err != nil {
-		_ = os.Remove(partial)
-	}
-	return err
+	return list, durable.WriteAtomic(path, []byte(text.String()), 0o600, 0)
 }
 
 func sorted(names map[string]bool) []string {
