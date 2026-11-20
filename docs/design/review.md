@@ -259,7 +259,8 @@ a disagreement is recorded in the report.
 | `unparsable` | `answer.json` is not one JSON object of the schema (the strict reader's error kept) | 5 |
 | `inconsistent` | read, but a check above fails (which one kept) | 5 |
 
-A run that ends in anything but `done` is not retried, and takes no round number (section 4).
+A run that ends in anything but `done` is not retried, and takes no round number; the next run
+of the task reuses N and the answers the other reviewers gave (section 4).
 
 ## 4. Rounds, triage and W-019
 
@@ -279,6 +280,19 @@ old lock.
 `round.json` into it and, last, renames it to `<task>/round-<N>/`: only that rename takes round N, so
 a killed run leaves a failed attempt and the next run still takes N. An attempt where some reviewers
 failed is not a round (exit 5); its successful answers stay readable.
+
+**Only the missing answers are paid for again** ([W-090](../decisions/W-090-review-of-0-6-0.md)). `attempt.json` records the attempt's
+**binding**: a digest of the round number, the task, the commits (base, head, previous), the review
+policy and content policy, each selected reviewer's settings (command, model, effort, isolation; not its deadline),
+and the digests of the prompt, the verdict schema and the `--brief` file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
+starting reviewers, a run looks through the task's earlier attempts (never rounds), newest first,
+for one with its own binding; a reviewer's `answer.json` there is reused when it reads and checks as a
+fresh answer would (section 3.5), is not `incomplete`, and was given with the same model and
+effort, its `run.json` saying `done` — or missing, when jackstay was killed after the answer was
+written. The answer is copied into the new attempt, its run marked `reused` with the attempt it
+came from (the report says so), and only the other reviewers run. When every answer is found, no
+source view is built and no reviewer starts. Anything else that changed (a new commit, a round
+taken meanwhile, a new focus, model or policy) is another binding, and every reviewer runs.
 
 **Chains and the ledger.** A task's rounds form chains: round 1 starts one, `--fresh` starts
 another (a full review with an empty ledger), every other round continues the previous one's chain

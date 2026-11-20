@@ -966,10 +966,10 @@
     },
     "status": {
       "additionalProperties": false,
-      "description": "Sets the defaults of the workspace overview, `jst workspace board`.",
+      "description": "Sets the defaults of `jst status`.",
       "properties": {
         "repos": {
-          "description": "Lists the repositories the overview reads when none are named: paths relative to this file's folder, or absolute. Repositories the overview reads when none are named: paths relative to this file's folder, or absolute.",
+          "description": "Lists the repositories `jst status` reads when none are named: paths relative to this file's folder, or absolute.",
           "items": {
             "pattern": "\\S",
             "type": "string"

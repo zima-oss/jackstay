@@ -153,6 +153,9 @@ or reaches a configured hook.
 ## What can go wrong
 
 - **Exit 6 running Codex in the Claude Code sandbox**: run the command outside that sandbox.
+- **Exit 5, one reviewer failed or the run was killed**: run the same command again. A reviewer
+  that already answered this exact question is not run again: its answer is reused, and the
+  report says from which attempt.
 - **Exit 5, `no slot`**: other reviews held every slot past `queue_minutes`. Rerun later. An
   inaccessible lock instead fails immediately and names the underlying error.
 - **Exit 2, task busy**: another run of the same task is under way; wait for it.

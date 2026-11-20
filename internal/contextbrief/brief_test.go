@@ -293,3 +293,31 @@ func TestReplacedCheckoutAtSamePathCannotReadOldBrief(t *testing.T) {
 		t.Fatalf("new task: %d %s", code, diagnostics.String())
 	}
 }
+
+func TestSummaryOfShowsTheTaskAndFreshnessWithoutTheText(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	root := testProject(t)
+	summary, err := SummaryOf(root)
+	if err != nil || summary.Freshness != "absent" || summary.TaskID != "" {
+		t.Fatalf("no brief: %+v %v", summary, err)
+	}
+	identity, err := gitIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := StoreFor(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Save(Brief{TaskID: "task-a", Task: "Private task text", Next: []string{"Run gate"}}, 0, defaultMaxAge, identity); err != nil {
+		t.Fatal(err)
+	}
+	summary, err = SummaryOf(root)
+	if err != nil || summary.TaskID != "task-a" || summary.Freshness != "current" || summary.UpdatedAt.IsZero() {
+		t.Fatalf("saved brief: %+v %v", summary, err)
+	}
+	encoded, _ := json.Marshal(summary)
+	if strings.Contains(string(encoded), "Private task text") {
+		t.Fatalf("summary carries the text: %s", encoded)
+	}
+}

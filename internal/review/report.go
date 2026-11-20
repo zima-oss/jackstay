@@ -21,7 +21,11 @@ func Report(settings Settings, record RoundRecord) string {
 		fmt.Fprintf(&out, "- focus: %s\n", record.Focus)
 	}
 	for _, run := range record.Runs {
-		fmt.Fprintf(&out, "- %s: %s, model %q, effort %q, %.0f s\n", run.Reviewer, run.Version, run.Model, run.Effort, run.Seconds)
+		reused := ""
+		if run.Reused != "" {
+			reused = ", answer reused from " + run.Reused
+		}
+		fmt.Fprintf(&out, "- %s: %s, model %q, effort %q, %.0f s%s\n", run.Reviewer, run.Version, run.Model, run.Effort, run.Seconds, reused)
 	}
 	if record.OverLimit {
 		fmt.Fprintf(&out, "- past the round limit of %d without the owner's word\n", settings.RoundLimit)

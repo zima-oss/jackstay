@@ -15,6 +15,8 @@ package gitcli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -201,6 +203,52 @@ func (git Git) Line(ctx context.Context, args ...string) (string, error) {
 func (git Git) CommonDir(ctx context.Context) (string, error) {
 	line, err := git.Line(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	return strings.TrimSpace(line), err
+}
+
+// RepositoryID names the repository Dir is in on this machine: "git:" and the SHA-256 of its common
+// folder's real path. Linked worktrees share it and independent clones differ even under one
+// project name; moving the common folder changes it.
+func (git Git) RepositoryID(ctx context.Context) (string, error) {
+	common, err := git.CommonDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	common, err = filepath.EvalSymlinks(common)
+	if err != nil {
+		return "", err
+	}
+	return CommonFolderID(common), nil
+}
+
+// CommonFolderID is RepositoryID of a common folder whose real path is already known.
+func CommonFolderID(common string) string {
+	digest := sha256.Sum256([]byte(filepath.Clean(common)))
+	return "git:" + hex.EncodeToString(digest[:])
+}
+
+// RepositoryInode names the repository Dir is in by its common folder's device and inode: it
+// survives renaming or moving the checkout within one file system, and a new clone made at the old
+// path gets another. "inode:" and the SHA-256 of "device:inode".
+func (git Git) RepositoryInode(ctx context.Context) (string, error) {
+	common, err := git.CommonDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	return CommonFolderInode(common)
+}
+
+// CommonFolderInode is RepositoryInode of a known common folder.
+func CommonFolderInode(common string) (string, error) {
+	info, err := os.Stat(common)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() {
+		return "", fmt.Errorf("%s: not a folder with a device and an inode", common)
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%d:%d", stat.Dev, stat.Ino)))
+	return "inode:" + hex.EncodeToString(digest[:]), nil
 }
 
 // MainCheckout is the main checkout's top folder (the one that holds the common .git), whichever
