@@ -37,8 +37,13 @@ type Captured struct {
 // asks a question of another program (a build, a probe, git) is run (docs/design/implementation.md
 // section 7.3).
 func Capture(ctx context.Context, argv []string, dir string, env []string, input []byte) (Captured, error) {
+	return CaptureTraced(ctx, argv, nil, dir, env, input)
+}
+
+// CaptureTraced is Capture keeping traceArgv in telemetry instead of argv (Spec.TraceArgv).
+func CaptureTraced(ctx context.Context, argv, traceArgv []string, dir string, env []string, input []byte) (Captured, error) {
 	stdout, stderr := &cappedBuffer{limit: CaptureCap}, &cappedBuffer{limit: CaptureCap}
-	spec := Spec{Argv: argv, Dir: dir, Env: env, Mode: Group, Input: input, Context: ctx,
+	spec := Spec{Argv: argv, TraceArgv: traceArgv, Dir: dir, Env: env, Mode: Group, Input: input, Context: ctx,
 		Grace: CaptureGrace, KillWait: CaptureGrace, ReadBound: CaptureGrace,
 		StdoutTo: stdout, StderrTo: stderr, Who: "jst"}
 	outcome, err := Run(nil, spec)

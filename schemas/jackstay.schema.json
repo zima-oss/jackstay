@@ -896,7 +896,7 @@
         "reviewers": {
           "additionalProperties": {
             "additionalProperties": false,
-            "description": "Overrides one built-in reviewer's command, model, effort, deadline and isolation flags.",
+            "description": "Overrides one built-in reviewer's command, model, effort, deadline, isolation flags and MCP servers.",
             "properties": {
               "command": {
                 "description": "Runs the reviewer as this program, a name on `PATH` or an absolute path (default `codex` for Codex, `claude` for Claude Code).",
@@ -914,6 +914,30 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "mcp_servers": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "description": "One MCP server given back to the reviewer.",
+                  "properties": {
+                    "args": {
+                      "description": "Passes these arguments to the MCP server.",
+                      "items": {
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "command": {
+                      "description": "Runs the MCP server as this program.",
+                      "pattern": "\\S",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "description": "Gives these MCP servers back to the reviewer, by name: `command` and `args` (needs `\"jackstay_schema\": 3`); the user's own stay closed.",
+                "type": "object"
               },
               "model": {
                 "description": "Passes this model to the reviewer; empty keeps the CLI's own default.",

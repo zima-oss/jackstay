@@ -112,7 +112,8 @@ func (saved reused) adopt(folder string) (ReviewerRun, error) {
 	if err := writeFileWhole(filepath.Join(folder, "answer.json"), data); err != nil {
 		return run, err
 	}
-	return run, writeJSON(filepath.Join(folder, "run.json"), run)
+	run.Argv = redactedArgv(run.Argv) // a run.json kept before redaction is not copied as it was
+	return run, writeRun(filepath.Join(folder, "run.json"), run)
 }
 
 // reviewersOf are who answers: each reviewer's settings less its deadline, which changes how long

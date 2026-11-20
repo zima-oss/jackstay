@@ -1,7 +1,11 @@
 // Package runner defines the request and result shared by review providers.
 package runner
 
-import "time"
+import (
+	"time"
+
+	"github.com/zima-oss/jackstay/internal/review/access"
+)
 
 // Outcomes describe how the reviewer subprocess ended before verdict validation.
 const (
@@ -30,6 +34,8 @@ type Request struct {
 	SchemaPath     string
 	Answered       func()
 	Environ        []string
+	// MCPServers are the MCP servers the project gives back to this reviewer; none by default.
+	MCPServers map[string]access.MCPServer
 }
 
 // Result describes a run and the provider-independent verdict file it wrote.

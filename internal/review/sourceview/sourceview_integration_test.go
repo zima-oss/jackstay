@@ -209,3 +209,25 @@ func TestPatchIgnoresUntrackedWorktreeAttributes(t *testing.T) {
 		t.Fatalf("worktree attributes affected pinned patch: %s, %v", patch, err)
 	}
 }
+
+func TestThePatchesHoldNoEnvFileContents(t *testing.T) {
+	repo := testrepo.New(t, map[string]string{"app.go": "package app\n", ".env": "TOKEN=made-up-base\n", "svc/.env.production": "KEY=made-up-one\n"})
+	base := repo.Git("rev-parse", "HEAD")
+	repo.Write(map[string]string{"app.go": "package app // changed\n", ".env": "TOKEN=made-up-head\n", "svc/.env.production": "KEY=made-up-two\n"})
+	head := repo.Commit("change", nil)
+	destination := filepath.Join(t.TempDir(), "view")
+	if err := Build(context.Background(), repo.Root, destination, Revisions{Base: base, Head: head}); err != nil {
+		t.Fatal(err)
+	}
+	patch, err := os.ReadFile(filepath.Join(destination, "changes", "base.patch"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(patch), "made-up") || !strings.Contains(string(patch), "app.go") {
+		t.Fatalf("the patch holds an .env file's contents, or lost the rest:\n%s", patch)
+	}
+	paths, err := os.ReadFile(filepath.Join(destination, "changes", "base.paths"))
+	if err != nil || !strings.Contains(string(paths), ".env") {
+		t.Fatalf("the change index no longer names the .env file: %s, %v", paths, err)
+	}
+}

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -169,5 +170,27 @@ func TestCodexIsTheReviewerWhenNothingNamesOne(t *testing.T) {
 	settings, problems := settingsFrom(t, `{"jackstay_schema":2,"review":{"use":["claude-code"]}}`)
 	if len(problems) != 0 || len(settings.Use) != 1 || settings.Use[0] != "claude-code" {
 		t.Fatalf("review.use: %v, %v", settings.Use, problems)
+	}
+}
+
+func TestAProjectGivesChosenMCPServersBackToAReviewer(t *testing.T) {
+	settings, problems := settingsFrom(t, `{"jackstay_schema":3,"review":{"reviewers":{"claude-code":{"mcp_servers":{"docs":{"command":"docs-mcp","args":["--stdio"]}}}}}}`)
+	if len(problems) != 0 || settings.Reviewers["claude-code"].MCPServers["docs"].Command != "docs-mcp" ||
+		len(settings.Reviewers["codex"].MCPServers) != 0 {
+		t.Fatalf("mcp servers: %+v, %v", settings.Reviewers, problems)
+	}
+	for _, document := range []string{
+		`{"jackstay_schema":3,"review":{"reviewers":{"codex":{"mcp_servers":{"bad name":{"command":"x"}}}}}}`,
+	} {
+		if _, problems := settingsFrom(t, document); len(problems) == 0 {
+			t.Errorf("refused nothing: %s", document)
+		}
+	}
+	parsed, err := config.Parse([]byte(`{"jackstay_schema":2,"review":{"reviewers":{"codex":{"mcp_servers":{}}}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys := config.Schema3Keys(parsed); !slices.Contains(keys, "review.reviewers.codex.mcp_servers") {
+		t.Fatalf("mcp_servers does not need schema 3: %v", keys)
 	}
 }
