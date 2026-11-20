@@ -74,9 +74,7 @@ func setSchemaHints(root map[string]any) {
 	repos["description"] = "Repositories the overview reads when none are named: paths relative to this file's folder, or absolute."
 	properties["adopt"].(map[string]any)["properties"].(map[string]any)["profile_sha256"].(map[string]any)["pattern"] = "^[0-9a-fA-F]{64}$"
 	properties["jackstay_schema"].(map[string]any)["enum"] = []int{1, 2, Schema}
-	queue := properties["queue"].(map[string]any)
-	queue["if"] = map[string]any{"required": []string{"enabled"}, "properties": map[string]any{"enabled": map[string]any{"const": true}}}
-	queue["then"] = map[string]any{"required": []string{"base_ref"}}
+	properties["land"].(map[string]any)["required"] = []string{"autonomy"}
 	chat := properties["chat"].(map[string]any)
 	enabled := map[string]any{"required": []string{"enabled"}, "properties": map[string]any{"enabled": map[string]any{"const": true}}}
 	chat["if"] = map[string]any{
@@ -95,6 +93,9 @@ func setSchemaHints(root map[string]any) {
 		"cards.unit":                 {"pr", "commit"},
 		"changes.newest":             {"first", "last"},
 		"guard.rules.*.level":        {"refuse", "warn", "off"},
+		"land.host":                  landHosts,
+		"land.autonomy":              {AutonomyMergeWhenGreen, AutonomyPrepare},
+		"land.method":                landMethods,
 		"telemetry.commands":         {"masked", "skeleton"},
 		"test.judge":                 testJudges,
 		"test.scopes.*.judge":        testJudges,

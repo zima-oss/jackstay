@@ -51,7 +51,7 @@ the workflows' pin moved before a project commits them.
 | Key | Meaning | Default |
 |---|---|---|
 | `changes.internal_into` | where internal entries are collected; without it they go only into the release commit's message and the release pull request's description (section 5) | none |
-| `release.merge` | who merges the release pull request: `owner` (only the owner; the pull request is a draft, section 6) or `agents` (any session, `jst gh pr-land`, later the queue) — W-029 | `owner` |
+| `release.merge` | who merges the release pull request: `owner` (only the owner; the pull request is a draft, section 6) or `agents` (any session, `jst land`) — W-029 | `owner` |
 | `release.branch` | the release pull request's head branch | `jackstay/release` |
 | `release.base` | the branch releases are made from and land on | `cards.branch`, else `main` |
 | `release.tag` | the tag's name; holds `{version}` once | `v{version}` |
@@ -298,7 +298,7 @@ with nothing to do ends 0. Runs are serial; GitHub keeps only the newest pending
 enough because each derives everything from git (inferred). `pr` and `publish` write to GitHub only
 inside Actions (`GITHUB_ACTIONS=true`) with `GH_TOKEN`; elsewhere they are `--dry-run`, which builds
 its candidates in a temporary repository and leaves the checkout alone. They select the remote by
-[implementation.md, section 8](implementation.md#8-github-and-branches-jst-gh-the-github-section-jst-tidy-jst-start-jst-sync-jst-owner)'s
+[implementation.md, section 8](implementation.md#8-github-and-branches-jst-checks-the-github-section-jst-tidy-jst-start-jst-sync-jst-owner)'s
 rule; a live run verifies the fetch and push URLs against `GITHUB_REPOSITORY`, and the fetched
 base's settings must name that branch as `release.base`.
 
@@ -337,16 +337,17 @@ the description is a preview. **A request that no longer agrees is harmless**: `
 nothing and a fresh pull request follows, so no "up to date" rule is needed.
 
 In an `owner` project only accidents are stopped (W-017; sessions act through the owner's login):
-the draft, the AGENTS block, and the merge queue, which would never take it. A guard rule refusing
-`gh pr merge` and `gh pr ready` of the release branch is designed, not built.
+the draft, the AGENTS block, and the guard, which from 0.6.0 refuses `gh pr merge` in a session
+(rule `gh-pr-merge`, naming `jst land`). A guard rule refusing `gh pr ready` of the release branch
+is designed, not built.
 
 ## 7. The checks in `jst lint pr`
 
 The one `Card:` check (`jst lint pr`, [implementation.md](implementation.md) section 4.1), which
-`card-line` and `jst gh pr-land` call (and the queue's cut-off would), gains the rules below. Its
+`card-line` calls and whose description rules `jst land` shares, gains the rules below. Its
 inputs are explicit:
 
-| Input | `card-line` (`--event`) | `pr-land` (`--pr N`) | the queue's cut-off | by hand (`--body-file F`) |
+| Input | `card-line` (`--event`) | `jst land` (`--pr N`) | the queue's cut-off | by hand (`--body-file F`) |
 |---|---|---|---|---|
 | description | `pull_request.body` | GitHub's, read at that moment | GitHub's, read at the cut-off | the file |
 | head branch | `pull_request.head.ref` | GitHub's | GitHub's | the current branch |

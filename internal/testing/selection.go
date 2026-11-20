@@ -5,6 +5,8 @@ import (
 	"path"
 	"slices"
 	"strings"
+
+	"github.com/zima-oss/jackstay/internal/config"
 )
 
 type selectionMatch struct {
@@ -67,7 +69,7 @@ func selectionProblems(section map[string]any) []string {
 	for index, rawRule := range rules {
 		rule := objectOf(rawRule)
 		pattern, name := textOf(rule["glob"]), textOf(rule["scope"])
-		if problem := selectionPatternProblem(pattern); problem != "" {
+		if problem := config.PathGlobProblem(pattern); problem != "" {
 			problems = append(problems, fmt.Sprintf("`test.selection.rules[%d].glob`: %s", index, problem))
 		}
 		if !seen[name] {
@@ -75,27 +77,6 @@ func selectionProblems(section map[string]any) []string {
 		}
 	}
 	return problems
-}
-
-func selectionPatternProblem(pattern string) string {
-	if pattern == "" || strings.HasPrefix(pattern, "/") || strings.HasSuffix(pattern, "/") {
-		return "use a nonempty repository-relative path glob"
-	}
-	for _, part := range strings.Split(pattern, "/") {
-		if part == "" || part == "." || part == ".." {
-			return "empty, `.` and `..` path segments are not allowed"
-		}
-		if part == "**" {
-			continue
-		}
-		if strings.Contains(part, "**") {
-			return "`**` must be a whole path segment"
-		}
-		if _, err := path.Match(part, "file"); err != nil {
-			return err.Error()
-		}
-	}
-	return ""
 }
 
 // selectionMatches treats ** as zero or more complete path segments. Other wildcards stay

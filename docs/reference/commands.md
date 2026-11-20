@@ -11,14 +11,12 @@ generated from the binary by `just reference`; change a command's help in its pa
 | [`jst test last`](#jst-test-last) | the last run of this project: outcome, what went wrong, where its output is |
 | [`jst test list`](#jst-test-list) | the project's test scopes: what each runs, and when the project runs it |
 | [`jst test plan`](#jst-test-plan) | the words a scope would run, step by step; nothing is run |
-| [`jst receipts`](#jst-receipts) | the receipts: key, stats, list, export, verify and CI provenance |
-| [`jst receipts attest-ci`](#jst-receipts-attest-ci) | sign a portable receipt with its CI identity |
+| [`jst receipts`](#jst-receipts) | the receipts: key, stats, list, export and verify |
 | [`jst receipts export`](#jst-receipts-export) | write a portable record of a stored test pass |
 | [`jst receipts key`](#jst-receipts-key) | the key of a command here and what went into it; nothing is run |
 | [`jst receipts list`](#jst-receipts-list) | the stored receipts |
 | [`jst receipts stats`](#jst-receipts-stats) | runs, reuses and seconds saved, from the run log |
 | [`jst receipts verify`](#jst-receipts-verify) | verify a portable test record against expected digests and revision |
-| [`jst receipts verify-ci`](#jst-receipts-verify-ci) | verify a CI receipt against a named trust root |
 | [`jst baseline`](#jst-baseline) | test runs by kind, their time, merges and destructive commands, from transcripts, git and the log |
 | [`jst lock`](#jst-lock) | run a heavy command holding the machine-wide lock, in its turn |
 | [`jst lock status`](#jst-lock-status) | who runs under the machine-wide lock and who waits |
@@ -116,7 +114,7 @@ example: jst test plan auto --base origin/main
 
 ### jst receipts
 
-The receipts: key, stats, list, export, verify and CI provenance.
+The receipts: key, stats, list, export and verify.
 
 ```text
 usage: jst receipts key -- COMMAND [ARG ...]
@@ -124,28 +122,11 @@ usage: jst receipts key -- COMMAND [ARG ...]
        jst receipts list [--project NAME]
        jst receipts export KEY
        jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE
-       jst receipts attest-ci --trust-root NAME --issuer ID --repository ID --workflow ID --run ID --signing-key KEY RECEIPT
-       jst receipts verify-ci --trust-root NAME --public-key KEY --issuer ID --repository ID --workflow ID --run ID --head SHA --key KEY --manifest SHA RECEIPT ATTESTATION
 
 exit: 2 always: runs nothing and prints this usage on standard error; each command under it names
 its own.
 
 example: jst receipts stats --json
-```
-
-### jst receipts attest-ci
-
-Sign a portable receipt with its CI identity.
-
-```text
-usage: jst receipts attest-ci --trust-root NAME --issuer ID --repository ID --workflow ID --run ID --signing-key KEY RECEIPT
-
-Signs the receipt's exact bytes and the CI run's identity, and writes the attestation to standard
-output. KEY is an Ed25519 private key file (PKCS#8 PEM), kept outside Git.
-
-exit: 0 attested; 1 invalid receipt, key or write failure; 2 bad request.
-
-example: jst receipts attest-ci --trust-root ci-2026 --issuer github-actions --repository example/widgets --workflow gate.yml --run "$ci_run" --signing-key "$ci_signing_key" evidence.json > evidence.attestation.json
 ```
 
 ### jst receipts export
@@ -222,21 +203,6 @@ Take DIGEST, SHA and KEY from a source other than FILE. Needs no receipt store o
 exit: 0 verified; 1 unverified or unreadable evidence; 2 bad request.
 
 example: jst receipts verify --sha256 "$expected_digest" --head "$expected_head" --key "$expected_key" evidence.json
-```
-
-### jst receipts verify-ci
-
-Verify a CI receipt against a named trust root.
-
-```text
-usage: jst receipts verify-ci --trust-root NAME --public-key KEY --issuer ID --repository ID --workflow ID --run ID --head SHA --key KEY --manifest SHA RECEIPT ATTESTATION
-
-Take the public key and every expected value from a source other than the two files. Needs no
-repository.
-
-exit: 0 verified; 1 invalid or mismatched evidence; 2 bad request.
-
-example: jst receipts verify-ci --trust-root ci-2026 --public-key "$ci_public_key" --issuer github-actions --repository example/widgets --workflow gate.yml --run "$expected_run" --head "$expected_head" --key "$expected_key" --manifest "$expected_manifest" evidence.json evidence.attestation.json
 ```
 
 ### jst baseline
@@ -403,15 +369,8 @@ example: jst wait --line 'listening on' --in server.log --fail 'error' --timeout
 | [`jst tidy`](#jst-tidy) | report, or remove, the branches and worktrees whose work is done |
 | [`jst discard`](#jst-discard) | put paths back to HEAD, keeping what that drops in jackstay's trash (undoable) |
 | [`jst trash`](#jst-trash) | move files and folders into jackstay's trash, undoably; list, restore, prune |
-| [`jst gh`](#jst-gh) | wait on GitHub's checks and runs, find and land pull requests |
-| [`jst queue`](#jst-queue) | local single-head merge candidate and manual handoff |
-| [`jst queue add`](#jst-queue-add) | pin one head in the local merge queue |
-| [`jst queue handoff`](#jst-queue-handoff) | verify freshness and show manual landing evidence |
-| [`jst queue prepare`](#jst-queue-prepare) | build a candidate commit without changing refs |
-| [`jst queue reconcile`](#jst-queue-reconcile) | record the observed landing and compare its tree |
-| [`jst queue remove`](#jst-queue-remove) | empty the local queue without changing refs |
-| [`jst queue status`](#jst-queue-status) | show the candidate and input freshness |
-| [`jst queue test`](#jst-queue-test) | run the gate on the candidate and save counted evidence |
+| [`jst land`](#jst-land) | push and open a change request, wait for its required checks, merge when the policy allows |
+| [`jst checks`](#jst-checks) | wait on a pull request's checks and a workflow's runs on GitHub |
 
 ### jst start
 
@@ -508,218 +467,82 @@ exit: 0 done; 1 a path could not be moved, or no such entry; 2 a bad request.
 example: jst trash build/old-output
 ```
 
-### jst gh
+### jst land
 
-Wait on GitHub's checks and runs, find and land pull requests.
+Push and open a change request, wait for its required checks, merge when the policy allows.
 
 ```text
 usage:
-  jst gh ci-wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
-  jst gh ci-status [PR|URL]
-  jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
-  jst gh pr-find [--head BRANCH] [--search TEXT] [--repo URL] [--wait S] [--state open|closed|merged|all]
-  jst gh pr-status [--pr PR|URL]
-  jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
-                [--no-wait] [--no-merge] [--dry-run] [--timeout S] [--interval S] [--lines N]
+  jst land [--change N|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT]
+           [--prepare | --confirm] [--plan] [--timeout S] [--interval S] [--lines N]
+  jst land status [--change N|URL]
+  jst land find (--head BRANCH | --search TEXT) [--repo URL] [--state STATE] [--wait S]
 
-  ci-wait [PR|URL]   wait until a pull request's checks settle (default: this branch's)
+Push the branch, open the change request, wait for the checks the base's rules require (and those
+land.checks lists), and merge at the head that was checked. The plan is printed first. The agent
+merges only when land.autonomy is merge-when-green and the change touches no human path
+(jackstay.json, .github/workflows/**, .claude/settings.json, and land.human_paths); any other
+change stops ready for a person, who merges it on the host's page or with --confirm. Checks that
+are not required are reported, never waited for and never blocking. Autonomy and checks are read
+from the base's jackstay.json; human paths from the base's and the change's. This checkout is
+never switched, pulled or rebased.
+
+  --change N|URL   an existing open change request from this branch
+  --title T        the new change request's title
+  --body-file F    its description, from a file
+  --card ID        the card the change is for (repeatable), or none with --reason
+  --reason TEXT    why the change is no card's work (with --card none)
+  --prepare        stop ready for a person, whatever land.autonomy says
+  --confirm        a person at a terminal types the change's number to merge it; the policy and
+                   checks are judged again after the number is typed
+  --plan           print the plan and stop
+  --timeout S      seconds to wait for the checks (github.wait.timeout_seconds, else 1800)
+  --interval S     seconds between looks (github.wait.interval_seconds, else 20)
+  --lines N        log lines shown per failed check (github.wait.log_lines, else 25)
+
+  status           where this branch and its change request stand
+  find             one change request by head branch or search text; none found is exit 1
+
+The last line on standard error is "jst land: STATE".
+exit: 0 landed (merged; with --confirm on a base with a merge queue, merged by the host's queue
+within the wait), or planned (--plan); 1 refused (a required check failed or was cancelled, a draft,
+a conflict, an operation the host does not offer); 2 invalid (usage, configuration, no account, no
+land section); 3 pending (checks or the queue still pending at the deadline); 4 moved (the head, the
+base, the test merge or the description moved: run it again); 5 unexpected (a host answer jackstay
+does not expect); 6 ready for a person (also every change on a base that requires the host's merge
+queue).
+
+example: jst land --title 'Fix the parser' --card W-012
+```
+
+### jst checks
+
+Wait on a pull request's checks and a workflow's runs on GitHub.
+
+```text
+usage:
+  jst checks wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
+  jst checks status [PR|URL]
+  jst checks run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
+
+  wait [PR|URL]      wait until a pull request's checks settle (default: this branch's)
     --timeout S      seconds to wait for every check
     --interval S     seconds between looks
     --lines N        log lines shown per failed check
     --any-head       follow the head when it moves, instead of ending with 4
-  ci-status [PR|URL] the checks as they are now; nothing is waited for
+  status [PR|URL]    the checks as they are now; nothing is waited for
   run-wait WORKFLOW  wait for a workflow run to complete
     --ref BRANCH|SHA the run's branch or commit (a SHA prefix of 7 or more); default the newest
     --repo URL       https://github.com/OWNER/REPO (default: this checkout's)
-    --timeout S, --interval S  as for ci-wait
+    --timeout S, --interval S  as for wait
     --appear S       seconds the run may take to be scheduled (default 120)
-  pr-find            one pull request; none found is exit 1
-    --head BRANCH    by its head branch
-    --search TEXT    by GitHub search text
-    --repo URL       as for run-wait
-    --wait S         seconds to wait for it to appear (default 0)
-    --state STATE    open (default), closed, merged or all
-  pr-status          where this branch and its pull request stand
-    --pr PR|URL      select an open pull request from this branch
-  pr-land            push, open the pull request, wait for its checks, squash-merge the head that
-                     was checked, delete the remote branch; the plan is printed first. It waits
-                     for the checks the base's rules require (every check when they require
-                     none); another check that fails stops it, one still pending does not
-    --pr PR|URL      select an existing open pull request from this branch
-    --title T        the new pull request's title
-    --body-file F    its description, from a file
-    --card ID        the card the change is for (repeatable), or none with --reason
-    --reason TEXT    why the change is no card's work (with --card none)
-    --no-push, --no-create, --no-wait, --no-merge  stop before that step
-    --dry-run        print the plan and stop
-    --timeout S, --interval S, --lines N  as for ci-wait
 
 exit: 0 fine; 1 not fine, the reason printed; 2 a bad request (also no account, a wrong login, a
-host that is not github.com); 3 still pending at the deadline (for ci-status: pending, or no check
+host that is not github.com); 3 still pending at the deadline (for status: pending, or no check
 registered yet, at once); 4 the head moved while waiting or while the checks were read; 5 an
 external format is not what jackstay assumes.
 
-example: jst gh pr-land --title 'Fix the parser' --card W-012
-```
-
-### jst queue
-
-Local single-head merge candidate and manual handoff.
-
-```text
-usage: jst queue add --head REF [--pr NUMBER]
-       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
-
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
-prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
-and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
-required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
-handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
-requests a GitHub merge. After landing, reconcile checks the observed target tree.
-
-exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
-
-example: jst queue add --head refs/heads/my-change
-```
-
-### jst queue add
-
-Pin one head in the local merge queue.
-
-```text
-usage: jst queue add --head REF [--pr NUMBER]
-       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
-
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
-prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
-and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
-required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
-handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
-requests a GitHub merge. After landing, reconcile checks the observed target tree.
-
-exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
-
-example: jst queue add --head refs/heads/my-change
-```
-
-### jst queue handoff
-
-Verify freshness and show manual landing evidence.
-
-```text
-usage: jst queue add --head REF [--pr NUMBER]
-       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
-
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
-prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
-and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
-required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
-handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
-requests a GitHub merge. After landing, reconcile checks the observed target tree.
-
-exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
-
-example: jst queue add --head refs/heads/my-change
-```
-
-### jst queue prepare
-
-Build a candidate commit without changing refs.
-
-```text
-usage: jst queue add --head REF [--pr NUMBER]
-       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
-
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
-prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
-and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
-required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
-handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
-requests a GitHub merge. After landing, reconcile checks the observed target tree.
-
-exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
-
-example: jst queue add --head refs/heads/my-change
-```
-
-### jst queue reconcile
-
-Record the observed landing and compare its tree.
-
-```text
-usage: jst queue add --head REF [--pr NUMBER]
-       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
-
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
-prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
-and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
-required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
-handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
-requests a GitHub merge. After landing, reconcile checks the observed target tree.
-
-exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
-
-example: jst queue add --head refs/heads/my-change
-```
-
-### jst queue remove
-
-Empty the local queue without changing refs.
-
-```text
-usage: jst queue add --head REF [--pr NUMBER]
-       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
-
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
-prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
-and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
-required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
-handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
-requests a GitHub merge. After landing, reconcile checks the observed target tree.
-
-exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
-
-example: jst queue add --head refs/heads/my-change
-```
-
-### jst queue status
-
-Show the candidate and input freshness.
-
-```text
-usage: jst queue add --head REF [--pr NUMBER]
-       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
-
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
-prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
-and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
-required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
-handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
-requests a GitHub merge. After landing, reconcile checks the observed target tree.
-
-exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
-
-example: jst queue add --head refs/heads/my-change
-```
-
-### jst queue test
-
-Run the gate on the candidate and save counted evidence.
-
-```text
-usage: jst queue add --head REF [--pr NUMBER]
-       jst queue prepare | test | status | handoff | reconcile --commit SHA | remove
-
-The queue is enabled by queue.enabled and queue.base_ref in jackstay.json. It holds one head.
-prepare writes an unreachable Git candidate commit; test runs the project gate on a clean copy
-and requires counted portable receipts. With --pr, handoff reads current GitHub PR reviews,
-required checks and test-merge tree. Without --pr it is explicitly local-only. In both modes,
-handoff prints the candidate and evidence for a manual merge; it never changes a Git ref or
-requests a GitHub merge. After landing, reconcile checks the observed target tree.
-
-exit: 0 done; 1 no lane, conflict, failed gate or stale candidate; 2 invalid use or configuration.
-
-example: jst queue add --head refs/heads/my-change
+example: jst checks wait --timeout 1200
 ```
 
 ## Review
@@ -1047,7 +870,7 @@ Read local status across named repositories.
 ```text
 usage: jst workspace board [--json] [REPO...]
 
-Read a summary of each explicitly supplied Git checkout. Linked worktrees share queue and chat
+Read a summary of each explicitly supplied Git checkout. Linked worktrees share chat
 state; gate and receipt summaries are for the named checkout. No remote service is contacted.
 No message bodies, receipt contents, or card bodies are printed.
 At most 32 repositories may be supplied in one call. With none named, the repositories are the

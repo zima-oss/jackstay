@@ -35,7 +35,7 @@
   "agents": {
     "rules": [
       "`just gate` is this organisation's gate; `jst test gate` runs it and is what a pull request needs.",
-      "`jst gh pr-land` only where the project's own rules let a session merge."
+      "`jst land` merges only where `land.autonomy` lets a session merge; otherwise stop at ready for a person."
     ],
     "leave_out": ["owner"]
   }

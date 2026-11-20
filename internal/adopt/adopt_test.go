@@ -829,3 +829,15 @@ func TestNewerKeysAreRefusedForAProjectPinnedBefore060(t *testing.T) {
 		t.Fatalf("a key the file already has: %v", err)
 	}
 }
+
+// A project whose only enabling section is `land` still gets the workflow that runs `jst lint pr`
+// (docs/design/land.md section 3.3: rule D0 keeps jackstay.json alone in its pull request).
+func TestALandOnlyProjectGetsTheLintWorkflow(t *testing.T) {
+	var names []string
+	for _, template := range wantedTemplates(nil, map[string]any{"land": map[string]any{"autonomy": "merge-when-green"}}) {
+		names = append(names, template.Name)
+	}
+	if !slices.Contains(names, "card-line") {
+		t.Fatalf("a land-only project's workflows: %v", names)
+	}
+}
