@@ -176,7 +176,6 @@ func TestSandboxRepairRefusesUnsafeInputAndConcurrentEdit(t *testing.T) {
 	home := t.TempDir()
 	settings := filepath.Join(home, "settings.json")
 	stateHome := filepath.Join(home, ".jackstay")
-	grants := SandboxGrants(stateHome, nil)
 	for name, content := range map[string]string{
 		"malformed":        `{`,
 		"duplicate keys":   `{"sandbox":{"enabled":false,"enabled":true}}`,
@@ -189,7 +188,7 @@ func TestSandboxRepairRefusesUnsafeInputAndConcurrentEdit(t *testing.T) {
 			if err := os.WriteFile(settings, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, _, err := prepareSandbox(settings, stateHome, grants); err == nil {
+			if _, _, _, _, err := prepareSandbox(settings, stateHome, nil); err == nil {
 				t.Fatal("unsafe settings accepted")
 			}
 		})
@@ -200,7 +199,7 @@ func TestSandboxRepairRefusesUnsafeInputAndConcurrentEdit(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, "elsewhere"), settings); err != nil {
 		t.Fatal(err)
 	}
-	_, _, _, _, err := prepareSandbox(settings, stateHome, grants)
+	_, _, _, _, err := prepareSandbox(settings, stateHome, nil)
 	if err == nil || !strings.Contains(err.Error(), settings+" is a symbolic link (to "+filepath.Join(home, "elsewhere")+")") {
 		t.Fatalf("symlink settings: %v", err)
 	}
@@ -210,7 +209,7 @@ func TestSandboxRepairRefusesUnsafeInputAndConcurrentEdit(t *testing.T) {
 	if err := os.WriteFile(settings, []byte(`{"sandbox":{"enabled":true}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	original, replacement, mode, _, err := prepareSandbox(settings, stateHome, grants)
+	original, replacement, mode, _, err := prepareSandbox(settings, stateHome, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

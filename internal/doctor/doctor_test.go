@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/layout"
 	"github.com/zima-oss/jackstay/internal/supervise"
 	"github.com/zima-oss/jackstay/internal/telemetry"
@@ -288,13 +289,16 @@ func TestSandboxGrantsAndEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	projects := SandboxProjects(home, []string{"service", "app"})
-	if strings.Join(projects, ",") != "app,node,service" {
+	// Expected names are stored as marker names already: one with capitals stays as it is.
+	projects := SandboxProjects(home, []string{"service", "app", homedir.MarkerName("My App")})
+	wantProjects := []string{"app", "node", "service", homedir.MarkerName("My App")}
+	sort.Strings(wantProjects)
+	if strings.Join(projects, ",") != strings.Join(wantProjects, ",") {
 		t.Fatalf("projects %v", projects)
 	}
 	grants := SandboxGrants(home, []string{"app"})
 	want := []string{".all/telemetry", ".all/procs", ".all/session-chat", ".all/context-brief", ".all/heavy-suite.lock",
-		".all/heavy-suite.lock.queue", ".trash", "app/telemetry", "app/outputs", "app/ids"}
+		".all/heavy-suite.lock.queue", ".all/heavy-suite.lock.holder", ".trash", "app/telemetry", "app/outputs", "app/ids"}
 	if len(grants) != len(want) {
 		t.Fatalf("grants %v", grants)
 	}
@@ -323,6 +327,11 @@ func TestSandboxGrantsAndEvidence(t *testing.T) {
 	if !strings.Contains(exposed, filepath.Join(home, "app", "receipts")) || !strings.Contains(exposed, filepath.Join(home, ".all", "runs.jsonl")) ||
 		len(entries) != 1 || entries[0] != home || !strings.Contains(fix, "jst setup") {
 		t.Fatalf("the whole home: %q %q %v", exposed, fix, entries)
+	}
+	write(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": `+quoted(append(grants, home+"/app/receipts/*.json"))+`}}}`)
+	if exposed, _, entries := SandboxWritesEvidence(settings, home, []string{"app"}); !strings.Contains(exposed, "app/receipts") ||
+		len(entries) != 1 || entries[0] != home+"/app/receipts/*.json" {
+		t.Fatalf("an entry for files inside the receipts: %q %v", exposed, entries)
 	}
 	write(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": ["`+home+`"], "denyWrite": ["`+home+`/app/receipts", "`+home+`/app/gate-marks", "`+home+`/app/gate-bars", "`+home+`/app/reviews", "`+home+`/.all/runs.jsonl", "`+home+`/.all/reviews", "`+home+`/.all/review-pool", "`+home+`/.all/delivery", "`+home+`/.all/expected-projects"]}}}`)
 	if exposed, _, _ := SandboxWritesEvidence(settings, home, []string{"app"}); exposed != "" {

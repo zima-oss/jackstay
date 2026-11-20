@@ -178,7 +178,7 @@ func planSandbox(report Report, finding Finding) SetupItem {
 		return item
 	}
 	grants := SandboxGrants(stateHome, projects)
-	original, replacement, mode, change, err := prepareSandbox(item.Path, stateHome, grants)
+	original, replacement, mode, change, err := prepareSandbox(item.Path, stateHome, projects)
 	switch {
 	case errors.Is(err, errNothingToChange):
 		item.Fix = finding.Fix

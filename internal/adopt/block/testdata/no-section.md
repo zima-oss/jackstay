@@ -5,6 +5,8 @@
 
 - **Run tests**: `jst test -- COMMAND` runs any test command, judged and recorded; only `passed`
   is a pass — read the last `jst test:` line. After a failure, `jst test last`, not a rerun.
+  A run that keeps receipts, the gate and `jst review` record evidence the agent sandbox may
+  only read: when one says to, run it outside the sandbox.
 - **Wait** for a process, a file or a log line: `jst wait … --timeout S`, never a `sleep` loop.
 - **Run something in the background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or
   `nohup`; `jst procs` lists them, `jst procs stop NAME` stops yours.

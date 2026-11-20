@@ -76,7 +76,8 @@ var items = []item{
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
 		"- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the\n" +
 			"  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.\n" +
-			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
+			"  `jst review check BASE..REV --task NAME` checks the saved round. It records the round, which the\n" +
+			"  agent sandbox may only read: run it outside the sandbox.")},
 	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
 		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
 			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
@@ -138,7 +139,7 @@ func testText(config map[string]any) string {
 	scopes := section(section(config, "test"), "scopes")
 	if len(scopes) == 0 {
 		return "- **Run tests**: `jst test -- COMMAND` runs any test command, judged and recorded; only `passed`\n" +
-			"  is a pass — read the last `jst test:` line. After a failure, `jst test last`, not a rerun."
+			"  is a pass — read the last `jst test:` line. After a failure, `jst test last`, not a rerun.\n" + evidenceText
 	}
 	text := "- **Run tests**: `jst test <scope>`; `jst test list` shows the scopes and when each is required.\n" +
 		"  Only `passed` is a pass — read the last `jst test:` line. After a failure, `jst test last`, not\n" +
@@ -150,8 +151,12 @@ func testText(config map[string]any) string {
 	if section(section(config, "test"), "selection") != nil {
 		text += "\n  Preview path-based selection with `jst test plan changed --base REF`."
 	}
-	return text + " No scope fits: `jst test -- COMMAND`."
+	return text + " No scope fits: `jst test -- COMMAND`.\n" + evidenceText
 }
+
+// evidenceText says where the commands that record evidence run (#59).
+const evidenceText = "  A run that keeps receipts, the gate and `jst review` record evidence the agent sandbox may\n" +
+	"  only read: when one says to, run it outside the sandbox."
 
 func guardText(config map[string]any) string {
 	text := "- **The guard** refuses destructive commands and names what to run instead: run that, never a\n" +

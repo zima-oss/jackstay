@@ -31,8 +31,9 @@ var errNothingToChange = errors.New("nothing to change")
 // entries naming the jackstay home itself and adds each grant not yet covered. Every other key and
 // value stays, in its order (the ordered model adopt edits settings with). A deny entry is an
 // owner decision, never something setup removes or overrides.
-func prepareSandbox(settingsPath, stateHome string, grants []string) ([]byte, []byte, os.FileMode, sandboxChange, error) {
+func prepareSandbox(settingsPath, stateHome string, projects []string) ([]byte, []byte, os.FileMode, sandboxChange, error) {
 	var change sandboxChange
+	grants := SandboxGrants(stateHome, projects)
 	original, mode, err := readProfile(settingsPath)
 	if err != nil {
 		return nil, nil, 0, change, err
@@ -93,8 +94,8 @@ func prepareSandbox(settingsPath, stateHome string, grants []string) ([]byte, []
 			kept = append(kept, entry)
 		}
 	}
-	for _, evidence := range sandboxEvidence(stateHome, nil) {
-		if entry := covering(kept, realPath(evidence)); entry != "" && covering(denied, realPath(evidence)) == "" {
+	for _, evidence := range sandboxEvidence(stateHome, projects) {
+		if entry := exposing(kept, realPath(evidence)); entry != "" && covering(denied, realPath(evidence)) == "" {
 			change.Kept = appendOnce(change.Kept, entry)
 		}
 	}
@@ -163,11 +164,12 @@ func sandboxDiff(path string, change sandboxChange) string {
 	return diff.String()
 }
 
-// makeGrants makes each grant before the settings name it (a folder, or the lock file empty),
+// makeGrants makes each grant before the settings name it (a folder, or the lock and its holder
+// note as empty files),
 // so a sandbox that binds paths finds them in place.
 func makeGrants(grants []string) error {
 	for _, grant := range grants {
-		if strings.HasSuffix(grant, ".lock") {
+		if strings.HasSuffix(grant, ".lock") || strings.HasSuffix(grant, ".holder") {
 			if err := os.MkdirAll(filepath.Dir(grant), 0o700); err != nil {
 				return err
 			}

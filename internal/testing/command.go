@@ -387,9 +387,13 @@ func (did *ran) finish(outcome string, status int, more map[string]any, words st
 			lines, extra := receipts.NotableLines(did.kept.Path, did.veto)
 			receipts.WriteNotable(did.stderr, "jst test: ", lines, extra)
 		}
-		if whole {
+		switch {
+		case whole && written:
 			did.say("the whole output: %s  (`jst test last` shows this again)", did.kept.Path)
-		} else {
+		case whole:
+			// Without its run-log line (inside the agent sandbox, say) `jst test last` cannot find it.
+			did.say("the whole output: %s", did.kept.Path)
+		default:
 			did.say("the kept output is not whole (writing it failed): %s", did.kept.Path)
 		}
 	}

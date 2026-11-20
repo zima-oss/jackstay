@@ -25,7 +25,8 @@ import (
 // serve`), so they need no grant.
 
 // sharedGrants are the paths under `<home>/.all` the sandbox may write.
-var sharedGrants = []string{"telemetry", "procs", "session-chat", "context-brief", "heavy-suite.lock", "heavy-suite.lock.queue"}
+var sharedGrants = []string{"telemetry", "procs", "session-chat", "context-brief", "heavy-suite.lock", "heavy-suite.lock.queue",
+	"heavy-suite.lock.holder"}
 
 // projectGrants are the paths under `<home>/<project>` the sandbox may write. A Swift run's
 // durations file is not one: it is replaced through a temporary file beside it, which would need
@@ -52,9 +53,10 @@ func SandboxProjects(home string, expectedProjects []string) []string {
 			}
 		}
 	}
-	for _, name := range expectedProjects {
-		if name != "" {
-			found[homedir.MarkerName(name)] = true
+	// The expected list holds marker names already (`jst doctor --expect` writes them so).
+	for _, marker := range expectedProjects {
+		if marker != "" {
+			found[marker] = true
 		}
 	}
 	names := make([]string, 0, len(found))
@@ -174,7 +176,7 @@ func SandboxWritesEvidence(settingsPath, home string, projects []string) (text, 
 	seen := map[string]bool{}
 	for _, evidence := range sandboxEvidence(home, projects) {
 		real := realPath(evidence)
-		entry := covering(rules.allow, real)
+		entry := exposing(rules.allow, real)
 		if entry == "" || covering(rules.deny, real) != "" {
 			continue
 		}
@@ -197,6 +199,15 @@ func SandboxWritesEvidence(settingsPath, home string, projects []string) (text, 
 		fmt.Sprintf("replace those entries with the folders jst needs; `jst setup` does it when an entry names the jackstay home "+
 			"itself, else narrow the entry in %s yourself", settingsPath),
 		entries
+}
+
+// exposing is the first allow entry that lets the sandbox write the evidence at real: one that
+// covers it, or one that reaches inside it (a pattern for its files).
+func exposing(allow []any, real string) string {
+	if entry := covering(allow, real); entry != "" {
+		return entry
+	}
+	return inside(allow, real)
 }
 
 // denied is the fix when a denyWrite entry stops jackstay's state. An entry may protect more than

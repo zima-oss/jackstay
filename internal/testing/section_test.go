@@ -3,11 +3,13 @@ package scopes
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/receipts"
 )
 
@@ -407,4 +409,28 @@ func TestPrerequisiteTimeoutDefaultsToAConstant(t *testing.T) {
 	if len(checks) != 2 || checks[0].timeout != config.TestRequiresTimeoutSeconds || checks[1].timeout != 7 {
 		t.Fatalf("unexpected timeouts: %+v", checks)
 	}
+}
+
+// A run that records reusable evidence does not start where it cannot write it (inside Claude
+// Code's sandbox, which may only read receipts, gate marks and bars): its failure could not undo an
+// earlier pass (#59).
+func TestARunThatCannotRecordItsEvidenceDoesNotStart(t *testing.T) {
+	w := newWorld(t, reuseSection(), reuseReceipts())
+	w.commit()
+	receiptsFolder := filepath.Join(w.repo.Home, homedir.MarkerName("demo"), "receipts")
+	if err := os.MkdirAll(receiptsFolder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(receiptsFolder, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(receiptsFolder, 0o700) })
+	w.expectStatus(w.jst("full"), statusRefused)
+	w.expectSaid("run it outside the sandbox")
+	w.expectCounters("full", 0)
+	if err := os.Chmod(receiptsFolder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	w.expectStatus(w.jst("full"), 0)
+	w.expectCounters("full", 1)
 }
