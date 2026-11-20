@@ -1993,6 +1993,7 @@ The last `jst test:` line on standard error names exactly one outcome:
 | `failed` | the command ended 0 and its output held a line its `veto` pattern names | 1 |
 | `nothing-run` | the command ended 0 but its output showed no test: not a pass, no receipt | 76 |
 | `unjudged` | the command ended 0 but its output could not be judged: it could not be read to its end, what it left could not be confirmed gone, or the evidence group matched something that is no number. Not a pass, no receipt | 77 |
+| `passed-on-retry` | a structured report shows every test passed, but at least one only after its runner retried it (Surefire's `flakyFailure`/`flakyError`, a Jest assertion with more than one invocation). Not a clean pass, no receipt; a gate step with it fails the gate | 78 |
 | `stopped` | `jst test` was asked to stop (SIGTERM, SIGINT, SIGHUP, SIGQUIT) after the command had started. Logged with the signal; no receipt | it ends by that signal |
 | `stopped-waiting` | the same while it waited for the lock. Nothing was run | it ends by that signal |
 | `gave-up` | only with the lock on: it was not had within `--wait`. Nothing was run | 75 |
@@ -2002,7 +2003,7 @@ The last `jst test:` line on standard error names exactly one outcome:
 | `resumed`, `refused` | `jst test gate --resume` only ([testing.md](testing.md) section 5) | 0, 2 |
 
 **An agent reads the last `jst test:` line**, not the status and not an earlier line: a command may
-itself end with 2, 75, 76 or 77, and then the line says `failed` with that status. When a line of
+itself end with 2, 75, 76, 77 or 78, and then the line says `failed` with that status. When a line of
 the record could not be written, a `WARNING` line says so on standard error just before the outcome
 line, every time; it never turns a pass into a failure.
 

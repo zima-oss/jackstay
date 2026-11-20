@@ -25,6 +25,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 )
 
@@ -259,7 +260,10 @@ func move(folder, given, project, session string, keepDays int, now time.Time, e
 		return entry, nil
 	}
 	entry.Held = false
-	if err := writeRecord(place, entry); err != nil {
+	if err := writeRecord(place, entry); errors.Is(err, durable.ErrNotSynced) {
+		// The record is released, and prunable, but a crash may bring the held one back.
+		return entry, fmt.Errorf("the file was kept as %s, but its record may not survive a crash (`jst trash restore %s`): %w", entry.ID, entry.ID, err)
+	} else if err != nil {
 		entry.Held = true // the record on disk still holds it: kept until restored, never lost
 	}
 	return entry, nil
@@ -300,16 +304,15 @@ func newEntry(folder string, entry *Entry, now time.Time) (string, *os.File, err
 	return place, locked, nil
 }
 
+// writeAtomic is durable.WriteAtomic; a test makes it fail after the rename.
+var writeAtomic = durable.WriteAtomic
+
 func writeRecord(place string, entry Entry) error {
 	record, err := json.MarshalIndent(entry, "", "  ")
 	if err != nil {
 		return err
 	}
-	temporary := filepath.Join(place, "entry.json.new")
-	if err := os.WriteFile(temporary, append(record, '\n'), 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temporary, filepath.Join(place, "entry.json"))
+	return writeAtomic(filepath.Join(place, "entry.json"), append(record, '\n'), 0o600, 0)
 }
 
 // Keep makes an entry from bytes: an item that is not on disk (the staged version of a file, kept

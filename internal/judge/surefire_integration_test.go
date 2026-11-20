@@ -31,8 +31,11 @@ func TestSurefireJUnitProducer(t *testing.T) {
 		status           int
 		reports          []string
 		counted, skipped int
+		retried          int
 		outcome          Outcome
 		unjudged         bool
+		// rerun runs the JUnit 5 project with surefire.rerunFailingTestsCount=1.
+		rerun bool
 	}{
 		{name: "pass", selection: "PassingTest", reports: []string{"PassingTest"}, counted: 1, skipped: 1, outcome: Passed},
 		{name: "fail", selection: "FailingTest", status: 1, reports: []string{"FailingTest"}, counted: 1, outcome: Failed},
@@ -40,10 +43,18 @@ func TestSurefireJUnitProducer(t *testing.T) {
 		{name: "multiple", reports: []string{"PassingTest-pass", "SkippedTest-skip"}, counted: 1, skipped: 2, outcome: Passed},
 		{name: "retry", selection: "RetryTest", reports: []string{"RetryTest"}, unjudged: true, outcome: Unjudged},
 		{name: "no-match", selection: "DoesNotExist", empty: true},
+		{name: "passed-on-rerun", selection: "FlakyTest", reports: []string{"FlakyTest"}, counted: 2, retried: 1,
+			outcome: PassedOnRetry, rerun: true},
+		{name: "failed-on-rerun", selection: "AlwaysFailingTest", status: 1, reports: []string{"AlwaysFailingTest"},
+			counted: 1, outcome: Failed, rerun: true},
 	} {
 		t.Run(sample.name, func(t *testing.T) {
 			project := t.TempDir()
-			if err := os.CopyFS(project, os.DirFS(filepath.Join("testdata", "surefire", "project"))); err != nil {
+			source := "project"
+			if sample.rerun {
+				source = "rerun-project"
+			}
+			if err := os.CopyFS(project, os.DirFS(filepath.Join("testdata", "surefire", source))); err != nil {
 				t.Fatal(err)
 			}
 			selections := []string{sample.selection}
@@ -61,6 +72,9 @@ func TestSurefireJUnitProducer(t *testing.T) {
 				}
 				if sample.empty {
 					arguments = append(arguments, "-Dsurefire.failIfNoSpecifiedTests=false")
+				}
+				if sample.rerun {
+					arguments = append(arguments, "-Dsurefire.rerunFailingTestsCount=1")
 				}
 				context, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 				output, err := exec.CommandContext(context, maven, arguments...).CombinedOutput()
@@ -114,6 +128,7 @@ func TestSurefireJUnitProducer(t *testing.T) {
 				}
 				total.Counts.Counted += facts.Counts.Counted
 				total.Counts.Skipped += facts.Counts.Skipped
+				total.Retried += facts.Retried
 				if facts.Failure != "" {
 					total.Failure = facts.Failure
 				}
@@ -121,8 +136,8 @@ func TestSurefireJUnitProducer(t *testing.T) {
 			if sample.unjudged {
 				return
 			}
-			if total.Counts.Counted != sample.counted || total.Counts.Skipped != sample.skipped {
-				t.Fatalf("Surefire facts %+v, want counted=%d skipped=%d", total, sample.counted, sample.skipped)
+			if total.Counts.Counted != sample.counted || total.Counts.Skipped != sample.skipped || total.Retried != sample.retried {
+				t.Fatalf("Surefire facts %+v, want counted=%d skipped=%d retried=%d", total, sample.counted, sample.skipped, sample.retried)
 			}
 			if verdict := Evaluate(total, End{Status: sample.status}, ScopePolicy); verdict.Outcome != sample.outcome {
 				t.Fatalf("Surefire verdict %+v", verdict)

@@ -97,6 +97,9 @@ func defaultReviewer(name string) ReviewerSettings {
 		Isolation: append([]string(nil), DefaultIsolation...)}
 }
 
+// DefaultReviewer is the reviewer a round runs when neither --reviewer nor `review.use` names one.
+const DefaultReviewer = "codex"
+
 // Defaults are the settings of a project with no `review` section.
 func Defaults() Settings {
 	reviewers := make(map[string]ReviewerSettings, len(KnownReviewers))
@@ -105,6 +108,7 @@ func Defaults() Settings {
 	}
 	return Settings{
 		Pool:             PoolSettings{Accepting: true, HistoryDays: 30, MaxPending: 32, MaxAttempts: 5, RetryInitialSeconds: 30, RetryCapSeconds: 900},
+		Use:              []string{DefaultReviewer},
 		Reviewers:        reviewers,
 		Severities:       []string{"blocker", "major", "minor"},
 		Blocking:         []string{"blocker"},
@@ -314,7 +318,7 @@ func isolationProblems(name string, words []string) []string {
 		word := words[index]
 		flag, _, _ := strings.Cut(word, "=")
 		switch {
-		case slices.Contains(ownedWords, flag):
+		case slices.Contains(ownedWords, flag), attachedShortOption(word):
 			found = append(found, fmt.Sprintf("`review.reviewers.%s.isolation` has %q, which jackstay sets itself or which would undo read-only", name, word))
 		case !strings.HasPrefix(word, "-"):
 			found = append(found, fmt.Sprintf("`review.reviewers.%s.isolation` has %q, which is not an option (a prompt?)", name, word))
@@ -334,6 +338,12 @@ func isolationProblems(name string, words []string) []string {
 		}
 	}
 	return found
+}
+
+// attachedShortOption reports a short owned flag written with its value attached (`-sVALUE`,
+// `-pPROFILE`, `-mMODEL`), which the cut at `=` above does not see.
+func attachedShortOption(word string) bool {
+	return len(word) > 2 && word[0] == '-' && word[1] != '-' && slices.Contains(ownedWords, word[:2])
 }
 
 // policyID records the configuration that decides what a round reviews and what blocks.

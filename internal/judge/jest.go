@@ -73,7 +73,8 @@ func readJestSelected(report io.Reader, selection *JestSelection) Facts {
 	}
 	var passed, failed, pending, todo int
 	var passedSuites, failedSuites, pendingSuites int
-	var retried, wrongSelection bool
+	var retried int
+	var wrongSelection bool
 	var selectedSuites, selectedCases int
 	for _, suite := range saved.Suites {
 		if suite.Assertions == nil {
@@ -96,7 +97,14 @@ func readJestSelected(report io.Reader, selection *JestSelection) Facts {
 				if *assertion.Invocations < 1 {
 					return invalid("the Jest report contains an invalid invocation count")
 				}
-				retried = retried || *assertion.Invocations > 1
+				if *assertion.Invocations > 1 {
+					switch assertion.Status {
+					case "passed":
+						retried++
+					case "pending", "todo":
+						return invalid("a skipped Jest assertion reports repeated invocations")
+					}
+				}
 			}
 			if selection != nil {
 				if selectedFile && assertion.FullName == selection.Name {
@@ -142,9 +150,7 @@ func readJestSelected(report io.Reader, selection *JestSelection) Facts {
 		return invalid("the Jest JSON report totals disagree with its assertion results")
 	}
 	facts.Counts.Counted, facts.Counts.Skipped = passed+failed, pending+todo
-	if retried {
-		facts.Unjudged = append(facts.Unjudged, "the Jest report includes retried assertions without intermediate attempt evidence")
-	}
+	facts.Retried = retried
 	if wrongSelection || selectedSuites > 1 || selectedCases > 1 {
 		facts.Unjudged = append(facts.Unjudged, "the Jest report does not uniquely match the selected file and assertion")
 	}
