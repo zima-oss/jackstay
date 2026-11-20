@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
@@ -169,7 +170,7 @@ func toolDefinitions() []map[string]any {
 		{"chat.reply", "Reply to a message addressed to this session", map[string]any{"message_id": stringField(64), "body": stringField(16384), "idempotency_key": stringField(128)}, []string{"message_id", "body", "idempotency_key"}, false},
 		{"chat.ack", "Acknowledge one message addressed to this session", map[string]any{"message_id": stringField(64)}, []string{"message_id"}, false},
 		{"review.submit", "Start `jst review BASE..HEAD` in the background on pinned commits of this repository; the result comes to this session as a review.finished chat message. An equal review already running is joined", map[string]any{"base": stringField(200), "head": stringField(200), "task": stringField(200), "reviewers": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"codex", "claude-code"}}, "minItems": 1, "maxItems": 2}}, []string{"base", "head", "task", "reviewers"}, false},
-		{"review.status", "Where a review task of this repository stands: the review running in the background, and the newest round or attempt", map[string]any{"task": stringField(200)}, []string{"task"}, true},
+		{"review.status", "Where a task's background reviews in this repository stand: the one running, and how the latest ended (outcome, round, report)", map[string]any{"task": stringField(200)}, []string{"task"}, true},
 	}
 	result := make([]map[string]any, 0, len(fields))
 	for _, entry := range fields {
@@ -284,9 +285,16 @@ func (server *Server) call(raw json.RawMessage) any {
 		if err == nil && common != server.store.commonDirectory {
 			err = errors.New("MCP session repository changed")
 		}
+		if err == nil && (strings.TrimSpace(arguments.Base) == "" || strings.TrimSpace(arguments.Head) == "" ||
+			strings.TrimSpace(arguments.Task) == "" || len(arguments.Reviewers) == 0 || len(arguments.Reviewers) > 2) {
+			err = errors.New("review.submit needs base, head, task and one or two reviewers")
+		}
 		if err == nil {
 			var background review.Background
 			background, err = reviewBackground(here)
+			if err == nil {
+				err = sameRepository(ctx, background.RepositoryRoot, server.store.commonDirectory)
+			}
 			if err == nil {
 				var submitted review.Submitted
 				submitted, err = background.Submit(ctx, review.Submission{Revision: arguments.Base + ".." + arguments.Head,
@@ -301,18 +309,22 @@ func (server *Server) call(raw json.RawMessage) any {
 		if err != nil {
 			break
 		}
+		if strings.TrimSpace(arguments.Task) == "" {
+			err = errors.New("review.status needs a task")
+			break
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		var background review.Background
 		background, err = reviewBackground(here)
 		if err == nil {
+			err = sameRepository(ctx, background.RepositoryRoot, server.store.commonDirectory)
+		}
+		if err == nil {
 			var status review.Status
 			status, err = background.StatusOf(arguments.Task)
-			if status.Running != nil {
-				running := publicRequest(*status.Running)
-				result = map[string]any{"running": running, "newest": status.Newest, "outcome": status.Outcome, "blocks": status.Blocks, "report": status.Report}
-			} else {
-				result = map[string]any{"newest": status.Newest, "outcome": status.Outcome, "blocks": status.Blocks, "report": status.Report}
-			}
+			result = publicStatus(status)
 		}
+		cancel()
 	default:
 		return toolFailure("unknown tool")
 	}
@@ -324,6 +336,35 @@ func (server *Server) call(raw json.RawMessage) any {
 		return toolFailure("chat result exceeds its size limit; retry with a smaller inbox limit")
 	}
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": string(encoded)}}, "structuredContent": result}
+}
+
+// sameRepository refuses a review whose project root is in another repository than the chat's
+// session: a nested repository without a jackstay.json of its own would review its parent.
+func sameRepository(ctx context.Context, root, commonDirectory string) error {
+	common, err := (gitcli.Git{Dir: root}).CommonDir(ctx)
+	if err == nil {
+		common, err = filepath.EvalSymlinks(common)
+	}
+	if err != nil {
+		return err
+	}
+	if common != commonDirectory {
+		return errors.New("the review's project is in another repository than this chat session; open the chat in that repository")
+	}
+	return nil
+}
+
+// publicStatus is a task's status without the sessions subscribed to its requests.
+func publicStatus(status review.Status) map[string]any {
+	answer := map[string]any{"report": status.Report}
+	if status.Running != nil {
+		answer["running"] = publicRequest(*status.Running)
+	}
+	if last := status.Last; last != nil {
+		answer["last"] = map[string]any{"request": publicRequest(last.Request), "lost": last.Lost, "status": last.Status,
+			"outcome": last.Outcome, "next": last.Next, "round": last.Round, "folder": last.Folder, "ended": last.Ended}
+	}
+	return answer
 }
 
 // publicRequest leaves out the other sessions subscribed to a request.
