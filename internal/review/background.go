@@ -433,6 +433,15 @@ func BackgroundAt(folder, executable string) (Background, error) {
 		Store: store, Executable: executable, Launch: launchDetached, Now: time.Now, Started: 10 * time.Second}, nil
 }
 
+// verified is end with its round and folder only while the folder still holds this request's
+// attempt: a folder pruned and taken again by a later review is not this end's.
+func (store Store) verified(end End) End {
+	if end.Folder != "" && !store.folderOf(end.Folder, end.Request.ID) {
+		end.Folder, end.Round = "", 0
+	}
+	return end
+}
+
 // folderOf says whether the round or attempt folder was made by request id.
 func (store Store) folderOf(folder, id string) bool {
 	var attempt AttemptRecord
@@ -489,11 +498,7 @@ func (background Background) StatusOf(task string) (Status, error) {
 	}
 	for index := len(ends) - 1; index >= 0; index-- {
 		if background.ours(ends[index].Request) {
-			last := ends[index]
-			// A folder pruned and taken again by a later review is not this end's: say none.
-			if last.Folder != "" && !background.Store.folderOf(last.Folder, last.Request.ID) {
-				last.Folder, last.Round = "", 0
-			}
+			last := background.Store.verified(ends[index])
 			status.Last = &last
 			if last.Folder != "" {
 				status.Report = filepath.Join(last.Folder, "report.md")

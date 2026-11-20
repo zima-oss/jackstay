@@ -293,7 +293,7 @@ func (server *Server) call(raw json.RawMessage) any {
 			var background review.Background
 			background, err = reviewBackground(here)
 			if err == nil {
-				err = sameRepository(ctx, background.RepositoryRoot, server.store.commonDirectory)
+				err = sameRepository(ctx, background.RepositoryRoot, server.store)
 			}
 			if err == nil {
 				var submitted review.Submitted
@@ -317,7 +317,7 @@ func (server *Server) call(raw json.RawMessage) any {
 		var background review.Background
 		background, err = reviewBackground(here)
 		if err == nil {
-			err = sameRepository(ctx, background.RepositoryRoot, server.store.commonDirectory)
+			err = sameRepository(ctx, background.RepositoryRoot, server.store)
 		}
 		if err == nil {
 			var status review.Status
@@ -340,15 +340,18 @@ func (server *Server) call(raw json.RawMessage) any {
 
 // sameRepository refuses a review whose project root is in another repository than the chat's
 // session: a nested repository without a jackstay.json of its own would review its parent.
-func sameRepository(ctx context.Context, root, commonDirectory string) error {
+func sameRepository(ctx context.Context, root string, store Store) error {
 	common, err := (gitcli.Git{Dir: root}).CommonDir(ctx)
-	if err == nil {
-		common, err = filepath.EvalSymlinks(common)
-	}
 	if err != nil {
 		return err
 	}
-	if common != commonDirectory {
+	// The same identity the chat's namespace was made from: the folder and its incarnation, so a
+	// repository replaced in place under a connected session is another one.
+	now, err := StoreFor(common, store.policy)
+	if err != nil {
+		return err
+	}
+	if now.namespace != store.namespace {
 		return errors.New("the review's project is in another repository than this chat session; open the chat in that repository")
 	}
 	return nil
