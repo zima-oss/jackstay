@@ -559,6 +559,10 @@ scripts events, deadlines, failures and auth errors. Cross-process tests cover t
 an unwritable `auth.json` gives exit 6; integration tests (real git) cover the pinned tree. A real
 Codex round is run by hand, outside the gate.
 
+The measurement of the wrapper against direct calls, outside the gate too: seeded defects over
+three ranges, recall, precision, time per stage, model and cost (`just review-bench`,
+[bench/review](../../bench/review/README.md); the runs before 0.6.0 are in its `results/`).
+
 ## 9. What it cannot see, and limits
 
 - Whether a reviewer's ratings are right: jackstay computes from them; the session checks them (W-048).

@@ -25,9 +25,6 @@ func (transaction *transaction) message(id string) (message, error) {
 		return found, err
 	}
 	if err := readRecord(transaction.place.envelope(id), envelopeBound, &found.envelope); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return found, errNoDelivery // a removal under way (section 7.3)
-		}
 		return found, err
 	}
 	return found, nil
