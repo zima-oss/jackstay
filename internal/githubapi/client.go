@@ -1,6 +1,6 @@
 // Package githubapi is jackstay's one GitHub client (docs/design/implementation.md, section 8.1; W-050):
 // go-github with the project's own account's token, reads retried and writes never, GraphQL for
-// checks and search. `jst release`, `jst lint pr`, `jst gh` and `jst tidy` ask GitHub through it; it
+// checks and search. `jst release`, `jst lint pr`, `jst land`, `jst checks` and `jst tidy` ask GitHub through it; it
 // does not read git remotes (the caller passes owner/name). githubfake is its fake for tests.
 package githubapi
 
@@ -203,12 +203,12 @@ type MergeResult struct {
 	Message string
 }
 
-// Merge is a squash merge of the pull request whose head must still be headSHA, with the commit's
-// title and body as given (an empty body stays empty); a write, never retried: an answer lost
-// after it is settled by reading the pull request again.
-func (client *Client) Merge(ctx context.Context, number int, headSHA, title, body string) (MergeResult, error) {
+// Merge merges the pull request by method ("squash", "merge" or "rebase") while its head is still
+// headSHA, with the commit's title and body as given (an empty body stays empty); a write, never
+// retried: an answer lost after it is settled by reading the pull request again.
+func (client *Client) Merge(ctx context.Context, number int, method, headSHA, title, body string) (MergeResult, error) {
 	result, _, err := client.api.PullRequests.Merge(ctx, client.owner, client.name, number, body, &github.PullRequestOptions{
-		CommitTitle: title, SHA: headSHA, MergeMethod: "squash", DontDefaultIfBlank: true,
+		CommitTitle: title, SHA: headSHA, MergeMethod: method, DontDefaultIfBlank: true,
 	})
 	if err != nil {
 		return MergeResult{}, err

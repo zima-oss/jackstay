@@ -9,8 +9,6 @@
   Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
 - **Share a counted pass**: `jst receipts export KEY`. Check one with `jst receipts verify`, taking
   the expected digest, revision and key from a trusted source, never from the receipt.
-- **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity
-  independently of the uploaded receipt and attestation.
 - **Wait** for a process, a file or a log line with `jst wait … --timeout S`, never a `sleep` loop.
 - **Background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or `nohup`; `jst procs stop N`
   stops it.
@@ -21,9 +19,13 @@
   `git checkout -- PATH`; `jst trash restore` brings them back.
 - **When the guard refuses** a command, run what it names instead, never a workaround. Read a
   `jst guard let this command run, with a warning` line before going on. Its rules: `jackstay.json` (`guard`).
-- **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
-  `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
-  `jackstay.json` (`github.account`).
+- **Land a change**: `jst land --title T` pushes, opens the change request, waits for the required
+  checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,
+  `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
+  (`gh pr merge` is refused), never run `--confirm`.
+- **Checks**: `jst checks wait` / `jst checks status` (a change request's checks) and
+  `jst checks run-wait` (a workflow's run). jackstay acts as the account in `jackstay.json`
+  (`github.account`).
 - **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`
   or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.
 - **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
@@ -44,8 +46,6 @@
 - **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Share an adoption profile** with `jst profile export`; verify its digest before adopting it.
-- **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`
-  for the operator's landing decision. After landing, run `jst queue reconcile --commit SHA`.
 - **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools
   to send a request, read your inbox and acknowledge messages you process.
 - **Deliver chat to managed Codex**: `jst chat codex-bridge` uses the owner's local socket, thread and session.

@@ -47,6 +47,7 @@ type BodyEdit struct {
 // MergeCall is a recorded Merge.
 type MergeCall struct {
 	Number         int
+	Method         string
 	HeadSHA        string
 	Title, Message string
 }
@@ -60,6 +61,12 @@ type Fake struct {
 	created []githubapi.NewPullRequest
 	edits   []BodyEdit
 	merges  []MergeCall
+	queued  []EnqueueCall
+}
+
+// EnqueueCall is a recorded Enqueue.
+type EnqueueCall struct {
+	PullRequestID, ExpectedHead string
 }
 
 // New is a fake with nothing programmed.
@@ -136,6 +143,15 @@ func (fake *Fake) OnMerge(numberOfPull int, answers ...Result[githubapi.MergeRes
 	program(fake, "Merge", strconv.Itoa(numberOfPull), answers)
 }
 
+// OnEnqueue programs Enqueue(pullRequestID): nil for success.
+func (fake *Fake) OnEnqueue(pullRequestID string, errs ...error) {
+	answers := make([]Result[struct{}], 0, len(errs))
+	for _, err := range errs {
+		answers = append(answers, Result[struct{}]{Err: err})
+	}
+	program(fake, "Enqueue", pullRequestID, answers)
+}
+
 // OnWorkflowRuns programs WorkflowRuns(filter).
 func (fake *Fake) OnWorkflowRuns(filter githubapi.RunFilter, answers ...Result[[]githubapi.WorkflowRun]) {
 	program(fake, "WorkflowRuns", filterKey(filter), answers)
@@ -194,11 +210,20 @@ func (fake *Fake) EditPullRequestBody(_ context.Context, numberOfPull int, body 
 }
 
 // Merge records the merge and answers as githubapi.Client.Merge.
-func (fake *Fake) Merge(_ context.Context, numberOfPull int, headSHA, title, body string) (githubapi.MergeResult, error) {
+func (fake *Fake) Merge(_ context.Context, numberOfPull int, method, headSHA, title, body string) (githubapi.MergeResult, error) {
 	fake.mutex.Lock()
-	fake.merges = append(fake.merges, MergeCall{Number: numberOfPull, HeadSHA: headSHA, Title: title, Message: body})
+	fake.merges = append(fake.merges, MergeCall{Number: numberOfPull, Method: method, HeadSHA: headSHA, Title: title, Message: body})
 	fake.mutex.Unlock()
 	return next[githubapi.MergeResult](fake, "Merge", strconv.Itoa(numberOfPull))
+}
+
+// Enqueue records the request and answers as githubapi.Client.Enqueue.
+func (fake *Fake) Enqueue(_ context.Context, pullRequestID, expectedHead string) error {
+	fake.mutex.Lock()
+	fake.queued = append(fake.queued, EnqueueCall{PullRequestID: pullRequestID, ExpectedHead: expectedHead})
+	fake.mutex.Unlock()
+	_, err := next[struct{}](fake, "Enqueue", pullRequestID)
+	return err
 }
 
 // WorkflowRuns answers as githubapi.Client.WorkflowRuns.
@@ -240,6 +265,13 @@ func (fake *Fake) BodyEdits() []BodyEdit {
 	fake.mutex.Lock()
 	defer fake.mutex.Unlock()
 	return append([]BodyEdit(nil), fake.edits...)
+}
+
+// Enqueues is every Enqueue, in order.
+func (fake *Fake) Enqueues() []EnqueueCall {
+	fake.mutex.Lock()
+	defer fake.mutex.Unlock()
+	return append([]EnqueueCall(nil), fake.queued...)
 }
 
 // Merges is every Merge, in order.

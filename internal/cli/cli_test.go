@@ -108,3 +108,20 @@ func TestHelpFlags(t *testing.T) {
 		}
 	}
 }
+
+// A command removed in 0.6.0 is unknown: the error names its replacement and nothing runs.
+func TestRemovedCommandsNameTheirReplacement(t *testing.T) {
+	cases := map[string][]string{
+		"`jst gh pr-land` was removed in 0.6.0: use `jst land`":        {"gh", "pr-land", "--dry-run"},
+		"`jst gh ci-wait` was removed in 0.6.0: use `jst checks wait`": {"gh", "ci-wait", "12"},
+		"`jst gh` was removed in 0.6.0":                                {"gh"},
+		"`jst queue` was removed in 0.6.0":                             {"queue", "status"},
+		"`jst receipts verify-ci` was removed in 0.6.0":                {"receipts", "verify-ci"},
+	}
+	for want, args := range cases {
+		var stdout, stderr strings.Builder
+		if code := Dispatch(args, nil, &stdout, &stderr); code != 2 || stdout.Len() != 0 || !strings.Contains(stderr.String(), want) {
+			t.Errorf("%v: %d %q, want %q", args, code, stderr.String(), want)
+		}
+	}
+}
