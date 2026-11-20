@@ -164,9 +164,10 @@ optional check does not block. When the rules require no check and `land.checks`
 not a gate for that base, so `jst land` stops ready for a person. When the rules cannot be read, the
 checks in `land.checks` are required; with none listed, it stops ready for a person.
 
-Where the base requires a merge queue, `jst land` hands the change to the host's queue. While it
-waits there, `jst land` judges the base's policy again at each new tip; a base that no longer lets
-the agent merge it takes the change out of the queue and stops ready for a person.
+Where the base requires a merge queue, the agent does not queue the change: the host's queue merges
+later, on a base jackstay has not judged, so `jst land` stops ready for a person. A person queues it
+on the host's page, or with `jst land --confirm`, which puts it in the queue at the head that was
+checked and waits for it to merge.
 
 ### The last line
 
@@ -243,9 +244,9 @@ any failing check stopped `pr-land`.
 |---|---|
 | `jst checks`: set github.account in jackstay.json | No account configured. |
 | Exit 2: the login is not the account | `gh` holds a token under a stale name; sign in again. |
-| `jst land` refuses before pushing | You are on the default branch, the tree is dirty, or a new change request has no `--title`. In a project with `cards`, the description of a non-exempt branch has no valid `Card:` line ([records](records.md)). |
+| `jst land` refuses before pushing | You are on the default branch, the tree is dirty, or a new change request has no `--title`. With `--card`, the line is written into the description; whether it is valid is the required `card-line` check's to say ([records](records.md)). |
 | `jst land: ready for a person` | The change touches a human path, the project is `prepare`, or the base requires no check. A person merges it on the host or with `jst land --confirm`. |
-| `jst land: pending` after merging was asked | The host's merge queue holds the change; the branch is kept. |
+| `jst land: pending` after `--confirm` queued it | The host's merge queue holds the change; the branch is kept. |
 | `jst checks wait` exit 4 | Someone pushed while you waited. Wait again, or use `--any-head`. |
 | `jst sync` exit 1 naming an ignored file | The merge would write over it. Move the file, then sync. |
 

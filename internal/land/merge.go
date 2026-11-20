@@ -114,7 +114,6 @@ func (work *session) write(landing ready, change hosting.Change, body string, de
 	if err != nil {
 		return 0, fmt.Errorf("whether #%d merged: %w", change.Number, err)
 	}
-	judgedTip := landing.change.BaseSHA
 	for queued && asked == nil && !landed.Merged() && landed.State == "open" {
 		more, err := work.sleepUntil(deadline, work.options.interval)
 		if err != nil {
@@ -122,13 +121,6 @@ func (work *session) write(landing ready, change hosting.Change, body string, de
 		}
 		if !more {
 			return 0, failf(exitPending, "#%d is still in the merge queue at the deadline; the remote branch is kept", change.Number)
-		}
-		if landing.agentMay {
-			// While it waits in the queue, the base moves: its policy is judged again at each new
-			// tip, and a base that no longer lets the agent merge takes it out of the queue.
-			if judgedTip, err = work.stillAgents(landed, judgedTip); err != nil {
-				return 0, err
-			}
 		}
 		if landed, err = work.readChange(change.Number); err != nil {
 			return 0, err
@@ -159,35 +151,6 @@ func (work *session) write(landing ready, change hosting.Change, body string, de
 	work.say("this checkout is left as it is: still on %s. `jst tidy --fix --branch %s` removes the branch once nothing would "+
 		"be lost.", work.branch, work.branch)
 	return exitLanded, nil
-}
-
-// stillAgents judges the policy again when the base's tip moved past judgedTip while the change
-// waits in the host's queue. A base whose policy no longer lets the agent merge it (autonomy
-// withdrawn, a new human path), or that cannot be judged, takes the change out of the queue and
-// hands it to a person. It returns the tip judged.
-func (work *session) stillAgents(queued hosting.Change, judgedTip string) (string, error) {
-	tip, err := work.host.BranchTip(work.ctx, queued.Base)
-	if err != nil || tip == judgedTip {
-		return judgedTip, nil // unread: the next look asks again
-	}
-	moved := queued
-	moved.BaseSHA = tip
-	decision, err := work.judgePolicy(moved)
-	if err == nil && decision.agentMay {
-		return tip, nil
-	}
-	why := "its policy cannot be judged"
-	if err != nil {
-		why += ": " + err.Error()
-	} else {
-		why = strings.Join(decision.reasons, "; ")
-	}
-	if dequeueErr := work.host.Dequeue(work.ctx, queued); dequeueErr != nil {
-		return "", failf(exitUnexpected, "%s moved to %s while #%d was queued and %s, but taking it out of the queue failed: %v",
-			queued.Base, short(tip, 8), queued.Number, why, dequeueErr)
-	}
-	work.say("for a person: %s moved to %s while #%d was queued: %s", queued.Base, short(tip, 8), queued.Number, why)
-	return "", failf(exitForPerson, "#%d is out of the merge queue and ready for a person", queued.Number)
 }
 
 // requiredStillPass reads the checks afresh: a required check no longer passing means moved.

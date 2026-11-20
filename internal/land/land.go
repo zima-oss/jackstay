@@ -496,7 +496,8 @@ func (work *session) printPlan(open bool, ahead int, rules hosting.Rules, basePo
 		plan = append(plan, "update the branch on the host when it is behind "+work.base+", then judge it again")
 	}
 	merge := fmt.Sprintf("%s-merge at the head that was checked", methodOf(basePolicy))
-	if rules.QueueRead && rules.Queue {
+	queued := rules.QueueRead && rules.Queue
+	if queued {
 		merge = "put it in the host's merge queue at the head that was checked"
 	}
 	switch {
@@ -504,6 +505,8 @@ func (work *session) printPlan(open bool, ahead int, rules hosting.Rules, basePo
 		plan = append(plan, "stop ready for a person: "+work.base+" has no landing policy yet")
 	case work.options.prepare:
 		plan = append(plan, "stop ready for a person (--prepare)")
+	case queued && !work.options.confirm:
+		plan = append(plan, "stop ready for a person: "+work.base+" requires the host's merge queue, which a person uses")
 	case basePolicy.Autonomy != config.AutonomyMergeWhenGreen && !work.options.confirm:
 		plan = append(plan, "stop ready for a person (`land.autonomy` is "+basePolicy.Autonomy+" on "+work.base+")")
 	case work.options.confirm:

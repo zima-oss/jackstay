@@ -174,8 +174,6 @@ type Host interface {
 	// Enqueue puts the change in the host's merge queue at expectedHead, by the change as read
 	// (its ID), with no further read.
 	Enqueue(ctx context.Context, change Change, expectedHead string) error
-	// Dequeue takes the change out of the host's merge queue.
-	Dequeue(ctx context.Context, change Change) error
 }
 
 // Explainer is a host that can say why failed checks failed (their failed step's log).

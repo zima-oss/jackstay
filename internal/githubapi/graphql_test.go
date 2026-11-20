@@ -209,22 +209,3 @@ func TestEnqueueRefusesAnUnknownNodeAndAnAnswerWithoutAnEntry(t *testing.T) {
 		t.Fatal("an answer without a queue entry is not success")
 	}
 }
-
-func TestDequeueSendsThePullRequestOnceAndRefusesAnUnknownNode(t *testing.T) {
-	rec, server := serve(t,
-		jsonAnswer(http.StatusOK, `{"data": {"dequeuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}}`),
-		jsonAnswer(http.StatusBadGateway, `{}`))
-	client := newClient(t, server, &clock{now: epoch})
-	if err := client.Dequeue(context.Background(), ""); err == nil || len(rec.requests) != 0 {
-		t.Fatalf("no node id: %v, %d requests", err, len(rec.requests))
-	}
-	if err := client.Dequeue(context.Background(), "PR_node"); err != nil {
-		t.Fatal(err)
-	}
-	if requests := graphQLRequests(t, rec); len(requests) != 1 || requests[0].Variables["id"] != "PR_node" {
-		t.Fatalf("requests %+v", requests)
-	}
-	if err := client.Dequeue(context.Background(), "PR_node"); err == nil || len(rec.requests) != 2 {
-		t.Fatalf("a write is not retried: %v after %d requests", err, len(rec.requests))
-	}
-}

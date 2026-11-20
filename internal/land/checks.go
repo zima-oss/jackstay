@@ -102,9 +102,10 @@ func judge(checks []hosting.Check, required []hosting.RequiredCheck) verdict {
 	return judged
 }
 
-// identity is what binds checks to a change: its repository, head, base and test merge.
+// sameIdentity is what binds checks to a change: its repository, head, base, test merge and
+// description (the merge commit's message, which CI's lint of the Card line judged).
 func sameIdentity(before, now hosting.Change) bool {
-	return before.Number == now.Number && before.Head == now.Head && before.HeadSHA == now.HeadSHA &&
+	return before.Number == now.Number && before.Head == now.Head && before.HeadSHA == now.HeadSHA && before.Body == now.Body &&
 		before.Base == now.Base && before.BaseSHA == now.BaseSHA && before.TestMerge == now.TestMerge &&
 		strings.EqualFold(before.HeadRepository, now.HeadRepository) && strings.EqualFold(before.BaseRepository, now.BaseRepository)
 }
@@ -121,6 +122,8 @@ func movedError(before, now hosting.Change) error {
 			before.Base, short(before.BaseSHA, 8), short(now.BaseSHA, 8), before.Number)
 	case before.TestMerge != now.TestMerge:
 		return failf(exitMoved, "the test merge of #%d changed after its checks were read; run it again", before.Number)
+	case before.Body != now.Body:
+		return failf(exitMoved, "the description of #%d was edited after its checks were read; run it again", before.Number)
 	}
 	return failf(exitMoved, "the identity of #%d changed after its checks were read; run it again", before.Number)
 }
@@ -248,6 +251,11 @@ func (work *session) readChange(number int) (hosting.Change, error) {
 	if !found {
 		return hosting.Change{}, failf(exitUnexpected, "the host no longer finds change #%d", number)
 	}
+	// Every read is bound to the base the plan named: a retarget, at any read, stops the landing
+	// before anything else is asked of the host.
+	if work.base != "" && change.Base != work.base {
+		return hosting.Change{}, failf(exitMoved, "#%d was retargeted from %s to %s; run it again", number, work.base, change.Base)
+	}
 	return change, nil
 }
 
@@ -278,9 +286,6 @@ func (work *session) prepareLanding(number int, deadline time.Time) (ready, int,
 		if change.Draft {
 			return ready{}, 0, failf(exitRefused, "#%d is a draft: a draft is not merged", number)
 		}
-		if change.Base != work.base {
-			return ready{}, 0, failf(exitMoved, "the base of #%d changed from %s to %s; run it again", number, work.base, change.Base)
-		}
 		// Step 2.
 		decision, err := work.judgePolicy(change)
 		if err != nil {
@@ -295,14 +300,17 @@ func (work *session) prepareLanding(number int, deadline time.Time) (ready, int,
 			decision.agentMay = false
 			decision.reasons = append(decision.reasons, gate)
 		}
+		if rules.QueueRead && rules.Queue {
+			// The host's queue merges later, on a base jackstay has not judged: that is a merge
+			// the agent does not start (no auto-merge). A person queues it.
+			decision.agentMay = false
+			decision.reasons = append(decision.reasons, change.Base+" requires the host's merge queue, which merges later "+
+				"without jackstay's policy: a person queues it (on the host's page, or with --confirm)")
+		}
 		// Step 3.
 		checked, code, err := work.waitChecks(number, change.HeadSHA, required, deadline)
 		if err != nil || code != exitLanded {
 			return ready{}, code, err
-		}
-		if checked.Base != change.Base {
-			return ready{}, 0, failf(exitMoved, "#%d was retargeted from %s to %s while its checks were read; run it again",
-				number, change.Base, checked.Base)
 		}
 		if checked.BaseSHA != decision.baseSHA {
 			continue // the base moved while waiting: judge the policy at the new base

@@ -86,31 +86,6 @@ func (client *Client) Enqueue(ctx context.Context, pullRequestID, expectedHead s
 	return nil
 }
 
-const dequeueMutation = `mutation($id: ID!) {
-  dequeuePullRequest(input: {id: $id}) { mergeQueueEntry { id } }
-}`
-
-// Dequeue takes the pull request out of the merge queue: a write, never retried.
-func (client *Client) Dequeue(ctx context.Context, pullRequestID string) error {
-	if pullRequestID == "" {
-		return fmt.Errorf("the pull request's node id is unknown, so it cannot be taken out of the merge queue")
-	}
-	var data struct {
-		DequeuePullRequest *struct {
-			MergeQueueEntry *struct {
-				ID string `json:"id"`
-			} `json:"mergeQueueEntry"`
-		} `json:"dequeuePullRequest"`
-	}
-	if err := client.Mutate(ctx, dequeueMutation, map[string]any{"id": pullRequestID}, &data); err != nil {
-		return err
-	}
-	if data.DequeuePullRequest == nil {
-		return fmt.Errorf("GitHub answered the dequeue request without an answer")
-	}
-	return nil
-}
-
 // Query is a read-only GraphQL query, retried as every read.
 func (client *Client) Query(ctx context.Context, query string, variables map[string]any, out any) error {
 	_, err := Read(ctx, client.retry, func() (struct{}, error) {

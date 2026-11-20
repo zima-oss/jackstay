@@ -461,29 +461,53 @@ func TestARetargetDuringTheWaitIsMoved(t *testing.T) {
 	land.noMerge()
 }
 
-// A base that withdraws autonomy while the change waits in the host's queue takes it out of the
-// queue and hands it to a person.
-func TestAQueuedChangeIsDequeuedWhenTheBaseWithdrawsAutonomy(t *testing.T) {
+// A base that requires the host's merge queue: the queue merges later, on a base jackstay has not
+// judged, so the agent does not queue it (no auto-merge); it is ready for a person.
+func TestABaseWithAQueueIsReadyForAPerson(t *testing.T) {
 	land := newLandRepo(t, greenSettings, nil, nil)
 	queued := requiresTest
 	queued.Queue = true
 	land.host.rules = []hosting.Rules{queued}
-	land.host.queueMergesAfter = 0
-	land.host.onEnqueue = func() {
-		place := land.side()
-		land.GitIn(place, "checkout", "-q", "main")
-		land.GitIn(place, "pull", "-q", "origin", "main")
-		if err := os.WriteFile(filepath.Join(place, "jackstay.json"), []byte(prepareSettings), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		land.GitIn(place, "commit", "-q", "-am", "a person withdraws autonomy")
-		land.GitIn(place, "push", "-q", "origin", "main")
-	}
 	out := land.expect(6, "ready for a person", "--title", "a feature")
-	contains(t, out, "`land.autonomy` is prepare on main")
-	if len(land.host.dequeued) != 1 || len(land.host.merges) != 0 {
-		t.Fatalf("dequeued %v, merges %+v", land.host.dequeued, land.host.merges)
+	contains(t, out, "requires the host's merge queue")
+	if len(land.host.enqueued) != 0 {
+		t.Fatalf("the agent queued it: %v", land.host.enqueued)
 	}
+	land.noMerge()
+}
+
+// A retarget during the read of mergeability makes no update of the branch.
+func TestARetargetBeforeTheBranchUpdateUpdatesNothing(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	fresh := requiresTest
+	fresh.UpToDate = true
+	land.host.rules = []hosting.Rules{fresh}
+	land.host.template.Behind = true
+	land.host.beforeRead = func(host *fakeHost, read int) {
+		// Reads: the loop's, the wait's before and after the checks, then mergeability's.
+		if read == 4 {
+			host.change.Base = "release"
+		}
+	}
+	out := land.expect(4, "moved", "--title", "a feature")
+	contains(t, out, "retargeted from main to release")
+	if len(land.host.updates) != 0 {
+		t.Fatalf("the branch was updated after a retarget: %v", land.host.updates)
+	}
+}
+
+// A description edited after the checks were read (the commits unchanged) stops with moved: the
+// merge commit's message is the description CI's lint judged.
+func TestADescriptionEditedAfterTheChecksIsMoved(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	land.host.onRules = func(call int) {
+		if call == 3 { // the recheck
+			land.host.change.Body = "edited\n"
+		}
+	}
+	out := land.expect(4, "moved", "--title", "a feature")
+	contains(t, out, "description of #7 was edited")
+	land.noMerge()
 }
 
 // --- checks ------------------------------------------------------------------------------------
@@ -637,14 +661,16 @@ func TestALostMergeAnswerIsSettledByReadingTheChange(t *testing.T) {
 	}
 }
 
-func TestTheHostsQueueMergesTheChange(t *testing.T) {
+// A person queues it with --confirm: the change is enqueued at the checked head and lands.
+func TestAPersonQueuesTheChangeWithConfirm(t *testing.T) {
 	land := newLandRepo(t, greenSettings, nil, nil)
 	queued := requiresTest
 	queued.Queue = true
 	land.host.rules = []hosting.Rules{queued}
 	land.host.queueMergesAfter = 3
+	land.terminal, land.stdin = true, "7\n"
 	head := land.Git("rev-parse", "feat")
-	out := land.expect(0, "landed", "--title", "a feature")
+	out := land.expect(0, "landed", "--confirm", "--title", "a feature")
 	contains(t, out, "in the host's merge queue")
 	if !slices.Equal(land.host.enqueued, []string{head}) || len(land.host.merges) != 0 {
 		t.Fatalf("enqueued %v, merges %+v", land.host.enqueued, land.host.merges)
@@ -656,7 +682,8 @@ func TestTheHostsQueueHoldingPastTheDeadlineIsPending(t *testing.T) {
 	queued := requiresTest
 	queued.Queue = true
 	land.host.rules = []hosting.Rules{queued}
-	out := land.expect(3, "pending", "--title", "a feature", "--timeout", "60", "--interval", "20")
+	land.terminal, land.stdin = true, "7\n"
+	out := land.expect(3, "pending", "--confirm", "--title", "a feature", "--timeout", "60", "--interval", "20")
 	contains(t, out, "still in the merge queue at the deadline")
 	if len(land.host.enqueued) != 1 || land.remoteBranch("feat") == "" {
 		t.Fatalf("enqueued %v; the remote branch must be kept", land.host.enqueued)

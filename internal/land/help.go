@@ -33,11 +33,13 @@ never switched, pulled or rebased.
   find             one change request by head branch or search text; none found is exit 1
 
 The last line on standard error is "jst land: STATE".
-exit: 0 landed (merged, or merged by the host's queue within the wait), or planned (--plan); 1
-refused (a required check failed or was cancelled, a draft, a conflict, an operation the host
-does not offer); 2 invalid (usage, configuration, no account, no land section); 3 pending (checks
-or the queue still pending at the deadline); 4 moved (the head, the base or the test merge moved:
-run it again); 5 unexpected (a host answer jackstay does not expect); 6 ready for a person.
+exit: 0 landed (merged; with --confirm on a base with a merge queue, merged by the host's queue
+within the wait), or planned (--plan); 1 refused (a required check failed or was cancelled, a draft,
+a conflict, an operation the host does not offer); 2 invalid (usage, configuration, no account, no
+land section); 3 pending (checks or the queue still pending at the deadline); 4 moved (the head, the
+base, the test merge or the description moved: run it again); 5 unexpected (a host answer jackstay
+does not expect); 6 ready for a person (also every change on a base that requires the host's merge
+queue).
 
 example: jst land --title 'Fix the parser' --card W-012
 `
