@@ -133,8 +133,14 @@ func (transaction *transaction) recover() (resolved []string, kept int, err erro
 // decide is section 7.3's choice for an entry: back without a commit record, forward once its
 // folder is fsynced, kept while it cannot be.
 func (transaction *transaction) decide(entry journalEntry) (deliverystate.Recovery, error) {
-	if !exists(transaction.place.commit(entry.ID)) {
+	_, err := os.Lstat(transaction.place.commit(entry.ID))
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return deliverystate.Recover(deliverystate.NoCommit, false), nil
+	case err != nil:
+		// Only a record known to be absent is rolled back; any other answer stops this operation
+		// and leaves the entry for the next recovery.
+		return "", err
 	}
 	synced := transaction.store.syncFolder(transaction.place.commits()) == nil
 	return deliverystate.Recover(deliverystate.CommitWritten, synced), nil
@@ -163,6 +169,14 @@ func (transaction *transaction) rollBack(entry journalEntry) error {
 	}
 	if entry.Asks != "" {
 		if err := os.Remove(transaction.place.requestIndex(entry.Asks)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	// The removals are made durable before usage, which no longer counts them, is saved and the entry
+	// goes: a crash cannot bring the files back under a usage that left them out.
+	place := transaction.place
+	for _, folder := range []string{place.bodies(), place.messages(), filepath.Dir(place.deliveries(entry.ID)), place.requests(), place.idempotency()} {
+		if err := transaction.store.syncFolder(folder); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	}

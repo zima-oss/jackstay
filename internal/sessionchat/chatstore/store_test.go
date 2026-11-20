@@ -934,3 +934,43 @@ func TestReplayRewritesAnIdempotencyEntryACrashLeftEmpty(t *testing.T) {
 		t.Fatalf("%+v %v", retry, err)
 	}
 }
+
+func TestACommitThatCannotBeLookedUpIsNeverRolledBack(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	id := "msg_" + strings.Repeat("4", 26)
+	err := f.store.update(f.ctx, func(transaction *transaction) error {
+		if err := transaction.publishJournal(journalEntry{Op: opSend, ID: id, Sender: "cc:a"}); err != nil {
+			return err
+		}
+		envelope := Envelope{V: 1, ID: id, ThreadID: id, Kind: "message", Recipients: []string{hashKey("cc:b")}}
+		data, _ := encodeRecord(envelope, envelopeBound)
+		delivery := Delivery{V: 1, ID: id, Key: "cc:b", Route: "hooks", State: "pending"}
+		if err := transaction.writeBeforeCommit("whole", data, envelope, []Delivery{delivery}); err != nil {
+			return err
+		}
+		return transaction.writeCommit(Commit{V: 1, ID: id, Committed: stamp(transaction.now)})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The commits folder cannot be searched for a moment: the lookup fails without saying the record
+	// is absent, so nothing is rolled back.
+	if err := os.Chmod(f.store.place.commits(), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	_, lookupErr := f.store.Sessions(f.ctx)
+	if err := os.Chmod(f.store.place.commits(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if lookupErr == nil {
+		t.Skip("this account can search a folder without permission (root)")
+	}
+	if !exists(f.store.place.envelope(id)) || !exists(f.store.place.body(id)) {
+		t.Fatal("a commit that could not be looked up had its message removed")
+	}
+	if _, err := f.store.Sessions(f.ctx); err != nil || !exists(filepath.Join(f.store.place.inbox(hashKey("cc:b")), id)) {
+		t.Fatalf("the next recovery rolls it forward: %v", err)
+	}
+}
