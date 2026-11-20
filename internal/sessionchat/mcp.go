@@ -309,18 +309,22 @@ func (server *Server) call(raw json.RawMessage) any {
 		if err != nil {
 			break
 		}
+		if strings.TrimSpace(arguments.Task) == "" {
+			err = errors.New("review.status needs a task")
+			break
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		var background review.Background
 		background, err = reviewBackground(here)
 		if err == nil {
+			err = sameRepository(ctx, background.RepositoryRoot, server.store.commonDirectory)
+		}
+		if err == nil {
 			var status review.Status
 			status, err = background.StatusOf(arguments.Task)
-			if status.Running != nil {
-				running := publicRequest(*status.Running)
-				result = map[string]any{"running": running, "newest": status.Newest, "outcome": status.Outcome, "blocks": status.Blocks, "report": status.Report}
-			} else {
-				result = map[string]any{"newest": status.Newest, "outcome": status.Outcome, "blocks": status.Blocks, "report": status.Report}
-			}
+			result = publicStatus(status)
 		}
+		cancel()
 	default:
 		return toolFailure("unknown tool")
 	}
@@ -348,6 +352,20 @@ func sameRepository(ctx context.Context, root, commonDirectory string) error {
 		return errors.New("the review's project is in another repository than this chat session; open the chat in that repository")
 	}
 	return nil
+}
+
+// publicStatus is a task's status without the sessions subscribed to its requests.
+func publicStatus(status review.Status) map[string]any {
+	answer := map[string]any{"newest": status.Newest, "commit": status.Commit, "base": status.Base,
+		"outcome": status.Outcome, "blocks": status.Blocks, "report": status.Report}
+	if status.Running != nil {
+		answer["running"] = publicRequest(*status.Running)
+	}
+	if last := status.Last; last != nil {
+		answer["last"] = map[string]any{"request": publicRequest(last.Request), "lost": last.Lost, "status": last.Status,
+			"outcome": last.Outcome, "next": last.Next, "round": last.Round, "folder": last.Folder, "ended": last.Ended}
+	}
+	return answer
 }
 
 // publicRequest leaves out the other sessions subscribed to a request.

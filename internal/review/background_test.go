@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
+	"github.com/zima-oss/jackstay/internal/durable"
 )
 
 // backgroundHarness submits against a fake repository; launches are recorded, and a launched
@@ -79,7 +80,7 @@ func TestAnEqualSubmissionJoinsAndADifferentOneIsRefusedWhileItRuns(t *testing.T
 	}
 }
 
-func TestARunThatDiedIsReplacedAndItsSubscribersAreNotForgotten(t *testing.T) {
+func TestARunThatDiedIsEndedAsLostBeforeAnotherStarts(t *testing.T) {
 	h := newBackgroundHarness(t)
 	ctx := context.Background()
 	if _, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"}); err != nil {
@@ -87,8 +88,8 @@ func TestARunThatDiedIsReplacedAndItsSubscribersAreNotForgotten(t *testing.T) {
 	}
 	h.alive = false
 	again, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s2"})
-	if err != nil || again.Joined || len(h.launched) != 2 || !slices.Equal(again.Request.Subscribers, []string{"s2", "s1"}) {
-		t.Fatalf("an equal review after a dead run does not carry its subscribers: %+v, %v", again, err)
+	if err != nil || again.Joined || len(h.launched) != 2 || !slices.Equal(again.Request.Subscribers, []string{"s2"}) {
+		t.Fatalf("a review after a dead run: %+v, %v", again, err)
 	}
 	h.alive = false
 	other, err := h.background.Submit(ctx, Submission{Revision: "c2", Subscriber: "s3"})
@@ -113,6 +114,9 @@ func TestARequestNotYetLaunchedIsLiveForAMinuteOnly(t *testing.T) {
 	}
 	if _, found, _ := h.background.Store.ReadRequest("feature/x"); found {
 		t.Fatal("a request whose launch failed was kept")
+	}
+	if end, found, _ := h.background.Store.LatestEnd("feature/x"); !found || end.Status != ExitUsage || !strings.Contains(end.Next, "no such program") {
+		t.Fatalf("a failed launch did not end its request for the sessions that joined: %+v", end)
 	}
 	young := Request{Created: h.now.Add(-30 * time.Second).Format(time.RFC3339)}
 	old := Request{Created: h.now.Add(-2 * time.Minute).Format(time.RFC3339)}
@@ -154,7 +158,7 @@ func TestFinishingARunTellsItsSubscribersOnceAndKeepsWhatTheChatRefused(t *testi
 	}
 	published := &recording{}
 	for _, subscriber := range []string{"s1", "s2"} {
-		if err := store.DeliverOwed(ctx, subscriber, published); err != nil {
+		if err := h.background.DeliverOwed(ctx, subscriber, published); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -205,8 +209,8 @@ func TestAResultIsSavedBeforeItsRequestIsRetired(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := h.background.Store
-	// The owed folder cannot be made: the result cannot be saved, so the request must stay.
-	if err := os.WriteFile(store.owedPath(), []byte("not a folder"), 0o600); err != nil {
+	// The ends folder cannot be made: the result cannot be saved, so the request must stay.
+	if err := os.WriteFile(store.endsPath(), []byte("not a folder"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitClear}, &recording{}); err == nil {
@@ -253,7 +257,40 @@ func TestStatusSaysHowTheLatestRequestEndedEvenWithoutAnAttempt(t *testing.T) {
 	h.alive = false
 	status, err := h.background.StatusOf("feature/x")
 	if err != nil || status.Running != nil || status.Last == nil || status.Last.Status != ExitEnvironment ||
-		status.Last.Request.Head != "c1" || status.Last.Next != "Codex has no login" {
+		status.Last.Request.Head != "c1" || status.Last.Next != "Codex has no login" || status.Last.Outcome != "the environment refuses" {
 		t.Fatalf("status: %+v, %v", status, err)
+	}
+}
+
+func TestACrashAfterTheEndWasWrittenTellsTheSameOutcomeAgain(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := h.background.Store
+	// The run wrote its end and died before removing its request.
+	saved, _, _ := store.ReadRequest("feature/x")
+	if err := durable.MakeFolder(store.endsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(store.endPath("feature/x", saved.ID), End{Request: saved, Status: ExitClear, Outcome: "clear",
+		Next: "nothing blocks", Ended: "2026-11-20T12:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	h.alive = false
+	published := &recording{}
+	if err := h.background.DeliverOwed(ctx, "s1", published); err != nil {
+		t.Fatal(err)
+	}
+	if len(published.events) != 1 || published.events[0].Meta["verdict"] != "clear" {
+		t.Fatalf("recovery told another outcome than the one saved: %+v", published.events)
+	}
+	if _, found, _ := store.ReadRequest("feature/x"); found {
+		t.Fatal("an ended request was kept")
+	}
+	if err := store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitBlocks}, published); err != nil || len(published.events) != 1 {
+		t.Fatalf("a late finish told a second outcome: %+v, %v", published.events, err)
 	}
 }

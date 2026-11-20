@@ -273,3 +273,44 @@ func TestALongEventFitsTheChatsMessageLimit(t *testing.T) {
 		t.Fatalf("a short message changed: %q", short)
 	}
 }
+
+func TestReviewStatusSaysWhenTheNewestRequestFailedAfterAnOlderClearRound(t *testing.T) {
+	chat := newReviewChat(t)
+	submitter := chat.register(t, "submitter", strings.Repeat("s", 32))
+	answer := chat.call(t, submitter, "review.submit", map[string]any{"base": "HEAD^", "head": "HEAD", "task": "t", "reviewers": []string{"codex"}})
+	identity := answer["request"].(map[string]any)["id"].(string)
+	background := chat.background(t)
+	if err := background.Store.Finish(context.Background(), "t", identity, review.Result{Status: review.ExitEnvironment,
+		Next: "Codex has no login"}, refusing{}); err == nil {
+		t.Fatal("refused publication not said")
+	}
+	chat.running = false
+	status := chat.call(t, submitter, "review.status", map[string]any{"task": "t"})
+	last, ok := status["last"].(map[string]any)
+	if !ok || last["outcome"] != "the environment refuses" || last["next"] != "Codex has no login" ||
+		last["request"].(map[string]any)["head"] == "" || status["running"] != nil {
+		t.Fatalf("status hides how the newest request ended: %+v", status)
+	}
+	if _, found := last["request"].(map[string]any)["subscribers"]; found {
+		t.Fatal("status shows the sessions subscribed")
+	}
+}
+
+func TestReviewStatusFromANestedRepositoryIsRefused(t *testing.T) {
+	chat := newReviewChat(t)
+	nested := testrepo.New(t, map[string]string{"file.txt": "nested\n"})
+	original := reviewBackground
+	reviewBackground = func(string) (review.Background, error) { return original(chat.repository.Root) }
+	nestedStore, err := StoreFor(nested.Root+"/.git", chat.store.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := nestedStore.Register("nested", strings.Repeat("n", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(map[string]any{"name": "review.status", "arguments": map[string]any{"task": "t"}})
+	if response := (&Server{store: nestedStore, session: session}).call(encoded).(map[string]any); response["isError"] != true {
+		t.Fatalf("the parent repository's status was read from a nested one: %+v", response)
+	}
+}
