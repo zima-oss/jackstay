@@ -4,6 +4,7 @@ package land
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -48,9 +49,11 @@ type fakeHost struct {
 
 	// rules answer each Rules call in turn; the last repeats.
 	ruleCalls int
+	// tip answers BranchTip (nil: the change's base commit).
+	tip func(branch string) string
 	// onRules runs inside each read of the rules, with its count (what the world does meanwhile).
 	onRules func(call int)
-	rules     []hosting.Rules
+	rules   []hosting.Rules
 
 	// mergeAnswer answers a merge; nil merges the change.
 	merges      []hosting.MergeRequest
@@ -187,8 +190,19 @@ func (host *fakeHost) Merge(_ context.Context, change hosting.Change, request ho
 	return hosting.Merged{Merged: true, SHA: "5ca1ab1e00000000000000000000000000000000"}, nil
 }
 
+func (host *fakeHost) BranchTip(_ context.Context, branch string) (string, error) {
+	host.record("branch-tip %s", branch)
+	if host.tip == nil {
+		return host.change.BaseSHA, nil
+	}
+	return host.tip(branch), nil
+}
+
 func (host *fakeHost) Enqueue(_ context.Context, change hosting.Change, expectedHead string) error {
 	host.record("enqueue #%d %s", change.Number, short(expectedHead, 8))
+	if change.ID == "" {
+		return errors.New("enqueued without the change's ID")
+	}
 	if host.enqueueErr != nil {
 		return host.enqueueErr
 	}

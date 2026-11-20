@@ -78,6 +78,8 @@ type GitHub interface {
 	BranchRules(ctx context.Context, branch string) (BranchRules, error)
 	// MergeMethods are the merge methods the repository allows (read false: GitHub did not say).
 	MergeMethods(ctx context.Context) (methods []string, read bool, err error)
+	// BranchTip is the commit a branch is at on GitHub now.
+	BranchTip(ctx context.Context, branch string) (string, error)
 }
 
 // Git asks git a question in the checkout (internal/gitcli.Git is one).

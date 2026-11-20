@@ -143,9 +143,11 @@ and names `jst adopt`, which writes the section in full:
 | `prepare` | a person, always; the agent pushes, opens the change request and waits for the checks |
 
 The human paths are `jackstay.json`, `.github/workflows/**`, `.claude/settings.json` and the globs
-in `human_paths`. `method` is `squash`, `merge` or `rebase`. `checks` names checks required in
-addition to the base's rules. `--prepare` stops before the merge for one run, whatever `autonomy`
-says. `autonomy` and `checks` are read from the base's `jackstay.json`, never the change's.
+in `human_paths`. `method` is `squash`, `merge` or `rebase`; a project whose Card line is in the
+description (`cards.unit` `pr`) cannot use `rebase`, which lands no description. `checks` names
+checks required in addition to the base's rules. `--prepare` stops before the merge for one run,
+whatever `autonomy` says. `autonomy` and `checks` are read from the base's `jackstay.json`, never
+the change's.
 
 ### Ready for a person
 

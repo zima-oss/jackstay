@@ -28,6 +28,9 @@ type ChangeRef struct {
 // Change is one change request (a pull request, a merge request) as the host sees it now.
 type Change struct {
 	Number int
+	// ID is the host's own identifier of the change, where an operation needs it (GitHub's node ID
+	// for its merge queue).
+	ID     string
 	URL    string
 	Title  string
 	Body   string
@@ -162,11 +165,14 @@ type Host interface {
 	// replaced by the newer run's own job of the same name.
 	Checks(ctx context.Context, change Change) ([]Check, error)
 	Rules(ctx context.Context, branch string) (Rules, error)
+	// BranchTip is the commit a branch of the repository is at now, as the host has it.
+	BranchTip(ctx context.Context, branch string) (string, error)
 	// UpdateBranch merges the base into the change's branch on the host while its head is
 	// expectedHead.
 	UpdateBranch(ctx context.Context, change Change, expectedHead string) error
 	Merge(ctx context.Context, change Change, request MergeRequest) (Merged, error)
-	// Enqueue puts the change in the host's merge queue at expectedHead.
+	// Enqueue puts the change in the host's merge queue at expectedHead, by the change as read
+	// (its ID), with no further read.
 	Enqueue(ctx context.Context, change Change, expectedHead string) error
 }
 

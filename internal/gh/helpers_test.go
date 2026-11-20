@@ -69,6 +69,8 @@ type fakeGitHub struct {
 	// rules and rulesErr are BranchRules' answer (default: no rule requires a check).
 	rules    BranchRules
 	rulesErr error
+	// tips are BranchTip's answers by branch.
+	tips map[string]string
 	// methods, methodsRead and methodsErr are MergeMethods' answer.
 	methods     []string
 	methodsRead bool
@@ -106,6 +108,12 @@ func (hub *fakeGitHub) BranchRules(context.Context, string) (BranchRules, error)
 	hub.mutex.Lock()
 	defer hub.mutex.Unlock()
 	return hub.rules, hub.rulesErr
+}
+
+func (hub *fakeGitHub) BranchTip(_ context.Context, branch string) (string, error) {
+	hub.mutex.Lock()
+	defer hub.mutex.Unlock()
+	return hub.tips[branch], nil
 }
 
 func (hub *fakeGitHub) MergeMethods(context.Context) ([]string, bool, error) {

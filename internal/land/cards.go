@@ -84,14 +84,21 @@ func judgeDescription(section map[string]any, files lint.Files, body, branch str
 		"(--card ID adds the line; --card none --reason TEXT for a change that is no card's work)", strings.Join(problems, "\n- "))
 }
 
-// judgeMerge judges, before a merge in a project with cards, the description as the host holds
-// it now against the files of the head that was checked, and returns it: the merge commit's body.
-// The tree's own rules are CI's to enforce (W-092), not a local gate here.
-func (work *session) judgeMerge(change hosting.Change) (string, error) {
-	files := lint.RevisionFiles(work.ctx, change.HeadSHA, work.git)
-	if err := judgeDescription(work.cardSection(), files, change.Body, work.branch); err != nil {
+// judgeDescriptionOf judges, before a merge in a project with cards, the description as the host
+// holds it against the files of what would land: the merge of the head that was checked with the
+// base commit it was judged at, made in memory (a card added to the base since the branch split
+// is there). Only the Card line is judged here; the tree's rules are CI's (W-092). It returns the
+// description judged: the merge commit's message.
+func (work *session) judgeDescriptionOf(change hosting.Change) (string, error) {
+	out, err := work.git.Run(work.ctx, "merge-tree", "--write-tree", change.BaseSHA, change.HeadSHA)
+	tree, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+	if err != nil || tree == "" {
+		return "", failf(exitRefused, "#%d: the merge of %s with %s cannot be made here (%v); not merging", change.Number,
+			short(change.HeadSHA, 10), short(change.BaseSHA, 10), err)
+	}
+	if err := judgeDescription(work.cardSection(), lint.RevisionFiles(work.ctx, tree, work.git), change.Body, work.branch); err != nil {
 		return "", err
 	}
-	work.say("#%d: its Card line is fine", change.Number)
+	work.say("#%d: its Card line is fine on the merge with %s at %s", change.Number, change.Base, short(change.BaseSHA, 8))
 	return change.Body, nil
 }

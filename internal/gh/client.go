@@ -134,6 +134,21 @@ func (api client) BranchRules(ctx context.Context, branch string) (BranchRules, 
 // MergeMethods are the merge methods the repository allows, by its allow_squash_merge,
 // allow_merge_commit and allow_rebase_merge; GitHub leaves them out for an account that may not
 // administer the repository, and then read is false.
+// BranchTip is the commit a branch is at on GitHub now.
+func (api client) BranchTip(ctx context.Context, branch string) (string, error) {
+	found, err := githubapi.Read(ctx, api.Retry(), func() (*github.Branch, error) {
+		found, _, err := api.API().Repositories.GetBranch(ctx, api.Owner(), api.Name(), branch, 1)
+		return found, err
+	})
+	if err != nil {
+		return "", fmt.Errorf("the branch %s: %w", branch, err)
+	}
+	if sha := found.GetCommit().GetSHA(); sha != "" {
+		return sha, nil
+	}
+	return "", fmt.Errorf("GitHub named no commit for the branch %s", branch)
+}
+
 func (api client) MergeMethods(ctx context.Context) ([]string, bool, error) {
 	repository, err := githubapi.Read(ctx, api.Retry(), func() (*github.Repository, error) {
 		repository, _, err := api.API().Repositories.Get(ctx, api.Owner(), api.Name())

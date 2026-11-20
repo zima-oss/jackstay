@@ -26,7 +26,7 @@ func TestAPullRequestIsAChange(t *testing.T) {
 	open := pull(7, "feat", shaA)
 	open.NodeID, open.BaseSHA, open.MergeCommitSHA, open.MergeableState, open.Draft = "PR_7", shaB, shaC, "BEHIND", true
 	change := changeOf(open)
-	want := hosting.Change{Number: 7, URL: open.URL, Title: "t", Body: "What it does.", State: "open", Draft: true,
+	want := hosting.Change{Number: 7, ID: "PR_7", URL: open.URL, Title: "t", Body: "What it does.", State: "open", Draft: true,
 		Head: "feat", HeadSHA: shaA, HeadRepository: "owner/checkout", Base: "main", BaseSHA: shaB, BaseRepository: "owner/checkout",
 		TestMerge: shaC, Mergeable: "yes", Behind: true}
 	if change != want {
@@ -282,10 +282,13 @@ func TestEnqueueSendsThePullRequestsNodeAndTheExpectedHead(t *testing.T) {
 	hub := newGitHub()
 	open := pull(7, "feat", shaA)
 	open.NodeID = "PR_7"
-	onPull(hub, open)
 	hub.OnEnqueue("PR_7", nil)
+	// The change as read carries its node ID: the enqueue makes no further read.
 	if err := hostOver(hub).Enqueue(context.Background(), changeOf(open), shaA); err != nil {
 		t.Fatal(err)
+	}
+	if err := hostOver(hub).Enqueue(context.Background(), hosting.Change{Number: 7}, shaA); err == nil {
+		t.Fatal("a change read without its node ID was enqueued")
 	}
 	if queued := hub.Enqueues(); len(queued) != 1 || queued[0] != (githubfake.EnqueueCall{PullRequestID: "PR_7", ExpectedHead: shaA}) {
 		t.Fatalf("queued %+v", queued)
@@ -328,5 +331,13 @@ func TestARunLookupThatFailsKeepsTheRowsAsRead(t *testing.T) {
 				t.Fatalf("optional %+v", check)
 			}
 		}
+	}
+}
+
+func TestTheBranchTipIsGitHubs(t *testing.T) {
+	hub := newGitHub()
+	hub.tips = map[string]string{"main": shaB}
+	if tip, err := hostOver(hub).BranchTip(context.Background(), "main"); err != nil || tip != shaB {
+		t.Fatalf("%q %v", tip, err)
 	}
 }

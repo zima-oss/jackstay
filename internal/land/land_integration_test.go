@@ -81,10 +81,12 @@ esac
 	}
 	repo.Commit("feature", featFiles)
 	land := &landRepo{Repo: repo, origin: origin, clock: newClock()}
-	land.host = newFakeHost(hosting.Change{Number: 7, URL: "https://github.com/owner/checkout/pull/7", State: "open",
+	land.host = newFakeHost(hosting.Change{Number: 7, ID: "PR_node7", URL: "https://github.com/owner/checkout/pull/7", State: "open",
 		Head: "feat", HeadSHA: land.Git("rev-parse", "feat"), HeadRepository: "owner/checkout",
 		Base: "main", BaseSHA: land.remoteBranch("main"), BaseRepository: "owner/checkout", Mergeable: "yes"}, requiresTest)
 	land.host.checks = passing(check("test", hosting.Pass))
+	// The host's branch tip is origin's, as the bare repository has it now.
+	land.host.tip = land.remoteBranch
 	return land
 }
 
@@ -366,6 +368,61 @@ func TestABaseThatMovedAfterItWasJudgedIsMoved(t *testing.T) {
 	}
 	out := land.expect(4, "moved", "--title", "a feature")
 	contains(t, out, "not at")
+	land.noMerge()
+}
+
+// A change for a person is rechecked before it is handed over: a required check that turned red
+// after the wait stops it with moved, not ready for a person.
+func TestAHandOverIsRecheckedFirst(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	land.host.checks = func(call int, change hosting.Change) []hosting.Check {
+		if call == 1 {
+			return onHead(change, []hosting.Check{check("test", hosting.Pass)})
+		}
+		return onHead(change, []hosting.Check{check("test", hosting.Fail)})
+	}
+	out := land.expect(4, "moved", "--prepare", "--title", "a feature")
+	contains(t, out, "no longer passes (test)")
+	land.noMerge()
+}
+
+const cardSettings = `{"jackstay_schema": 3, "github": {"account": "someone", "repository": "owner/checkout"},
+ "land": {"autonomy": "merge-when-green"},
+ "cards": {"dir": "cards", "id": "APP-[0-9]+", "unit": "pr", "branch": "main", "since": "2026-01-01"}}`
+
+var firstCard = map[string]string{"cards/APP-1-x.md": "---\n{\"id\": \"APP-1\", \"state\": \"active\"}\n---\n# APP-1\n"}
+
+// The Card line is judged on the merge with the base it was judged at: a card added to the base
+// after the branch split is there.
+func TestACardAddedToTheBaseAfterTheSplitIsFound(t *testing.T) {
+	land := newLandRepo(t, cardSettings, firstCard, nil)
+	place := land.side()
+	land.GitIn(place, "checkout", "-q", "main")
+	land.GitIn(place, "pull", "-q", "origin", "main")
+	if err := os.WriteFile(filepath.Join(place, "cards", "APP-2-y.md"), []byte("---\n{\"id\": \"APP-2\", \"state\": \"active\"}\n---\n# APP-2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	land.GitIn(place, "add", "-A")
+	land.GitIn(place, "commit", "-q", "-m", "card APP-2")
+	land.GitIn(place, "push", "-q", "origin", "main")
+	land.Git("push", "-q", "-u", "origin", "feat")
+	land.host.change = land.host.template
+	land.host.change.BaseSHA = land.remoteBranch("main")
+	land.host.change.Body = "What it does.\n\nCard: APP-2\n"
+	land.host.opened = true
+	out := land.expect(0, "landed")
+	contains(t, out, "its Card line is fine on the merge")
+	if len(land.host.merges) != 1 || land.host.merges[0].Body != "What it does.\n\nCard: APP-2\n" {
+		t.Fatalf("merges %+v", land.host.merges)
+	}
+}
+
+// A rebase lands no description, so a project whose Card line is in the description refuses it.
+func TestARebaseIsRefusedWhereTheCardLineIsInTheDescription(t *testing.T) {
+	settings := strings.Replace(cardSettings, `"autonomy": "merge-when-green"`, `"autonomy": "merge-when-green", "method": "rebase"`, 1)
+	land := newLandRepo(t, settings, firstCard, nil)
+	out := land.expect(2, "invalid", "--title", "a feature", "--card", "APP-1")
+	contains(t, out, "a rebase does not land")
 	land.noMerge()
 }
 

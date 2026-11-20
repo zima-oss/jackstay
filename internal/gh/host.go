@@ -53,7 +53,7 @@ func (adapter *host) DefaultBranch(ctx context.Context) (string, error) {
 
 // changeOf is jackstay's hosting view of a pull request.
 func changeOf(pull githubapi.PullRequest) hosting.Change {
-	change := hosting.Change{Number: pull.Number, URL: pull.URL, Title: pull.Title, Body: pull.Body, State: pull.State,
+	change := hosting.Change{Number: pull.Number, ID: pull.NodeID, URL: pull.URL, Title: pull.Title, Body: pull.Body, State: pull.State,
 		Draft: pull.Draft, Head: pull.Head, HeadSHA: pull.HeadSHA, HeadRepository: pull.HeadRepository,
 		Base: pull.Base, BaseSHA: pull.BaseSHA, BaseRepository: pull.BaseRepository,
 		Mergeable: "unknown", Behind: strings.EqualFold(pull.MergeableState, "behind")}
@@ -273,9 +273,13 @@ func (adapter *host) Merge(ctx context.Context, change hosting.Change, request h
 // Enqueue puts the pull request in its base's merge queue at expectedHead (GraphQL
 // enqueuePullRequest, by the pull request's node id).
 func (adapter *host) Enqueue(ctx context.Context, change hosting.Change, expectedHead string) error {
-	pull, err := adapter.github.PullRequest(ctx, change.Number)
-	if err != nil {
-		return fmt.Errorf("pull request #%d: %w", change.Number, err)
+	if change.ID == "" {
+		return fmt.Errorf("pull request #%d was read without its node ID", change.Number)
 	}
-	return adapter.github.Enqueue(ctx, pull.NodeID, expectedHead)
+	return adapter.github.Enqueue(ctx, change.ID, expectedHead)
+}
+
+// BranchTip is the commit a branch is at on GitHub now.
+func (adapter *host) BranchTip(ctx context.Context, branch string) (string, error) {
+	return adapter.github.BranchTip(ctx, branch)
 }
