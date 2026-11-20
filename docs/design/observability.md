@@ -93,7 +93,7 @@ recorded (one machine), `jackstay.project` (the project's name, `config.ProjectN
 | `jackstay.review.task`, `jackstay.review.round`, `jackstay.review.attempt`, `jackstay.review.store` | string/int | review phases; `jackstay.review.store` is the round's folder (the link into jackstay's store, section 9) |
 | `jackstay.test.scope`, `jackstay.test.key`, `jackstay.test.run_id`, `jackstay.test.output` | string | test phases; `jackstay.test.output` is the kept output's path |
 | `jackstay.bg.id`, `jackstay.bg.name` | string | `jst bg` |
-| `jackstay.github.operation`, `jackstay.github.repository`, `jackstay.github.pull_request` | string, string, int | `jst gh`: its subcommand, and the repository and number of a resolved pull request |
+| `jackstay.github.operation`, `jackstay.github.repository`, `jackstay.github.pull_request` | string, string, int | `jst checks` and `jst land status`/`find`: the subcommand; with `jst land`, the repository and number of a resolved pull request |
 | `jackstay.lock.name`, `jackstay.lock.path`, `jackstay.wait.gave_up` | string/bool | wait spans |
 | `jackstay.guard.command` | string | guard: the masked command, at most 1,000 bytes; `jackstay.guard.command_sha256` of the unmasked text so equal commands stay equal |
 | `jackstay.git.calls`, `jackstay.git.seconds` | int/double | phases and command |
