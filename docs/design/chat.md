@@ -252,7 +252,8 @@ else (the table is the package `internal/sessionchat/deliverystate`, checked by 
 | `pending` | `refused` | the recipient's engine closing the connection on the native doorbell (section 8.3) |
 | `pending`, `sending` | `dropped` | `SessionEnd`, a dead process, or a closed mailbox (`recipient_ended`); from `sending` the bridge's later outcome is then dropped (compare-and-set) |
 | `pending` | `expired` | the deadline, found by the sweep or by any step of section 4.10; the closing of its request (section 4.4) |
-| `pending`, `delivered` | `read` | `chat.inbox` emitting the whole body in one response, while the body is visible (section 4.10); `chat.ack` with `read`; or a review mailbox's freeze (section 9.1) |
+| `pending`, `delivered` | `read` | `chat.inbox` emitting the whole body in one response, while the body is visible (section 4.10); `chat.ack` with `read` |
+| `pending` (a mailbox's) | `read` | a review mailbox's freeze (section 9.1) |
 | `pending`, `sending`, `delivered`, `read` | `acted` | `chat.ack` with `acted`, or `chat.respond` to this request (from `sending`: the recipient read it before the bridge recorded the answer) |
 
 `refused`, `dropped`, `expired` and `acted` are final. The bridge records its outcome only if the
@@ -261,9 +262,11 @@ response, the sweep's `unconfirmed`), the late outcome is dropped and logged. Ex
 `pending`: a message the recipient read, or the bridge steered, is not reported as expired.
 
 **What the receipts promise.**
-- A message's text reaches the recipient's model through its own inbox read; on the bridge, also
-  through one steer, **at most once** (W-091): a steer whose result is unknown is never repeated,
-  because Codex cannot recognise a repeat; it is `delivered` with `unconfirmed`, and the sender sees
+- A message's text reaches the recipient's model only through the recipient's own reads
+  (`chat.inbox`, `chat.thread`, `jst chat inbox`); on the bridge, also through one steer, **at most
+  once** (W-091). Only `chat.inbox` and `chat.ack` change a receipt: a thread read shows the text of
+  a visible delivery, `pending` included, and leaves it `pending`. A steer whose result is unknown is
+  never repeated, because Codex cannot recognise a repeat; it is `delivered` with `unconfirmed`, and the sender sees
   the reason in its outbox and decides whether to send it again.
 - A doorbell carries no text, so a repeated doorbell is harmless, and its silence means nothing: the
   receipt that counts is the recipient's read (W-095).
@@ -889,14 +892,16 @@ Each recipient's **delivery** is its own small file:
     "whole": { "type": "boolean" },
     "next_attempt": { "type": "string" },
     "rung": { "type": "boolean" },
+    "hook_rung": { "type": "boolean" },
     "notice": { "enum": ["owed", "shown"] },
     "note": { "type": "string", "maxLength": 200 } } }
 ```
 
 `route` is chosen when the delivery is created and never changes (section 8.1). `pusher` names the
 bridge pass that set `sending`; `attempts` (confirmed failures, at most 4), `next_attempt` and
-`whole` (a steer carried the whole body) belong to the Codex bridge. `rung` is set once a doorbell
-told the recipient of the delivery (sections 8.3 and 8.4). `notice` is set to `owed` with a final `refused`, `dropped` or
+`whole` (a steer carried the whole body) belong to the Codex bridge. `rung` is set once the socket's
+doorbell told the recipient of the delivery (section 8.3), and `hook_rung` once a hook did (section
+8.4); neither changes a receipt, and neither stops the other from ringing. `notice` is set to `owed` with a final `refused`, `dropped` or
 `expired` state (except a request's expired delivery, whose notice is the request's, section 4.4),
 and to `shown` once the sender has seen it (section 8.5).
 
@@ -1222,7 +1227,7 @@ session's state (a `Stop` making it idle), starts the pusher if it is not runnin
 **pass** at each store change and every 15 seconds, and exits only after 10 minutes without pusher
 work. A session's doorbell is **due** when it is `idle` (a busy session hears its hooks' doorbell,
 section 8.4), its binding names a socket and a verified version, and it has a `pending` native
-delivery, or an owed notice, that no doorbell has told it of yet (`rung` on the delivery; for
+delivery, or an owed notice, that its socket has not told it of yet (`rung` on the delivery; for
 notices, the session's `notices_rung_at`). For each due session the pass:
 
 1. checks that the socket path is a socket owned by the same user, connects, writes the doorbell
@@ -1252,12 +1257,15 @@ The hooks ring the same doorbell, in the hook's output, for every session with a
 a version outside the verified range, for a session without a usable socket, and for a busy session
 on the native route, whose socket rings only when it is idle (W-095).
 
-- **Ring.** At `UserPromptSubmit` and `PostToolBatch` the dispatcher, under the lock, counts the
-  session's `pending` deliveries (on the `native` and `hooks` routes; `later` ones only at
-  `UserPromptSubmit`) and owed notices that no doorbell has told it of yet, marks them `rung`, and
-  returns the doorbell line as `additionalContext`. Nothing of a message's text is in it.
-- **Hold the turn.** At `Stop`, when the session has `pending` `now` deliveries no doorbell has told
-  it of, the dispatcher answers `{"decision": "block", "reason": …}` with the doorbell line, so the
+- **Ring.** At `UserPromptSubmit` the dispatcher, under the lock, counts **every** `pending` delivery
+  of the session on the `native` and `hooks` routes and every owed notice, and returns the doorbell
+  line as `additionalContext`: a socket's ring is silent and proves nothing, so each new prompt is
+  reminded of what is still unread until it is read or expires. At `PostToolBatch` it counts only the
+  `now` and `next` ones no hook has told it of yet (`hook_rung` on the delivery), marks them, and
+  rings the same way, so a busy turn hears of each new message once. Nothing of a message's text is
+  in either.
+- **Hold the turn.** At `Stop`, when the session has `pending` `now` deliveries no hook has told it
+  of, the dispatcher answers `{"decision": "block", "reason": …}` with the doorbell line, so the
   model reads its inbox before the turn ends. When `stop_hook_active` is true (the turn already
   continues because of a `Stop` hook), it blocks again only for `now` deliveries that arrived since,
   and at most 3 times in a row, well inside Claude Code's cap of 8 consecutive continuations. It
@@ -1643,8 +1651,8 @@ durable, so a machine crash could restore a record standing for nothing (7.3).
   non-body rendering passes 12 KiB is refused, and only a message whose whole body came in one
   response becomes `read`.
 - **Routes.** Each recipient's `delivery` gives the route of new deliveries, which never changes;
-  only the bridge claims; the doorbell rings for `native` and `hooks` deliveries, marks them `rung`,
-  and rings again only for new ones.
+  only the bridge claims; the socket rings once for each new `native` delivery; a hook rings at each
+  prompt for every unread one and at a tool batch for each new one, whatever the socket did.
 - **Rendering.** The frame escapes `</body>` and `</jackstay-message>` in a body; the doorbell line
   carries a count and no text, sender, summary or ID.
 
@@ -1660,8 +1668,9 @@ durable, so a machine crash could restore a record standing for nothing (7.3).
 - **Concurrency.** Several processes send, read, ack and ring at once; readers never see a half-made
   send; bounds hold; no delivery is steered by two passes.
 - **Hooks.** `jst hook claude` against recorded stdin for each event, from a real Claude Code
-  version (fixtures in `testdata/`): bindings written, states set, the doorbell rung once for each
-  new message across `PostToolBatch`, `Stop` and the socket; the `Stop` hold with and without
+  version (fixtures in `testdata/`): bindings written, states set; a message the socket rang for and
+  the session ignored is rung for again at its next prompt, and a tool batch rings once for each new
+  message; the `Stop` hold with and without
   `stop_hook_active`, never more than 3 in a row, and no `idle` while it holds.
 - **Detached pusher.** Started by a server or hook, it is not a descendant of any session; only one
   runs; it exits when idle; a recipient that is the only session open still hears its doorbell.

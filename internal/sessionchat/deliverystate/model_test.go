@@ -298,7 +298,7 @@ func invariant(w world) string {
 	case w.shown > 1:
 		return "AtMostOnce: the text reached the model twice"
 	case w.delivery.Route != Bridge && w.shown > 0:
-		return "ContentOnlyThroughInbox: a doorbell route carried the text"
+		return "ContentOnlyThroughReads: a doorbell route carried the text"
 	case w.engine != "none" && w.delivery.State == Pending:
 		return "NeverLooksUnpushed: a steered delivery is recorded pending"
 	case w.pushedClose:

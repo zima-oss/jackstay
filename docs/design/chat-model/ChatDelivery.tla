@@ -353,8 +353,9 @@ TypeOK ==
 \* The bridge steers a message's text at most once.
 AtMostOnce == shown <= 1
 
-\* On every other route the text reaches the model only through the inbox read: a doorbell carries none.
-ContentOnlyThroughInbox == d.route # "bridge" => shown = 0
+\* On every other route the text reaches the model only through the recipient's own reads (a steer is
+\* the only push): a doorbell carries none.
+ContentOnlyThroughReads == d.route # "bridge" => shown = 0
 
 \* A steer that may have reached the engine is never recorded as not steered.
 NeverLooksUnpushed == engine # "none" => d.state # "pending"

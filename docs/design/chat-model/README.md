@@ -45,7 +45,7 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | property | model | what it says |
 |---|---|---|
 | `AtMostOnce` | delivery | the bridge steers the text at most once |
-| `ContentOnlyThroughInbox` | delivery | on every other route the text reaches the model only through the inbox read |
+| `ContentOnlyThroughReads` | delivery | on every other route the text reaches the model only through the recipient's own reads |
 | `NeverLooksUnpushed` | delivery | a steer that may have reached the app-server is never recorded `pending` |
 | `NoPushStartsAfterClose` | delivery | no steer of a closed request begins |
 | `NoWriteAfterFreeze` | delivery | no pass that still owns its claim writes a question after its mailbox froze |
