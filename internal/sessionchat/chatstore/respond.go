@@ -150,13 +150,12 @@ func (transaction *transaction) requestOf(responder Session, requestID string) (
 // refused, and one past the deadline closes the request with its delivery and is refused. A request
 // closed by a crash between its two writes gets its delivery closed first.
 func (transaction *transaction) admitResponse(envelope Envelope, commit *Commit, delivery *Delivery, hash string) error {
-	moment := stamp(transaction.now)
 	request := commit.request()
 	table := delivery.table(true)
 	if request.State == deliverystate.Closed && deliverystate.Expirable(table.State) {
 		repaired, err := deliverystate.Apply(table, deliverystate.Event{Kind: deliverystate.CloseRequest})
 		if err == nil {
-			if err := transaction.writeDelivery(envelope.ID, hash, delivery.withTable(repaired, moment)); err != nil {
+			if *delivery, err = transaction.saveStepped(envelope, hash, *delivery, repaired); err != nil {
 				return err
 			}
 		}
@@ -168,6 +167,8 @@ func (transaction *transaction) admitResponse(envelope Envelope, commit *Commit,
 	case errors.Is(err, deliverystate.ErrAlreadyAnswered):
 		return refuse(ReasonAlreadyAnswered, "%s is already answered", envelope.Request.RequestID)
 	case errors.Is(err, deliverystate.ErrRequestClosed):
+		// A closure cut short after its delivery's write still settles the subscription on it.
+		defer func() { _, _ = transaction.reconcileWatchers(hash) }()
 		if nextRequest.State != request.State {
 			if err := transaction.closeRequest(envelope.ID, commit, delivery, hash, nextRequest, nextDelivery); err != nil {
 				return err
@@ -189,8 +190,13 @@ func (transaction *transaction) closeRequest(id string, commit *Commit, delivery
 	if err := writeRecord(transaction.place.commit(id), *commit, commitBound); err != nil {
 		return err
 	}
-	*delivery = delivery.withTable(next, moment)
-	return transaction.writeDelivery(id, hash, *delivery)
+	var envelope Envelope
+	if err := readRecord(transaction.place.envelope(id), envelopeBound, &envelope); err != nil {
+		return err
+	}
+	updated, err := transaction.saveStepped(envelope, hash, *delivery, next)
+	*delivery = updated
+	return err
 }
 
 // checkDecision is section 5.2's rule: approve or reject for a decision, answer for an answer, and

@@ -46,6 +46,9 @@ type MessageView struct {
 	Attachments []Attachment      `json:"attachments,omitempty"`
 	Meta        map[string]string `json:"meta,omitempty"`
 	State       string            `json:"state,omitempty"`
+	// Hidden marks a message of a thread whose body this session may not see: nothing of it but its
+	// place is shown (section 4.10).
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // renderedSize is the bytes a message takes in a result without its body, its sender's address and

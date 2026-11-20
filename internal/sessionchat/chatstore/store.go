@@ -138,6 +138,8 @@ type transaction struct {
 	store *Store
 	place layout
 	now   time.Time
+	// swept is true once this operation ran the sweep.
+	swept bool
 }
 
 // update runs change under the store's lock, after recovery.
@@ -172,6 +174,9 @@ func (store *Store) update(ctx context.Context, change func(*transaction) error)
 		if err := store.syncFolder(transaction.place.journal()); err != nil {
 			return errStopped
 		}
+	}
+	if err := transaction.sweepIfDue(); err != nil {
+		return err
 	}
 	return change(transaction)
 }
