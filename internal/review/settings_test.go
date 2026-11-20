@@ -135,12 +135,12 @@ func TestSettingsTaken(t *testing.T) {
 func TestBlocks(t *testing.T) {
 	s := Defaults()
 	s.RepeatSeverities = allButLast(s.Severities)
-	if !s.Blocks("blocker", "ordinary", "mild") || !s.Blocks("blocker", "unusual", "severe") || s.Blocks("blocker", "unusual", "mild") ||
-		s.Blocks("major", "ordinary", "severe") {
+	if !s.Blocks("blocker", "ordinary", "mild", "") || !s.Blocks("blocker", "unusual", "severe", "a rebase in a linked worktree") ||
+		s.Blocks("blocker", "unusual", "mild", "a path") || s.Blocks("blocker", "unusual", "severe", " ") || s.Blocks("major", "ordinary", "severe", "") {
 		t.Fatal("triage on")
 	}
 	s.Triage = false
-	if !s.Blocks("blocker", "unusual", "mild") {
+	if !s.Blocks("blocker", "unusual", "mild", "") {
 		t.Fatal("triage off")
 	}
 }

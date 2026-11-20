@@ -47,3 +47,27 @@ func TestTemplateCannotDropTheForm(t *testing.T) {
 		t.Fatal("an unknown field must be refused")
 	}
 }
+
+func TestAnUnusualAndSevereFindingMustNameItsOrdinaryPath(t *testing.T) {
+	form := verdictForm(PromptData{Triage: true, Severities: []string{"blocker", "major", "minor"}, Blocking: []string{"blocker"}})
+	for _, want := range []string{"hand-built setup or deliberate misuse", "`ordinary_path`", "however `severe` (W-094)"} {
+		if !strings.Contains(form, want) {
+			t.Errorf("the verdict form lacks %q:\n%s", want, form)
+		}
+	}
+	settings := testSettings()
+	_, next := Disposition(settings, RoundRecord{Round: 1, Outcome: Outcome{Blocks: true}})
+	_, owner := Disposition(settings, RoundRecord{Round: settings.RoundLimit, Outcome: Outcome{Blocks: true}})
+	for _, guidance := range []string{next, owner} {
+		if !strings.Contains(guidance, "W-094") {
+			t.Errorf("the session is not told to re-check the ratings: %s", guidance)
+		}
+	}
+	settings.Triage = false
+	if _, plain := Disposition(settings, RoundRecord{Round: 1, Outcome: Outcome{Blocks: true}}); strings.Contains(plain, "W-094") {
+		t.Errorf("with triage off a rating decides nothing, yet the session is told to re-check it: %s", plain)
+	}
+	if form := verdictForm(PromptData{Severities: []string{"blocker"}, Blocking: []string{"blocker"}}); strings.Contains(form, "W-094") {
+		t.Error("with triage off the form still says an unusual finding without a path is rare")
+	}
+}
