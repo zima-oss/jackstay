@@ -55,6 +55,15 @@ func (transaction *transaction) observe(session Session, observed string, person
 			session.State, session.Since = StateBusy, moment
 		}
 	case ObserveIdle:
+		// What already arrived is armed at the generation it arrived in before this idle advances
+		// it: a receipt written just before a killed process never makes the subscription miss
+		// this idle.
+		reconciled, err := transaction.reconcileWatchers(hashKey(session.Key))
+		if err != nil {
+			return session, err
+		}
+		session.IdleWatchers = reconciled.IdleWatchers
+		session.Notices = reconciled.Notices
 		if session.State != StateIdle {
 			session.State, session.Since = StateIdle, moment
 		}
@@ -306,18 +315,18 @@ func (transaction *transaction) arrival(id, hash string, session Session) (int, 
 	if err := readRecord(transaction.place.commit(id), commitBound, &commit); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return waiting, time.Time{}, err
 	}
-	at, _ := parseStamp(delivery.At)
+	eventAt, _ := parseStamp(delivery.At)
 	state := deliverystate.State(delivery.State)
 	switch {
 	case commit.RequestState == string(deliverystate.Closed) && deliverystate.Expirable(state):
 		closed, _ := parseStamp(commit.Closed)
 		return notArrived, closed, nil // a closure cut short before its delivery's write (section 4.4)
 	case delivery.Reason == string(deliverystate.Unconfirmed):
-		return notArrived, at, nil
+		return notArrived, eventAt, nil
 	case state == deliverystate.Delivered || state == deliverystate.Read || state == deliverystate.Acted:
-		return arrived, at, nil
+		return arrived, eventAt, nil
 	case deliverystate.Final(state):
-		return notArrived, at, nil
+		return notArrived, eventAt, nil
 	case session.State == StateGone:
 		ended, _ := parseStamp(session.Since)
 		return notArrived, ended, nil

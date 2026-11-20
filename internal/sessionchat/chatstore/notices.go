@@ -2,10 +2,10 @@ package chatstore
 
 import (
 	"errors"
-	"github.com/zima-oss/jackstay/internal/durable"
 	"path/filepath"
 	"strings"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/sessionchat/deliverystate"
 )
 

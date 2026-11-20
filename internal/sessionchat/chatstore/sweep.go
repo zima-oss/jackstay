@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/sessionchat/deliverystate"
@@ -54,6 +55,9 @@ func (transaction *transaction) sweepIfDue() error {
 // notice whose pusher died, an idle subscription past its `until`), then removes the messages and
 // sessions past their retention. Each change is single-record and idempotent.
 func (transaction *transaction) sweep() error {
+	if err := transaction.removeLeftovers(); err != nil {
+		return err
+	}
 	ids, err := listNames(transaction.place.commits())
 	if err != nil {
 		return err
@@ -296,4 +300,36 @@ func (transaction *transaction) done(found message) bool {
 		request = found.commit.request()
 	}
 	return deliverystate.MessageDone(deliveries, whole, request)
+}
+
+// removeLeftovers removes the files of every message ID that has neither a commit record nor a
+// journal entry (section 7.3): what a removal stopped after its commit's unlink left behind. Such
+// files were never served and nothing refers to them.
+func (transaction *transaction) removeLeftovers() error {
+	names, err := listNames(transaction.place.messages())
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		id := strings.TrimSuffix(name, ".json")
+		if !messageIDPattern.MatchString(id) || exists(transaction.place.commit(id)) ||
+			exists(filepath.Join(transaction.place.journal(), id)) {
+			continue
+		}
+		var envelope Envelope
+		if err := readRecord(transaction.place.envelope(id), envelopeBound, &envelope); err == nil {
+			for _, hash := range envelope.Recipients {
+				removeIfThere(filepath.Join(transaction.place.inbox(hash), id))
+			}
+			removeIfThere(filepath.Join(transaction.place.outbox(hashKey(envelope.From)), id))
+			if envelope.Request != nil {
+				removeIfThere(transaction.place.requestIndex(envelope.Request.RequestID))
+			}
+		}
+		if err := transaction.removeMessageFiles(id); err != nil {
+			return err
+		}
+		transaction.store.log("leftover-removed", id)
+	}
+	return nil
 }

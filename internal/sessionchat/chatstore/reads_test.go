@@ -1084,19 +1084,62 @@ func TestAnUnreadableMailboxRecordHoldsItsMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 	sent := f.send("cc:a", SendInput{To: "review:task/r1/codex", Message: "for the next round", ExpiresInSeconds: 60})
+	f.clock.advance(2 * time.Minute)
+	if err := f.store.Sweep(f.ctx); err != nil { // the expiry is settled while the mailbox reads
+		t.Fatal(err)
+	}
 	f.clock.advance(8 * 24 * time.Hour)
-	mailbox := f.store.place.session(hashKey("cx:round"))
-	if err := os.Chmod(mailbox, 0o000); err != nil {
+	held := false
+	if err := f.store.update(f.ctx, func(transaction *transaction) error {
+		found, err := transaction.message(sent.MessageID)
+		if err != nil {
+			return err
+		}
+		mailbox := transaction.place.session(hashKey("cx:round"))
+		if err := os.Chmod(mailbox, 0o000); err != nil {
+			return err
+		}
+		held = transaction.heldByMailbox(found.envelope)
+		return os.Chmod(mailbox, 0o600)
+	}); err != nil {
 		t.Fatal(err)
 	}
-	sweepErr := f.store.Sweep(f.ctx)
-	if err := os.Chmod(mailbox, 0o600); err != nil {
+	if !held {
+		t.Fatal("a mailbox record it cannot read does not hold its message")
+	}
+}
+
+func TestAReceiptCutShortBeforeItsArmingStillFiresOnTheNextIdle(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateBusy)
+	sent := f.send("cc:a", SendInput{To: "b", Message: "tell me when done", NotifyWhenIdle: true})
+	// The read was written, then the process was killed before the subscription was armed.
+	f.setDelivery(sent.MessageID, "cc:b", func(delivery *Delivery) { delivery.State = "read" })
+	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveIdle, false); err != nil {
 		t.Fatal(err)
 	}
-	if sweepErr != nil {
-		t.Logf("the sweep stopped: %v", sweepErr)
+	if notices := f.record("cc:a").Notices; len(notices) != 1 || notices[0].Kind != NoticeIdle {
+		t.Fatalf("the first idle after the read fires: %+v", notices)
 	}
-	if !exists(f.store.place.commit(sent.MessageID)) {
-		t.Fatal("a mailbox it could not read lost its message")
+}
+
+func TestTheSweepFinishesARemovalStoppedAfterItsUnlink(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	sent := f.send("cc:a", SendInput{To: "b", Message: "half removed"})
+	if err := os.Remove(f.store.place.commit(sent.MessageID)); err != nil { // stopped right after the unlink
+		t.Fatal(err)
+	}
+	before := f.measured().Bytes
+	if err := f.store.Sweep(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if exists(f.store.place.envelope(sent.MessageID)) || exists(f.store.place.body(sent.MessageID)) {
+		t.Fatal("the leftover files are removed")
+	}
+	if after := f.measured().Bytes; after >= before {
+		t.Fatalf("their charge is freed: %d then %d", before, after)
 	}
 }
