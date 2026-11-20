@@ -110,6 +110,12 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	if len(positional) == 1 {
 		options.Revision = positional[0]
 	}
+	given := false
+	flags.Visit(func(flag *flag.Flag) { given = given || flag.Name == "reviewer" })
+	if given && strings.TrimSpace(reviewers) == "" {
+		fmt.Fprintln(stderr, "jst review: --reviewer names no reviewer: give codex, claude-code or both, or leave the flag out for the default")
+		return ExitUsage
+	}
 	if reviewers != "" {
 		options.Reviewers = strings.Split(reviewers, ",")
 	}
