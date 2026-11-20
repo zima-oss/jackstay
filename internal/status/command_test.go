@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/contextbrief"
+	"github.com/zima-oss/jackstay/internal/gitcli"
 )
 
 func TestStatusWithoutPathsIsThisRepositoryInDetail(t *testing.T) {
@@ -145,35 +147,69 @@ func TestARepositoryWithoutJackstayIsReadWhole(t *testing.T) {
 	}
 }
 
+// writeJob writes a `jst bg` entry; with live, its supervisor is this test process.
+func writeJob(t *testing.T, home, id, cwd, repository string, live bool) {
+	t.Helper()
+	supervisor := "999999"
+	if live {
+		supervisor = strconv.Itoa(os.Getpid())
+	}
+	write(t, filepath.Join(home, ".all", "procs", id+".json"),
+		`{"id":"`+id+`","name":null,"supervisor":`+supervisor+`,"supervisor_start":null,"group":999998,"started":1,"leader_start":1,`+
+			`"deadline":null,"keep":true,"session":null,"watched":null,"cwd":"`+cwd+`","repository":"`+repository+`",`+
+			`"command":["make"],"status":"running"}`)
+}
+
 func TestJobsAreAttributedByTheRepositoryRecordedAtLaunch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("JACKSTAY_HOME", home)
 	parent := t.TempDir()
 	root := repository(t, parent, "app")
 	other := repository(t, parent, "other")
-	moved := filepath.Join(parent, "moved")
 	git(t, root, "worktree", "add", "-qb", "feature", filepath.Join(parent, "linked"))
-	git(t, root, "worktree", "move", filepath.Join(parent, "linked"), moved)
-	identity := readBoard(root).Repositories[0].RepositoryID
-	entry := func(id, cwd, repository string) {
-		write(t, filepath.Join(home, ".all", "procs", id+".json"),
-			`{"id":"`+id+`","name":null,"supervisor":999999,"supervisor_start":1,"group":999998,"started":1,"leader_start":1,`+
-				`"deadline":null,"keep":true,"session":null,"watched":null,"cwd":"`+cwd+`","repository":"`+repository+`",`+
-				`"command":["make"],"status":"running"}`)
+	identity, err := gitcli.CommonFolderInode(filepath.Join(root, ".git"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	entry("1800000000-1", filepath.Join(parent, "linked", "sub"), identity) // its worktree moved since
-	entry("1800000000-2", filepath.Join(root, "renamed-away"), identity)    // its folder renamed since
-	entry("1800000000-3", root, "git:another")                              // another repository at a reused path
-	entry("1800000000-4", other, "")                                        // an older jst, in another repository
+	writeJob(t, home, "1800000000-1", filepath.Join(parent, "linked", "sub"), identity, true)
+	writeJob(t, home, "1800000000-2", filepath.Join(root, "renamed-away"), identity, true)
+	writeJob(t, home, "1800000000-3", root, "inode:another", false)
+	writeJob(t, home, "1800000000-4", other, "", true)
+	git(t, root, "worktree", "move", filepath.Join(parent, "linked"), filepath.Join(parent, "moved"))
 	found := readBoard(root).Repositories[0]
-	if len(found.Background.Jobs) != 2 || found.Background.Jobs[0].ID != "1800000000-1" || found.Background.Jobs[1].ID != "1800000000-2" ||
-		found.Background.Unattributed != 0 {
+	if len(found.Background.Jobs) != 2 || found.Background.Jobs[0].ID != "1800000000-1" ||
+		found.Background.Jobs[1].ID != "1800000000-2" || found.Background.Unattributed != 0 {
 		t.Fatalf("jobs %+v", found.Background)
 	}
 
-	entry("1800000000-5", filepath.Join(root, "gone"), "") // an older jst, its folder gone: not guessed
-	report := readBoard(root)
+	// The main checkout renamed while its jobs run, and a new clone made at the old path.
+	renamed := filepath.Join(parent, "app-renamed")
+	if err := os.Rename(root, renamed); err != nil {
+		t.Fatal(err)
+	}
+	git(t, parent, "clone", "-q", renamed, root)
+	if found := readBoard(renamed).Repositories[0]; len(found.Background.Jobs) != 2 {
+		t.Fatalf("the renamed checkout lost its jobs: %+v", found.Background)
+	}
+	if found := readBoard(root).Repositories[0]; len(found.Background.Jobs) != 0 {
+		t.Fatalf("a new clone at the old path took the jobs: %+v", found.Background)
+	}
+
+	writeJob(t, home, "1800000000-5", filepath.Join(parent, "vanished"), "", true)
+	writeJob(t, home, "1800000000-6", filepath.Join(parent, "vanished"), "", false)
+	report := readBoard(renamed)
 	if report.Repositories[0].Background.Unattributed != 1 || !report.Partial {
-		t.Fatalf("an unattributable job: %+v", report.Repositories[0].Background)
+		t.Fatalf("a live job that can be placed nowhere: %+v", report.Repositories[0].Background)
+	}
+}
+
+func TestAnUnreadableJobStoreIsUnknownNotEmpty(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	root := repository(t, t.TempDir(), "app")
+	write(t, filepath.Join(home, ".all", "procs", "1800000000-1.json"), "{broken")
+	report := readBoard(root)
+	if report.Repositories[0].Background.Status != "unknown" || !report.Partial {
+		t.Fatalf("background %+v", report.Repositories[0].Background)
 	}
 }

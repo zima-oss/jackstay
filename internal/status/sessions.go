@@ -45,12 +45,15 @@ type Session struct {
 // by their recorded paths.
 type checkout struct {
 	RepositoryID string
-	Project      string
-	Root         string
-	Common       string
-	Worktrees    []Worktree
-	Folders      []string
-	byPath       map[string]string
+	// Inode is the common folder's rename-stable identity (gitcli.RepositoryInode), "" when it
+	// cannot be read; background jobs record it.
+	Inode     string
+	Project   string
+	Root      string
+	Common    string
+	Worktrees []Worktree
+	Folders   []string
+	byPath    map[string]string
 }
 
 // openCheckout reads the repository containing current.
@@ -76,6 +79,7 @@ func openCheckout(ctx context.Context, current string) (checkout, error) {
 		return checkout{}, err
 	}
 	found := checkout{RepositoryID: gitcli.CommonFolderID(common), Root: top, Common: common, Worktrees: parseWorktrees(string(listed))}
+	found.Inode, _ = gitcli.CommonFolderInode(common)
 	home, err := homedir.Home()
 	if err != nil {
 		return checkout{}, err

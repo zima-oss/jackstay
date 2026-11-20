@@ -359,7 +359,7 @@ func (run *backgroundRun) begin(id string, group int, control stopper, started t
 func repositoryOf(folder string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	id, err := (gitcli.Git{Dir: folder}).RepositoryID(ctx)
+	id, err := (gitcli.Git{Dir: folder}).RepositoryInode(ctx)
 	if err != nil {
 		return ""
 	}

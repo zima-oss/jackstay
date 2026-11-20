@@ -34,9 +34,9 @@ type Entry struct {
 	Session         *string  `json:"session"`
 	Watched         *Watched `json:"watched"`
 	Cwd             string   `json:"cwd"`
-	// Repository is the Git repository the command was started in (gitcli.RepositoryID), "" outside
-	// one or from a jst before 0.6.0: what `jst status` attributes the job by, whatever happens to
-	// its folder since.
+	// Repository is the Git repository the command was started in (gitcli.RepositoryInode, which a
+	// renamed or moved checkout keeps), "" outside one or from a jst before 0.6.0: what `jst status`
+	// attributes the job by, whatever happens to its folder since.
 	Repository string   `json:"repository,omitempty"`
 	Command    []string `json:"command"`
 	Status     string   `json:"status"`

@@ -15,7 +15,10 @@ func TestJobsReportsStatesWithoutRemovingOrStopping(t *testing.T) {
 	h := newLookHarness(t, "")
 	h.supervised(t, 610, 611, "build", "session-a", time.Minute)
 	h.listed(t, 620, 621, "", "", time.Minute)
-	jobs := jobsOf(h.look.host, h.place)
+	jobs, err := jobsOf(h.look.host, h.place)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(jobs) != 2 || jobs[0].ID != "1800000000-610" || jobs[0].Name != "build" || jobs[0].State != "running" ||
 		jobs[0].Cwd != "/work" || jobs[1].State != stateGone {
 		t.Fatalf("jobs %+v", jobs)
@@ -45,7 +48,23 @@ func TestTheRepositoryOfAStartIsRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if id := repositoryOf(folder); id != gitcli.CommonFolderID(common) || !strings.HasPrefix(id, "git:") {
-		t.Fatalf("repository %q", id)
+	want, err := gitcli.CommonFolderInode(common)
+	if id := repositoryOf(folder); err != nil || id != want || !strings.HasPrefix(id, "inode:") {
+		t.Fatalf("repository %q, want %q (%v)", id, want, err)
+	}
+}
+
+func TestJobsReportsAnUnreadableEntryInsteadOfLeavingItOut(t *testing.T) {
+	h := newLookHarness(t, "")
+	h.supervised(t, 610, 611, "build", "", time.Minute)
+	if err := os.WriteFile(h.place.entryPath("1800000000-9"), []byte("{broken"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if jobs, err := jobsOf(h.look.host, h.place); err == nil {
+		t.Fatalf("an unreadable entry was left out: %+v", jobs)
+	}
+	empty := store{folder: filepath.Join(t.TempDir(), "absent")}
+	if jobs, err := jobsOf(h.look.host, empty); err != nil || len(jobs) != 0 {
+		t.Fatalf("no folder: %+v %v", jobs, err)
 	}
 }

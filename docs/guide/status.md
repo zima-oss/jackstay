@@ -23,8 +23,9 @@ With no path, `jst status` covers the repository you are in (or, with one path, 
 - **brief**: the task id of the worktree's saved brief and whether it is still `current`.
 - **chat**: the number of chat sessions and pending messages, when chat is enabled.
 - **background**: the `jst bg` jobs started in the repository and their states. A job is placed by
-  the repository `jst bg` recorded when it started, so a renamed folder or a moved worktree does
-  not hide it; a job of an older jst whose folder is gone is counted as unattributed.
+  the repository `jst bg` recorded when it started (its Git folder's device and inode), so a
+  renamed folder, a moved worktree or a renamed checkout does not hide it. A running job that can
+  be placed nowhere is counted as unattributed, and the report is partial.
 - **gate** and **receipt**: the last recorded gate and stored passed run of this checkout, and
   whether each is for its HEAD (`current`) or an older commit (`stale`).
 - **cards**: the active cards and their states, when the project uses cards.

@@ -206,8 +206,8 @@ func (git Git) CommonDir(ctx context.Context) (string, error) {
 }
 
 // RepositoryID names the repository Dir is in on this machine: "git:" and the SHA-256 of its common
-// folder's real path. Linked worktrees share it, a moved linked worktree keeps it, and independent
-// clones differ even under one project name.
+// folder's real path. Linked worktrees share it and independent clones differ even under one
+// project name; moving the common folder changes it.
 func (git Git) RepositoryID(ctx context.Context) (string, error) {
 	common, err := git.CommonDir(ctx)
 	if err != nil {
@@ -224,6 +224,31 @@ func (git Git) RepositoryID(ctx context.Context) (string, error) {
 func CommonFolderID(common string) string {
 	digest := sha256.Sum256([]byte(filepath.Clean(common)))
 	return "git:" + hex.EncodeToString(digest[:])
+}
+
+// RepositoryInode names the repository Dir is in by its common folder's device and inode: it
+// survives renaming or moving the checkout within one file system, and a new clone made at the old
+// path gets another. "inode:" and the SHA-256 of "device:inode".
+func (git Git) RepositoryInode(ctx context.Context) (string, error) {
+	common, err := git.CommonDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	return CommonFolderInode(common)
+}
+
+// CommonFolderInode is RepositoryInode of a known common folder.
+func CommonFolderInode(common string) (string, error) {
+	info, err := os.Stat(common)
+	if err != nil {
+		return "", err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.IsDir() {
+		return "", fmt.Errorf("%s: not a folder with a device and an inode", common)
+	}
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%d:%d", stat.Dev, stat.Ino)))
+	return "inode:" + hex.EncodeToString(digest[:]), nil
 }
 
 // MainCheckout is the main checkout's top folder (the one that holds the common .git), whichever

@@ -204,10 +204,12 @@ func readBrief(root string) BriefStatus {
 	return BriefStatus{Status: "saved", Summary: summary}
 }
 
-// readBackground are the jobs started in this repository: by the repository identity `jst bg`
-// recorded at launch, which survives a renamed folder or a moved worktree. A job of an older jst
-// carries none and is placed by its folder while that exists; one whose folder is gone is counted
-// as unattributed rather than guessed.
+// readBackground are the jobs started in this repository, found by the repository identity
+// `jst bg` recorded at launch: its common folder's device and inode, which a renamed or moved
+// checkout keeps and a new clone at an old path does not get. A job of an older jst carries none
+// and is placed by its folder while that exists. A live job that can be placed nowhere (its folder
+// gone, and its identity unknown here, as after a move across file systems) is counted as
+// unattributed, which makes the report partial, rather than guessed or dropped.
 func readBackground(found checkout) BackgroundStatus {
 	jobs, err := background.Jobs()
 	if err != nil {
@@ -216,13 +218,11 @@ func readBackground(found checkout) BackgroundStatus {
 	result := BackgroundStatus{Status: stateNone}
 	for _, job := range jobs {
 		switch {
-		case job.Repository != "":
-			if job.Repository == found.RepositoryID {
-				result.Jobs = append(result.Jobs, job)
-			}
-		case found.holds(job.Cwd):
+		case job.Repository != "" && job.Repository == found.Inode:
 			result.Jobs = append(result.Jobs, job)
-		case !exists(job.Cwd):
+		case job.Repository == "" && found.holds(job.Cwd):
+			result.Jobs = append(result.Jobs, job)
+		case job.Live() && !exists(job.Cwd):
 			result.Unattributed++
 		}
 	}
