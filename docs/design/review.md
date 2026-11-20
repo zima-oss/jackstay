@@ -251,7 +251,7 @@ round's report merges their findings by `place`.
 
 ### 3.4 The run
 
-- **The reviewer's access profile** (W-090), the same for Codex and Claude Code (`internal/review/access`).
+- **The reviewer's access profile** ([W-090](../decisions/W-090-review-of-0-6-0.md)), the same for Codex and Claude Code (`internal/review/access`).
   The reviewer's task is to read and report, so it is given everything it may need to read, and
   denied only what it clearly does not need:
   - **reads everywhere**, read-only. Codex: a permission profile `":root"="read"`. Claude Code:
@@ -269,22 +269,37 @@ round's report merges their findings by `place`.
     Codex; `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR` and the Bedrock or Vertex
     credentials when that is its provider, for Claude Code. Codex's shell inherits it
     (`shell_environment_policy.inherit="all"`, with Codex's own default exclusion of key-like
-    names kept).
+    names kept); jackstay sets it before the project's isolation flags, so a project's own
+    `shell_environment_policy` wins.
   - **secrets are not read**: `~/.ssh`, `~/.aws`, `~/.azure`, `~/.gnupg`, `~/.kube`,
     `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.config/gh`, `~/.config/gcloud`,
-    `~/.config/hub`, `~/.git-credentials`, `~/.password-store`, and the keychain
-    (`~/Library/Keychains`) or keyring (`~/.local/share/keyrings`); and `.env` / `.env.*` files.
-    Codex: each path `"none"` in the profile, the `.env` files found under the source view and the
-    live checkout (8 folders deep, 512 files at most) listed one by one. Claude Code: `Read`, `Glob`
-    and `Grep` deny rules for each path and `Read(**/.env)`, `Read(**/.env.*)`, through `--settings`.
+    `~/.config/hub`, `~/.config/op`, `~/.git-credentials`, `~/.password-store`, `~/.vault-token`,
+    `~/.terraform.d/credentials.tfrc.json`, `~/.cargo/credentials.toml`, the keychain
+    (`~/Library/Keychains`) or keyring (`~/.local/share/keyrings`); **the other reviewer's login and
+    state** (Claude Code is denied `$CODEX_HOME`, else `~/.codex`; Codex is denied `~/.claude`,
+    `~/.claude.json` and `$CLAUDE_CONFIG_DIR`); and `.env` / `.env.*` files. Their contents are
+    also left out of the generated patches (`changes/*.patch`); the change index still names them.
+    Claude Code: `Read`, `Glob` and `Grep` deny rules for each path and for `//**/.env` and
+    `//**/.env.*` (anchored at the filesystem's root, not at its working folder), through
+    `--settings`. Codex: each path `"none"` in the profile, and `.env` / `.env.*` globs `"none"`.
+    On macOS they are `"/**/.env"` and `"/**/.env.*"`, checked at every read. On Linux Codex
+    expands a glob when the run starts (`glob_scan_max_depth` 12), takes regular files only, refuses
+    a glob rooted at `/`, and stops every sandboxed command when its scan meets a folder it cannot
+    read. So the globs are rooted at the source view and the live checkout only, and a `.env`
+    symbolic link at the checkout's top is denied by its literal path and its target's. A `.env`
+    elsewhere, deeper, or made during the run is not denied to Codex there, and an unreadable folder
+    inside the checkout stops Codex's commands (taken from Codex 0.169.0's Linux sandbox source; not
+    run on Linux here).
   - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
     `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
     local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,
     `disableAllHooks`. `review.reviewers.<name>.mcp_servers` gives chosen servers back, and their
-    tools only.
+    tools only. Their definitions may hold a credential, so `run.json` and `round.json` keep every
+    MCP setting of the argv — jackstay's, or a project's in its isolation flags, whole table or one
+    key — by key only (a reused run's record too), and so does the argv kept in telemetry.
   Checked against Codex 0.169.0 and Claude Code 2.1.328 on macOS (2026-11-20): both were denied
-  `~/.ssh` and an untracked `.env` of the checkout, listed `/usr/share`, and fetched
-  `https://example.com`; Codex's shell had the user's full `PATH` and no `GH_TOKEN` set in the
+  `~/.ssh`, the untracked `.env` of the checkout and of a checkout beside it, and the other
+  reviewer's login, listed `/usr/share`, and fetched a public web page; Codex's shell had the user's full `PATH` and no `GH_TOKEN` set in the
   caller, and wrote nothing outside its folder.
 - **argv** (Codex): as in section 1, then the access profile as `-c` permission settings,
   `-a never`, `--strict-config` and `project_doc_max_bytes=0` (repository instructions are read
@@ -386,10 +401,10 @@ attempt, with its evidence, and the next run takes k+1 and still N. Rounds are n
 the order of those renames. With several reviewers and some failing, the attempt is not a round
 and exit is 5; the successful answers stay in its folder, readable.
 
-**Only the missing answers are paid for again** (W-090). `attempt.json` records the attempt's
+**Only the missing answers are paid for again** ([W-090](../decisions/W-090-review-of-0-6-0.md)). `attempt.json` records the attempt's
 **binding**: a digest of the round number, the task, the commits (base, head, previous), the review
-policy and content policy, and the digests of the prompt, the verdict schema and the `--brief`
-file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
+policy and content policy, each selected reviewer's settings (command, model, effort, isolation; not its deadline),
+and the digests of the prompt, the verdict schema and the `--brief` file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
 starting reviewers, a run looks through the task's earlier attempts (never rounds), newest first,
 for one with its own binding; a reviewer's `answer.json` there is reused when it reads and checks as a
 fresh answer would (section 3.5), is not `incomplete`, and was given with the same model and

@@ -1,8 +1,6 @@
 package access
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -51,28 +49,17 @@ func TestEnvironmentKeepsWhatAReviewerNeedsAndDropsTheRest(t *testing.T) {
 }
 
 func TestSecretsAreTheAccountsKeysAndTheEnvFiles(t *testing.T) {
-	paths := SecretPaths("/home/r")
-	for _, want := range []string{"/home/r/.ssh", "/home/r/.aws", "/home/r/.config/gh"} {
+	paths := SecretPaths("/home/r", Codex, []string{"CLAUDE_CONFIG_DIR=/claude/config"})
+	for _, want := range []string{"/home/r/.ssh", "/home/r/.aws", "/home/r/.config/gh", "/home/r/.vault-token",
+		"/home/r/.claude", "/home/r/.claude.json", "/claude/config"} {
 		if !slices.Contains(paths, want) {
-			t.Errorf("%s is not a secret: %v", want, paths)
+			t.Errorf("%s is not a secret to Codex: %v", want, paths)
 		}
 	}
-	root := t.TempDir()
-	for _, file := range []string{".env", "service/.env.production", "deep/a/b/c/d/.env", ".git/.env", "environment.go", ".envrc"} {
-		path := filepath.Join(root, file)
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
+	if claude := SecretPaths("/home/r", Claude, nil); !slices.Contains(claude, "/home/r/.codex") || slices.Contains(claude, "/home/r/.claude") {
+		t.Errorf("Claude Code's secrets: %v", claude)
 	}
-	found := SecretFiles([]string{root, ""}, 3, 100)
-	want := []string{filepath.Join(root, ".env"), filepath.Join(root, "service/.env.production")}
-	if !slices.Equal(found, want) {
-		t.Fatalf("found %v, want %v (not past the depth, not in .git, not .envrc)", found, want)
-	}
-	if limited := SecretFiles([]string{root}, 3, 1); len(limited) != 1 {
-		t.Fatalf("the limit: %v", limited)
+	if !slices.Equal(SecretFileGlobs, []string{"//**/.env", "//**/.env.*"}) {
+		t.Fatalf("the .env rules are not anchored at the root: %v", SecretFileGlobs)
 	}
 }

@@ -231,7 +231,7 @@ case "$arguments" in
   *) exit 21 ;;
 esac
 case "$arguments" in *dangerously*|*Bash*|*Edit*|*Write*) exit 22 ;; esac
-case "$arguments" in *"--add-dir / --settings"*'Read(**/.env)'*) ;; *) exit 25 ;; esac
+case "$arguments" in *"--add-dir / --settings"*'Read(//**/.env)'*) ;; *) exit 25 ;; esac
 case "$TMPDIR" in */claude-code/tmp) [ -d "$TMPDIR" ] ;; *) exit 26 ;; esac
 [ "$(cat head/reviewed.txt)" = pinned-after ]
 [ "$(cat base/reviewed.txt)" = before ]

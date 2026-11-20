@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -359,5 +360,29 @@ func TestReviewStatusOfAnotherCloneOfTheSameProjectIsNotShown(t *testing.T) {
 	if status := response["structuredContent"].(map[string]any); status["last"] != nil || status["running"] != nil ||
 		status["report"] != "" || status["outcome"] != nil || status["blocks"] != nil {
 		t.Fatalf("a clone was shown another clone's review: %+v", status)
+	}
+}
+
+func TestAConnectedSessionCannotUseARepositoryReplacedInPlace(t *testing.T) {
+	chat := newReviewChat(t)
+	submitter := chat.register(t, "submitter", strings.Repeat("s", 32))
+	gitFolder := filepath.Join(chat.repository.Root, ".git")
+	if err := os.Rename(gitFolder, gitFolder+"-old"); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := exec.Command("git", "-C", chat.repository.Root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, output)
+	}
+	for name, arguments := range map[string]map[string]any{
+		"review.status": {"task": "t"},
+		"review.submit": {"base": "HEAD", "head": "HEAD", "task": "t", "reviewers": []string{"codex"}},
+	} {
+		encoded, _ := json.Marshal(map[string]any{"name": name, "arguments": arguments})
+		if response := (&Server{store: chat.store, session: submitter}).call(encoded).(map[string]any); response["isError"] != true {
+			t.Fatalf("%s worked in a repository replaced under the session: %+v", name, response)
+		}
+	}
+	if len(chat.launched) != 0 {
+		t.Fatal("a review was started")
 	}
 }

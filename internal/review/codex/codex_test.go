@@ -171,10 +171,9 @@ func TestPinnedSourceUsesTheReviewerAccessProfile(t *testing.T) {
 		}
 	}
 	home := homedir.AccountHome()
-	tree, _ := canonicalPath(request.Tree)
 	temporary, _ := canonicalPath(Temporary(request))
 	for _, want := range []string{`":root"="read"`, strconv.Quote(filepath.Join(home, ".ssh")) + `="none"`,
-		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(tree, ".env.local")) + `="none"`,
+		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`, globKey(request, home, ".env"), globKey(request, home, ".env.*"),
 		strconv.Quote(temporary) + `="write"`} {
 		if !strings.Contains(filesystem, want) {
 			t.Errorf("the filesystem table lacks %s: %s", want, filesystem)
@@ -385,4 +384,36 @@ func TestLoginWords(t *testing.T) {
 	if codexLogLines("2026 ERROR codex_core: x\nplain line\n") != "2026 ERROR codex_core: x" {
 		t.Fatal("log lines")
 	}
+}
+
+func TestTheProjectsInheritWinsAndEveryKeyIsOnce(t *testing.T) {
+	request := setup(t, "done")
+	request.PinnedSource = true
+	request.Isolation = []string{"-c", "shell_environment_policy.inherit=none"}
+	request.Environ = []string{"CLAUDE_CONFIG_DIR=" + filepath.Join(homedir.AccountHome(), ".claude")} // the same folder twice
+	argv := Argv(request, filepath.Join(request.Folder, "answer.json"))
+	filesystem := ""
+	for _, word := range argv {
+		if strings.HasPrefix(word, "permissions.jackstay_review.filesystem=") {
+			filesystem = word
+		}
+	}
+	claude, _ := canonicalPath(filepath.Join(homedir.AccountHome(), ".claude"))
+	if count := strings.Count(filesystem, strconv.Quote(claude)+"="); count != 1 {
+		t.Fatalf("a key appears %d times: %s", count, filesystem)
+	}
+	defaults := slices.Index(argv, `shell_environment_policy.inherit="all"`)
+	project := slices.Index(argv, "shell_environment_policy.inherit=none")
+	if defaults < 0 || project < defaults {
+		t.Fatalf("the project's inherit does not come after jackstay's default: %v", argv)
+	}
+}
+
+// globKey is the profile's entry denying files named name under the first root of this platform.
+func globKey(request Request, home, name string) string {
+	root := envGlobRoots(request, home)[0]
+	if resolved, err := canonicalPath(root); err == nil {
+		root = resolved
+	}
+	return strconv.Quote(strings.TrimSuffix(root, "/")+"/**/"+name) + `="none"`
 }

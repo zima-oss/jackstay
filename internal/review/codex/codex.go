@@ -79,6 +79,10 @@ func Argv(request Request, answerPath string) []string {
 	if request.Effort != "" {
 		argv = append(argv, "-c", fmt.Sprintf("model_reasoning_effort=%q", request.Effort))
 	}
+	if request.PinnedSource {
+		// A default the project's isolation flags may override: they come after it.
+		argv = append(argv, "-c", `shell_environment_policy.inherit="all"`)
+	}
 	argv = append(argv, request.Isolation...)
 	for _, name := range sortedNames(request.MCPServers) {
 		server := request.MCPServers[name]
@@ -94,8 +98,7 @@ func Argv(request Request, answerPath string) []string {
 		argv = append(argv, "--strict-config", "-c", `default_permissions="jackstay_review"`,
 			"-c", Filesystem(request, homedir.AccountHome()),
 			"-c", "permissions.jackstay_review.network.enabled=true",
-			"-c", "project_doc_max_bytes=0",
-			"-c", `shell_environment_policy.inherit="all"`)
+			"-c", "project_doc_max_bytes=0")
 	}
 	return append(argv, "-")
 }
@@ -104,22 +107,46 @@ func Argv(request Request, answerPath string) []string {
 func Temporary(request Request) string { return filepath.Join(request.Folder, "tmp") }
 
 // Filesystem is the permission profile's filesystem table: read everything; never the account's
-// secrets or a `.env` file of the reviewed tree or the live checkout; write only Temporary.
+// secrets nor a `.env` file — glob rules under envGlobRoots, which Codex checks at every read on
+// macOS and expands when the run starts on Linux, globScanDepth folders deep; write only Temporary.
 func Filesystem(request Request, home string) string {
+	environ := request.Environ
+	if environ == nil {
+		environ = os.Environ()
+	}
 	entries := []string{`":root"="read"`}
-	denied := access.SecretPaths(home)
-	denied = append(denied, access.SecretFiles([]string{request.Tree, request.RepositoryRoot}, 8, 512)...)
-	for _, path := range denied {
+	seen := map[string]bool{}
+	for _, path := range append(access.SecretPaths(home, access.Codex, environ), envLinks(request)...) {
 		if resolved, err := canonicalPath(path); err == nil {
 			path = resolved
 		}
+		if seen[path] { // a TOML table takes each key once
+			continue
+		}
+		seen[path] = true
 		entries = append(entries, strconv.Quote(path)+`="none"`)
+	}
+	for _, root := range envGlobRoots(request, home) {
+		if resolved, err := canonicalPath(root); err == nil {
+			root = resolved
+		}
+		for _, name := range access.SecretFileNames {
+			if key := strings.TrimSuffix(root, "/") + "/**/" + name; !seen[key] {
+				seen[key] = true
+				entries = append(entries, strconv.Quote(key)+`="none"`)
+			}
+		}
 	}
 	if temporary, err := canonicalPath(Temporary(request)); err == nil {
 		entries = append(entries, strconv.Quote(temporary)+`="write"`)
 	}
+	entries = append(entries, fmt.Sprintf("glob_scan_max_depth=%d", globScanDepth))
 	return "permissions.jackstay_review.filesystem={" + strings.Join(entries, ",") + "}"
 }
+
+// globScanDepth is how deep Codex looks for files matching a glob rule where it must find them
+// before the run (Linux); on macOS the rule is checked at every read.
+const globScanDepth = 12
 
 func sortedNames(servers map[string]access.MCPServer) []string {
 	names := make([]string, 0, len(servers))
@@ -290,6 +317,7 @@ func Run(ctx context.Context, request Request) Result {
 		return finish(OutcomeFailed, err.Error())
 	}
 	spec := GroupSpec(append([]string{path}, argv[1:]...))
+	spec.TraceArgv = access.RedactedArgv(spec.Argv)
 	spec.Dir, spec.Env, spec.Input = request.Tree, access.Environment(environ, access.Codex, temporary), request.Prompt
 	spec.Trace = ctx
 	stderrTail := &tailBuffer{limit: 64 << 10}

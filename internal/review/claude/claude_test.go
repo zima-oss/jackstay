@@ -31,13 +31,22 @@ func TestTheReviewerReadsEverywhereButWritesNothingAndRunsNoCommand(t *testing.T
 		t.Errorf("permissions bypassed: %v", words)
 	}
 	settings := words[slices.Index(words, "--settings")+1]
-	for _, want := range []string{"Read(//home/r/.ssh/**)", "Grep(//home/r/.aws/**)", "Read(//home/r/.config/gh/**)", "Read(**/.env)", "Read(**/.env.*)", `"disableAllHooks":true`} {
-		if !strings.Contains(Settings("/home/r"), want) {
-			t.Errorf("the settings lack %s: %s", want, Settings("/home/r"))
+	for _, want := range []string{"Read(//home/r/.ssh/**)", "Grep(//home/r/.aws/**)", "Read(//home/r/.config/gh/**)", "Read(//**/.env)", "Read(//**/.env.*)", "Grep(//**/.env)", `"disableAllHooks":true`} {
+		if !strings.Contains(Settings("/home/r", nil), want) {
+			t.Errorf("the settings lack %s: %s", want, Settings("/home/r", nil))
 		}
 	}
 	if !strings.Contains(settings, `"deny"`) {
 		t.Errorf("no deny rules passed: %s", settings)
+	}
+}
+
+func TestClaudeCodeCannotReadCodexsLogin(t *testing.T) {
+	for environ, folder := range map[string]string{"": "/home/r/.codex", "CODEX_HOME=/elsewhere/codex": "/elsewhere/codex"} {
+		settings := Settings("/home/r", []string{environ})
+		if !strings.Contains(settings, "Read(/"+folder+"/**)") {
+			t.Errorf("Codex's login %s is readable: %s", folder, settings)
+		}
 	}
 }
 

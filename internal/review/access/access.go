@@ -6,7 +6,6 @@
 package access
 
 import (
-	"io/fs"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -24,26 +23,54 @@ const (
 var secretFolders = []string{
 	".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker/config.json", ".netrc", ".npmrc", ".pypirc",
 	".config/gh", ".config/gcloud", ".config/hub", ".git-credentials", ".password-store",
+	".vault-token", ".terraform.d/credentials.tfrc.json", ".cargo/credentials.toml", ".config/op",
 }
 
-// SecretPaths are the absolute paths a reviewer is never allowed to read under home: the account's
-// secrets and the system's keychain or keyring.
-func SecretPaths(home string) []string {
+// SecretPaths are the absolute paths reviewer is never allowed to read: the account's secrets, the
+// system's keychain or keyring, and the other reviewer's own login and state (its OAuth and refresh
+// tokens are not this reviewer's), found from environ (CODEX_HOME, CLAUDE_CONFIG_DIR) and home.
+func SecretPaths(home, reviewer string, environ []string) []string {
 	folders := slices.Clone(secretFolders)
 	if runtime.GOOS == "darwin" {
 		folders = append(folders, "Library/Keychains")
 	} else {
 		folders = append(folders, ".local/share/keyrings")
 	}
-	paths := make([]string, 0, len(folders))
+	paths := make([]string, 0, len(folders)+3)
 	for _, folder := range folders {
 		paths = append(paths, filepath.Join(home, folder))
+	}
+	value := func(name string) string {
+		for _, pair := range environ {
+			if found, ok := strings.CutPrefix(pair, name+"="); ok {
+				return found
+			}
+		}
+		return ""
+	}
+	switch reviewer {
+	case Codex:
+		paths = append(paths, filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json"))
+		if folder := value("CLAUDE_CONFIG_DIR"); folder != "" {
+			paths = append(paths, folder)
+		}
+	case Claude:
+		codexHome := value("CODEX_HOME")
+		if codexHome == "" {
+			codexHome = filepath.Join(home, ".codex")
+		}
+		paths = append(paths, codexHome)
 	}
 	return paths
 }
 
-// SecretFileGlobs are files a reviewer is never allowed to read wherever they are: `.env` files.
-var SecretFileGlobs = []string{"**/.env", "**/.env.*"}
+// SecretFileGlobs are files a reviewer is never allowed to read wherever they are: `.env` files,
+// anchored at the filesystem's root (Claude Code's `//` form; Codex takes them with one `/`), not at
+// the reviewer's working folder.
+var SecretFileGlobs = []string{"//**/.env", "//**/.env.*"}
+
+// SecretFileNames are the names of those files, for rules that take a folder and a pattern.
+var SecretFileNames = []string{".env", ".env.*"}
 
 // tokenLike are names of variables that carry a credential.
 var tokenLike = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|COOKIE|SESSION_?KEY|(^|_)AUTH($|_))`)
@@ -123,33 +150,30 @@ type MCPServer struct {
 	Args    []string `json:"args"`
 }
 
-// SecretFiles are the `.env` files under roots, found by walking each at most depth folders deep and
-// at most limit files in all: a reviewer whose rules take only paths is denied each one.
-func SecretFiles(roots []string, depth, limit int) []string {
-	var found []string
-	for _, root := range roots {
-		if root == "" {
-			continue
+// RedactedArgv is argv as jackstay keeps it (run.json, round.json, telemetry): an MCP server's definition may carry a credential in
+// its command, arguments or environment, so every MCP setting — jackstay's, or a project's in its
+// isolation flags, whole table or one key — is kept by key only. `mcp_servers={}` is kept as is.
+func RedactedArgv(argv []string) []string {
+	kept := slices.Clone(argv)
+	for index, word := range kept {
+		value, inline := strings.CutPrefix(word, "--config=")
+		if !inline {
+			if index == 0 || kept[index-1] != "-c" && kept[index-1] != "--config" {
+				if kept[max(index-1, 0)] == "--mcp-config" && index > 0 && word != `{"mcpServers":{}}` {
+					kept[index] = "<redacted>"
+				}
+				continue
+			}
+			value = word
 		}
-		_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil || len(found) >= limit {
-				if entry != nil && entry.IsDir() && path != root {
-					return filepath.SkipDir
-				}
-				return nil
+		key, setting, _ := strings.Cut(value, "=")
+		if strings.HasPrefix(strings.TrimSpace(key), "mcp_servers") && strings.TrimSpace(setting) != "{}" {
+			redacted := key + "=<redacted>"
+			if inline {
+				redacted = "--config=" + redacted
 			}
-			relative, _ := filepath.Rel(root, path)
-			if entry.IsDir() {
-				if entry.Name() == ".git" || relative != "." && strings.Count(relative, string(filepath.Separator)) >= depth {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if name := entry.Name(); name == ".env" || strings.HasPrefix(name, ".env.") {
-				found = append(found, path)
-			}
-			return nil
-		})
+			kept[index] = redacted
+		}
 	}
-	return found
+	return kept
 }
