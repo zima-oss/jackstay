@@ -25,7 +25,7 @@ import (
 // serve`), so they need no grant.
 
 // sharedGrants are the paths under `<home>/.all` the sandbox may write.
-var sharedGrants = []string{"telemetry", "procs", "session-chat", "context-brief", "heavy-suite.lock", "heavy-suite.lock.queue",
+var sharedGrants = []string{"telemetry", "procs", "chat", "session-chat", "context-brief", "heavy-suite.lock", "heavy-suite.lock.queue",
 	"heavy-suite.lock.holder"}
 
 // projectGrants are the paths under `<home>/<project>` the sandbox may write. Test outputs and

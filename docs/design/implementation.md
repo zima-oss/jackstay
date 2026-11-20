@@ -139,7 +139,7 @@ A log line is one JSON object appended in one write, so processes never mix line
 cannot be written never fails its tool, except `jst test`, which checks its evidence first.
 `jst setup` lets Claude Code's sandbox write only what jst writes from a sandboxed command
 (`doctor.SandboxGrants`: the journals, the heavy-suite lock with its queue and holder note,
-`procs`, `session-chat`, `context-brief`, each project's `ids`, the trash). Evidence (receipts and
+`procs`, `chat`, `session-chat`, `context-brief`, each project's `ids`, the trash). Evidence (receipts and
 failure notes, gate marks and bars, review rounds, the run log, the delivery record, the expected
 projects) stays read-only there, so a sandboxed agent cannot forge a pass (#59): `jst test` and
 `jst review` run outside it. Before running, `jst test` appends-opens the run log, makes and removes

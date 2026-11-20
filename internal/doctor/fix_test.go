@@ -22,7 +22,8 @@ func TestEveryProblemNamesItsFix(t *testing.T) {
 		"adoption", "binary-not-signed", "checkout-moved", "codesign-identity-invalid",
 		"codesign-setting-unreadable", "codesign-uninspected", "config-error", "expected-never-called",
 		"expected-unreadable", "failed-open", "folder-incomplete", "guard-does-not-refuse",
-		"guard-never-called", "launcher-missing", "launcher-not-fixed", "layout-unreadable",
+		"guard-never-called", "land-account", "land-guard", "land-invalid", "land-lint-missing", "land-lint-not-required", "land-method",
+		"land-no-required-checks", "land-rules", "land-rules-unread", "launcher-missing", "launcher-not-fixed", "layout-unreadable",
 		"link-missing", "lock-unwritable", "path-not-first", "sandbox-blocks-state", "sandbox-writes-evidence", "version-mismatch",
 	}
 	files, err := filepath.Glob("*.go")

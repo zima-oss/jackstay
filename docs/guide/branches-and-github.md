@@ -136,6 +136,11 @@ checks required in addition to the base's rules. `--prepare` stops before the me
 whatever `autonomy` says. `autonomy` and `checks` are read from the base's `jackstay.json`, never
 the change's.
 
+`jst adopt` asks who merges before it writes the section, the recommended answer first (at a
+terminal; elsewhere `--apply` needs `--autonomy merge-when-green|prepare`), and never changes an
+`autonomy` the file has. `jst setup` asks the same once per machine and keeps the answer adopt
+offers first.
+
 ### Ready for a person
 
 When the agent may not merge, `jst land` still pushes, opens the change request and waits for the

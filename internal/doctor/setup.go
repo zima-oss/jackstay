@@ -14,9 +14,11 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/zima-oss/jackstay/internal/adopt"
 )
 
-const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]"
+const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE"
 
 const setupHelp = setupUsage + `
 
@@ -31,6 +33,11 @@ stays read-only to the sandbox; jst test and jst review run outside it.
   --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
+  --autonomy MODE keep merge-when-green or prepare as this machine's answer to who merges
+
+Once per machine, a terminal is also asked who merges a project's changes: the agent when the
+required checks pass, or a person. ` + "`jst adopt`" + ` offers that answer first when it writes a project's
+land section; the project's jackstay.json decides.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
@@ -212,7 +219,7 @@ func planSandbox(report Report, finding Finding) SetupItem {
 
 // RunSetup is jst setup. Mutations require an interactive choice or --yes with a selected ID.
 func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	planOnly, asJSON, yes, chat, prefix := false, false, false, false, ""
+	planOnly, asJSON, yes, chat, prefix, autonomy := false, false, false, false, "", ""
 	selected := map[string]bool{}
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
@@ -224,16 +231,21 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			yes = true
 		case "--chat":
 			chat = true
-		case "--select", "--prefix":
-			if index+1 >= len(args) {
+		case "--select", "--prefix", "--autonomy":
+			option, rest := args[index], args[index+1:]
+			if len(rest) == 0 {
 				fmt.Fprintln(stderr, setupUsage)
 				return 2
 			}
+			value := rest[0]
 			index++
-			if args[index-1] == "--select" {
-				selected[args[index]] = true
-			} else {
-				prefix = args[index]
+			switch option {
+			case "--select":
+				selected[value] = true
+			case "--prefix":
+				prefix = value
+			default:
+				autonomy = value
 			}
 		default:
 			fmt.Fprintln(stderr, setupUsage)
@@ -243,6 +255,18 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if (yes && len(selected) == 0) || (!yes && len(selected) != 0) || (planOnly && yes) || (chat && yes) {
 		fmt.Fprintln(stderr, setupUsage)
 		return 2
+	}
+	if autonomy != "" {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, setupUsage)
+			return 2
+		}
+		if err := adopt.SaveMachineAutonomy(autonomy); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers land.autonomy %s first on this machine\n", autonomy)
+		return 0
 	}
 	for identifier := range selected {
 		if identifier != "path" && identifier != "sandbox" {
@@ -261,6 +285,7 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	inputs := RealInputs(prefix)
 	// Settings lives under ~/.claude; the profile belongs directly under account home.
 	plan := planSetup(Diagnose(inputs), filepath.Dir(filepath.Dir(inputs.Settings)), os.Getenv("SHELL"))
+	plan.Items = append(plan.Items, autonomyItem(adopt.MachineAutonomy()))
 	if chat {
 		plan.Items = append(plan.Items, chatEngineSetupItems(exec.LookPath)...)
 	}
@@ -274,11 +299,57 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if planOnly || (!yes && (!terminalInput(stdin) || !terminalOutput(stdout))) {
 		return 0
 	}
+	return applySetup(plan, yes, chat, selected, stdin, stdout, stderr)
+}
+
+// applySetup asks and applies a plan: the questions at a terminal; with --yes only the selected
+// repairs, unattended, asking nothing.
+func applySetup(plan SetupPlan, yes, chat bool, selected map[string]bool, stdin io.Reader, stdout, stderr io.Writer) int {
 	reader := bufio.NewReader(stdin)
+	if !yes {
+		if err := askMachineAutonomy(plan, reader, stdout, adopt.SaveMachineAutonomy); err != nil {
+			fmt.Fprintf(stderr, "jst setup: autonomy: %v\n", err)
+			return 1
+		}
+	}
 	if chat {
 		promptChatEngineSetup(plan, reader, stdout)
 	}
 	return executeSetup(plan, yes, selected, reader, stdout, stderr)
+}
+
+// autonomyItem is this machine's answer to who merges (docs/design/land.md section 5): asked once,
+// then offered first by `jst adopt`.
+func autonomyItem(saved string, err error) SetupItem {
+	item := SetupItem{ID: "autonomy", Status: "ask", Text: "who merges a project's changes, offered first by `jst adopt`: not answered on this machine",
+		Fix: "answer the question at a terminal (`jst setup`), or `jst setup --autonomy merge-when-green|prepare`"}
+	switch {
+	case err != nil:
+		item.Status, item.Text = "manual", "this machine's answer to who merges cannot be read: "+err.Error()
+		item.Fix = "fix or remove the file named, then `jst setup --autonomy merge-when-green|prepare`"
+	case saved != "":
+		item.Status, item.Text = "done", "`jst adopt` offers land.autonomy "+saved+" first on this machine"
+		item.Fix = "`jst setup --autonomy merge-when-green|prepare` changes it; a project's jackstay.json decides"
+	}
+	return item
+}
+
+// askMachineAutonomy asks adopt's question when the plan says it is not answered, and keeps the answer.
+func askMachineAutonomy(plan SetupPlan, reader *bufio.Reader, stdout io.Writer, save func(string) error) error {
+	for _, item := range plan.Items {
+		if item.ID != "autonomy" || item.Status != "ask" {
+			continue
+		}
+		answer, err := adopt.AskAutonomy(reader, stdout, "")
+		if err != nil {
+			return err
+		}
+		if err := save(answer); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers land.autonomy %s first on this machine\n", answer)
+	}
+	return nil
 }
 
 func chatEngineSetupItems(lookPath func(string) (string, error)) []SetupItem {
