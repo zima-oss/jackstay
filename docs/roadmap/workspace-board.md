@@ -1,5 +1,9 @@
 # Workspace board across repositories
 
+> Superseded: the board became the many-repository view of `jst status`, without the merge queue
+> ([W-090](../decisions/W-090-one-status-command.md), [the guide](../guide/status.md)). This
+> specification is kept as history.
+
 ## Problem and scope
 
 An operator supervising several local agent sessions needs one quick view of work spread across

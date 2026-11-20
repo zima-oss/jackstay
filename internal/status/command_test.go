@@ -107,3 +107,58 @@ func TestStatusReadsTheConfiguredRepositoriesAsABoard(t *testing.T) {
 		t.Fatalf("board text:\n%s", &output)
 	}
 }
+
+func TestAnUnusableRepositoryListIsAWrongRequest(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	root := repository(t, t.TempDir(), "hub")
+	write(t, filepath.Join(root, "jackstay.json"), `{"jackstay_schema":3,"project":"shared","status":{"repos":"../service"}}`)
+	t.Chdir(root)
+	var output, diagnostics bytes.Buffer
+	if code := run(nil, nil, &output, &diagnostics); code != 2 || output.Len() != 0 ||
+		!strings.Contains(diagnostics.String(), "status.repos cannot be read") {
+		t.Fatalf("exit %d: %q %q", code, &output, &diagnostics)
+	}
+}
+
+func TestAnInvalidSectionHidesOnlyItsOwnSource(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	root := repository(t, t.TempDir(), "app")
+	write(t, filepath.Join(root, "jackstay.json"), `{"jackstay_schema":3,"project":"shared","cards":{"dir":"cards"},"chat":{"enabled":true}}`)
+	write(t, filepath.Join(home, ".all", "runs.jsonl"),
+		`{"event":"gate","project":"shared","worktree":"`+root+`","head":"x","epoch":1,"at":"2026-11-19T10:00:00Z","outcome":"passed"}`+"\n")
+	found := readBoard(root).Repositories[0]
+	if found.Cards.Status != "unknown" || found.Chat.Status != "available" || found.Gate.Status != "recorded" || found.Status != "ok" {
+		t.Fatalf("sources: cards %+v chat %+v gate %+v", found.Cards, found.Chat, found.Gate)
+	}
+}
+
+func TestARepositoryWithoutJackstayIsReadWhole(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	root := repository(t, t.TempDir(), "plain")
+	if err := os.Remove(filepath.Join(root, "jackstay.json")); err != nil {
+		t.Fatal(err)
+	}
+	var output, diagnostics bytes.Buffer
+	if code := run([]string{root}, nil, &output, &diagnostics); code != 0 || !strings.Contains(output.String(), "cards      disabled") {
+		t.Fatalf("exit %d: %s%s", code, &output, &diagnostics)
+	}
+}
+
+func TestAJobWhoseFolderWasRenamedIsStillShown(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	parent := t.TempDir()
+	root := repository(t, parent, "app")
+	other := repository(t, parent, "other")
+	for _, job := range []struct{ id, cwd string }{{"1800000000-1", filepath.Join(root, "renamed-away")},
+		{"1800000000-2", filepath.Join(other, "gone")}, {"1800000000-3", filepath.Join(parent, "app-sibling", "x")}} {
+		write(t, filepath.Join(home, ".all", "procs", job.id+".json"),
+			`{"id":"`+job.id+`","name":null,"supervisor":999999,"supervisor_start":1,"group":999998,"started":1,"leader_start":1,`+
+				`"deadline":null,"keep":true,"session":null,"watched":null,"cwd":"`+job.cwd+`","command":["make"],"status":"running"}`)
+	}
+	found := readBoard(root).Repositories[0]
+	if len(found.Background.Jobs) != 1 || found.Background.Jobs[0].ID != "1800000000-1" {
+		t.Fatalf("jobs %+v", found.Background)
+	}
+}

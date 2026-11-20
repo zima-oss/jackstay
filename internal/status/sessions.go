@@ -87,6 +87,11 @@ func openCheckout(ctx context.Context, current string) (checkout, error) {
 		found.Project = config.ProjectName(root, settings, top)
 		folders = append(folders, filepath.Join(home, homedir.MarkerName(found.Project), telemetry.FolderName))
 	}
+	// A project configured below the Git root journals under its own name: the folder the reader
+	// asked from selects it too. Spans are still attributed only through the worktrees' paths.
+	if root, settings, err := config.Load(current, []string{}); err == nil && root != "" {
+		folders = append(folders, filepath.Join(home, homedir.MarkerName(config.ProjectName(root, settings, current)), telemetry.FolderName))
+	}
 	for index := range found.Worktrees {
 		item := &found.Worktrees[index]
 		// Git lists prunable registrations too. Keep the path and state even if its local
@@ -117,9 +122,37 @@ func (found checkout) worktreeOwning(location string) string {
 	return ownerOf(found.byPath, location)
 }
 
-// holds says path is inside one of the repository's worktrees.
+// holds says path is inside one of the repository's worktrees. A path that no longer exists (a
+// job's folder renamed or removed while it runs) is judged by its words against the worktrees'
+// paths, so a running job is not hidden.
 func (found checkout) holds(path string) bool {
-	return path != "" && found.worktreeOwning(path) != ""
+	if path == "" || !filepath.IsAbs(path) {
+		return false
+	}
+	if found.worktreeOwning(path) != "" {
+		return true
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return false
+	}
+	cleaned := filepath.Clean(path)
+	for _, tree := range found.Worktrees {
+		for _, root := range []string{tree.Path, realPathOf(tree.Path)} {
+			if root != "" && (cleaned == root || strings.HasPrefix(cleaned, root+string(filepath.Separator))) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// realPathOf is the path with its links resolved, "" when it cannot be.
+func realPathOf(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return ""
+	}
+	return resolved
 }
 
 func worktreeID(ctx context.Context, directory, expectedCommon string) string {

@@ -9,8 +9,8 @@ records what is implemented now.
 
 ## Current baseline
 
-`jst inventory`, portable receipt evidence, resumable local adoption and changelog collection,
-`jst timeline`, and portable profile bundles provide the first slices of A1–A5. The reviewed
+`jst status` (worktrees, sessions and delivery events), portable receipt evidence, resumable local
+adoption and changelog collection, and portable profile bundles provide the first slices of A1–A5. The reviewed
 tree also has optional Codex and Claude Code review adapters. The current test contract and its
 multi-runner proposal are described in [testing](../design/testing.md) and the
 [test evidence plan](../design/testing-multirunner-proposal.md). Each next slice below starts
@@ -191,10 +191,10 @@ works. It must report the observed delivery boundary for each host.
 
 | Direction | Next end-to-end slice | Dependencies and verification |
 |---|---|---|
-| A1 Runner control | Explain one policy decision across a Claude Code guard call, a Codex guard call and a shell invocation using stable repository and session identities. | Build on `jst inventory`, shared guard decisions and the optional review adapters. Test two independent repositories with the same name, a linked worktree, missing hooks and explicit unknown identity. Keep policy distribution as a later opt-in service design. |
+| A1 Runner control | Explain one policy decision across a Claude Code guard call, a Codex guard call and a shell invocation using stable repository and session identities. | Build on `jst status`, shared guard decisions and the optional review adapters. Test two independent repositories with the same name, a linked worktree, missing hooks and explicit unknown identity. Keep policy distribution as a later opt-in service design. |
 | A2 Delivery | Add remote effect reconciliation for one bounded GitHub operation, beginning with a release PR update. | Use the local delivery record and G1–G3 identities. A fake provider interrupts before and after every remote response, then replays without duplicate effects. Require observable remote identity or idempotency support before claiming exactly one effect. B6 uses this protocol later. |
 | A3 Verification | Bind portable evidence to a named trust root and CI identity, then verify it from a second machine. | Extend the existing exported receipt envelope only after TST-2 gives all runners one verdict contract. Test signature/key rotation, changed source revision, policy and toolchain, offline verification and replay refusal. Preserve readable local receipts. |
-| A4 Observability | Opt in to workspace aggregation of existing redacted timelines, with gate throughput, failure classes and available token counts. | Build on per-repository `jst timeline`. Test same-name repository isolation, retention, partial scans and redacted output. A monetary estimate needs a dated and independently verified price table, so token counts are the first cost measure. |
+| A4 Observability | Opt in to workspace aggregation of existing redacted timelines, with gate throughput, failure classes and available token counts. | Build on the events of `jst status`. Test same-name repository isolation, retention, partial scans and redacted output. A monetary estimate needs a dated and independently verified price table, so token counts are the first cost measure. |
 | A5 Distribution | Stage a profile or binary upgrade across two repositories, preview each generated diff, and report adapter compatibility. | Build on portable bundles, pin records and `jst doctor`. Test unknown bundle schema, conflicting local settings, interrupted staging and rollback. Persist the exact verified bundle digest for each repository. |
 
 ## Dependency order

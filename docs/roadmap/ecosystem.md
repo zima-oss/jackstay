@@ -27,14 +27,14 @@ adopter feedback.
 
 | Priority | Initiative | Existing foundation | Earliest useful outcome |
 |---|---|---|---|
-| 1 | Live worktree occupancy and commit attribution | `jst inventory`, `jst start`, `jst tidy`, local delivery records | A user can identify another active session touching a planned Git operation before it runs. |
+| 1 | Live worktree occupancy and commit attribution | `jst status`, `jst start`, `jst tidy`, local delivery records | A user can identify another active session touching a planned Git operation before it runs. |
 | 1 | Runner coverage diagnostics | `jst doctor`, `jst guard`, generated adoption settings | A user can see which tested hook route refused a harmless probe, and which routes remain unknown. |
 | 2 | Test environment provenance | Test receipts, clean-copy runs and the multi-runner evidence plan | A test record explains which executable and effective inputs produced its verdict. |
-| 2 | Usage provenance and budget reports | Review token counters, `jst timeline`, local journal | A local report separates measured tokens from unavailable cost data and identifies coverage gaps. |
+| 2 | Usage provenance and budget reports | Review token counters, `jst status` events, local journal | A local report separates measured tokens from unavailable cost data and identifies coverage gaps. |
 
 ### Live worktree occupancy and commit attribution
 
-A new `jst inventory --activity` report would join worktree identity, Git index state and observed
+A new activity view in `jst status` would join worktree identity, Git index state and observed
 local sessions. A later preflight shared by `jst gh pr-land`, `jst release` and other Git-writing
 commands would snapshot HEAD, the index tree and intended path set, then revalidate those facts
 immediately before the write. The report would use stable identity and timestamps, with explicit

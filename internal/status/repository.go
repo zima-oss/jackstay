@@ -6,7 +6,6 @@ package status
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 	"time"
 
@@ -145,17 +144,29 @@ func readRepository(parent context.Context, supplied string, asked window, now t
 
 	result.Background = readBackground(found)
 	result.Brief = readBrief(found.Root)
-	configRoot, loaded, err := config.Load(found.Root, []string{"cards", "chat"})
-	if err == nil && configRoot != found.Root {
-		err = errors.New("jackstay.json is absent at the repository root")
-	}
+	result.Status = "ok"
+	result.Gate, result.Receipt = readRuns(found.Root, found.Project, result.Head)
+	// Each section is loaded on its own, so one that is invalid hides only its own source. A
+	// repository without its own jackstay.json uses neither cards nor chat.
+	configRoot, _, err := config.Load(found.Root, []string{})
 	if err != nil {
-		result.Error = err.Error()
+		result.Cards = CardStatus{Status: stateUnknown, Error: err.Error()}
+		result.Chat = ChatStatus{Status: stateUnknown, Error: err.Error()}
 		return result
 	}
-	result.Status = "ok"
-	result.Cards = readCards(found.Root, loaded)
-	result.Chat = readChat(found.Common, loaded)
-	result.Gate, result.Receipt = readRuns(found.Root, found.Project, result.Head)
+	if configRoot != found.Root {
+		result.Cards, result.Chat = CardStatus{Status: stateDisabled}, ChatStatus{Status: stateDisabled}
+		return result
+	}
+	if _, loaded, err := config.Load(found.Root, []string{"cards"}); err != nil {
+		result.Cards = CardStatus{Status: stateUnknown, Error: err.Error()}
+	} else {
+		result.Cards = readCards(found.Root, loaded)
+	}
+	if _, loaded, err := config.Load(found.Root, []string{"chat"}); err != nil {
+		result.Chat = ChatStatus{Status: stateUnknown, Error: err.Error()}
+	} else {
+		result.Chat = readChat(found.Common, loaded)
+	}
 	return result
 }

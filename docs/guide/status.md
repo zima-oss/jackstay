@@ -81,4 +81,4 @@ A change that removes or renames a field raises `schema`.
 
 0: every source was read. 1: at least one source is `unknown`, or the journal was read only in
 part (an unreadable line, a file that cannot be read, or more than 8192 spans to relate); the
-report is still printed and `partial` is true. 2: the request is wrong.
+report is still printed and `partial` is true. 2: the request is wrong, or `status.repos` cannot be read.

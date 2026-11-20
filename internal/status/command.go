@@ -32,7 +32,8 @@ No message, receipt, card or brief text is shown, and events carry no arguments 
   --since DURATION  the window for sessions and events, back from now (default 24h, maximum 720h)
   --limit N         keep at most the N newest events (default 20, maximum 1000)
 
-exit: 0 every source read; 1 at least one source unknown or partial (the report still printed).
+exit: 0 every source read; 1 at least one source unknown or partial (the report still printed); 2 the
+request is wrong (an option, a path, more than 32 repositories, or an unusable status.repos).
 
 example: jst status --since 4h
          jst status --json ~/src/app ~/src/service
@@ -112,11 +113,11 @@ func parse(args []string, now time.Time) (request, error) {
 		if err != nil {
 			return request{}, err
 		}
-		// A configuration that cannot be read lists nothing: this repository is then shown, with
-		// the configuration's error in its row.
-		if root, loaded, err := config.Load(working, []string{"status"}); err == nil {
-			paths = config.StatusRepositories(loaded.Section("status"), root)
+		root, loaded, err := config.Load(working, []string{"status"})
+		if err != nil {
+			return request{}, fmt.Errorf("status.repos cannot be read: %w", err)
 		}
+		paths = config.StatusRepositories(loaded.Section("status"), root)
 		if len(paths) == 0 {
 			paths, detail = []string{working}, true
 		}

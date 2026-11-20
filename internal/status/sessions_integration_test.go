@@ -141,3 +141,24 @@ func hasSession(found Repository, runner, id, guard string) bool {
 		return item.Runner == runner && item.ID == id && item.Guard == guard
 	})
 }
+
+func TestStatusReadsTheJournalOfAProjectBelowTheGitRoot(t *testing.T) {
+	repo := testrepo.New(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"outer"}`,
+		"inner/jackstay.json": `{"jackstay_schema":2,"project":"inner"}`})
+	inner := filepath.Join(repo.Root, "inner")
+	folder := filepath.Join(repo.Home, homedir.MarkerName("inner"), telemetry.FolderName)
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	var log bytes.Buffer
+	appendSpan(&log, now, 7, 1, 0, map[string]string{telemetry.AttrCommand: "test", telemetry.AttrCwd: inner,
+		telemetry.AttrClaudeSession: "inner-session"})
+	if err := os.WriteFile(filepath.Join(folder, journal.FileName(now.Format(time.DateOnly))), log.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(inner)
+	if found := invokeInventory(t); !hasSession(found, "claude-code", "inner-session", "unknown") {
+		t.Fatalf("the inner project's journal was not read: %+v", found.Sessions)
+	}
+}
