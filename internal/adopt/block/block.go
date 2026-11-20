@@ -45,9 +45,6 @@ var items = []item{
 	{id: "evidence", commands: []string{"receipts export", "receipts verify"}, wanted: hasSection("receipts"), text: fixed(
 		"- **Share a counted pass**: `jst receipts export KEY`. Check one with `jst receipts verify`, taking\n" +
 			"  the expected digest, revision and key from a trusted source, never from the receipt.")},
-	{id: "ci-evidence", commands: []string{"receipts attest-ci", "receipts verify-ci"}, wanted: hasSection("receipts"), text: fixed(
-		"- **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity\n" +
-			"  independently of the uploaded receipt and attestation.")},
 	{id: "wait", commands: []string{"wait"}, wanted: always, text: fixed(
 		"- **Wait** for a process, a file or a log line with `jst wait … --timeout S`, never a `sleep` loop.")},
 	{id: "bg", commands: []string{"bg", "procs", "procs stop"}, wanted: always, text: fixed(
@@ -64,13 +61,14 @@ var items = []item{
 		"- **Drop uncommitted changes** with `jst discard PATH…`, never `git restore` or\n" +
 			"  `git checkout -- PATH`; `jst trash restore` brings them back.")},
 	{id: "guard", commands: []string{"guard"}, wanted: always, text: guardText},
-	{id: "github", commands: []string{"gh"}, wanted: func(config map[string]any) bool {
+	{id: "land", commands: []string{"land"}, wanted: hasSection("land"), text: landText},
+	{id: "checks", commands: []string{"checks"}, wanted: func(config map[string]any) bool {
 		account, _ := section(config, "github")["account"].(string)
 		return account != ""
 	}, text: fixed(
-		"- **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,\n" +
-			"  `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in\n" +
-			"  `jackstay.json` (`github.account`).")},
+		"- **Checks**: `jst checks wait` / `jst checks status` (a change request's checks) and\n" +
+			"  `jst checks run-wait` (a workflow's run). jackstay acts as the account in `jackstay.json`\n" +
+			"  (`github.account`).")},
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
 		"- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`\n" +
@@ -101,11 +99,6 @@ var items = []item{
 		"- **The owner's words**: `jst owner --grep RE` to find a ruling to quote.")},
 	{id: "profiles", commands: []string{"profile export", "profile verify"}, wanted: hasSection("adopt"), text: fixed(
 		"- **Share an adoption profile** with `jst profile export`; verify its digest before adopting it.")},
-	{id: "queue", commands: []string{"queue status", "queue test", "queue handoff", "queue reconcile"}, wanted: func(config map[string]any) bool {
-		return section(config, "queue")["enabled"] == true
-	}, text: fixed(
-		"- **Verify a queued merge candidate**: `jst queue status`, `jst queue test`, then `jst queue handoff`\n" +
-			"  for the operator's landing decision. After landing, run `jst queue reconcile --commit SHA`.")},
 	{id: "chat", commands: []string{"chat serve", "setup"}, wanted: func(config map[string]any) bool {
 		return section(config, "chat")["enabled"] == true
 	}, text: fixed(
@@ -156,6 +149,20 @@ func guardText(config map[string]any) string {
 		text += " Its rules: `jackstay.json` (`guard`)."
 	}
 	return text
+}
+
+// landText follows land.autonomy: only merge-when-green lets the agent merge; any other value,
+// or none, is read as prepare.
+func landText(config map[string]any) string {
+	if autonomy, _ := section(config, "land")["autonomy"].(string); autonomy == "merge-when-green" {
+		return "- **Land a change**: `jst land --title T` pushes, opens the change request, waits for the required\n" +
+			"  checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,\n" +
+			"  `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host\n" +
+			"  (`gh pr merge` is refused), never run `--confirm`."
+	}
+	return "- **Land a change**: `jst land --title T` pushes, opens the change request and waits for the\n" +
+		"  required checks; a person merges. At `jst land: ready for a person`, say so and stop; never merge\n" +
+		"  on the host (`gh pr merge` is refused), never run `--confirm`."
 }
 
 func cardsText(config map[string]any) string {

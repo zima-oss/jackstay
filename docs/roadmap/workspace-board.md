@@ -1,5 +1,8 @@
 # Workspace board across repositories
 
+jackstay 0.6.0 removed the local merge queue (`jst queue`), and with it the board's `queue` source;
+the queue rows below are history.
+
 ## Problem and scope
 
 An operator supervising several local agent sessions needs one quick view of work spread across

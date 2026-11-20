@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:3956dbebff0a — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:2cc62618d291 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,
@@ -42,8 +42,6 @@ the same rules hold.
   Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit). No scope fits: `jst test -- COMMAND`.
 - **Share a counted pass**: `jst receipts export KEY`. Check one with `jst receipts verify`, taking
   the expected digest, revision and key from a trusted source, never from the receipt.
-- **Verify CI evidence** with `jst receipts verify-ci`. Obtain the trusted key and expected CI identity
-  independently of the uploaded receipt and attestation.
 - **Wait** for a process, a file or a log line with `jst wait … --timeout S`, never a `sleep` loop.
 - **Background**: `jst bg --for MIN --name N -- COMMAND`, never `&` or `nohup`; `jst procs stop N`
   stops it.

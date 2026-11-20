@@ -124,8 +124,9 @@ Both exit 1 with each problem named by its rule id. Every flag and exit status:
 ## Where the `Card:` check runs
 
 - On every pull request: the `card-line` workflow that `jst adopt` writes when the project has
-  `cards` or `changes`. It downloads the pinned jackstay release and runs `jst lint pr --event`.
-- Before a merge: `jst gh pr-land` judges the description and the merged tree.
+  `cards`, `changes` or `land`. It downloads the pinned jackstay release and runs `jst lint pr --event`.
+- Before a merge: `jst land` judges the description it sends, on the merge with the base; the
+  required `card-line` check (`jst lint pr` in CI) judges the description and the merged tree.
 - Before a push to the cards branch: the guard's `cards-push` rule (with the Claude Code hook).
 
 ## What can go wrong

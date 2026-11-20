@@ -61,7 +61,8 @@ the installed folder (section 7.1).
 | `homedir`, `expected` | `~/.jackstay` and its folders, one log line per write; the expected-projects list | sections 3.1, 7.7 |
 | `supervise`, `proctree`, `procs`, `wait`, `flock`, `lock` | starting and stopping processes; `jst bg`, `jst procs`, `jst wait`; the machine-wide lock, `jst lock` | section 5 |
 | `install`, `layout`, `prove`, `doctor`, `version` | `jst install`, `jst uninstall`, the prefix's layout, the probes, `jst doctor`; the version constant and build commit | section 7 |
-| `gh`, `githubapi`, `remote`, `branch`, `tidy`, `owner` | `jst gh`; the one GitHub client (`githubfake` for tests); the remote and default branch; `jst start`, `jst sync`, `jst tidy`, `jst owner` | section 8 |
+| `land`, `hosting` | `jst land`; the host interface it asks | [land.md](land.md) |
+| `gh`, `githubapi`, `remote`, `branch`, `tidy`, `owner` | `jst checks` and the GitHub adapter of `jst land`; the one GitHub client (`githubfake` for tests); the remote and default branch; `jst start`, `jst sync`, `jst tidy`, `jst owner` | section 8 |
 | `gitcli` | the one adapter that runs git: a deadline, a stated environment, typed errors | section 5.2 |
 | `telemetry`, `logs`, `stats` | the journal, `jst log`, `jst stats` | [observability.md](observability.md) |
 | `cli` | the command table, `jst help`, `--help`, `jst version` | section 2 |
@@ -164,7 +165,8 @@ Every section is optional. Keys, types and defaults are one table, `config.Table
 | `receipts` | `jst test`, `jst receipts` | section 9 |
 | `test` | `jst test <scope>`, `list`, `plan` | testing.md |
 | `baseline` | `jst baseline` | section 9.6 |
-| `github` | `jst gh`, `jst tidy`, `jst sync`, `jst start`, `jst lint pr`, `jst release` | section 8.1 |
+| `github` | `jst checks`, `jst land`, `jst tidy`, `jst sync`, `jst start`, `jst lint pr`, `jst release` | section 8.1 |
+| `land` | `jst land` | land.md section 1 |
 | `procs` | `jst bg` | section 5.1 |
 | `trash` | `jst trash` | guard.md section 10 |
 | `cards`, `ids`, `records`, `changes` | `jst lint`, `jst id`, `jst new`, `jst changes`, the guard's push rule | section 4 |
@@ -256,7 +258,7 @@ A change that reaches `cards.branch` names its cards on lines of their own, from
 **Every line that starts with `Card: ` is read, not git's trailers**: GitHub appends
 `Co-authored-by:` after the description, and git then no longer reads `Card:` as a trailer. A line
 of prose that starts so is refused unless it parses. The rules are one package, `internal/cards`,
-shared by `jst lint`, `jst cards`, `jst gh pr-land` and the guard's push rule. Rule ids:
+shared by `jst lint`, `jst cards`, `jst land` and the guard's push rule. Rule ids:
 `card-line-missing`, `card-line-unreadable`, `card-none-reason`, `card-unknown`.
 
 #### `jst cards`: what landed, read from history
@@ -318,18 +320,19 @@ file or a `git log` record of an unexpected shape.
   **and `edited`**, checks out the merge with the base, downloads the pinned release with its
   checksums, and runs `jst lint pr --event "$GITHUB_EVENT_PATH"`. It runs only for branches of the
   same repository.
-- **Before a merge, locally**: `jst gh pr-land`, in a project whose `cards.unit` is `pr`, after
-  the checks are green and before it merges, fetches the pull request's own base, makes the merge
-  of the head it saw green with that base in memory (`git merge-tree`), and judges the
-  description as GitHub holds it and the tree's rules on that merge. Either failing stops it with
-  exit 1. The description it judged is the squash commit's message, and the merge is made only on
-  the head it judged. This covers a description edited after the runner's last run and a number
-  another pull request brought to the branch since.
-- **When `pr-land` opens the pull request**: `--card ID` (repeatable; `--card none --reason TEXT`)
-  adds the line to the description it writes. In such a project it opens no pull request whose
-  description it cannot judge first (no `--card` and no `--body-file`) or whose description fails
-  the lines' rules; it stops before the push. `--card` for a pull request that is open already is
-  refused: its description is edited on GitHub, and judged before the merge.
+- **Before a merge, locally**: `jst land`, where the base's `cards.unit` is `pr`, judges the
+  description exactly as it sends it for the merge commit's message, against the files of the
+  in-memory merge (`git merge-tree`) of the head with the base commit it judged, by the base's
+  `cards` section, and, where the base has `changes`, its changelog rule (D1: an entry or a
+  `Changes: none (reason)` line); the recheck before the merge stops if the description changes.
+  The tree's rules are the `card-line` workflow's, a required check (W-092): no local gate on the
+  tree.
+- **When `jst land` opens the pull request**: `--card ID` (repeatable; `--card none --reason TEXT`)
+  adds the line to the description it writes. Where the base asks for the line, it opens no pull
+  request whose description it cannot judge first (no `--card` and no `--body-file`) or whose
+  description fails the rules on the merge with the base's tip; it stops before the push. `--card`
+  for a pull request that is open already is refused. A base whose Card line is in the
+  description refuses `land.method: rebase`, which lands no description.
 - **Before a push to the branch itself**: the guard's `cards-push` and
   `card-push-unreadable-config` rules ([guard.md](guard.md) section 5). A project that pushes to
   its branch runs `jst lint range origin/main..HEAD` and `jst lint tree` in its gate.
@@ -852,10 +855,10 @@ names) under `flock` on `expected-projects.lock` (up to 30 s), written atomicall
 drops the project's `guard-seen`. A blank name is exit 2; a failed change, exit 1. A list that
 exists and cannot be read whole is an error, never empty.
 
-## 8. GitHub and branches: `jst gh`, the `github` section, `jst tidy`, `jst start`, `jst sync`, `jst owner`
+## 8. GitHub and branches: `jst checks`, the `github` section, `jst tidy`, `jst start`, `jst sync`, `jst owner`
 
 jackstay talks to GitHub through one client, `internal/githubapi` (go-github and GraphQL), shared by
-`jst gh`, `jst tidy`, `jst lint pr` and `jst release`
+`jst checks`, `jst land`, `jst tidy`, `jst lint pr` and `jst release`
 ([W-050](../decisions/W-050-go-part3-design-github-account-all-steps-here.md)). It runs the `gh` CLI
 only to ask for a token; git pushes, fetches and deletes remote branches. How to use these commands
 is the [branches and GitHub guide](../guide/branches-and-github.md).
@@ -869,7 +872,7 @@ The account jackstay acts as, so it never depends on, or changes, `gh`'s active 
 | `account` | required in the section: the login jackstay acts as (letters, digits, single hyphens, at most 39) |
 | `remote` | the remote that names the repository and that `sync`, `start`, `tidy` fetch (section 8.2) |
 | `repository` | `owner/name`, when not read from the remote's URL |
-| `wait` | `timeout_seconds`, `interval_seconds`, `log_lines`: defaults for `ci-wait`, `run-wait`, `pr-land`; flags win |
+| `wait` | `timeout_seconds`, `interval_seconds`, `log_lines`: defaults for `jst checks wait`, `run-wait` and `jst land`; flags win |
 
 **Two ways to a token**, chosen once per call:
 
@@ -881,12 +884,12 @@ The account jackstay acts as, so it never depends on, or changes, `gh`'s active 
   naming `gh auth login --hostname github.com`; a keychain or TLS failure is named apart. A
   `GH_TOKEN`, `GITHUB_TOKEN`, `GH_HOST` or enterprise variable is ignored, and said once.
 
-Without `github.account`, outside Actions, `jst gh` and `jst lint pr --pr` exit 2 and `jst tidy`
+Without `github.account`, outside Actions, `jst checks`, `jst land` and `jst lint pr --pr` exit 2 and `jst tidy`
 skips `pr-merged`; offline commands need none.
 
 **The account is the API's, not git's.** git's credentials (the URL's user, a credential helper,
 which for `gh` answers with the *active* account, an SSH key) are not verified. Before a push or a
-deletion, `pr-land` checks that every effective push URL of the remote (`pushurl` and rewrites
+deletion, `jst land` checks that every effective push URL of the remote (`pushurl` and rewrites
 included) names the pull request's repository, and the deletion requires GitHub to confirm the
 merged head's repository, branch and SHA. jackstay never rewrites a remote or git's settings.
 
@@ -916,95 +919,36 @@ by the step's times, else the last lines, saying so.
 The remote is `github.remote` (one that names no remote is an error), else `origin`, else what the
 local `main` (then `master`) tracks, else the only remote; anything else is an error naming them.
 The default branch is the remote's as fetched (`<remote>/HEAD`, else `/main`, `/master`), else the
-local `main`, else `master`. `pr-land` takes the base from GitHub's own default branch.
+local `main`, else `master`. `jst land` takes the base from the host's own default branch.
 
-### 8.3 `jst gh`
+### 8.3 `jst checks` and `jst land`
 
-    jst gh ci-wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
-    jst gh ci-status [PR|URL]
-    jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
-    jst gh pr-find [--head BRANCH] [--search TEXT] [--repo URL] [--wait S] [--state open|closed|merged|all]
-    jst gh pr-status [--pr PR|URL]
-    jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT]
-                   [--no-push] [--no-create] [--no-wait] [--no-merge] [--dry-run]
-                   [--timeout S] [--interval S] [--lines N]
+    jst checks wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
+    jst checks status [PR|URL]
+    jst checks run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
 
 Sessions that wait on GitHub by hand write many loop shapes around `gh pr checks`, some of them
 wrong; these commands replace them ([W-006](../decisions/W-006-tidy-and-github-tools.md)).
 
-- `ci-wait` waits until every check on the pull request's **current** head settles (default: this
+- `wait` waits until every check on the pull request's **current** head settles (default: this
   branch's pull request); a red check prints its failing step's log if time remains (`--lines`
   per check). One deadline covers lookup, requests, retries and optional error detail.
-  `--timeout 0` allows one look with a ten-second request budget. A head
-  that moves while waiting is exit 4 (checks for the old head say nothing about the new one), or
-  with `--any-head` is followed. `ci-status` is the same, once.
+  `--timeout 0` allows one look with a ten-second request budget. A head that moves while waiting
+  is exit 4 (checks for the old head say nothing about the new one), or with `--any-head` is
+  followed. `status` is the same, once. Every check is waited for: `jst checks` does not read the
+  base's rules.
 - `run-wait` waits for one workflow run to complete, on a branch or a commit (a SHA prefix of 7 or
   more); the run may take `--appear` seconds (default 120) to be scheduled.
-- `pr-find` finds one pull request by its head branch or by search text, waiting up to `--wait`
-  for it to appear; none found is exit 1, never "null".
-- `pr-status` says where this branch and its pull request stand, using the selected pull request's
-  own base. When a head branch has several open pull requests, require a number or URL. `ci-wait`
-  and `ci-status` take it positionally, and `pr-status` and `pr-land` take `--pr PR|URL`.
-  `--pr` selects an open pull request from this checkout's branch and repository.
-- `pr-land` pushes, opens the pull request, waits for its checks, squash-merges the head that was
-  checked and deletes the remote branch. Each step can be skipped (`--no-…`), the order cannot.
-  The plan is printed first; `--dry-run` stops there.
 
 Defaults: `--timeout` 1800 s, `--interval` 20 s, `--lines` 25, or the `github.wait` values.
+Exit: 0 fine; 1 not fine, the reason printed; 2 the request was wrong (also no account, a wrong
+login, a host that is not github.com); 3 still pending at the deadline; 4 the head moved while
+waiting; 5 an external format is not what jackstay assumes.
 
-**`pr-land`** refuses, before anything is pushed: the default branch (or `main`, `master`) checked
-out; a dirty work tree; a new pull request without `--title`. In a project whose `cards` unit is
-the pull request, the description (`--body-file`, else the commits' bodies, with the `Card:` line
-`--card`/`--reason` asks for) is judged by `jst lint pr`'s rules before the push, and again before
-the merge: the description as GitHub holds it then, and the tree's rules on the merge of the head
-seen green with the pull request's own base as just fetched (made in memory); the description
-judged is the squash commit's body (section 4.1). A head branch in
-`cards.exempt_branches` may open without a Card line, and its merge still runs the tree rules. Before the merge it waits up to 60 s while GitHub
-says `mergeable: UNKNOWN` (still unknown: exit 3; not mergeable: exit 1); a pull request that is
-behind its base is updated on GitHub and its new head waited for. It refuses to merge when the
-local branch has commits the pull request lacks: they would not land.
-
-It waits for the checks the base branch's rules require: the `required_status_checks` rules of the
-rulesets that apply to it and its classic protection's required contexts (REST
-`rules/branches/BRANCH`, paged, and `branches/BRANCH`). A check required from an app (a ruleset's
-`integration_id`, a protection's `app_id`) is only that app's check run of the name. Required
-checks are judged as GitHub judges them, by commit: when the pull request's test merge commit has
-any result, they are judged on it; else on the head (GitHub's "conflicts between head commit and
-test merge commit"). One absent from the commit judged is waited for. The base whose rules were
-read is bound to the pull request: every look of the wait, the branch update, the description's
-judgement and a last read just before the merge refuse a retargeted base with exit 4. The green
-verdict records the repository and pull request, head and reported base SHA, and the test merge
-candidate considered for required checks. Jackstay re-reads the pull request after querying that
-candidate and checks the verdict again before an update or merge. A branch update followed by a
-wait replaces the verdict with one for the updated head. GitHub enforces branch protection when
-applying the merge.
-Of the other checks only a failure stops the merge; one pending, never started or cancelled is
-reported and not waited for (a job no runner picks up does not hold a merge GitHub would accept).
-Rules that require none, or that cannot be read, leave every check waited for, as `ci-wait` does;
-the plan line says which.
-
-It merges with the head that was checked (or, with `--no-wait`, the one seen) as the expected
-head, so GitHub refuses the merge if the head moved. Afterwards GitHub is asked whether the pull
-request merged: one a merge queue or auto-merge only holds is exit 3, its branch kept. Then it
-deletes only the remote branch, with a lease on that head (`git push
---force-with-lease=refs/heads/B:<head> <remote> :refs/heads/B`): a push made after the merge is not
-deleted. If another open pull request in the repository still uses the branch, jackstay leaves it
-on the remote.
-A deletion failure is reported and the merge stands.
-
-**It never changes the checkout it runs in**
-([W-019](../decisions/W-019-repeated-findings-mean-redesign.md)): no switch, no pull, no local
-branch deleted. Every way of returning to the base branch after a merge passes through a tree that
-may write over a file git does not track. The local branch is left for `jst tidy`, which removes it
-as `pr-merged` once GitHub says its pull request merged at that tip: from a worktree, with the
-worktree; in the main checkout, after the session switches away from it. `pr-land` merges by
-whatever rules GitHub enforces; a project's own rules (reviews, who merges) are the session's to
-keep.
-
-**Exit codes are a contract**, because these run inside loops: 0 fine; 1 not fine, the reason
-printed; 2 the request was wrong (also no account, a wrong login, a host that is not github.com);
-3 still pending at the deadline; 4 the pull request's head moved while waiting; 5 an external
-format is not what jackstay assumes (a GraphQL answer of an unknown shape).
+Landing a change (`jst land`, `jst land status`, `jst land find`) is specified in
+[land.md](land.md): the `land` section, the hosting adapter, who may merge, required checks and the
+exit states. They replace 0.5.x's `jst gh pr-land`, `pr-status` and `pr-find`; `jst checks`
+replaces `jst gh ci-wait`, `ci-status` and `run-wait` with the same flags.
 
 ### 8.4 `jst tidy`
 
@@ -1301,6 +1245,5 @@ The Vitest producer check runs separately. There is no macOS job
 ## 11. Not in this spec
 
 Ideas kept for later are not specified here, and nothing of them is built until it becomes a spec.
-Among them: the merge queue (`jst land`, `jst queue`;
-[W-029](../decisions/W-029-queue-self-merge-configurable-go-last.md)) and a mail hook; neither is
-built.
+Among them: a mail hook, not built. jackstay keeps no merge queue of its own; a person queues a
+change in the host's ([land.md](land.md)).
