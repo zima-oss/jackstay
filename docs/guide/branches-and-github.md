@@ -11,7 +11,7 @@ remote's as fetched (`<remote>/HEAD`, else `main`, `master`).
 
 ## `jst start`
 
-```sh
+```text
 jst start NAME [--from REF] [--path DIR] [--no-fetch]
 ```
 
@@ -29,7 +29,7 @@ Exit: 0 made; 1 git refused; 2 a taken name or folder, or a `REF` that is not a 
 
 ## `jst sync`
 
-```sh
+```text
 jst sync [--no-fetch] [--push] [DIR]
 ```
 
@@ -48,7 +48,7 @@ yourself), or git refused; 2 uncommitted work, a detached HEAD, or a merge alrea
 
 ## `jst tidy`
 
-```sh
+```text
 jst tidy [--fix] [--branch NAME]... [--worktree PATH]... [--no-fetch] [--no-github] [--json] [DIR]
 ```
 
@@ -64,7 +64,7 @@ jst tidy --fix --branch fix-parser   # remove only that branch and its worktree
 jst tidy --no-github                 # git alone; branches only GitHub could show finished are kept
 ```
 
-`--fix` judges each item again just before removing it, runs `git worktree remove` without
+`--fix` judges each item again right before removing it, runs `git worktree remove` without
 `--force`, and deletes the branch only at the tip it judged. Remote branches are never touched.
 
 Exit: 0 nothing finished is left; 1 something finished is listed and not removed, or a removal
@@ -75,7 +75,7 @@ why; run `--fix` outside the sandbox.
 
 ## `jst gh`
 
-```sh
+```text
 jst gh ci-wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
 jst gh ci-status [PR|URL]
 jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
