@@ -230,11 +230,13 @@ func TestApplyAtATerminalAsksOnceAndOffersTheMachinesAnswerFirst(t *testing.T) {
 	if err := SaveMachineAutonomy(config.AutonomyPrepare); err != nil {
 		t.Fatal(err)
 	}
-	code, stdout, stderr := runIn(t, true, "\n", "--apply", root)
+	// Enter for each of the three questions: the reviewer and chat (asked while planning), then who merges.
+	code, stdout, stderr := runIn(t, true, "\n\n\n", "--apply", root)
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if strings.Index(stdout, AnswerPrepare) > strings.Index(stdout, AnswerMergeWhenGreen) || strings.Count(stdout, "Answer [1]") != 1 {
+	if strings.Index(stdout, AnswerPrepare) > strings.Index(stdout, AnswerMergeWhenGreen) || strings.Count(stdout, "Answer [1]") != 1 ||
+		strings.Count(stdout, "Which reviewer runs") != 1 {
 		t.Fatalf("the machine's answer is not offered first, or asked twice:\n%s", stdout)
 	}
 	if land, _, err := config.LandOf([]byte(read(t, root, "jackstay.json"))); err != nil || land.Autonomy != config.AutonomyPrepare {
