@@ -115,3 +115,45 @@ func TestParent(t *testing.T) {
 		})
 	}
 }
+
+func TestGoJSONRefusesARealCachedCoverRun(t *testing.T) {
+	folder := t.TempDir()
+	files := map[string]string{
+		"go.mod":          "module example.invalid/fixture\n\ngo 1.27.0\n",
+		"fixture.go":      "package fixture\n\nfunc Add(a, b int) int { return a + b }\n",
+		"fixture_test.go": "package fixture\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) {\n\tif Add(1, 2) != 3 {\n\t\tt.Fatal(\"add\")\n\t}\n}\n",
+	}
+	for name, text := range files {
+		if err := os.WriteFile(filepath.Join(folder, name), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run := func() goJSONReader {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		command := exec.CommandContext(ctx, "go", "test", "-json", "-cover", ".")
+		command.Dir = folder
+		command.Env = append(os.Environ(), "GOWORK=off", "GOTOOLCHAIN=local", "GOPROXY=off", "GOFLAGS=")
+		output, err := command.Output()
+		if err != nil {
+			t.Fatalf("running go test -json -cover: %v", err)
+		}
+		var reader goJSONReader
+		scanner := bufio.NewScanner(strings.NewReader(string(output)))
+		for scanner.Scan() {
+			reader.line(scanner.Text())
+		}
+		if err := scanner.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return reader
+	}
+	run()
+	second := run()
+	if !second.cached {
+		t.Fatal("the second run was not seen as replayed from Go's cache")
+	}
+	if verdict := Evaluate(second.facts(), End{}, ScopePolicy); verdict.Outcome != Unjudged || !strings.Contains(verdict.Why, "cache") {
+		t.Fatalf("a cached -cover run was judged: %+v", verdict)
+	}
+}
