@@ -128,7 +128,7 @@ every other character is `%XX` of its UTF-8 bytes; an empty name is `unknown`.
     <project>/receipts/<key>.failed.<when>-<process>   a failure of that key, one file each
     <project>/outputs/<run_id>.log          the output of the newest runs (section 9)
     <project>/durations.jsonl               per-class durations (testing.md section 4)
-    <project>/gate-marks/, gate-bars/       the gate's step marks and bars (testing.md section 5)
+    <project>/cache/                        scope cache entries and their failure notes (land.md section 7.3)
     <project>/clean-copies/                 copies `--commit` makes (discard-and-clean-gate.md)
     <project>/guard-seen                    touched by every hook call from a session (guard.md)
     <project>/ids/<series>.jsonl            the number counters (`jst id`)
@@ -138,7 +138,7 @@ every other character is `%XX` of its UTF-8 bytes; an empty name is `unknown`.
 A log line is one JSON object appended in one write, so processes never mix lines; a log that
 cannot be written never fails its tool. A sandboxed session records only when `~/.jackstay` is in
 `sandbox.filesystem.allowWrite` (`jst doctor` checks). Every session of the account may write here,
-so receipts, marks and the run record can be forged: a known limit, not a boundary (guard.md).
+so receipts, cache entries and the run record can be forged: a known limit, not a boundary (guard.md).
 
 ### 3.2 The project file: `jackstay.json`
 
@@ -653,7 +653,8 @@ approving, the maintainer has run `just gate` on a Mac on the tagged commit
 
 1. Refuse a tag that is not annotated, not the commit checked out, not on main, or not
    `v` + `internal/version`'s `Version`.
-2. `just gate` on the tagged tree.
+2. The Linux CI job `jst test ci (linux)` on the tagged commit, like any other CI run, with its
+   cache ([land.md](land.md) sections 7.4 and 7.6).
 3. GoReleaser builds, signs and notarises with that tag (`GORELEASER_CURRENT_TAG`,
    `--skip=publish,announce`).
 4. `actions/attest` signs build provenance for each archive, bound to the repository, workflow and
@@ -1076,7 +1077,8 @@ The contract behind it:
 
 - `passed` only when the command ran now, ended 0, its output was read to its end, its tests were
   **counted** above zero and no veto line was seen. Nothing else is `passed`, and only `passed`
-  stores a receipt.
+  stores a receipt. The one exception is a scope's cached pass: a pass counted before for the same
+  inputs ([land.md](land.md) section 7.3).
 - `exited-0`: ended 0 with nothing to count its tests (no `evidence` pattern, or the `exit` judge);
   the line reads `outcome=exited-0 (no test count: not proof that tests ran)`. Never a pass in any
   count.
@@ -1087,7 +1089,9 @@ The contract behind it:
 - `stopped` / `stopped-waiting`: asked to stop after the start, or while waiting for the lock
   (nothing ran); it ends by that signal. `gave-up` (75) and `not-started` (2) ran nothing; a
   command that cannot start is 127. `timed-out` (124) is a scope's (testing.md section 3);
-  `resumed` and `refused` are the gate's (testing.md section 5).
+  `skipped`, `not-run`, `left-to-ci` and `needs-other-system` are a graph's, and a scope served
+  from the cache keeps its stored `passed` marked `cached` ([land.md](land.md) sections 7.2 and
+  7.4).
 
 A command's own 2, 75–78 shows as `failed`, so the line, not the status, is read. An unwritable
 record line adds a `WARNING` just before it and never turns a pass into a failure.
@@ -1230,6 +1234,10 @@ credentials not kept, a 30-minute limit, a pull request's older run cancelled. `
 The Vitest producer check runs separately. There is no macOS job
 ([W-083](../decisions/W-083-no-macos-job-in-ci.md)): `*_darwin.go` is checked by the maintainers'
 `just gate` on a Mac before an install and a release.
+
+This recipe set, the `just gate` workflow and the separate `go` and `integration` runs are the state
+before the migration to the scope graph; the 0.6.0 target (one Go scope with the integration tests,
+one `jst test ci (linux)` job) is [land.md](land.md) section 7.6.
 
 **Practices:**
 - The commit is injected at build (`-X …/internal/version.Commit`), else the build info's

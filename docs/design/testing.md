@@ -2,7 +2,10 @@
 
 Decisions: [W-012](../decisions/W-012-test-scopes-vocabulary.md) (one vocabulary of scopes; each
 project defines its selection) and [W-013](../decisions/W-013-quality-testing-declarative.md) (no
-time-sensitive tests; everything declarative and general). Status: built. How to use scopes is the
+time-sensitive tests; everything declarative and general). Status: built, except that 0.6.0 runs
+scopes as a graph with a cache by input hash ([land.md](land.md) section 7, after
+[W-096](../decisions/W-096-task-graph-and-input-cache.md)), which section 5 summarises and which
+is not built yet. How to use scopes is the
 [tests guide](../guide/tests.md); the raw form `jst test -- COMMAND`, its outcomes, receipts and run
 record are [implementation.md](implementation.md) section 9. The
 [compatibility baseline](testing-compatibility.md) pins the outcomes; the
@@ -42,7 +45,7 @@ Extra names are allowed only with the prefix `x-` (`x-coverage`), so the six nev
 | `quick` | a broad look: everything a headless run can do, less the slowest classes | minutes |
 | `full` | the whole suite a headless run can do | the longest single run |
 | `display` | the sets that need a real screen, device or other environment (`requires`) | varies |
-| `gate` | every step a change must pass to merge: checks and runs, in order | the longest |
+| `gate` | every scope a change must pass to merge: a scope with no `run` whose `deps` are those scopes | the longest |
 
 When each is required is the project's rule, written **once**, in the scope's `when` text, which
 `jst test list` prints; jackstay does not choose the cadence.
@@ -71,7 +74,10 @@ Keys of a scope (all optional except `run` or `steps`):
   `(^|\.)Class(/|$)`; refused without ARGS), `{base}` (the scope's `base` or `--base REF`), `{slow}`
   (section 4), `{report}` (section 2.1). A placeholder is `{name}` of lower-case letters and `_`,
   not after `$`; an unknown one is an error. Other braces (`${VAR}`, `{2,3}`) are literal.
-- `steps`: instead of `run`, a list of step names (`steps` section) or scope names; section 5.
+- `steps`: instead of `run`, a list of step names (`steps` section) or scope names, read as `deps`.
+- `deps`, `ci`, `systems`, `inputs`, `cache`: what must pass first, where CI runs the scope, where
+  it runs at all, the files its cache hash reads, and whether it is cached;
+  [land.md](land.md) section 7.1.
 - `judge`: `swift-test` (section 2), `steps` (a count line declared by `evidence`),
   `go-json`, `junit`, `jest-json` and `trx` (section 2.1), or `exit` (status only; the outcome is
   `exited-0` on 0, never `passed`). Default: the section's `judge`, else `exit`.
@@ -82,11 +88,12 @@ Keys of a scope (all optional except `run` or `steps`):
 - `timeout` (seconds of the command's own run) and `lock_wait` (seconds waiting for the lock,
   counted apart; default: the scope's `timeout`); section 3.
 - `requires`: checks run first, each with its own `timeout` (default 60 s) and the tree stop of
-  section 3; one that fails or times out makes the outcome `not-started` with its `why`.
+  section 3; one that fails or times out makes the outcome `not-started` with its `why`. Only a
+  scope with `run` takes it in schema 3 ([land.md](land.md) section 7.1).
 - `env`: variables set for the run, recorded.
 - `lock`: whether the scope takes the machine-wide lock when `lock.enabled` is true (default true
-  for `full`, `display`, `changed`, steps and `x-` scopes; false for `focused`, `quick`); a gate's
-  steps each take it by their own `lock`.
+  for `full`, `display`, `changed`, steps and `x-` scopes; false for `focused`, `quick`); a scope
+  with no `run` takes none, and each of its deps takes it by its own `lock`.
 - `when`: one line of text for `jst test list`.
 
 `jst check` validates the section like the rest of `jackstay.json`; `jst test plan` shows the result.
@@ -118,7 +125,7 @@ It reads both streams, escape sequences removed, to their end, and requires, for
    something else could not be judged (an unattributed leftover, a bundle that did not end):
    `failed` > `timed-out` > `stopped` > `unjudged` > `nothing-run` > `passed`. A status caused by
    jackstay's own stop (the timeout, or a signal sent to `jst test`) is not a failure: such a run is
-   `timed-out` or `stopped` unless a failure line or veto was seen before the stop. A `failed` run always writes its failure note and, in a gate, its bar.
+   `timed-out` or `stopped` unless a failure line or veto was seen before the stop. A `failed` run always writes its failure note, and the failure note of its cache hash.
 
 The judge prints its reading as the last line's detail:
 `jst test: outcome=passed (… s, counted=2290 bundles=9/9 xctest=2290 swift-testing=0 skipped=1)`
@@ -167,10 +174,8 @@ name. Unavailable timings are left out. Swift class selection uses its existing 
 The format name, adapter version and semantic report settings are keyed. The allocated report
 path is transport only. Receipt lookup recomputes the saved material's digest and requires a
 positive count. Changing the adapter version changes the key without rewriting the historical
-records. Structured gate marks also carry the adapter version and counted pass. Resume needs
-that durable verdict, even after the private report directory is removed. It still runs
-`requires` before resuming any step that needs an external input. `--commit` runs afresh in a
-clean copy, including for structured judges.
+records. A scope's cache entry ([land.md](land.md) section 7.3) carries the adapter version and the
+counted pass, so a hit needs no report file after the private report directory is removed.
 The [producer guide](../guide/tests.md#structured-test-reports) lists the pinned probes. The
 [compatibility baseline](testing-compatibility.md) records the original exit and reporting contracts.
 
@@ -220,73 +225,21 @@ are found, remembered by id and start time, and signalled is
 
 A slow class is skipped from `quick`, never excused from `full` (W-013).
 
-## 5. The gate: steps in order
+## 5. The gate: a graph of scopes, cached
 
-- `steps` names steps (from the `steps` section) or other scopes, run **in the declared order**.
-  `jst check` warns when a step whose median recorded time is above 60 s comes before one below
-  10 s ("cheap first").
-- **Fail-fast**: the first step that is not `passed`/`exited-0` ends the gate; the outcome is that
-  step's, and the line names it (`gate failed at docs`). `--keep-going` runs the rest and reports
-  each — except a step refused by a bar under `--resume`, which ends the gate at once (below).
-- Each step has its own kept output and its own record line (`step`, `gate_run_id`); the gate's
-  line lists every step's outcome and seconds.
-- **Resume** (`jst test gate --resume`) skips a leaf step that passed before on the same tree. What
-  "the same tree" means is exactly what jackstay checks, and no more:
-  - **Clean checkout.** `git status --porcelain --untracked-files=all` is empty; no entry is marked
-    skip-worktree or assume-unchanged; and no untracked file is hidden only by a rule outside the
-    committed `.gitignore` files (`.git/info/exclude`, a global excludes file), except under an
-    agent's top folder (`.claude`, `.omc`, `.omx`, `.codex`, `.cursor`), under a regenerable folder
-    (`.build`, `DerivedData`, `node_modules`, `__pycache__`, …) or a `.DS_Store`. A checkout that is
-    not clean is never resumed and its passes leave no mark.
-  - **The step's key**: HEAD's commit; the step's full definition from `jackstay.json` (words,
-    folder, `env`, judge, vetoes, timeout, adapter version and report settings); the environment
-    variables and the toolchain output the receipts key reads; jackstay's version; the content of
-    `receipts.extra_files`; the **tip
-    commit** of every ref in `receipts.refs` and the command entry's own `refs`; the **merge base**
-    of HEAD with every ref in `receipts.merge_bases` and the entry's own `merge_bases` (only the
-    merge base: the ref's tip may move without changing the key); and for the step's resolved
-    `{base}`, both its tip and its merge base with HEAD. A ref that cannot be resolved, or a merge
-    base that cannot be found, allows no mark. The key is made again before a mark is written and
-    before it is used, so a step that chose its tests from `origin/main` (its `{base}`) is not
-    resumed after `origin/main` moved; a step that reads a ref's tip without naming it as `{base}`
-    lists it in `refs`, not `merge_bases`.
-  - **Nothing rewritten while it ran**: the identity, size and times of every tracked file, and the
-    content of `receipts.extra_files`, are the same after the step as before it, and the checkout is
-    still clean with the same key; otherwise its pass leaves no mark.
-  - **No bar** of the key and no `unattributed` leftover under a `"fail": true` glob (section 6).
-  Not covered, by design: a file ignored by a committed `.gitignore` (an `.env`, a generated
-  config, a cache), an untracked file in the places the clean check passes over, and anything
-  outside the checkout (another package by path, the network, the keychain). A step that reads such
-  a **file** in the checkout names it in `receipts.extra_files` — one readable file per entry. Its
-  bytes then enter the step's key, so a change between runs is seen; its identity, size, times and
-  bytes enter the stamps compared before and after a run, so a change during one is seen. A change
-  of its mode or other metadata between runs is not seen: a step that depends on those declares
-  `"resume": false`. A folder, or a file that cannot be read, is recorded only as `missing`, so a
-  change inside a folder is not seen. A step whose inputs cannot all be
-  named that way (a folder of them, anything outside the checkout) declares `"resume": false`.
-- **Marks and bars.** A step that passed (or ended `exited-0` for an `exit` step) on a clean checkout
-  with a key writes a **mark**; one that `failed` writes a **bar** for its key under
-  `<jackstay home>/<project>/gate-bars/`. A step that is run removes its key's mark before it starts,
-  so one that then ends without a verdict (`timed-out`, `unjudged`, `stopped`) leaves no mark and
-  runs again next time. A step whose `requires` check fails is `not-started` before its key is made:
-  it removes nothing, and an earlier mark of it can be used once the check passes. A key with a bar
-  gets no mark, so no mark outlives a bar; bars are not pruned with receipts and live at least as
-  long as any mark can be used (`receipts.max_age_hours` + one day). Marks older than
-  `receipts.max_age_hours` are not used; a bar still refuses `--resume` after every mark of its key
-  has expired.
-- **A bar ends the gate.** Under `--resume` a step whose key has a bar is not run: the gate ends
-  `refused` (exit 2) with "nothing has changed since this step failed; change the tree or run the
-  gate without --resume", also with `--keep-going`, and the later steps do not run. So resume saves
-  repeated work and never turns a failure green by rerunning it (W-013).
-- Marks exist only for **leaf** steps (ones with `run`). A step that is itself a scope with
-  `steps` is expanded into its leaves, recursively, and `--resume` judges each leaf on its own
-  mark, key, bar and `"resume": false`; a composite step never has a mark of its own. A cycle in
-  `steps` is an error in `jackstay.json`.
-- Inside a gate, receipts reuse (`"reuse": true`) is off: the step mark is the only skip, and a
-  skipped step is shown as `resumed`, never as `passed`. `resumed` lets the gate go on to the next
-  step, as `passed` does. The gate's outcome is `passed` when every step `passed`, `exited-0` or
-  `resumed` and at least one ran now; when every step was `resumed`, the outcome is `resumed`
-  (exit 0): nothing ran, and it is not counted as a pass.
+How several scopes run together, and when one is skipped because it passed before, is
+[land.md](land.md) section 7: each scope once, after its `deps`, in a stable order; a failure stops
+the run unless `--keep-going`; a scope whose inputs have a counted pass in the cache is not run and
+is marked `cached`. A `steps` list is read as `deps`, so 0.5.x gates keep their order. What 0.6.0
+removes from 0.5.x (step marks, bars, `--resume`, the `resumed` and `refused` outcomes, the
+`resume` key, receipts reuse for a scope) is listed in its section 7.7.
+
+What stays here:
+
+- `jst check` warns when a scope whose median recorded time is above 60 s comes before one below
+  10 s among the deps of one scope ("cheap first").
+- Each node has its own kept output and its own record line (`step`, `gate_run_id`); the run's line
+  lists every node's outcome and seconds.
 - `jst test <scope> --commit REV` runs the scope on a clean copy of REV that jackstay makes, and always
   removes (W-052, [discard-and-clean-gate.md](discard-and-clean-gate.md) section 3).
 
@@ -336,31 +289,24 @@ SwiftPM/XCTest/Swift Testing for the `swift-test` judge.
   folder `jst test` was called from; `cwd` is in the key.
 - `requires` checks run in `jst test` itself, before the lock and before a receipt is looked up.
   A failed check writes a `not-started` `run` line, which no count takes as a run; one stopped at
-  its timeout fails whatever it ended with (`requires_session`, `requires_killed`). A nested list's
-  `requires` is checked before its first leaf.
-- Receipts for a scope: only when its expanded words are a `receipts.commands` entry with
-  `"reuse": true` (as for `jst test --`); the scope's definition and `test.leftovers` are in the
-  key. Off inside a gate.
+  its timeout fails whatever it ended with (`requires_session`, `requires_killed`).
+- A scope is skipped only by the cache of [land.md](land.md) section 7.3; receipts reuse is for
+  `jst test -- COMMAND`.
 - After a normal end the session has up to 1 s to empty by itself before what is left is stopped.
 - Durations are recorded from `passed` and `failed` runs (not `unjudged`, `timed-out`, `stopped`).
-- The gate writes a `gate-start` line and, at its end, a `gate` line (`steps`: each step's outcome,
-  seconds and run id); each step's own `start`/`run` lines carry `step` and `gate_run_id`. A gate
-  stopped or killed during a step leaves the step's `stopped` line and a `gate-start` with no
-  `gate`. A gate refused by a bar ends `refused` (2). `jst test last --scope gate` shows the gate.
+- A run of more than one node writes a `gate-start` line and, at its end, a `gate` line (`steps`:
+  each node's outcome, `cached` mark, seconds and run id); each node's own `start`/`run` or
+  `cached` lines carry `step` and `gate_run_id`. A run stopped or killed during a node leaves the
+  node's `stopped` line and a `gate-start` with no `gate`. `jst test last --scope gate` shows it.
 - A recorded run whose `start` has no `run` overlaps only while its pid is alive.
-- A list of steps (`gate`) takes no `timeout`, `lock_wait`, `lock` or `resume` of its own: each step
-  has its own. Its `requires` is checked like a step's.
-- A `failed` scope run outside a gate (`jst test full`) also writes the bar of that step's key, when
-  `resume` is on, the checkout clean and the key computable. Test names, another `{base}` or folder
-  make another key; a reused receipt writes no bar.
-- An inner run killed outright (no result) is `unjudged` to the gate: no verdict, no bar.
+- An inner run killed outright (no result) is `unjudged` to the run: no verdict, no failure note.
 - Membership by session is trusted only while the command's pid is free or still the command
   (same start time); a child is adopted by its parent link only when the parent is the remembered
   process and the child started after it; every group a remembered process leads is signalled too
   (SwiftPM starts `xctest` in a group of its own). While the stop waits it reads the process table
   again and signals what is new at once.
 - A process table that cannot be read is "the end of the tree cannot be confirmed", not "nothing
-  left": the run is `unjudged` (`tree_unconfirmed`, no receipt, no mark) and a `requires` check is
+  left": the run is `unjudged` (`tree_unconfirmed`, no receipt, no cache entry) and a `requires` check is
   not passed. `JACKSTAY_PROC_UNREADABLE=1` makes jackstay act so (tests only).
 - A bundle that ends without starting is `unjudged`.
 - `jst test`'s own files in `$TMPDIR` are removed before it ends by re-raising a signal.
