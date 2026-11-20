@@ -33,7 +33,7 @@ from a verified release.
 - [Numbers, records and cards](records.md) covers shared IDs and project records.
 - [Changelogs and releases](releases.md) covers collection, preparation and publication steps.
 - [What jackstay did](observability.md) covers the local timeline, inventory, journal and diagnostics.
-- [Workspace board](workspace-board.md) compares local task, queue, test and chat evidence across named repositories.
+- [`jst status`](status.md) shows what is going on in this repository, or one row per repository.
 - [Reviewer pool](../roadmap/reviewer-pool.md) defines the local queue and its explicit worker.
 
 ## Agent integrations

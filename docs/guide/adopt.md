@@ -161,7 +161,7 @@ expressions; `jst check` remains the authoritative validator.
 | `changes`, `release` | changelog entries, versions and the release workflow | [releases](releases.md) |
 | `adopt` | the workflows' pin, the profile, kept exceptions | here |
 | `brief` | `max_age_hours`: how long a saved brief stays fresh (default 168, 1 to 720) | `jst brief save --help` |
-| `status` | `repos`: the repositories the overview reads when none are named | `jst workspace board --help` |
+| `status` | `repos`: the repositories `jst status` reads when none are named | `jst status --help` |
 | `chat`, `queue` | session chat and the local merge queue | [session chat](session-chat.md) |
 | `telemetry` | the journal's retention and how command text is recorded | [observability](observability.md) |
 

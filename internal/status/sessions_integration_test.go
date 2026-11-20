@@ -1,13 +1,12 @@
 //go:build integration
 
-package inventory
+package status
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,7 +20,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/testrepo"
 )
 
-func TestInventorySeparatesReposAndFollowsWorktreeAndRunnerEvidence(t *testing.T) {
+func TestStatusSeparatesReposAndFollowsWorktreeAndRunnerEvidence(t *testing.T) {
 	const settings = `{"jackstay_schema":2,"project":"demo"}`
 	repo := testrepo.New(t, map[string]string{"jackstay.json": settings})
 	linked := filepath.Join(filepath.Dir(repo.Root), "linked")
@@ -65,15 +64,15 @@ func TestInventorySeparatesReposAndFollowsWorktreeAndRunnerEvidence(t *testing.T
 	copied := invokeInventory(t)
 	t.Chdir(other)
 	independent := invokeInventory(t)
-	if main.Schema != 1 || main.Project != "demo" || main.RepositoryID != copied.RepositoryID ||
-		independent.RepositoryID == main.RepositoryID || copied.Current != linked || len(main.Worktrees) != 2 ||
+	if main.Project != "demo" || main.RepositoryID != copied.RepositoryID ||
+		independent.RepositoryID == main.RepositoryID || copied.Path != resolved(t, linked) || len(main.Worktrees) != 2 ||
 		main.Worktrees[0].ID == main.Worktrees[1].ID {
 		t.Fatalf("main %+v\nlinked %+v\nindependent %+v", main, copied, independent)
 	}
 	if len(independent.Sessions) != 2 || !hasSession(independent, "claude-code", "other-id", "unknown") ||
 		!hasSession(main, "claude-code", "claude-id", "observed") || !hasSession(main, "codex", "codex-id", "unknown") ||
 		!hasSession(main, "unknown", "", "unknown") || !hasSession(main, "unknown", "unknown-hook", "unknown") ||
-		slices.ContainsFunc(main.Sessions, func(item session) bool { return strings.HasPrefix(item.ID, "other") }) {
+		slices.ContainsFunc(main.Sessions, func(item Session) bool { return strings.HasPrefix(item.ID, "other") }) {
 		t.Fatalf("main sessions: %+v\nindependent sessions: %+v", main.Sessions, independent.Sessions)
 	}
 }
@@ -110,27 +109,35 @@ func appendSpan(log *bytes.Buffer, now time.Time, traceID, spanID, parentID int,
 		traceID, spanID, parent, now.Add(-time.Second).UnixNano(), now.UnixNano(), attributesJSON)
 }
 
-func invokeInventory(t *testing.T) report {
+// invokeInventory is `jst status --json` here, whose one repository it returns. Exit 1 (a source
+// such as chat or the run log is partial) is not expected of these fixtures.
+func invokeInventory(t *testing.T) Repository {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	if code := run(nil, nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit %d: %s", code, &stderr)
+	if code := run([]string{"--json"}, nil, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s%s", code, &stdout, &stderr)
 	}
-	var result report
+	var result Report
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	return result
+	if result.Schema != Schema || result.Kind != KindRepository || len(result.Repositories) != 1 {
+		t.Fatalf("envelope: %s", &stdout)
+	}
+	return result.Repositories[0]
 }
 
-func hasSession(found report, runner, id, guard string) bool {
-	return slices.ContainsFunc(found.Sessions, func(item session) bool {
+func resolved(t *testing.T, path string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+func hasSession(found Repository, runner, id, guard string) bool {
+	return slices.ContainsFunc(found.Sessions, func(item Session) bool {
 		return item.Runner == runner && item.ID == id && item.Guard == guard
 	})
-}
-
-func TestInventoryRefusesMalformedFlags(t *testing.T) {
-	if code := run([]string{"--since"}, nil, io.Discard, io.Discard); code != 2 {
-		t.Fatalf("exit %d", code)
-	}
 }

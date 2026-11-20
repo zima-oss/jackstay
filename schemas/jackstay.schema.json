@@ -832,7 +832,7 @@
       "additionalProperties": false,
       "properties": {
         "repos": {
-          "description": "Repositories the overview reads when none are named: paths relative to this file's folder, or absolute.",
+          "description": "Repositories `jst status` reads when none are named: paths relative to this file's folder, or absolute.",
           "items": {
             "pattern": "\\S",
             "type": "string"

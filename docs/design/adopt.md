@@ -431,8 +431,8 @@ The text, for a project with every section (`internal/adopt/block`, golden-teste
   `jst release prepare` shows the next one.
 - **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a
   surprising failure, before asking.
-- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
-- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
+- **What is going on here**: `jst status` shows this repository's worktrees, agent sessions, recent
+  events, chat, brief and background jobs; `jst status PATH…` gives one row per repository.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Share an adoption profile** with `jst profile export`. Verify its digest before adopting the bundle.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is

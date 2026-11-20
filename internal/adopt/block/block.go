@@ -91,12 +91,9 @@ var items = []item{
 	{id: "log", commands: []string{"log", "stats"}, wanted: always, text: fixed(
 		"- **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a\n" +
 			"  surprising failure, before asking.")},
-	{id: "timeline", commands: []string{"timeline"}, wanted: always, text: fixed(
-		"- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.")},
-	{id: "inventory", commands: []string{"inventory"}, wanted: always, text: fixed(
-		"- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.")},
-	{id: "workspace-board", commands: []string{"workspace board"}, wanted: always, text: fixed(
-		"- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.")},
+	{id: "status", commands: []string{"status"}, wanted: always, text: fixed(
+		"- **What is going on here**: `jst status` shows this repository's worktrees, agent sessions, recent\n" +
+			"  events, chat, brief and background jobs; `jst status PATH…` gives one row per repository.")},
 	{id: "context-brief", commands: []string{"brief save", "brief show"}, wanted: always, text: fixed(
 		"- **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.")},
 	{id: "owner", commands: []string{"owner"}, wanted: always, text: fixed(

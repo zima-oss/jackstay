@@ -406,7 +406,7 @@ func BriefMaxAge(section map[string]any) time.Duration {
 
 var briefSection = object("max_age_hours", boundedInteger(BriefMaxAgeHoursMinimum, BriefMaxAgeHoursMaximum, BriefMaxAgeHours))
 
-// StatusRepositories are the repositories the overview reads by default (`status.repos`), each
+// StatusRepositories are the repositories `jst status` reads by default (`status.repos`), each
 // relative to the folder of the jackstay.json it is in, or absolute.
 func StatusRepositories(section map[string]any, folder string) []string {
 	var found []string
@@ -432,7 +432,7 @@ var Table = object(
 	"chat", chatSection,
 	// The defaults of `jst brief`.
 	"brief", briefSection,
-	// The repositories the overview reads when none are named.
+	// The repositories `jst status` reads when none are named.
 	"status", object("repos", texts()),
 	"queue", object("enabled", boolean(), "base_ref", str(), "require_pull_request", boolean(), "review_task", str()),
 	"guard", object(

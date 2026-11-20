@@ -1,9 +1,10 @@
 //go:build integration
 
-package timeline
+package status
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,7 +22,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/testrepo"
 )
 
-func TestTimelineJoinsMixedDeliveryStagesWithoutPrivateFields(t *testing.T) {
+func TestStatusJoinsMixedDeliveryStagesWithoutPrivateFields(t *testing.T) {
 	const settings = `{"jackstay_schema":2,"project":"delivery"}`
 	repository := testrepo.New(t, map[string]string{"jackstay.json": settings})
 	linked := filepath.Join(filepath.Dir(repository.Root), "linked")
@@ -99,46 +100,42 @@ func TestTimelineJoinsMixedDeliveryStagesWithoutPrivateFields(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	read := func(limit int) report {
+	read := func(limit int) Repository {
 		t.Helper()
-		var stdout, stderr bytes.Buffer
-		if code := run([]string{"--since", "10m", "--until", until.Format(time.RFC3339), "--limit", strconv.Itoa(limit)},
-			nil, &stdout, &stderr); code != 0 {
-			t.Fatalf("exit %d: %s", code, &stderr)
-		}
-		for _, hidden := range []string{private, nested, repository.Root, linked, "Example/Remote", "2def-111", "3abc-111"} {
-			if strings.Contains(stdout.String(), hidden) {
-				t.Fatalf("report leaked %q: %s", hidden, &stdout)
-			}
-		}
-		var got report
-		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		report := Read(context.Background(), []string{repository.Root}, window{from: from, until: until, limit: limit}, true, time.Now())
+		events, err := json.Marshal(report.Repositories[0].Events)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return got
+		for _, hidden := range []string{private, nested, repository.Root, linked, "Example/Remote", "2def-111", "3abc-111"} {
+			if strings.Contains(string(events), hidden) {
+				t.Fatalf("events leaked %q: %s", hidden, events)
+			}
+		}
+		return report.Repositories[0]
 	}
 
 	got := read(10)
 	stages := []string{}
-	for _, entry := range got.Rows {
+	for _, entry := range got.Events {
 		stages = append(stages, entry.Stage)
 	}
 	want := []string{"github.ci-status", "test.run", "review.attempt", "review.agent", "background.started"}
-	if got.Schema != 1 || got.RepositoryID == "" || !slices.Equal(stages, want) || got.OmittedRows != 0 {
+	if got.RepositoryID == "" || !slices.Equal(stages, want) || got.Counts.OmittedEvents != 0 {
 		t.Fatalf("timeline %+v", got)
 	}
-	pr, test, review, agent, background := got.Rows[0], got.Rows[1], got.Rows[2], got.Rows[3], got.Rows[4]
+	pr, test, review, agent, background := got.Events[0], got.Events[1], got.Events[2], got.Events[3], got.Events[4]
 	if pr.Pull != pullID("example/remote", 24) || !pr.At.Equal(from) || pr.DurationMS != 1000 ||
 		test.ParentSpanID != pr.SpanID || test.TraceID != pr.TraceID || test.WorktreeID != pr.WorktreeID ||
 		test.Head != pr.Head || test.Status != "passed" || test.TestRunID != "1a2f-987" ||
 		review.ParentSpanID != test.SpanID || agent.ParentSpanID != review.SpanID ||
 		agent.Tokens == nil || agent.Tokens.Input != 123 || agent.Tokens.Output != 45 ||
 		background.At.Equal(until) || background.WorktreeID == test.WorktreeID || background.BackgroundID != "1760000000-123" {
-		t.Fatalf("stages did not correlate: %+v", got.Rows)
+		t.Fatalf("stages did not correlate: %+v", got.Events)
 	}
 	clipped := read(2)
-	if len(clipped.Rows) != 2 || clipped.OmittedRows != 3 ||
-		clipped.Rows[0].Stage != "review.agent" || clipped.Rows[1].Stage != "background.started" {
+	if len(clipped.Events) != 2 || clipped.Counts.OmittedEvents != 3 ||
+		clipped.Events[0].Stage != "review.agent" || clipped.Events[1].Stage != "background.started" {
 		t.Fatalf("output limit: %+v", clipped)
 	}
 }

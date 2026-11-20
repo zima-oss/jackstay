@@ -34,7 +34,7 @@ archives; the tap is not published yet.
 | Manage branches and GitHub checks | [`jst start`, `jst sync`, `jst tidy` and `jst gh`](docs/guide/branches-and-github.md) cover worktrees, CI and cleanup. |
 | Review a change | [`jst review`](docs/guide/review.md) records a round and its verdict. Select Codex, Claude Code or both. |
 | Collect changes and release | [`jst changes` and `jst release`](docs/guide/releases.md) keep changelog entries and release steps recoverable. |
-| Reconstruct a session | [`jst timeline`, `jst log`, `jst stats` and `jst inventory`](docs/guide/observability.md) read local records. |
+| See what is going on | [`jst status`](docs/guide/status.md) shows sessions, events, chat and jobs; [`jst log` and `jst stats`](docs/guide/observability.md) read the journal. |
 
 `jst help` lists commands. Every command answers `--help` with its flags and exit statuses.
 Project-specific runners, paths and rules live in `jackstay.json` and optional
