@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/zima-oss/jackstay/internal/durable"
 )
 
 func TestMoveListRestore(t *testing.T) {
@@ -416,5 +418,31 @@ func TestRestoreKeepsAnEditWrittenBeforeExchange(t *testing.T) {
 	item := filepath.Join(folder, entry.ID, "item", filepath.Base(target))
 	if data, err := os.ReadFile(item); err != nil || string(data) != "edit" {
 		t.Fatalf("original = %q, %v, want the trash copy to remain", data, err)
+	}
+}
+
+func TestARecordWrittenButNotSyncedIsReportedWithItsEntry(t *testing.T) {
+	writes := 0
+	writeAtomic = func(path string, data []byte, mode os.FileMode, limit int) error {
+		writes++
+		err := durable.WriteAtomic(path, data, mode, limit)
+		if err == nil && writes == 2 {
+			return fmt.Errorf("%s: %w: injected", path, durable.ErrNotSynced)
+		}
+		return err
+	}
+	t.Cleanup(func() { writeAtomic = durable.WriteAtomic })
+	work := t.TempDir()
+	file := filepath.Join(work, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	folder := filepath.Join(t.TempDir(), ".trash")
+	entry, err := Move(folder, file, "jackstay", "", 0, time.Now())
+	if err == nil || entry.ID == "" || !strings.Contains(err.Error(), entry.ID) || entry.Held {
+		t.Fatalf("Move = %+v, %v; want the released entry named in an error", entry, err)
+	}
+	if entries := Entries(folder); len(entries) != 1 || entries[0].Held {
+		t.Fatalf("entries %+v; the record on disk is released", entries)
 	}
 }

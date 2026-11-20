@@ -2,7 +2,9 @@ package sessionchat
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -379,31 +381,24 @@ func TestPerRecipientPendingCapLeavesSpaceForOtherSessions(t *testing.T) {
 
 // The chat's writers share one lock, state.lock beside the state, with every earlier writer.
 func TestChatWritersWaitForTheStateLock(t *testing.T) {
-	common := filepath.Join(t.TempDir(), ".git")
-	if err := os.Mkdir(common, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	store, err := StoreFor(common, config.ChatPolicy{Enabled: true, MaxMessageBytes: 4096, MaxPending: 8, MaxSessions: 8, RetentionHours: 72})
-	if err != nil {
-		t.Fatal(err)
-	}
+	store, _ := chatFixture(t)
 	held, err := flock.TryFile(filepath.Join(filepath.Dir(store.path), "state.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() {
-		_, registerErr := store.Register("waiting", "")
-		done <- registerErr
-	}()
-	select {
-	case err := <-done:
-		held.Release()
-		t.Fatalf("a writer went on under another's state.lock: %v", err)
-	case <-time.After(300 * time.Millisecond):
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	updateContext = func() context.Context { return ended }
+	t.Cleanup(func() { updateContext = context.Background })
+	if _, err := store.Register("waiting", ""); err == nil {
+		t.Fatal("a writer went on under another's state.lock")
+	}
+	if _, err := os.Stat(store.path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the state was written under another's lock: %v", err)
 	}
 	held.Release()
-	if err := <-done; err != nil {
+	updateContext = context.Background
+	if _, err := store.Register("waiting", ""); err != nil {
 		t.Fatal(err)
 	}
 }

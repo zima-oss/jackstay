@@ -74,26 +74,30 @@ func WriteAtomic(path string, data []byte, mode os.FileMode, limit int) error {
 	return nil
 }
 
-// MakeFolder makes folder and its missing parents with mode, like os.MkdirAll, and fsyncs the
-// parent of each folder it made, so the new folders survive a crash with what is written in them.
+// MakeFolder makes folder and its missing parents with mode, like os.MkdirAll, then fsyncs every
+// folder above it (SyncAncestry), so folder survives a crash with what is written in it. A folder
+// that is already there is synced too: it may have been made by another process, or by an earlier
+// call whose sync failed, and its being there does not say its entry is on disk.
 func MakeFolder(folder string, mode os.FileMode) error {
-	var missing []string
-	for current := filepath.Clean(folder); ; current = filepath.Dir(current) {
-		if _, err := os.Lstat(current); err == nil {
-			break
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		missing = append(missing, current)
-		if filepath.Dir(current) == current {
-			break
-		}
-	}
 	if err := os.MkdirAll(folder, mode); err != nil {
 		return err
 	}
-	for index := len(missing) - 1; index >= 0; index-- {
-		if err := SyncFolder(filepath.Dir(missing[index])); err != nil {
+	return SyncAncestry(folder)
+}
+
+// SyncAncestry fsyncs each folder above folder, from its parent up to the root, so the entry of
+// each folder on the way is on disk. It stops at the first folder it may not open: one that no
+// jackstay process made.
+func SyncAncestry(folder string) error {
+	current, err := filepath.Abs(folder)
+	if err != nil {
+		return err
+	}
+	for parent := filepath.Dir(current); parent != current; current, parent = parent, filepath.Dir(parent) {
+		if err := SyncFolder(parent); err != nil {
+			if errors.Is(err, os.ErrPermission) {
+				return nil
+			}
 			return err
 		}
 	}

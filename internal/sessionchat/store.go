@@ -383,8 +383,11 @@ func (store Store) Reply(sessionID, messageID, body, key string) (Message, bool,
 // stateLimit bounds the chat state file.
 const stateLimit = 12 << 20
 
+// updateContext bounds the wait for the state's lock (with durable.LockTimeout); a test ends it.
+var updateContext = context.Background
+
 func (store Store) update(change func(*snapshot) (bool, error)) error {
-	err := durable.UpdateUnder(context.Background(), filepath.Join(filepath.Dir(store.path), "state.lock"), store.path, 0o600, stateLimit, func(data []byte) ([]byte, error) {
+	err := durable.UpdateUnder(updateContext(), filepath.Join(filepath.Dir(store.path), "state.lock"), store.path, 0o600, stateLimit, func(data []byte) ([]byte, error) {
 		var state snapshot
 		if data != nil {
 			if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {

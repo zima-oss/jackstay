@@ -160,3 +160,16 @@ func TestUpdateUnderTakesTheNamedLockAndMakeFolderMakesTheChain(t *testing.T) {
 		t.Fatal("an existing folder:", err)
 	}
 }
+
+func TestMakeFolderSyncsAFolderAnotherProcessMade(t *testing.T) {
+	folder := filepath.Join(t.TempDir(), "made", "elsewhere")
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := MakeFolder(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := SyncAncestry(folder); err != nil {
+		t.Fatal(err)
+	}
+}
