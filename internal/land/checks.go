@@ -67,31 +67,36 @@ func judge(checks []hosting.Check, required []hosting.RequiredCheck) verdict {
 		}
 		return judged
 	}
-	present := make([]bool, len(required))
+	// A row counts as required when any requirement names it; each requirement is judged on every
+	// row that satisfies it (rulesets and classic protection may require one name twice, once with
+	// an app and once without).
 	for _, check := range checks {
-		index := slices.IndexFunc(required, func(wanted hosting.RequiredCheck) bool { return wanted.SatisfiedBy(check) })
-		if index < 0 {
-			if check.State != hosting.Pass && check.State != hosting.Skipped {
-				judged.reported = append(judged.reported, check)
-			}
-			continue
-		}
-		if check.OnTestMerge != judged.onMerge {
-			continue // the host judges the other commit
-		}
-		present[index] = true
-		switch check.State {
-		case hosting.Pass, hosting.Skipped:
-			judged.passed++
-		case hosting.Fail, hosting.Cancelled:
-			judged.failed = append(judged.failed, check)
-		default:
-			judged.pending = append(judged.pending, check.Name)
+		if !slices.ContainsFunc(required, func(wanted hosting.RequiredCheck) bool { return wanted.SatisfiedBy(check) }) &&
+			check.State != hosting.Pass && check.State != hosting.Skipped {
+			judged.reported = append(judged.reported, check)
 		}
 	}
-	for index, check := range required {
-		if !present[index] {
-			judged.pending = append(judged.pending, check.String()+" (not registered yet)")
+	for _, wanted := range required {
+		var matching []hosting.Check
+		for _, check := range checks {
+			if wanted.SatisfiedBy(check) && check.OnTestMerge == judged.onMerge {
+				matching = append(matching, check)
+			}
+		}
+		failed := slices.IndexFunc(matching, func(check hosting.Check) bool {
+			return check.State == hosting.Fail || check.State == hosting.Cancelled
+		})
+		switch {
+		case len(matching) == 0:
+			judged.pending = append(judged.pending, wanted.String()+" (not registered yet)")
+		case failed >= 0:
+			if !slices.ContainsFunc(judged.failed, func(seen hosting.Check) bool { return seen == matching[failed] }) {
+				judged.failed = append(judged.failed, matching[failed])
+			}
+		case slices.ContainsFunc(matching, func(check hosting.Check) bool { return !check.State.Settled() }):
+			judged.pending = append(judged.pending, wanted.String())
+		default:
+			judged.passed++
 		}
 	}
 	return judged
@@ -318,17 +323,14 @@ func (work *session) prepareLanding(number int, deadline time.Time) (ready, int,
 			}
 			continue
 		}
-		// Step 5.
-		landing := ready{policy: decision, change: checked, rules: rules, required: required, gate: gate}
-		if err := work.recheck(landing); err != nil {
-			return ready{}, 0, err
-		}
-		return landing, exitLanded, nil
+		// Step 5, the recheck, is made by merge right before it asks the host.
+		return ready{policy: decision, change: checked, rules: rules, required: required, gate: gate}, exitLanded, nil
 	}
 }
 
-// recheck is step 5: the change, the base tip and the rules read again, and the required checks
-// read afresh. Anything moved stops with `moved`; the next run starts at step 2.
+// recheck is step 5, made after every local check and right before the merge: the change, the
+// base branch's live tip and the rules read again, and the required checks read afresh. Anything
+// moved stops with `moved`; the next run starts at step 2.
 func (work *session) recheck(landing ready) error {
 	now, err := work.readChange(landing.change.Number)
 	if err != nil {
@@ -344,17 +346,14 @@ func (work *session) recheck(landing ready) error {
 	if !sameRules(landing.rules, rules) {
 		return failf(exitMoved, "the rules of %s changed while #%d was judged; run it again", now.Base, now.Number)
 	}
-	if landing.gate != "" {
-		return nil
+	if landing.gate == "" {
+		if err := work.requiredStillPass(now, landing.required); err != nil {
+			return err
+		}
 	}
-	checks, err := work.host.Checks(work.ctx, now)
-	if err != nil {
-		return fmt.Errorf("the checks of #%d: %w", now.Number, err)
-	}
-	judged := judge(checks, landing.required)
-	if len(judged.failed) > 0 || len(judged.pending) > 0 {
-		return failf(exitMoved, "a required check of #%d no longer passes (%s); run it again", now.Number,
-			strings.Join(append(names(judged.failed), judged.pending...), ", "))
+	// Last, the base branch's live tip on the remote: the host's view of the change's base may lag.
+	if err := work.baseTipIs(now.Base, landing.change.BaseSHA); err != nil {
+		return err
 	}
 	last, err := work.readChange(now.Number)
 	if err != nil {
@@ -362,6 +361,35 @@ func (work *session) recheck(landing ready) error {
 	}
 	if !sameIdentity(now, last) {
 		return movedError(now, last)
+	}
+	return nil
+}
+
+// requiredStillPass reads the checks afresh: a required check no longer passing means moved.
+func (work *session) requiredStillPass(now hosting.Change, required []hosting.RequiredCheck) error {
+	checks, err := work.host.Checks(work.ctx, now)
+	if err != nil {
+		return fmt.Errorf("the checks of #%d: %w", now.Number, err)
+	}
+	judged := judge(checks, required)
+	if len(judged.failed) > 0 || len(judged.pending) > 0 {
+		return failf(exitMoved, "a required check of #%d no longer passes (%s); run it again", now.Number,
+			strings.Join(append(names(judged.failed), judged.pending...), ", "))
+	}
+	return nil
+}
+
+// baseTipIs asks the remote for the base branch's tip: one other than the commit the policy and
+// checks were judged at means the base moved.
+func (work *session) baseTipIs(base, judged string) error {
+	out, err := work.git.Run(work.ctx, "ls-remote", "--", work.remoteName, "refs/heads/"+base)
+	if err != nil {
+		return failf(exitRefused, "the tip of %s cannot be read from %s: %v", base, work.remoteName, err)
+	}
+	tip, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\t")
+	if tip != judged {
+		return failf(exitMoved, "%s is at %s on %s, not at %s where the change was judged; run it again",
+			base, short(tip, 8), work.remoteName, short(judged, 8))
 	}
 	return nil
 }

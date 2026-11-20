@@ -164,7 +164,14 @@ func (adapter *host) Checks(ctx context.Context, change hosting.Change) ([]hosti
 func (adapter *host) checksOf(ctx context.Context, rows []githubapi.Check, commit string, onTestMerge bool, pullNumber int) ([]hosting.Check, error) {
 	result, err := supersede(ctx, adapter.github, rows, commit, pullNumber)
 	if err != nil {
-		return nil, err
+		// Whether a cancelled run was superseded cannot be told: the rows stand as read, each
+		// cancelled one saying why, so an optional cancellation never stops a landing by itself.
+		result = superseded{rows: rows, rowNotes: make([]string, len(rows))}
+		for index, row := range rows {
+			if row.Bucket() == githubapi.Cancel {
+				result.rowNotes[index] = fmt.Sprintf("whether a newer run supersedes it cannot be told: %v", err)
+			}
+		}
 	}
 	adapter.mutex.Lock()
 	defer adapter.mutex.Unlock()

@@ -1,7 +1,6 @@
 package land
 
 import (
-	"fmt"
 	"slices"
 	"strings"
 
@@ -86,30 +85,13 @@ func judgeDescription(section map[string]any, files lint.Files, body, branch str
 }
 
 // judgeMerge judges, before a merge in a project with cards, the description as the host holds
-// it now and the tree's rules on the merge of the head that was checked with the change's base
-// commit (made in memory). It returns the description judged: the merge commit's body.
+// it now against the files of the head that was checked, and returns it: the merge commit's body.
+// The tree's own rules are CI's to enforce (W-092), not a local gate here.
 func (work *session) judgeMerge(change hosting.Change) (string, error) {
-	out, err := work.git.Run(work.ctx, "merge-tree", "--write-tree", change.BaseSHA, change.HeadSHA)
-	tree, _, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
-	if err != nil || tree == "" {
-		return "", failf(exitRefused, "#%d: the merge of %s with %s cannot be made here (%v); not merging", change.Number,
-			short(change.HeadSHA, 10), short(change.BaseSHA, 10), err)
-	}
-	files := lint.RevisionFiles(work.ctx, tree, work.git)
+	files := lint.RevisionFiles(work.ctx, change.HeadSHA, work.git)
 	if err := judgeDescription(work.cardSection(), files, change.Body, work.branch); err != nil {
 		return "", err
 	}
-	found, err := lint.TreeRules(work.config, files, lint.GitHistory(work.ctx, work.git, change.BaseSHA, change.HeadSHA))
-	if err != nil {
-		return "", failf(exitInvalid, "the tree's rules cannot be checked: %v", err)
-	}
-	if len(found) > 0 {
-		var lines []string
-		for _, finding := range found {
-			lines = append(lines, fmt.Sprintf("- [%s] %s", finding.Rule, finding.Text))
-		}
-		return "", failf(exitRefused, "#%d merged with %s breaks the tree's rules; not merging:\n%s", change.Number, change.Base, strings.Join(lines, "\n"))
-	}
-	work.say("#%d: Card line and tree's rules fine on the merge with %s at %s", change.Number, change.Base, short(change.BaseSHA, 8))
+	work.say("#%d: its Card line is fine", change.Number)
 	return change.Body, nil
 }

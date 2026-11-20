@@ -209,29 +209,6 @@ func (git *scriptedGit) Run(_ context.Context, args ...string) ([]byte, error) {
 	return []byte(answer.out), nil
 }
 
-func (git *scriptedGit) called(command string) bool {
-	git.mutex.Lock()
-	defer git.mutex.Unlock()
-	for _, call := range git.calls {
-		if call == command {
-			return true
-		}
-	}
-	return false
-}
-
-func (git *scriptedGit) callsStarting(prefix string) []string {
-	git.mutex.Lock()
-	defer git.mutex.Unlock()
-	var found []string
-	for _, call := range git.calls {
-		if strings.HasPrefix(call, prefix) {
-			found = append(found, call)
-		}
-	}
-	return found
-}
-
 // checkout scripts a clean checkout on feat at tip, pushed to origin (github.com/owner/checkout).
 func checkout(tip string) *scriptedGit {
 	git := newGit()

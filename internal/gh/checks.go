@@ -393,18 +393,18 @@ func supersede(ctx context.Context, client GitHub, rows []githubapi.Check, commi
 			noteOfRow[jobKey{run: replacement.ID, name: row.Name, app: row.AppID}] = note
 			continue
 		}
+		if replacement.Status == "completed" {
+			// The newer run finished without a job of this name: the cancellation stands. A
+			// run's overall conclusion never decides a check.
+			note = fmt.Sprintf("run %d, which superseded cancelled run %d of %s, finished without %s: the cancellation stands",
+				replacement.ID, row.RunID, row.Workflow, row.Name)
+			result.said[len(result.said)-1] = note
+			result.rows, result.rowNotes = append(result.rows, row), append(result.rowNotes, note)
+			continue
+		}
+		// While the newer run has no result for this job, the check is pending.
 		row.RunID = replacement.ID
 		row.Status, row.Conclusion = "IN_PROGRESS", ""
-		if replacement.Status == "completed" {
-			switch replacement.Conclusion {
-			case "cancelled":
-				row.Status, row.Conclusion = "COMPLETED", "CANCELLED"
-			case "success", "skipped", "neutral":
-				// Wait for the replacement job's own result.
-			default:
-				row.Status, row.Conclusion = "COMPLETED", "FAILURE"
-			}
-		}
 		result.rows, result.rowNotes = append(result.rows, row), append(result.rowNotes, note)
 	}
 	for index, row := range result.rows {

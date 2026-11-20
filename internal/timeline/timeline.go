@@ -336,6 +336,14 @@ func stageOf(span journal.Span) string {
 		return "review.agent"
 	}
 	switch span.Text(telemetry.AttrCommand) {
+	case "gh":
+		// Spans recorded by jackstay before 0.6.0, whose `jst gh` is removed.
+		switch operation := span.Text(telemetry.AttrGitHubOperation); operation {
+		case "ci-wait", "ci-status", "run-wait", "pr-find", "pr-status", "pr-land":
+			return "github." + operation
+		default:
+			return "github.command"
+		}
 	case "checks":
 		switch operation := span.Text(telemetry.AttrGitHubOperation); operation {
 		case "wait", "status", "run-wait":

@@ -346,6 +346,29 @@ func TestConfirmWithTheWrongNumberTypedIsRefused(t *testing.T) {
 	land.noMerge()
 }
 
+// --confirm always asks, even for a change the agent could merge on its own.
+func TestConfirmAsksEvenForAChangeTheAgentMayMerge(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	land.terminal, land.stdin = true, ""
+	out := land.expect(1, "refused", "--confirm", "--title", "a feature")
+	contains(t, out, "no answer was typed")
+	land.noMerge()
+}
+
+// The recheck reads the base branch's live tip, not only the base the host reports for the
+// change: a base that moved after the policy and checks were judged stops the landing.
+func TestABaseThatMovedAfterItWasJudgedIsMoved(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	land.host.onRules = func(call int) {
+		if call == 3 { // the recheck's read: the base moved during the local checks
+			land.advanceMain("c.txt")
+		}
+	}
+	out := land.expect(4, "moved", "--title", "a feature")
+	contains(t, out, "not at")
+	land.noMerge()
+}
+
 // --- checks ------------------------------------------------------------------------------------
 
 func TestRulesUnreadWithListedChecksRequireOnlyThose(t *testing.T) {

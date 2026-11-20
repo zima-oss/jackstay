@@ -24,6 +24,9 @@ func (work *session) merge(landing ready, deadline time.Time) (int, error) {
 			return 0, err
 		}
 	}
+	if err := work.recheck(landing); err != nil {
+		return 0, err
+	}
 	method := methodOf(landing.base)
 	if landing.rules.MethodsRead && !slices.Contains(landing.rules.Methods, method) {
 		return 0, failf(exitRefused, "the repository does not allow a %s merge (`land.method`); it allows: %v", method, landing.rules.Methods)

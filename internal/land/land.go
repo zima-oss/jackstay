@@ -397,15 +397,16 @@ func (work *session) run() (int, error) {
 	if err != nil || code != exitLanded {
 		return code, err
 	}
-	if !ready.agentMay {
-		for _, reason := range ready.reasons {
-			work.say("for a person: %s", reason)
-		}
-		if !work.options.confirm {
-			work.say("\n#%d is ready for a person: merge it on the host's page, or run `jst land --confirm` at a terminal "+
-				"and type its number", ready.change.Number)
-			return exitForPerson, nil
-		}
+	for _, reason := range ready.reasons {
+		work.say("for a person: %s", reason)
+	}
+	if !ready.agentMay && !work.options.confirm {
+		work.say("\n#%d is ready for a person: merge it on the host's page, or run `jst land --confirm` at a terminal "+
+			"and type its number", ready.change.Number)
+		return exitForPerson, nil
+	}
+	if work.options.confirm {
+		// --confirm always asks, whether or not the agent could merge it, and judges it again after.
 		if err := work.askPerson(ready.change.Number); err != nil {
 			return 0, err
 		}

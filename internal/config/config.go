@@ -1359,6 +1359,7 @@ type Land struct {
 	HumanPaths []string
 }
 
+// The two values of `land.autonomy`: the agent merges a green change, or a person merges.
 const (
 	AutonomyMergeWhenGreen = "merge-when-green"
 	AutonomyPrepare        = "prepare"

@@ -1,3 +1,5 @@
+//go:build integration
+
 package land
 
 import (
@@ -46,6 +48,8 @@ type fakeHost struct {
 
 	// rules answer each Rules call in turn; the last repeats.
 	ruleCalls int
+	// onRules runs inside each read of the rules, with its count (what the world does meanwhile).
+	onRules func(call int)
 	rules     []hosting.Rules
 
 	// mergeAnswer answers a merge; nil merges the change.
@@ -152,6 +156,9 @@ func (host *fakeHost) Checks(_ context.Context, change hosting.Change) ([]hostin
 func (host *fakeHost) Rules(_ context.Context, branch string) (hosting.Rules, error) {
 	host.ruleCalls++
 	host.record("rules %s", branch)
+	if host.onRules != nil {
+		host.onRules(host.ruleCalls)
+	}
 	if len(host.rules) == 0 {
 		return hosting.Rules{}, nil
 	}

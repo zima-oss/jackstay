@@ -524,12 +524,11 @@ shape (`range`).
   `jst lint pr --event "$GITHUB_EVENT_PATH"`. It is a workflow of its own, so an edit of the
   description restarts only this check. It runs only for branches of the same repository.
 - **Before a merge, locally**: `jst land`, in a project whose `cards.unit` is `pr`, after
-  the checks are green and before it merges, fetches the pull request's own base, makes the merge
-  of the head it saw green with that base in memory (`git merge-tree`), and judges the
-  description as GitHub holds it and the tree's rules on that merge. Either failing stops it with
-  exit 1. The description it judged is the squash commit's message, and the merge is made only on
-  the head it judged. This covers a description edited after the runner's last run and a number
-  another pull request brought to the branch since.
+  the checks are green and before it merges, judges the description as the host holds it against
+  the files of the head it saw green; a failure stops it with exit 1. The description it judged is
+  the merge commit's message, and the merge is made only on the head it judged. The tree's rules
+  are the `card-line` workflow's to enforce as a required check: `jst land` adds no local gate on
+  a computed merge (W-092).
 - **When `jst land` opens the pull request**: `--card ID` (repeatable; `--card none --reason TEXT`)
   adds the line to the description it writes. In such a project it opens no pull request whose
   description it cannot judge first (no `--card` and no `--body-file`) or whose description fails

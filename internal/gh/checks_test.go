@@ -406,12 +406,26 @@ func TestACancelledCheckWaitsForTheReplacementJob(t *testing.T) {
 	contains(t, stdout, "run 5 supersedes cancelled run 4")
 }
 
-func TestAReplacementWorkflowWithoutTheRequiredJobStaysPending(t *testing.T) {
+// docs/design/land.md section 4: a newer run that finished without the job leaves the check
+// cancelled; only while it runs is the check pending.
+func TestAFinishedReplacementWithoutTheJobLeavesTheCheckCancelled(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4)})
 	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
 		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "success"},
+		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
+	}))
+	stdout, _ := bench.expect(exitNotFine, "wait", "7", "--timeout", "5", "--interval", "5")
+	contains(t, stdout, "finished without lint: the cancellation stands")
+}
+
+func TestARunningReplacementWithoutTheJobYetIsPending(t *testing.T) {
+	bench := newHarness(t, checkout(shaA))
+	onPull(bench.hub, pull(7, "feat", shaA))
+	onChecks(bench.hub, shaA, []githubapi.Check{checkRun("lint", "COMPLETED", "CANCELLED", 4)})
+	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
+		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "in_progress"},
 		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
 	}))
 	stdout, stderr := bench.expect(exitPending, "wait", "7", "--timeout", "5", "--interval", "5")

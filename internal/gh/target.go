@@ -132,12 +132,6 @@ func (work *session) resolvePull(target pullTarget) (int, error) {
 	return pull.Number, nil
 }
 
-// openPulls reads this repository's open pull requests from the branch, excluding same-named
-// branches of other repositories.
-func (work *session) openPulls(branch string) ([]githubapi.PullRequest, error) {
-	return openPulls(work.ctx, work.github, work.repository, branch)
-}
-
 func openPulls(ctx context.Context, client GitHub, repository, branch string) ([]githubapi.PullRequest, error) {
 	owner, _, _ := strings.Cut(repository, "/")
 	pulls, err := client.PullRequestsByHead(ctx, owner+":"+branch, "open")

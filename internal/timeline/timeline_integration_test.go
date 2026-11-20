@@ -59,7 +59,7 @@ func TestTimelineJoinsMixedDeliveryStagesWithoutPrivateFields(t *testing.T) {
 	add(span("review.attempt", 1, 3, 2, point(5), point(6), map[string]any{
 		telemetry.AttrOutcome: "clear", telemetry.AttrHead: head, telemetry.AttrReviewTask: private,
 	}))
-	add(span("jst gh", 1, 1, 0, from.Add(-time.Second), from, map[string]any{
+	add(span("jst checks", 1, 1, 0, from.Add(-time.Second), from, map[string]any{
 		telemetry.AttrCommand: "checks", telemetry.AttrGitHubOperation: "status", telemetry.AttrCwd: repository.Root,
 		telemetry.AttrGitHubRepository: "Example/Remote", telemetry.AttrGitHubPull: 24, telemetry.AttrOutcome: "ok",
 		telemetry.AttrHead: head, telemetry.AttrArgs: private,

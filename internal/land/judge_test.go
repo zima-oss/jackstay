@@ -163,3 +163,17 @@ func TestCardLine(t *testing.T) {
 		t.Fatalf("none without a reason: %v", err)
 	}
 }
+
+// Rulesets and classic protection may require one name twice, once with an app and once without:
+// each requirement is judged on every row that satisfies it.
+func TestOverlappingRequirementsOfOneNameAreEachSatisfied(t *testing.T) {
+	wanted := []hosting.RequiredCheck{{Name: "test"}, {Name: "test", App: 15368}}
+	passed := hosting.Check{Name: "test", App: 15368, State: hosting.Pass}
+	if judged := judge([]hosting.Check{passed}, wanted); judged.passed != 2 || len(judged.pending) != 0 {
+		t.Fatalf("the app's pass satisfies both: %+v", judged)
+	}
+	other := hosting.Check{Name: "test", App: 7, State: hosting.Pass}
+	if judged := judge([]hosting.Check{other}, wanted); judged.passed != 1 || len(judged.pending) != 1 {
+		t.Fatalf("another app's pass satisfies only the unrestricted one: %+v", judged)
+	}
+}

@@ -306,3 +306,27 @@ func TestUpdateBranchAndTheDefaultBranchAreGitHubs(t *testing.T) {
 		t.Fatal(adapter.Name())
 	}
 }
+
+// When whether a cancelled run was superseded cannot be told, the rows stand as read: the caller
+// still judges the required checks, and an optional cancellation only says why.
+func TestARunLookupThatFailsKeepsTheRowsAsRead(t *testing.T) {
+	hub := newGitHub()
+	onChecks(hub, shaA, []githubapi.Check{passed("test"), checkRun("optional", "COMPLETED", "CANCELLED", 4)})
+	hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, githubfake.Fail[[]githubapi.WorkflowRun](errors.New("a server error")))
+	checks, err := hostOver(hub).Checks(context.Background(), changeOf(pull(7, "feat", shaA)))
+	if err != nil || len(checks) != 2 {
+		t.Fatalf("%+v %v", checks, err)
+	}
+	for _, check := range checks {
+		switch check.Name {
+		case "test":
+			if check.State != hosting.Pass {
+				t.Fatalf("test %+v", check)
+			}
+		case "optional":
+			if check.State != hosting.Cancelled || !strings.Contains(check.Note, "cannot be told: workflow runs of aaaaaaaa: a server error") {
+				t.Fatalf("optional %+v", check)
+			}
+		}
+	}
+}
