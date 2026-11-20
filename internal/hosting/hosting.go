@@ -30,10 +30,10 @@ type Change struct {
 	Number int
 	// ID is the host's own identifier of the change, where an operation needs it (GitHub's node ID
 	// for its merge queue).
-	ID     string
-	URL    string
-	Title  string
-	Body   string
+	ID    string
+	URL   string
+	Title string
+	Body  string
 	// State is "open", "closed" or "merged".
 	State          string
 	Draft          bool
