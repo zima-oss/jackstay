@@ -35,6 +35,11 @@ Flags: `jst adopt --help`. The contract of each mode:
 - `--settings-only` plans or applies `jackstay.json` alone; the other files are planned again after
   it merges, and an `--accept` of one of theirs is refused
   ([W-085](../decisions/W-085-adopt-lands-settings-and-files-apart.md)).
+- `--autonomy merge-when-green|prepare` answers the one question adopt asks, who merges, for a new
+  `land` section (section 3.1). Without it `--apply` asks at a terminal, offering first the answer
+  `jst setup` kept for the machine (`<jackstay home>/.all/setup.json`), else the recommended one;
+  without a terminal it exits 2 naming the flag. `--plan` never asks: it shows the offered answer
+  and says the apply will ask.
 - `--json` prints the plan as one object `{"project", "profile", "changes": [...], "conflicts": [...],
   "exceptions": [...], "notes": [...], "choices": [...]}`; each change `{"id", "path", "what"}`, each conflict
   `{"id", "path", "what", "settle"}`.
@@ -58,16 +63,16 @@ A new plan resumes the previous operation when all inputs and remaining outputs 
 and the recorded completed effects are visible. If the state has changed, adoption plans a new
 operation and applies its usual conflict checks.
 
-**The questions** (W-090). Some of how jackstay behaves is the project's choice, so adopt asks
-rather than assumes (`internal/choices`): the reviewer (`review.use`; `codex` recommended) and the
-agent chat (`chat.enabled`; `off` recommended, written either way so it is asked once; not asked
-when the pin this apply ends with is before 0.6.0). With `--apply` on a terminal it asks each
-question the original file does not answer, offering the machine's answer from `jst setup` first;
-`--answer ID=VALUE` answers without asking and is written over the project's value; without a
-terminal nothing is written. Answers are settled before the pin is chosen. The plan's `choices`
-give each question's key, value, where it came from (`--answer`, asked, the project's file, the
-profile's defaults) and whether it was written. The landing autonomy and each scope's CI split are
-asked once `land.autonomy` and a scope's `ci` are read (`internal/choices` defines both already).
+**The questions** (W-090). Besides who merges (`land.autonomy`, land.md section 5), adopt asks two
+of the project's choices rather than assume them (`internal/choices`): the reviewer (`review.use`;
+`codex` recommended) and the agent chat (`chat.enabled`; `off` recommended, written either way so
+it is asked once; not asked when the pin this apply ends with is before 0.6.0). With `--apply` on
+a terminal it asks each one the original file does not answer, offering the reviewer `jst setup`
+kept in `<home>/.all/setup.json` first; `--reviewer` and `--chat` answer without asking and are
+written over the project's value; without a terminal nothing is written. Answers are settled before
+the pin. The plan's `choices` give each question's key, value, where it came from (a flag, asked,
+the project's file, the profile's defaults) and whether it was written. Limits: these two
+questions only; each scope's CI split is asked once a scope's `ci` is read.
 
 ## 3. What `jst adopt` owns
 
@@ -84,6 +89,25 @@ project's: `jst adopt` reads it to find conflicts and never changes it.
 - **`jackstay_schema` moved from 1 to 2** when the file would carry a section that needs 2 (`config`'s
   `Stage1Sections`, which gains `adopt`). Schema 1 to 2 is a number only (2 reads every schema-1
   file the same way).
+- **The `land` section** (docs/design/land.md section 5), by a jackstay of 0.6.0 or later, in full:
+  `host`, `autonomy`, `method`, `checks`, `human_paths`. An existing section gets the keys it lacks;
+  its `autonomy` is never changed (an `--autonomy` that differs is refused). A file that is or
+  becomes schema 3 gets the section with the answer to adopt's question; a profile's `land`
+  defaults fill its other keys and never `autonomy`. A schema-2 file pinned to
+  0.5.x gets it as the last of three pull requests a person merges, and the plan's notes name each
+  step and the one due: the pin (`--apply --pin --settings-only`, the file stays schema 2), the
+  workflows that download the new pin (those a project with a `land` section has, `card-line`
+  included), then schema 3 with the section. Each plan holds only what is
+  due, so schema 3 is never planned before the workflows run a jackstay that reads it. Whether
+  the upgrade is due is read from the project's own file, a schema-2 file with a pin, never from a
+  schema this plan would raise (without a pin no workflow downloads jackstay yet, and the file
+  moves to schema 3 at once); a key needing schema 3 (`adopt.profile_sha256` from `--profile-sha256`,
+  say) is refused before step 3. Step 2 is done when the whole plan, its exceptions and accepts
+  applied, writes and settles no workflow, and, when the project keeps any workflow adopt does not
+  manage (its own, or kept by an exception), a person has confirmed with the exception
+  `upgrade:workflows` in `adopt.exceptions` that none still downloads a jackstay older than 0.6.0,
+  directly or through a script or an action: jackstay does not read those files to find out. Until then the plan lists a blocker naming the files and the exception (`blockers`
+  in `--json`, exit 3), `--apply` prints it, and `jst doctor` reports the project as not up to date.
 - **The profile's defaults** (section 6, `jackstay_json.defaults`) added where the project has no value:
   a missing section is added whole; inside an existing object only missing keys are added,
   recursively; a value the project has (a list, a string, a different number) is never replaced.
@@ -367,7 +391,7 @@ Item IDs, what each needs, and what changes with the section:
 | `release` | `release` | |
 | `log` | the commands `log` and `stats` in the table | |
 | `evidence` | `receipts` | |
-| `inventory`, `timeline`, `owner` | always | |
+| `status`, `owner` | always | |
 | `profiles` | `adopt` | |
 
 Then the profile's `agents.rules`, under `### This project's organisation`, one bullet each.

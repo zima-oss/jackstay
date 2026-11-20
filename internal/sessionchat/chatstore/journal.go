@@ -19,6 +19,10 @@ import (
 const (
 	opSend    = "send"
 	opRespond = "respond"
+	// opFire is an idle subscription's firing (section 7.3): always rolled forward.
+	opFire = "fire"
+	// opObserve is an idle or an end with the work it triggers: always rolled forward.
+	opObserve = "observe"
 )
 
 // journalEntry names an operation in progress and what follows from its commit.
@@ -39,6 +43,10 @@ type journalEntry struct {
 	Responder string `json:"responder,omitempty"`
 	// Asks is the request ID a request message is given; its index entry is the operation's own file.
 	Asks string `json:"asks,omitempty"`
+	// Firing is what an opFire entry finishes.
+	Firing *firing `json:"firing,omitempty"`
+	// Observed is what an opObserve entry finishes.
+	Observed *observation `json:"observed,omitempty"`
 }
 
 type subscriptionPlan struct {
@@ -112,6 +120,20 @@ func (transaction *transaction) recover() (resolved []string, kept int, err erro
 			return resolved, kept, readErr
 		case readErr != nil || entry.ID != name || entry.Op == "":
 			transaction.moveBroken(name)
+			continue
+		}
+		if entry.Op == opObserve && entry.Observed != nil {
+			if _, err := transaction.applyObservation(*entry.Observed); err != nil {
+				return resolved, kept, err
+			}
+			resolved = append(resolved, entry.ID)
+			continue
+		}
+		if entry.Op == opFire && entry.Firing != nil {
+			if err := transaction.applyFiring(*entry.Firing); err != nil {
+				return resolved, kept, err
+			}
+			resolved = append(resolved, entry.ID)
 			continue
 		}
 		decision, err := transaction.decide(entry)
@@ -255,17 +277,28 @@ func (transaction *transaction) applyCommitted(entry journalEntry, envelope Enve
 	if err := readRecord(path, deliveryBound, &delivery); err != nil {
 		return fmt.Errorf("the request's delivery of %s: %w", entry.ID, err)
 	}
-	next, err := deliverystate.Apply(delivery.table(true), deliverystate.Event{Kind: deliverystate.AckActed})
-	if err != nil || string(next.State) == delivery.State {
-		return transaction.store.syncFolder(transaction.place.deliveries(entry.Request))
+	var asked Envelope
+	if err := readRecord(transaction.place.envelope(entry.Request), envelopeBound, &asked); err != nil {
+		return err
 	}
-	return transaction.writeDelivery(entry.Request, entry.Responder, delivery.withTable(next, stamp(transaction.now)))
+	next, err := deliverystate.Apply(delivery.table(true), deliverystate.Event{Kind: deliverystate.AckActed})
+	if err != nil {
+		next = delivery.table(true) // final already: nothing moves, the subscriptions still reconcile
+	}
+	if string(next.State) == delivery.State {
+		if err := transaction.store.syncFolder(transaction.place.deliveries(entry.Request)); err != nil {
+			return err
+		}
+	}
+	_, err = transaction.saveStepped(asked, entry.Responder, delivery, next)
+	return err
 }
 
 // armSubscription writes an idle subscription on its recipient's record, replacing an earlier one
 // of the same watcher (section 4.9).
 func (transaction *transaction) armSubscription(plan subscriptionPlan) error {
-	session, err := transaction.readSession(plan.Recipient)
+	// The subscription this one replaces gets its own outcome first, if it has one by now.
+	session, err := transaction.reconcileWatchers(plan.Recipient)
 	if err != nil {
 		return err
 	}

@@ -15,11 +15,11 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/zima-oss/jackstay/internal/adopt"
 	"github.com/zima-oss/jackstay/internal/choices"
 )
 
-const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]\n" +
-	"       jst setup --answer ID=VALUE..."
+const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE | jst setup --reviewer WHO"
 
 const setupHelp = setupUsage + `
 
@@ -34,14 +34,12 @@ stays read-only to the sandbox; jst test and jst review run outside it.
   --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
-  --answer ID=VALUE  keep this machine's answer to a question without being asked (repeatable)
+  --autonomy MODE keep merge-when-green or prepare as this machine's answer to who merges
+  --reviewer WHO  keep codex, claude-code or codex,claude-code as this machine's reviewer
 
-The questions, the recommended answer first. On a terminal setup asks them after the repairs and
-keeps the answers as this machine's defaults (` + "`<jackstay home>/.all/choices.json`" + `); a terminal
-jst adopt --apply offers them first, and a project's jackstay.json still decides:
-  reviewer   codex, claude-code, or codex,claude-code: who runs jst review
-  chat       off or on: the agent chat, which each repository still turns on in its jackstay.json
-How far the agent may land on its own is asked once the landing command reads it.
+Once per machine, a terminal is also asked who merges a project's changes (the agent when the
+required checks pass, or a person) and which reviewer runs jst review (Codex recommended).
+` + "`jst adopt`" + ` offers these answers first; the project's jackstay.json decides.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
@@ -74,15 +72,6 @@ type SetupItem struct {
 // SetupPlan retains doctor's manual findings; setup never guesses repairs for them.
 type SetupPlan struct {
 	Items []SetupItem `json:"items"`
-	// Choices are this machine's answers adopt offers first, and where each comes from.
-	Choices []SetupChoice `json:"choices"`
-}
-
-// SetupChoice is one machine question's current answer.
-type SetupChoice struct {
-	ID    string `json:"id"`
-	Value string `json:"value"`
-	From  string `json:"from"`
 }
 
 func checkPath(report *Report, inputs Inputs) {
@@ -232,9 +221,8 @@ func planSandbox(report Report, finding Finding) SetupItem {
 
 // RunSetup is jst setup. Mutations require an interactive choice or --yes with a selected ID.
 func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	planOnly, asJSON, yes, chat, prefix := false, false, false, false, ""
+	planOnly, asJSON, yes, chat, prefix, autonomy, reviewer := false, false, false, false, "", "", ""
 	selected := map[string]bool{}
-	answers := choices.Defaults{}
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
 		case "--plan":
@@ -245,40 +233,60 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			yes = true
 		case "--chat":
 			chat = true
-		case "--select", "--prefix", "--answer":
-			if index+1 >= len(args) {
+		case "--select", "--prefix", "--autonomy", "--reviewer":
+			option, rest := args[index], args[index+1:]
+			if len(rest) == 0 {
 				fmt.Fprintln(stderr, setupUsage)
 				return 2
 			}
+			value := rest[0]
 			index++
-			switch args[index-1] {
+			switch option {
 			case "--select":
-				selected[args[index]] = true
+				selected[value] = true
 			case "--prefix":
-				prefix = args[index]
+				prefix = value
+			case "--reviewer":
+				reviewer = value
 			default:
-				id, value, err := choices.ParseAnswer(args[index], machineQuestions())
-				if err != nil {
-					fmt.Fprintf(stderr, "jst setup: %v\n", err)
-					return 2
-				}
-				answers[id] = value
+				autonomy = value
 			}
 		default:
 			fmt.Fprintln(stderr, setupUsage)
 			return 2
 		}
 	}
-	if len(answers) > 0 {
-		if planOnly || yes || chat || len(selected) > 0 || prefix != "" {
-			fmt.Fprintln(stderr, setupUsage)
-			return 2
-		}
-		return keepAnswers(answers, stdout, stderr)
-	}
 	if (yes && len(selected) == 0) || (!yes && len(selected) != 0) || (planOnly && yes) || (chat && yes) {
 		fmt.Fprintln(stderr, setupUsage)
 		return 2
+	}
+	if reviewer != "" {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, setupUsage)
+			return 2
+		}
+		if err := choices.Reviewer.Check(reviewer); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 2
+		}
+		if err := choices.SaveMachineAnswers(choices.Defaults{choices.Reviewer.ID: reviewer}); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers review.use %s first on this machine\n", reviewer)
+		return 0
+	}
+	if autonomy != "" {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, setupUsage)
+			return 2
+		}
+		if err := adopt.SaveMachineAutonomy(autonomy); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers land.autonomy %s first on this machine\n", autonomy)
+		return 0
 	}
 	for identifier := range selected {
 		if identifier != "path" && identifier != "sandbox" {
@@ -297,20 +305,9 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	inputs := RealInputs(prefix)
 	// Settings lives under ~/.claude; the profile belongs directly under account home.
 	plan := planSetup(Diagnose(inputs), filepath.Dir(filepath.Dir(inputs.Settings)), os.Getenv("SHELL"))
+	plan.Items = append(plan.Items, autonomyItem(adopt.MachineAutonomy()), reviewerItem(choices.MachineAnswers()))
 	if chat {
 		plan.Items = append(plan.Items, chatEngineSetupItems(exec.LookPath)...)
-	}
-	store, storeErr := choices.MachineStore()
-	defaults := choices.Defaults{}
-	if storeErr == nil {
-		defaults, storeErr = store.Load()
-	}
-	plan.Choices = []SetupChoice{}
-	if storeErr == nil {
-		for _, question := range machineQuestions() {
-			value, from := choices.Offered(question, "", false, defaults)
-			plan.Choices = append(plan.Choices, SetupChoice{ID: question.ID, Value: value, From: from})
-		}
 	}
 	if asJSON {
 		encoder := json.NewEncoder(stdout)
@@ -319,93 +316,97 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	printSetupPlan(stdout, plan)
-	printMachineChoices(stdout, defaults, storeErr)
 	if planOnly || (!yes && (!terminalInput(stdin) || !terminalOutput(stdout))) {
 		return 0
 	}
+	return applySetup(plan, yes, chat, selected, stdin, stdout, stderr)
+}
+
+// applySetup asks and applies a plan: the questions at a terminal; with --yes only the selected
+// repairs, unattended, asking nothing.
+func applySetup(plan SetupPlan, yes, chat bool, selected map[string]bool, stdin io.Reader, stdout, stderr io.Writer) int {
 	reader := bufio.NewReader(stdin)
+	if !yes {
+		if err := askMachineAutonomy(plan, reader, stdout, adopt.SaveMachineAutonomy); err != nil {
+			fmt.Fprintf(stderr, "jst setup: autonomy: %v\n", err)
+			return 1
+		}
+		if err := askMachineReviewer(plan, reader, stdout); err != nil {
+			fmt.Fprintf(stderr, "jst setup: reviewer: %v\n", err)
+			return 1
+		}
+	}
 	if chat {
 		promptChatEngineSetup(plan, reader, stdout)
 	}
-	status := executeSetup(plan, yes, selected, reader, stdout, stderr)
-	if yes || storeErr != nil {
-		return status
+	return executeSetup(plan, yes, selected, reader, stdout, stderr)
+}
+
+// autonomyItem is this machine's answer to who merges (docs/design/land.md section 5): asked once,
+// then offered first by `jst adopt`.
+// reviewerItem is this machine's reviewer (W-090): asked once, offered first by `jst adopt`.
+func reviewerItem(saved choices.Defaults, err error) SetupItem {
+	item := SetupItem{ID: "reviewer", Status: "ask", Text: "which reviewer runs `jst review`, offered first by `jst adopt`: not answered on this machine",
+		Fix: "answer the question at a terminal (`jst setup`), or `jst setup --reviewer codex|claude-code|codex,claude-code`"}
+	switch {
+	case err != nil:
+		item.Status, item.Text = "manual", "this machine's reviewer cannot be read: "+err.Error()
+		item.Fix = "fix or remove the file named, then `jst setup --reviewer codex|claude-code|codex,claude-code`"
+	case saved[choices.Reviewer.ID] != "":
+		item.Status, item.Text = "done", "`jst adopt` offers review.use "+saved[choices.Reviewer.ID]+" first on this machine"
+		item.Fix = "`jst setup --reviewer codex|claude-code|codex,claude-code` changes it; a project's jackstay.json decides"
 	}
-	asker := choices.TerminalAsker{In: reader, Out: stdout}
-	asked := choices.Defaults{}
-	for _, question := range machineQuestions() {
-		offered, _ := choices.Offered(question, "", false, defaults)
-		answer, err := asker.Ask(question, offered)
+	return item
+}
+
+// askMachineReviewer asks the reviewer question when the plan says it is not answered, and keeps it.
+func askMachineReviewer(plan SetupPlan, reader *bufio.Reader, stdout io.Writer) error {
+	for _, item := range plan.Items {
+		if item.ID != "reviewer" || item.Status != "ask" {
+			continue
+		}
+		answer, err := choices.TerminalAsker{In: reader, Out: stdout}.Ask(choices.Reviewer, choices.Reviewer.Recommended())
 		if err != nil {
-			fmt.Fprintf(stderr, "jst setup: %s: %v; this machine's answers are unchanged\n", question.ID, err)
-			return max(status, 1)
+			return err
 		}
-		asked[question.ID] = answer
-	}
-	// Each answer replaces only the value shown when asking: one another setup changed meanwhile
-	// is not overwritten unseen.
-	err := store.Update(func(current choices.Defaults) error {
-		for id, answer := range asked {
-			if current[id] != defaults[id] {
-				return fmt.Errorf("%w (%s)", choices.ErrChanged, id)
-			}
-			current[id] = answer
+		if err := choices.SaveMachineAnswers(choices.Defaults{choices.Reviewer.ID: answer}); err != nil {
+			return err
 		}
-		return nil
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "jst setup: keeping this machine's answers: %v; run jst setup again\n", err)
-		return 1
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers review.use %s first on this machine\n", answer)
 	}
-	fmt.Fprintf(stdout, "jst setup: kept this machine's answers in %s; a terminal jst adopt --apply offers them first\n", store.Path)
-	return status
+	return nil
 }
 
-// machineQuestions are the questions setup keeps a machine default for: those with one whose
-// answer some command reads now. The landing autonomy joins them once `land.autonomy` exists.
-func machineQuestions() []choices.Question {
-	var found []choices.Question
-	for _, question := range choices.All() {
-		if question.Machine && !question.Later() {
-			found = append(found, question)
-		}
+func autonomyItem(saved string, err error) SetupItem {
+	item := SetupItem{ID: "autonomy", Status: "ask", Text: "who merges a project's changes, offered first by `jst adopt`: not answered on this machine",
+		Fix: "answer the question at a terminal (`jst setup`), or `jst setup --autonomy merge-when-green|prepare`"}
+	switch {
+	case err != nil:
+		item.Status, item.Text = "manual", "this machine's answer to who merges cannot be read: "+err.Error()
+		item.Fix = "fix or remove the file named, then `jst setup --autonomy merge-when-green|prepare`"
+	case saved != "":
+		item.Status, item.Text = "done", "`jst adopt` offers land.autonomy "+saved+" first on this machine"
+		item.Fix = "`jst setup --autonomy merge-when-green|prepare` changes it; a project's jackstay.json decides"
 	}
-	return found
+	return item
 }
 
-// printMachineChoices lists each machine question with the answer adopt will offer first.
-func printMachineChoices(out io.Writer, defaults choices.Defaults, problem error) {
-	if problem != nil {
-		fmt.Fprintf(out, "choices [manual]: this machine's answers cannot be read: %v\n", problem)
-		return
-	}
-	for _, question := range machineQuestions() {
-		value, from := choices.Offered(question, "", false, defaults)
-		fmt.Fprintf(out, "choice %s: %s (%s)\n", question.ID, value, from)
-	}
-}
-
-// keepAnswers saves --answer values as this machine's defaults, keeping the others.
-func keepAnswers(answers choices.Defaults, stdout, stderr io.Writer) int {
-	store, err := choices.MachineStore()
-	if err != nil {
-		fmt.Fprintf(stderr, "jst setup: %v\n", err)
-		return 1
-	}
-	var kept choices.Defaults
-	err = store.Update(func(current choices.Defaults) error {
-		for id, value := range answers {
-			current[id] = value
+// askMachineAutonomy asks adopt's question when the plan says it is not answered, and keeps the answer.
+func askMachineAutonomy(plan SetupPlan, reader *bufio.Reader, stdout io.Writer, save func(string) error) error {
+	for _, item := range plan.Items {
+		if item.ID != "autonomy" || item.Status != "ask" {
+			continue
 		}
-		kept = current
-		return nil
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "jst setup: keeping this machine's answers: %v\n", err)
-		return 1
+		answer, err := adopt.AskAutonomy(reader, stdout, "")
+		if err != nil {
+			return err
+		}
+		if err := save(answer); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers land.autonomy %s first on this machine\n", answer)
 	}
-	printMachineChoices(stdout, kept, nil)
-	return 0
+	return nil
 }
 
 func chatEngineSetupItems(lookPath func(string) (string, error)) []SetupItem {
@@ -501,7 +502,7 @@ func terminalOutput(output io.Writer) bool {
 }
 
 func terminalFile(file *os.File) bool {
-	return choices.IsTerminal(file)
+	return isTerminal(file.Fd())
 }
 
 func printSetupPlan(output io.Writer, plan SetupPlan) {

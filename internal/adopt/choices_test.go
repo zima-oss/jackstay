@@ -118,24 +118,21 @@ func TestAdoptWritesAnAnswerGivenAndSaysWhatAppliesWithoutOne(t *testing.T) {
 		t.Fatalf("review.use not written: %s %v", settings, err)
 	}
 	chat := made.Choices[1]
-	if chat.Written || chat.Value != "off" || !strings.Contains(chat.From, "--answer chat=VALUE") {
+	if chat.Written || chat.Value != "off" || !strings.Contains(chat.From, "jst adopt --apply --chat VALUE") {
 		t.Fatalf("chat without an answer or a terminal: %+v", chat)
 	}
 	var text bytes.Buffer
 	writeText(&text, made)
-	if !strings.Contains(text.String(), "reviewer") || !strings.Contains(text.String(), "review.use = codex,claude-code: --answer") {
+	if !strings.Contains(text.String(), "reviewer") || !strings.Contains(text.String(), "review.use = codex,claude-code: --reviewer") {
 		t.Fatalf("the plan does not show the choices:\n%s", &text)
 	}
 }
 
 func TestAnAnswerOutsideTheOptionsIsAUsageError(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"--answer", "reviewer=gpt"}, nil, &stdout, &stderr); code != 2 ||
+	if code := Run([]string{"--reviewer", "gpt"}, nil, &stdout, &stderr); code != 2 ||
 		!strings.Contains(stderr.String(), "codex, claude-code, codex,claude-code") {
 		t.Fatalf("exit %d: %s", code, &stderr)
-	}
-	if code := Run([]string{"--answer", "autonomy=prepare"}, nil, &stdout, &stderr); code != 2 {
-		t.Fatalf("a question with no key yet was accepted: exit %d", code)
 	}
 }
 

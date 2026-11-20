@@ -12,7 +12,7 @@ import (
 )
 
 func TestEveryQuestionRecommendsItsFirstOptionAndMarksIt(t *testing.T) {
-	for _, question := range append(All(), ScopeQuestions([]string{"x-go"})...) {
+	for _, question := range All() {
 		if len(question.Options) < 2 || !strings.Contains(question.Options[0].Label, "recommended") {
 			t.Errorf("%s: the first option is not the marked recommendation: %+v", question.ID, question.Options)
 		}
@@ -20,7 +20,7 @@ func TestEveryQuestionRecommendsItsFirstOptionAndMarksIt(t *testing.T) {
 			t.Errorf("a question without an ID or text: %+v", question)
 		}
 	}
-	if Reviewer.Recommended() != "codex" || Autonomy.Recommended() != "merge-when-green" || Chat.Recommended() != "off" {
+	if Reviewer.Recommended() != "codex" || Chat.Recommended() != "off" {
 		t.Fatal("a default other than the owner's (W-090, W-091)")
 	}
 }
@@ -55,37 +55,40 @@ func TestOfferedPrefersTheProjectThenTheMachine(t *testing.T) {
 	}
 }
 
-func TestMachineDefaultsKeepOnlyKnownAnswers(t *testing.T) {
-	store := FileStore{Path: filepath.Join(t.TempDir(), ".all", "choices.json")}
-	if loaded, err := store.Load(); err != nil || len(loaded) != 0 {
-		t.Fatalf("no file: %v %v", loaded, err)
+func TestMachineAnswersShareSetupJSONWithLandAutonomy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	if kept, err := MachineAnswers(); err != nil || len(kept) != 0 {
+		t.Fatalf("no file: %v %v", kept, err)
 	}
-	for id, value := range map[string]string{"reviewer": "claude-code", "autonomy": "prepare"} {
-		// Two updates of one answer each keep both.
-		if err := store.Update(func(current Defaults) error { current[id] = value; return nil }); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if kept, err := store.Load(); err != nil || kept["reviewer"] != "claude-code" || kept["autonomy"] != "prepare" {
-		t.Fatalf("kept %v %v", kept, err)
-	}
-	if err := os.WriteFile(store.Path, []byte(`{"reviewer":"claude-code","autonomy":"prepare","chat":"maybe","old":"x"}`), 0o600); err != nil {
+	path := filepath.Join(home, ".all", MachineFile)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	loaded, err := store.Load()
-	if err != nil || len(loaded) != 2 || loaded["reviewer"] != "claude-code" || loaded["autonomy"] != "prepare" {
-		t.Fatalf("loaded %v %v", loaded, err)
+	if err := os.WriteFile(path, []byte(`{"land_autonomy": "prepare", "chat": "on", "reviewer": "gpt"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if kept, err := MachineAnswers(); err != nil || len(kept) != 0 {
+		t.Fatalf("an unknown reviewer or a chat answer was offered: %v %v", kept, err)
+	}
+	if err := SaveMachineAnswers(Defaults{"reviewer": "claude-code"}); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := MachineAnswers()
+	if err != nil || len(kept) != 1 || kept["reviewer"] != "claude-code" {
+		t.Fatalf("kept %v %v", kept, err)
+	}
+	if data, _ := os.ReadFile(path); !strings.Contains(string(data), `"land_autonomy": "prepare"`) {
+		t.Fatalf("the autonomy answer was lost: %s", data)
 	}
 }
 
-func TestParseAnswer(t *testing.T) {
-	if id, value, err := ParseAnswer("reviewer=claude-code", All()); err != nil || id != "reviewer" || value != "claude-code" {
-		t.Fatal(id, value, err)
+func TestCheckNamesTheAnswers(t *testing.T) {
+	if Reviewer.Check("claude-code") != nil || Chat.Check("on") != nil {
+		t.Fatal("a listed answer refused")
 	}
-	for _, bad := range []string{"reviewer", "reviewer=", "reviewer=gpt", "colour=red"} {
-		if _, _, err := ParseAnswer(bad, All()); err == nil {
-			t.Errorf("%q accepted", bad)
-		}
+	if err := Reviewer.Check("gpt"); err == nil || !strings.Contains(err.Error(), "--reviewer takes one of: codex, claude-code, codex,claude-code") {
+		t.Fatalf("%v", err)
 	}
 }
 

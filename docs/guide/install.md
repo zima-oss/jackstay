@@ -125,14 +125,13 @@ unusual file, a profile with a different jackstay PATH entry, malformed settings
 deny rule that needs an owner's decision. A second run does not append the same entry again.
 Open a new shell or Claude Code session after a change, then run `jst doctor` again.
 
-After the repairs, setup on a terminal asks two questions, recommended answer first, and keeps the
-answers as this machine's defaults, which a terminal `jst adopt --apply` offers first (a project's
-`jackstay.json` still decides): the reviewer (`codex`) and the agent chat (`off`; each repository
-turns it on in its own file). How far the agent may land on its own is asked once the landing
-command reads it. The plan lists the current answers. To set one without being asked:
+After the repairs, setup on a terminal asks, once per machine, who merges a project's changes and
+which reviewer runs `jst review` (Codex recommended), and keeps the answers in
+`~/.jackstay/.all/setup.json`; `jst adopt` offers them first, and a project's `jackstay.json` still
+decides. The plan lists the current answers. To set one without being asked:
 
 ```sh
-jst setup --answer reviewer=codex,claude-code
+jst setup --reviewer codex,claude-code
 ```
 
 `jst setup --chat` shows local session chat integration routes. The terminal can show steps for

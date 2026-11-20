@@ -1,16 +1,15 @@
-// Package choices are the questions `jst setup` and `jst adopt` put to a person, so nothing about
-// how jackstay behaves in a project is a surprise (W-090): which reviewer runs, how far the agent
-// may land on its own, whether chat is on, and where each test scope runs. Every question shows
-// its options with the recommended one first and marked.
+// Package choices are two of the questions `jst setup` and `jst adopt` put to a person, so nothing
+// about how jackstay behaves in a project is a surprise (W-090): which reviewer runs and whether
+// chat is on. Who merges (land.autonomy) is asked by adopt's land planning the same way (#104).
+// Every question shows its options with the recommended one first.
 //
-// Setup keeps a machine default for the questions that have one; adopt offers it first, and the
-// project's jackstay.json decides: a value it already sets is never asked again. An answer is
-// written to its configuration key through a Key; a question whose key this jackstay does not
-// read yet is not asked by adopt (its answer would have nowhere to go), but setup keeps it.
+// Setup keeps this machine's reviewer in `<jackstay home>/.all/setup.json` beside land_autonomy;
+// adopt offers it first, and the project's jackstay.json decides: a value it already sets is
+// never asked again. Limits: two questions, each a fixed list of answers; no per-scope CI question
+// until a scope's `ci` key is read.
 package choices
 
 import (
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -20,23 +19,20 @@ import (
 
 // Question is one choice.
 type Question struct {
-	// ID is how flags and the machine defaults name it (`--answer reviewer=codex`).
+	// ID is how its flag and the machine file name it (`--reviewer codex`).
 	ID string
 	// Text is the question.
 	Text string
 	// Options are the answers, the recommended one first.
 	Options []Option
-	// Machine says setup keeps a machine default for it, which adopt offers first.
+	// Machine says setup keeps a machine answer for it, which adopt offers first.
 	Machine bool
-	// Key writes and reads the answer in jackstay.json; nil while no key holds it.
+	// Key writes and reads the answer in jackstay.json.
 	Key Key
 	// Schema3 says the key needs "jackstay_schema": 3, so a project pinned to an older jackstay is
 	// not asked.
 	Schema3 bool
 }
-
-// Later says no command reads the answer yet: setup keeps it for the command that will.
-func (question Question) Later() bool { return question.Key == nil }
 
 // Option is one answer.
 type Option struct {
@@ -77,17 +73,13 @@ var (
 	Reviewer = Question{ID: "reviewer", Text: "Which reviewer runs `jst review` here?", Machine: true,
 		Options: []Option{{"codex", "Codex (recommended)"}, {"claude-code", "Claude Code"}, {"codex,claude-code", "both, Codex and Claude Code"}},
 		Key:     reviewUse{}}
-	Autonomy = Question{ID: "autonomy", Text: "How far may the agent land a change on its own?", Machine: true,
-		Options: []Option{
-			{"merge-when-green", "the agent merges when the required checks pass; jackstay.json and the listed paths need a person (recommended)"},
-			{"prepare", "the agent prepares the change; a person merges"}}}
-	Chat = Question{ID: "chat", Text: "Turn on the agent chat for this repository?", Machine: true,
+	Chat = Question{ID: "chat", Text: "Turn on the agent chat for this repository?",
 		Options: []Option{{"off", "off (recommended; it can be turned on per repository later)"}, {"on", "on"}},
-		Key:     chatEnabled{}, Schema3: true}
+		Key:     chatEnabled{}, Schema3: true} // per repository, so setup keeps no machine answer
 )
 
-// All are the questions, in order. A project's test scopes get theirs from ScopeQuestions.
-func All() []Question { return []Question{Reviewer, Autonomy, Chat} }
+// All are the questions, in order.
+func All() []Question { return []Question{Reviewer, Chat} }
 
 // Find is the question of that ID.
 func Find(id string) (Question, bool) {
@@ -99,37 +91,10 @@ func Find(id string) (Question, bool) {
 	return Question{}, false
 }
 
-// ScopeQuestions ask, for each of a project's test scopes, whether CI runs it (W-092): the
-// project's split between local runs and CI. Their key, a scope's `ci`, is not read by this
-// jackstay yet, so they carry none and adopt does not ask them until it is.
-func ScopeQuestions(scopes []string) []Question {
-	questions := make([]Question, 0, len(scopes))
-	for _, scope := range scopes {
-		questions = append(questions, Question{ID: "ci." + scope, Text: fmt.Sprintf("Does CI run the test scope %s?", scope),
-			Options: []Option{{"local", "no, it runs locally before a pull request (recommended until CI runs it)"},
-				{"linux", "yes, on Linux"}, {"darwin", "yes, on macOS"}, {"linux,darwin", "yes, on Linux and macOS"}}})
+// Check is nil when value is one of the question's answers, else an error naming them.
+func (question Question) Check(value string) error {
+	if question.Has(value) {
+		return nil
 	}
-	return questions
-}
-
-// ParseAnswer reads `ID=VALUE` (from `--answer`) against the questions given.
-func ParseAnswer(text string, questions []Question) (string, string, error) {
-	id, value, found := strings.Cut(text, "=")
-	if !found || id == "" || value == "" {
-		return "", "", errors.New("--answer takes ID=VALUE")
-	}
-	for _, question := range questions {
-		if question.ID != id {
-			continue
-		}
-		if !question.Has(value) {
-			return "", "", fmt.Errorf("--answer %s takes one of: %s", id, question.Values())
-		}
-		return id, value, nil
-	}
-	known := make([]string, len(questions))
-	for index, question := range questions {
-		known[index] = question.ID
-	}
-	return "", "", fmt.Errorf("--answer: no question %q (the questions: %s)", id, strings.Join(known, ", "))
+	return fmt.Errorf("--%s takes one of: %s", question.ID, question.Values())
 }

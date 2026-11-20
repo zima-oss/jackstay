@@ -88,7 +88,7 @@ set per project it knows:
 | `.all/telemetry`, `<project>/telemetry` | the journal |
 | `.all/heavy-suite.lock`, its `.queue` and `.holder` | `jst lock` |
 | `.all/procs` | `jst bg` and `jst procs` |
-| `.all/session-chat` | chat commands |
+| `.all/chat`, `.all/session-chat` | chat commands |
 | `.all/context-brief` | `jst brief save` |
 | `<project>/ids` | `jst id next` |
 | `.trash` | `jst discard` |

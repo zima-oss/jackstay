@@ -14,7 +14,7 @@ an agent inside the sandbox could write a gate mark and get a green gate without
 
 - Setup grants, by reading what jst writes from a sandboxed Bash command: the journals (shared
   and per project), each project's ids, the heavy-suite lock with its queue and holder note,
-  `procs`, `session-chat`, `context-brief` and the trash. Hooks and stdio MCP servers run outside
+  `procs`, `chat`, `session-chat`, `context-brief` and the trash. Hooks and stdio MCP servers run outside
   the sandbox and need nothing.
 - Receipts and failure notes, gate marks and bars, review rounds, the run log, the delivery record
   and the expected projects are never granted. Granting the negative records (failure notes, bars)
