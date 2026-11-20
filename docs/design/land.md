@@ -3,7 +3,9 @@
 Status: for 0.6.0; sections 1 to 4 and 6 are built, 5 and 7 are not yet. It follows
 [W-090](../decisions/W-090-landing.md) (one forge-neutral `jst land`, hosting adapters, two autonomy
 modes chosen explicitly) and [W-092](../decisions/W-092-thin-land-and-where-tests-run.md) (the
-landing stays thin; where tests run is the project's declared split between local and CI). It keeps
+landing stays thin; where tests run is the project's declared split between local and CI) and
+[W-096](../decisions/W-096-task-graph-and-input-cache.md) (scopes as a task graph, cached by their
+inputs). It keeps
 [W-047](../decisions/W-047-release-redesign-fixed-settings-no-one-off-imports.md) (`jackstay.json`
 changes alone and is a person's to merge) and
 [W-019](../decisions/W-019-repeated-findings-mean-redesign.md) (a landing never switches, pulls or
@@ -229,40 +231,246 @@ following `land.autonomy` ("`jst land` … stops at `jst land: ready for a perso
 and `land.human_paths`: say so and stop; never merge on the host, never run `--confirm`"); the
 `checks` item names `jst checks wait`/`status`/`run-wait`.
 
-## 7. Where tests run
+## 7. Where tests run: one graph of scopes, cached by their inputs
 
-CI is the gate, but not every test runs in CI: jackstay itself has no macOS runner, so its macOS
-code is tested only on a Mac. The project declares the split; jackstay does not fix it.
+A run of `jst test` runs each scope at most once, after the scopes it depends on, and skips a scope
+whose inputs already have a counted pass in the cache. The project declares which scopes CI runs
+and on which systems; CI is the gate for those, and a person's machine runs the rest. This follows
+[W-096](../decisions/W-096-task-graph-and-input-cache.md): a task graph and a cache by input hash,
+on the model of monorepo task runners, each with simple behaviour and written limits. It replaces
+the ordered lists of `steps`, the gate's step marks and bars, and `--resume` (section 7.6).
 
-A test scope gains one key: `ci`, the operating systems on which CI runs it (absent: not in CI).
+**Prior art.** Nx runs a target after the targets named in its `dependsOn` and hashes a task from
+its `inputs`, its command, the runtime and the hashes of what it depends on
+([run tasks](https://nx.dev/docs/features/run-tasks),
+[inputs](https://nx.dev/docs/reference/inputs),
+[cache task results](https://nx.dev/docs/features/cache-task-results)). Turborepo builds a task
+graph from `dependsOn` and keys each task by its `inputs`, its `env`, a global hash and the hashes
+of its dependencies, replaying the logs on a hit
+([configuring tasks](https://turborepo.dev/docs/crafting-your-repository/configuring-tasks),
+[caching](https://turborepo.dev/docs/crafting-your-repository/caching)). Bazel keys an action by its
+command line, the digests of its inputs, its environment and its platform
+([remote caching](https://bazel.build/remote/caching)). jackstay takes the graph and the key, and
+leaves out what a test runner does not need: outputs, named inputs, parallel runs and a remote
+store.
+
+### 7.1 The keys of a scope
+
+| key | value | default | meaning |
+|---|---|---|---|
+| `deps` | scope or step names | `[]` | what must pass first, in the order given |
+| `ci` | systems | `[]`: not in CI | the systems CI runs this scope on as a job of its own |
+| `systems` | systems | any | the systems the scope runs on at all |
+| `inputs` | repository-relative globs | every tracked file | the tracked files whose content enters the scope's hash |
+| `cache` | boolean | `true` | `false`: the scope always runs; nothing is read from or written to the cache for it |
+
+A system is Go's name for it: `darwin`, `linux`. The five keys need `"jackstay_schema": 3`
+([W-090](../decisions/W-090-compatibility-of-0-6-0.md)).
 
 ```json
 "scopes": {
-  "x-go":  {"run": ["just", "go"], "ci": ["linux"]},
-  "x-ios": {"run": ["just", "ios"], "systems": ["darwin"]}
+  "x-build": {"run": ["just", "build"], "judge": "exit", "inputs": ["cmd/**", "internal/**", "go.*"]},
+  "x-go":    {"run": ["just", "go"], "deps": ["x-build"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "inputs": ["docs/**", "site/**"]},
+  "x-ios":   {"run": ["just", "ios"], "deps": ["x-build"], "systems": ["darwin"]},
+  "gate":    {"deps": ["x-docs", "x-go", "x-ios"], "ci": ["linux"]}
 }
 ```
 
+**A scope with no `run`** (a composite, such as `gate`) runs nothing of its own. It passes when
+every dep that runs on this system passed, and at least one did; it takes no `judge`, `timeout`,
+`lock_wait`, `lock`, `inputs` or `cache`. It may take `requires`, `ci`, `systems` and `when`.
+
+**`steps` is read as `deps`.** A scope's `steps` list is its `deps` in the same order, in schema 2
+and 3, so a schema-2 project keeps working unchanged; a scope with both is an error in
+`jackstay.json`. A name in the `steps` section is a node of the graph like a scope. A list of steps
+with no deps between its members runs in its declared order and stops at the first failure, as in
+0.5.x; what changes is that a step two lists share runs once, and that `--resume` is gone. The
+0.5.x key `"resume": false` is read as `"cache": false`.
+
+`jst check` refuses an unknown name in `deps`, a cycle (naming it), `steps` and `deps` together,
+and a scope with `run` whose dep has `systems` that leave out one of the scope's own systems (it
+could never run there). Each refusal is also `not-started` (2) before anything runs.
+
+### 7.2 The run
+
+1. **The graph.** The scopes asked for, with their deps, and the deps of those, to the end. Each
+   name is one node, however many scopes depend on it.
+2. **The order.** A depth-first walk from the scopes asked for, in the order given, visiting each
+   node's deps in their declared order and listing a node after its deps; a node already listed is
+   not visited again. So the order follows the declarations wherever the graph allows, and `steps`
+   lists keep their 0.5.x order. With the example above, `jst test gate` runs `x-docs`, `x-build`,
+   `x-go`, `x-ios`, then judges `gate`.
+3. **One at a time.** Nodes run one after another, in that order, each under its own `timeout`,
+   lock and leftovers (testing.md sections 3 and 6). No two run at once in 0.6.0.
+4. **Before a node runs**: when its `systems` leave out this machine, it is `skipped`; when a dep
+   is `skipped` and the node has `run`, it is `skipped` too. When its cache entry is found
+   (section 7.3), it does not run and keeps the stored outcome, marked `cached`; a cached node runs
+   no `requires`. Otherwise its `requires` run, then the node. A composite's `requires` are checked
+   before its first dep runs.
+5. **A failure stops the run.** The first node whose outcome is not `passed` or `exited-0` (cached
+   or not) or `skipped` ends the run; the nodes after it are `not-run`. With `--keep-going`, every
+   node whose deps all passed still runs, the others are `not-run`, and the run keeps the failure as
+   its outcome.
+
+A node's outcome is one of `jst test`'s outcomes (testing.md and implementation.md section 9.3),
+or one of two that only a graph has:
+
+| outcome | when | a pass? |
+|---|---|---|
+| `skipped` | its `systems` leave out this machine, or it has `run` and a dep is `skipped` | no |
+| `not-run` | a dep did not pass, or an earlier node ended the run | no |
+
+The last `jst test:` line reads the run as a whole:
+
+- **`passed`** when every scope asked for passed: by running now, or `cached` (the cache holds
+  only counted passes of identical inputs, so a cached pass is the same claim), with `skipped` deps
+  of a composite named. Only `passed` is a pass, as before; the detail says how much ran now:
+  `jst test: outcome=passed (gate, 41 s: x-docs=exited-0 cached, x-build=exited-0 cached,
+  x-go=passed, x-ios=passed)`. When nothing ran now, the detail says `nothing ran now: every scope
+  cached`. A scope asked for that is exit-judged ends `exited-0`, cached or not.
+- **The failure** otherwise, by the order of testing.md section 2 (`failed` > `timed-out` >
+  `stopped` > `unjudged` > `nothing-run`), naming the node: `outcome=failed (gate failed at x-go)`.
+- **`skipped`** (exit 79) when a scope asked for is `skipped` and nothing failed: it does not run
+  on this system.
+
+`jst test plan SCOPE` prints the order, each node's hash, and whether it would be cached, skipped
+or run; it runs nothing.
+
+### 7.3 The cache
+
+A node with `run` has a **hash**: SHA-256 over
+
+- its definition after defaults and placeholders: the expanded words (so a new `{slow}` list is a
+  new hash), `cwd`, `env` names and values, the judge with its `evidence`, `veto`, report settings
+  and adapter version, `timeout`, `leftovers` of the section, and `requires`;
+- the content of its `inputs` at HEAD: each matching tracked file's path, mode and blob id, so no
+  file is read; plus the content of `receipts.extra_files`;
+- what the receipts key reads of the machine (implementation.md section 9.2): the output of each
+  `receipts.toolchain` command, the variables matching `receipts.env`, the system's version and
+  build, the machine kind; and jackstay's version;
+- the commits of `receipts.refs` and the command's `refs`, HEAD's merge bases with
+  `receipts.merge_bases` and the command's `merge_bases`, and, for a `{base}` in its words, the
+  base's tip and its merge base with HEAD;
+- the hash of each dep, in declared order. A composite dep contributes the hashes of its own deps.
+
+HEAD's commit is not in the hash: two commits whose inputs are the same share an entry, so a scope
+that passed on a branch is cached on the merge commit with the same tree.
+
+**Only a clean checkout reads or writes the cache.** Clean means: `git status --porcelain
+--untracked-files=all` is empty; no entry is marked skip-worktree or assume-unchanged; and no
+untracked file is hidden only by a rule outside the committed `.gitignore` files
+(`.git/info/exclude`, a global excludes file), except under an agent's top folder (`.claude`,
+`.omc`, `.omx`, `.codex`, `.cursor`), under a regenerable folder (`.build`, `DerivedData`,
+`node_modules`, `__pycache__`, …) or a `.DS_Store`. A checkout that is not clean runs every node
+and says `cache=off (not clean)`; a copy made by `--commit` is always clean. Hashing the working
+files instead would let uncommitted work enter the cache under a commit's name; jackstay does not
+do that.
+
+**No hash**, so no cache for the node and every node that depends on it, said in the line: a ref
+that cannot be resolved, a toolchain command that fails, `receipts.toolchain` or `receipts.env`
+not written out, or git failing.
+
+**A hit.** An entry of this hash with outcome `passed` (or `exited-0` for an exit-judged node), at
+most `receipts.max_age_hours` old, with no failure note of the hash: the node is not run. The run
+record gets a `cached` line naming the run that stored the entry; that run's output is named when
+it is still kept. No log is replayed. The lookup is made before the lock and again under it.
+`--no-reuse` or `JACKSTAY_NO_REUSE` skips the lookup; the run still writes.
+
+**An entry is written** under the rules of a receipt (implementation.md section 9.4): the node
+`passed` or ended `exited-0` for an exit-judged node; the checkout was clean before and after it,
+with the same HEAD and hash; no tracked file or `receipts.extra_files` entry was rewritten while it
+ran, even to the same content (identity, size and times compared); and no failure note of the hash
+is newer than its start.
+
+**A failure is never cached.** A node that ends `failed` or `passed-on-retry` writes a failure note
+of its hash; while the note lives (`receipts.max_age_hours` and one more day), the hash gets no
+entry and every older entry of it is unused. So the node runs every time until its inputs change,
+and a rerun that passes is reported `passed` but cached on no hash that failed
+([W-013](../decisions/W-013-quality-testing-declarative.md)). A node that ends `timed-out`,
+`unjudged` or `stopped` writes neither.
+
+**The store.** `<jackstay home>/<project>/cache/`: one entry per hash in the receipt's format,
+beside its failure notes. An entry is a verdict, not the output or a build product, so it is a few
+hundred bytes. It is pruned like receipts, by age, and at 10,000 entries per project (a constant)
+the oldest go first. In CI the same folder is kept in CI's own cache store: the workflow adopt
+writes restores it before the run and saves it after, under a key holding the system, so a rerun of
+a workflow or a merge commit with the same inputs skips what passed.
+
+**Not in the hash**, written down as limits: files ignored by a committed `.gitignore` (unless in
+`receipts.extra_files`); anything outside the checkout (another package by path, a simulator, the
+keychain); the network; variables not declared in `env` or matched by `receipts.env`; the date and
+time; flakiness. A scope that depends on one of these declares it (`inputs`, `receipts.env`,
+`receipts.extra_files`) or sets `"cache": false`. A `"cache": false` node still has a hash, for the
+nodes that depend on it. An entry is unsigned: any session of the account can write one, as it can
+a receipt ([W-017](../decisions/W-017-review-fixes-and-threat-model.md)).
+
+**Open: cache across machines.** Whether a cached pass may cross between a person's machine and CI
+is not decided. The options:
+
+- **A. No crossing** (recommended). Each machine and CI keeps its own store; a pass counts only
+  where it was counted.
+- **B. CI to a person's machine.** CI publishes each scope's hash and outcome on its check, and
+  `jst test changed` takes a pass CI reports for the same hash.
+- **C. A person's machine to CI.** CI takes a local pass for the same hash; this needs signed
+  receipts, since CI cannot trust an unsigned file.
+- **D. Both B and C.**
+
+Everything in this section works under A without change; B, C and D would add a reader of another
+store, not change the hash.
+
+### 7.4 Local and CI
+
+A scope is **covered on a system** when it runs in a CI job there: its own `ci` lists the system,
+or a scope covered on that system depends on it; and its `systems` include that system. A scope is
+**covered** when it is covered on some system.
+
+- **In CI**: each scope with `ci` runs as one job per listed system, named `jst test SCOPE (SYSTEM)`,
+  and the base's rules require those jobs. A scope covered only through a dependent has no job of
+  its own. No scope runs in two jobs of one system: `jst check` refuses a `ci` entry whose graph
+  shares a node with another job's on that system (naming the node and both scopes), since that
+  node would run twice on one commit. The remedy is one composite with `ci`. `jst doctor` reports a
+  job of a scope with `ci` that the base's rules do not require.
 - **Before a pull request**: `jst test changed` ranks the scopes matched by the changed paths as
-  today (`test.selection.order`, `gate` for a path no rule matches) and picks the strictest. That
-  scope runs locally unless it has `ci`. Every other matched scope with no `ci` also runs locally,
-  since a stricter covered scope will run only in CI. A composite scope such as `gate` counts as
-  covered only through its own `ci`. Example, order `x-go`, `x-ios`, `gate`, `x-go` with
-  `ci: ["linux"]`: a change to Go and Swift files picks `x-ios`, which runs locally, and leaves
-  `x-go` to CI; with the order `x-ios`, `x-go`, `gate`, `x-go` is picked and left to CI, and
-  `x-ios` still runs locally.
-- **In CI**: each covered scope runs as one job per listed system, named `jst test SCOPE (SYSTEM)`,
-  and the base's rules require those jobs.
-  `jst doctor` reports a covered scope the rules do not require.
-- **Before an install or a tag**: `jst test uncovered` runs, on the exact commit, every scope whose
-  `ci` does not include this machine's operating system, of those that run without arguments (a
-  selector scope that needs a test ID is left out) and that run here (a scope may name the systems
-  it runs on in `systems`; absent: any). `jst release` and `bin/jst install` refuse
-  without its passing receipt for that commit. For jackstay, on a Mac, that is the whole gate:
-  CI covers Linux only ([W-083](../decisions/W-083-no-macos-job-in-ci.md)).
+  today (`test.selection.order`, `gate` for a path no rule matches) and picks the strictest. It asks
+  the graph for that scope unless it is covered, and for every other matched scope that is not
+  covered, since a stricter covered scope runs only in CI. Their deps run with them, covered or
+  not, since a scope runs only after its deps. Example, with the scopes above, order `x-go`,
+  `x-ios`, `gate`: a change to Go and Swift files matches `x-go` and `x-ios`; `x-ios` is picked and
+  runs locally after `x-build`; `x-go` is covered through `gate` and left to CI. When every matched
+  scope is covered, nothing runs and the line is `outcome=left-to-ci` (exit 0, not a pass), naming
+  the jobs that will run them.
+- **Before an install or a tag**: `jst test uncovered` asks the graph, on a clean copy of the
+  commit (`--commit REV`, default HEAD), for every scope that is not covered on this machine's
+  system, runs here (its `systems`) and needs no test arguments (a scope with `{tests}` or a typed
+  selector is left out). Their deps run with them. Its `passed` record, for that commit, the
+  project named by that commit's `jackstay.json` and this system, is what `jst install` from a
+  checkout needs: without it, the install is refused and names `jst test uncovered`. For jackstay
+  on a Mac that is the whole gate: CI covers Linux only
+  ([W-083](../decisions/W-083-no-macos-job-in-ci.md)). Before a tag, a full gate on a Mac,
+  including `jst test uncovered`, runs on the version-bump commit.
 - **The AGENTS block** states the split, generated from the scopes: "CI runs x-go, x-integration,
   x-check, x-docs on Linux and is the gate. Before a pull request: `jst test changed`. Before an
   install or a tag: `jst test uncovered`."
+
+### 7.5 What it does not do
+
+- Run two nodes at once, or split one scope into shards: one node at a time.
+- Keep a scope's output or build products as cache outputs: the cache holds verdicts.
+- Find overlap between scopes: `quick` inside `full` both run when both are asked for; the graph
+  removes repeats of a scope, not of a test.
+- Read a store other than this machine's or CI's own (section 7.3, "Open").
+
+### 7.6 What goes away
+
+| 0.5.x | 0.6.0 |
+|---|---|
+| `steps`: a list run in order, expanded into its leaves, a shared step run each time it appears | read as `deps`; each node once |
+| `jst test gate --resume` and the step mark of a leaf (`gate-marks/`) | the cache, read on every run of a clean checkout; `--resume` is an unknown flag whose error names the cache |
+| bars (`gate-bars/`) and the `refused` outcome | failure notes: a hash that failed is never cached and runs again |
+| the gate's `resumed` outcome | `cached` on each node; the run is `passed` |
+| the `resume` key | `cache` (`"resume": false` read as `"cache": false`) |
+| receipts reuse for a scope whose words match a `receipts.commands` entry | the cache; `jst test -- COMMAND` keeps receipts |
 
 ## 8. Tests
 
@@ -277,8 +485,27 @@ A test scope gains one key: `ci`, the operating systems on which CI runs it (abs
   red before the recheck, a lost merge answer with the change merged, a queue that holds it, a
   retarget, a description edited after the checks.
 - **Guard**: `gh pr merge` and `glab mr merge` refused with and without a `land` section.
-- **Where tests run**: `jst test changed` requiring only uncovered scopes; `jst test uncovered` on
-  Linux and macOS; release and install refusing without its receipt.
+- **The graph**: a dep shared by two scopes runs once; the order of section 7.2 for a diamond, for
+  `steps` lists (0.5.x order kept) and for several scopes asked for; a cycle, an unknown dep,
+  `steps` with `deps`, and a dep on fewer systems refused by `jst check` and `not-started` (2); a
+  failure stops the run and leaves the rest `not-run`, and `--keep-going` runs only the nodes whose
+  deps passed; a composite passes when its deps passed, with a `skipped` dep named, and is `skipped`
+  (79) when all are; a node with `run` after a `skipped` dep is `skipped`; a composite's `requires`
+  checked before its first dep; a schema-2 file with `steps` and `"resume": false` read unchanged.
+- **The cache**: a hit for each passed and each exit-judged node, the run `passed` with `nothing ran
+  now` when all hit; a miss for a change of each part of the hash (an input file, a file outside
+  `inputs` not, the expanded words, `env`, a toolchain line, a `receipts.env` variable, jackstay's
+  version, a ref, `{base}`, a dep's hash); the same entry used on two commits with one tree; no read
+  or write on a checkout that is not clean, nor without a hash; no entry when a file is rewritten
+  during the run or the checkout stops being clean; a failure note keeps a later pass of the hash
+  from the cache; `timed-out`, `unjudged`, `stopped` write nothing; `--no-reuse` and
+  `JACKSTAY_NO_REUSE` skip the read and still write; `"cache": false`; age and count pruning.
+- **Where tests run**: covered through `ci` and through a dependent, and not on a system its
+  `systems` leave out; `jst check` refusing two jobs of one system that share a node; `jst test
+  changed` running only scopes that are not covered, with their deps, and `left-to-ci` when all
+  are; `jst test uncovered` on Linux and macOS, leaving out selector scopes, on a clean copy;
+  install refusing without its `passed` record for the commit, project and system; doctor reporting
+  a `jst test SCOPE (SYSTEM)` job the rules do not require.
 - **GitHub pilot**, by hand in a disposable repository with synthetic content: required checks,
   a private repository whose rules cannot be read, update-branch, the native merge queue, and the
   concurrency cancellation of #13.
