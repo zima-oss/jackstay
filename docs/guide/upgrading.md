@@ -5,26 +5,41 @@ each project in steps, so a project pinned to 0.5.x never meets a key it cannot 
 
 ## 1. Install 0.6.0 on the machine
 
+Update as in [Install](install.md#update); `jst version` then prints `jackstay 0.6.0`. Then:
+
 ```sh
 jst doctor
 ```
 
-Install as in [Install](install.md#update); `jst version` then prints `jackstay 0.6.0`. `jst doctor`
-names anything left to fix.
+It names anything left to fix on the machine.
 
 ## 2. Move each project in three pull requests
 
 A file with `"jackstay_schema": 3` is refused by 0.5.10 and 0.5.11, with a message that names the
-keys they do not know. So a project moves in this order, each step landed before the next:
+keys they do not know. The project's CI downloads the jackstay its `adopt.pin` names, so a project
+moves in this order, each pull request landed before the next:
 
-1. **The pin**: `jst adopt --apply --pin` moves `adopt.pin`, the release the project's workflows
-   download, to 0.6.0.
-2. **The files**: `jst adopt --apply` rewrites the AGENTS block, the hook and the workflows for
-   0.6.0.
-3. **Schema 3**: the new keys, `$schema` and `"jackstay_schema": 3`. `jst adopt --plan` lists
-   them.
+1. **The pin.** Move `adopt.pin`, the release the workflows download, to 0.6.0. It changes
+   `jackstay.json` alone:
 
-`jst adopt --plan` shows what each step would write; nothing is written until `--apply`.
+   ```sh
+   jst adopt --apply --pin --settings-only
+   ```
+
+2. **The files.** On the merged base, rewrite the AGENTS block, the hook and the workflows:
+
+   ```sh
+   jst adopt --apply
+   ```
+
+3. **Schema 3.** Set `"jackstay_schema": 3` and add the keys you want from 0.6.0 (`$schema`,
+   `brief`, `status`), then check the file:
+
+   ```sh
+   jst check
+   ```
+
+`jst adopt --plan` shows what `--apply` would write, without writing it.
 [Adopting a project](adopt.md) explains the plan and its conflicts.
 
 ## What is new

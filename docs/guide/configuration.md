@@ -47,8 +47,12 @@ jst check
 | `ids`, `records`, `cards`, `changes`, `release` | numbers, records, cards, changelogs and releases | [Records](records.md), [Releases](releases.md) |
 | `telemetry` | what the local journal keeps | [What jackstay did](observability.md) |
 | `adopt` | the workflows' pin and the organisation's profile | [Adopting a project](adopt.md) |
+| `brief` | how long a compaction brief stays fresh | [Compaction briefs](context-brief.md) |
+| `baseline` | what `jst baseline` counts | `jst baseline --help` |
+| `chat`, `queue`, `status` | chat between sessions, the local merge queue, the status overview | being reworked for 0.6.0 |
 
-Every key, with its type, default and meaning: [Configuration reference](../reference/configuration.md).
+Every section and key, with its type, default and meaning: [Configuration
+reference](../reference/configuration.md).
 
 ## Rules for many projects: profiles
 

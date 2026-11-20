@@ -1,0 +1,32 @@
+{{- /*
+  Returns a page's Markdown with its links made absolute, for the Markdown the site serves to agents
+  (llms-full.txt and each page's Markdown, W-093). A relative link to a file a page is made from
+  becomes that page's address, any other relative link the file's address on GitHub, an in-page
+  `#fragment` the page's own address with it; the fragment is kept. The HTML's render hook
+  (_markup/render-link.html) resolves the same links and checks them.
+
+  Context: a dict with
+    page  the page whose Markdown it is
+*/ -}}
+{{- $page := .page -}}
+{{- $text := $page.RawContent -}}
+{{- $source := $page.Params.jackstay_source | default "" -}}
+{{- range findRESubmatch `\]\(([^)\s]+)\)` $text -}}
+  {{- $destination := index . 1 -}}
+  {{- $url := urls.Parse $destination -}}
+  {{- $href := "" -}}
+  {{- if and $source (not $url.Scheme) (not $url.Host) $url.Path (not (hasPrefix $url.Path "/")) -}}
+    {{- $target := path.Clean (path.Join (path.Dir $source) $url.Path) -}}
+    {{- $href = printf "%s/blob/main/%s" site.Params.repository $target -}}
+    {{- with where site.Pages "Params.jackstay_source" $target -}}
+      {{- $href = (index (sort . "RelPermalink") 0).Permalink -}}
+    {{- end -}}
+  {{- else if and (not $url.Scheme) (not $url.Host) (not $url.Path) $url.Fragment -}}
+    {{- $href = $page.Permalink -}}
+  {{- end -}}
+  {{- if $href -}}
+    {{- with $url.Fragment }}{{ $href = printf "%s#%s" $href . }}{{ end -}}
+    {{- $text = replace $text (index . 0) (printf "](%s)" $href) -}}
+  {{- end -}}
+{{- end -}}
+{{- return $text -}}

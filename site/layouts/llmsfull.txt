@@ -12,6 +12,6 @@ Page: {{ .Permalink }}
 
 # {{ .Title }}
 
-{{ .RawContent | strings.TrimSpace }}
+{{ partial "jackstay/markdown-links.html" (dict "page" .) | strings.TrimSpace }}
 {{- range .Pages.ByWeight }}{{ template "llms-full" . }}{{ end }}
 {{- end -}}

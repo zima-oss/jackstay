@@ -4,10 +4,11 @@
   contributors' pages; the design and the decision records stay in the repository, and links to
   them lead to GitHub (layouts/_markup/render-link.html).
 
-  docs/guide/README.md orders everything: its `## ` headings are the sidebar's groups (each group's
-  page shows the README's text under the heading), and a page comes where the README first links
-  to it. The guide's files stay in one folder; `groups` puts each in its group. Everything is of
-  type docs, so Hextra shows the sidebar beside every page at every desktop width and the previous
+  docs/guide/README.md orders everything: the `## ` headings `headings` names are the sidebar's
+  groups (each group's page shows the README's text under the heading), a file goes to the group
+  its first link in the README is under, and a page comes where the README first links to it. The
+  guide's files stay in one folder; a page's address before it moved into a group redirects to it
+  (`aliases` adds the older ones). Everything is of type docs, so Hextra shows the sidebar beside every page at every desktop width and the previous
   and next pages below each.
 */ -}}
 {{- $order := (resources.Get "docs/guide/README.md").Content -}}
@@ -24,13 +25,10 @@
   "section" "guide"
   "folder" "docs/guide"
   "type" "docs"
-  "groups" (dict
-    "getting-started.md" $start "install.md" $start "adopt.md" $start
-    "tests.md" $daily "guard.md" $daily "branches-and-github.md" $daily "review.md" $daily
-    "background.md" $daily "records.md" $daily "releases.md" $daily "observability.md" $daily
-    "maven-surefire.md" $daily "merge-queue.md" $daily "homebrew-tap.md" $daily
-    "session-chat.md" $agents "context-brief.md" $agents "workspace-board.md" $agents
-    "claude-code.md" $agents "codex.md" $agents
+  "aliases" (dict
+    "claude-code.md" (slice "/guide/integrations/claude-code/")
+    "codex.md" (slice "/guide/integrations/codex/")
+    $agents (slice "/guide/integrations/")
   )
   "headings" (dict $start "Start" $daily "Daily work" $agents "Working with several agents")
 ) -}}
@@ -43,6 +41,7 @@
 ) -}}
 {{- $contributing := index $at "\n## Contributing\n" -}}
 {{- partial "jackstay/page-from-file.html" (dict "adapter" . "kind" "section" "path" "guide/contributing"
-  "file" "CONTRIBUTING.md" "title" "Contributing" "weight" $contributing) -}}
+  "file" "CONTRIBUTING.md" "title" "Contributing" "weight" $contributing
+  "aliases" (slice "/guide/more-on-github/" "/more-on-github/")) -}}
 {{- partial "jackstay/page-from-file.html" (dict "adapter" . "path" "guide/contributing/style"
   "file" "docs/STYLE.md" "weight" 1) -}}
