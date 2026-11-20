@@ -977,7 +977,8 @@ own 12 MiB state file.
   outbox/<hash>/<id>           empty marker: sent by this session
   idempotency/<sha256(sender, key)>   the message ID it produced
   pusher.lock                  held by the running detached pusher
-  usage.json                   charges and counts, rebuilt by recovery
+  swept.json                   when the sweep last ran
+  requests/<request_id>        the message ID of a request
 ```
 
 Folders are `0700`, files `0600`, as in 0.5.x. Markers and indexes are derived from committed
@@ -996,7 +997,7 @@ to it:
 | one lock for the store, with a deadline | `LockFile` on `lock`, waited for with the caller's context | its deadlines: at most 2 s in a hook (then the hook does nothing, so a turn is never held up by chat), 5 s in a tool (then `store_busy`) |
 | a shared mode for readers | not offered: `LockFile` is exclusive | readers take the same exclusive lock for their short read. A shared mode, if it is added to `internal/durable` later, changes nothing else here: section 7.3 never relies on readers running together |
 | create-exclusive for markers and idempotency entries; publication of journal entries | not offered | markers and idempotency entries: `O_CREATE\|O_EXCL` then `SyncFolder`; journal entries: a fsynced temporary file linked to its name, then `SyncFolder` (section 7.3); all under the store's lock |
-| capacity accounting | not offered | `usage.json`, written with `WriteAtomic` under the store's lock and rebuilt from the folders (section 7.4) |
+| capacity accounting | not offered | the charges measured from the folders at every admission, under the store's lock (section 7.4); nothing is stored |
 
 ### 7.3 Writes, commit and recovery
 
@@ -1024,7 +1025,7 @@ that points at a read delivery, and every reader checks the delivery behind each
    is applied on another record before the commit is durable, since a rollback removes only the
    operation's own files and could not undo it;
 4. write the derived files: the `inbox` markers of the deliveries created `pending`, the `outbox`
-   marker, the idempotency entry; update `usage.json`;
+   marker, the idempotency entry;
 5. remove `journal/<id>`.
 
 The commit record is the commit point: a message without one does not exist for any reader.
@@ -1059,8 +1060,7 @@ and gets `duplicate`.
 
 **A `duplicate` names a message that exists.** A retry is answered `duplicate` only when the message
 its idempotency entry names still has its commit record. An entry whose message is gone (removed by
-retention, or by a removal that a crash cut short between the commit record and the entry) is a
-leftover: it is removed and the send is fresh. So a key is remembered as long as its message is
+retention) is a leftover: it is removed and the send is fresh. So a key is remembered as long as its message is
 kept, no longer (the model's second review found the phantom `duplicate`).
 
 **Nothing is served before it is durable.** A message is served (steered, rung for, returned by a
@@ -1074,10 +1074,15 @@ at and skip (and, holding the exclusive lock, remove) a marker whose delivery is
 make reading fast; they are never the truth.
 
 **The sweep** (section 7.4) is a series of single-record changes and removals, each idempotent and
-rolled forward: there is nothing to roll back. A removal unlinks the commit record first and fsyncs its folder, so the
-message disappears at once and a machine crash cannot bring the record back over files already
-gone, and then removes its other files and its idempotency entry; files of a message ID that has neither a commit
-record nor a journal entry are leftovers, and the next sweep removes them.
+rolled forward: there is nothing to roll back. A removal unlinks a message's files in the reverse of
+the order its send made them: its markers, its deliveries, the request index, the idempotency entry
+if it names the message, the body, the envelope, and the commit record last, then fsyncs the commit
+records' folder (the owner's ruling after the reads' review: an ordering rule, not a journal of
+removals). Each step is idempotent: a file already gone counts as done, and any other error stops
+the removal. So a removal cut short anywhere leaves the commit record, and the next sweep finds it. A
+commit record whose envelope is gone, or whose message lacks a delivery (a send writes every delivery
+before its commit), is a **removal under way**: readers take the message as absent, and the sweep
+finishes the removal, whatever retention says.
 
 A push to an engine (section 8) happens **outside** the lock: the pusher records `sending` under the
 lock, releases it, pushes, then takes the lock again to record the outcome.
@@ -1106,10 +1111,10 @@ The sweep runs at most every 10 minutes, started by any writer, under the exclus
 when it is created, not its size on disk: a body its byte length, an envelope 48 KiB, each delivery
 4 KiB, a commit record 1 KiB, a session 64 KiB, a binding 8 KiB. A record can then grow (a reason, a
 note, an owed notice) without ever passing what was charged, so such changes are never refused for
-room, and `usage.json` changes only when records are created or removed. It is therefore a function
-of which files exist, and recovery and the sweep rebuild it by listing
-the folders; a writer that finds it missing, or finds a journal entry, rebuilds it before admitting a
-growing write. A send (or a response) is admitted with the charge of **every** record it will
+room. The charges are therefore a function of which files exist, and they are **measured, never
+stored**: every admission lists the folders under the lock it already holds and admits the new
+charge against what it finds (the owner's ruling after the store's review, which kept finding a
+stored count wrong after a crash). Recovery resolves the journal and nothing else. A send (or a response) is admitted with the charge of **every** record it will
 create: body, envelope, deliveries, commit record, and the derived files of step 4 (an `inbox`
 marker per delivery, the `outbox` marker, the idempotency entry), so recovery never needs room to
 roll a committed send forward and never has to drop a marker (the model found this, section
@@ -1123,6 +1128,15 @@ if room is still short, removes **done** messages oldest first before their 7 da
 removes a message that is not done, so a body a recipient may still fetch, or an owed notice, is
 never lost to make room;
 if room is still short, the send is refused with `capacity`.
+
+**What removal does not promise.** The removal order covers a process stopped between any two of its
+steps. It does not cover a stopped process followed by a machine crash before the folders it
+touched are fsynced: only the commit records' folder is fsynced, so the crash can bring back some of
+the files the removal had unlinked. When what comes back still reads as a removal under way (a commit
+record without its envelope or a delivery), the sweep finishes it; otherwise the restored files stay
+until retention removes them again, charged meanwhile. A restored idempotency entry can answer one
+retry `duplicate` of a message being removed. No message whose commit record is durable is lost,
+and none is served twice.
 
 Events are messages, but they are stored only while the store stays under 90% of each bound; an
 event that does not fit is not stored, and `Publish` reports it (section 10). So a full store refuses
