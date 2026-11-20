@@ -1093,3 +1093,20 @@ func TestAResumedSessionCountsAgainstTheLiveBound(t *testing.T) {
 		Channel: alpha, State: StateIdle})
 	f.refused(err, ReasonCapacity)
 }
+
+func TestNothingRunsWhileTheJournalFolderCannotBeMadeDurable(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	f.send("cc:a", SendInput{To: "b", Message: "leaves an empty journal folder"})
+	f.store.syncFolder = func(folder string) error {
+		if folder == f.store.place.journal() {
+			return errors.New("the disk refused")
+		}
+		return durable.SyncFolder(folder)
+	}
+	_, err := f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "b", Message: "must wait"})
+	f.refused(err, ReasonStoreBusy)
+	f.store.syncFolder = durable.SyncFolder
+	f.send("cc:a", SendInput{To: "b", Message: "must wait"})
+}

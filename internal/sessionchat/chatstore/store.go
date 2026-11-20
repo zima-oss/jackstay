@@ -166,6 +166,13 @@ func (store *Store) update(ctx context.Context, change func(*transaction) error)
 			return err
 		}
 	}
+	// An entry an earlier operation removed must stay removed: until the journal folder is durable
+	// nothing runs, so a machine crash cannot bring back an entry a later write has overtaken.
+	if exists(transaction.place.journal()) {
+		if err := store.syncFolder(transaction.place.journal()); err != nil {
+			return errStopped
+		}
+	}
 	return change(transaction)
 }
 
