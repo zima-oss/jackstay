@@ -229,12 +229,25 @@ func (measurement *bench) rescore(path string, arms []string) error {
 			return fmt.Errorf("%s: %w", labelsPath, err)
 		}
 	}
-	// A setting a run did not keep is "unknown", unless the operator names it.
+	// A setting a run did not keep comes from the archive's settings file, else it is "unknown";
+	// a flag the operator gives wins.
 	given := map[string]bool{}
 	flag.Visit(func(set *flag.Flag) { given[set.Name] = true })
+	archived := map[string]string{}
+	settingsPath := strings.TrimSuffix(path, ".jsonl") + ".settings.json"
+	if data, err := os.ReadFile(settingsPath); err == nil { // #nosec G304 -- beside the operator's results
+		if err := json.Unmarshal(data, &archived); err != nil {
+			return fmt.Errorf("%s: %w", settingsPath, err)
+		}
+	}
 	for name, setting := range map[string]*string{"codex-model": &measurement.codexModel, "codex-effort": &measurement.codexEffort,
 		"claude-model": &measurement.claudeModel, "claude-effort": &measurement.claudeEffort} {
-		if !given[name] {
+		if given[name] {
+			continue
+		}
+		if value, found := archived[name]; found {
+			*setting = value
+		} else {
 			*setting = "unknown"
 		}
 	}
@@ -259,37 +272,67 @@ func (measurement *bench) rescore(path string, arms []string) error {
 			}
 		}
 	}
+	if err := measurement.checkLabels(all); err != nil {
+		return err
+	}
 	if measurement.proposeLabels {
-		if measurement.labels == nil {
-			measurement.labels = map[string]string{}
-		}
-		for index := range all {
-			for _, finding := range all[index].Findings {
-				if _, labelled := measurement.labels[labelKey(all[index], finding)]; !labelled {
-					if guess := measurement.propose(all[index], finding); guess != "" {
-						measurement.labels[labelKey(all[index], finding)] = guess
-					}
+		// Proposals go to a file of their own, which the scorer never reads: a person moves each one
+		// into the labels file, or not.
+		proposed := map[string]string{}
+		for _, run := range all {
+			for position, finding := range run.Findings {
+				key := labelKey(run, position, finding)
+				if _, labelled := measurement.labels[key]; !labelled {
+					proposed[key] = measurement.propose(run, finding)
 				}
 			}
-			measurement.score(&all[index])
 		}
-		data, err := json.MarshalIndent(measurement.labels, "", "  ")
+		data, err := json.MarshalIndent(proposed, "", "  ")
 		if err == nil {
-			err = os.WriteFile(labelsPath, append(data, '\n'), 0o600)
+			err = os.WriteFile(strings.TrimSuffix(path, ".jsonl")+".proposed.json", append(data, '\n'), 0o600)
 		}
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(measurement.log, "proposed labels written to %s: a person reads every one before trusting the report\n", labelsPath)
+		fmt.Fprintf(measurement.log, "%d proposals written beside %s; none counts until a person moves it into the labels\n", len(proposed), path)
 	}
 	stamp := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	report := measurement.report(all, arms, runs, stamp)
 	return os.WriteFile(strings.TrimSuffix(path, ".jsonl")+".md", []byte(report), 0o600)
 }
 
-// labelKey names one finding of one run for the labels file.
-func labelKey(run Run, finding Finding) string {
-	return fmt.Sprintf("%s/%s/%d: %s — %s", run.Arm, run.Range, run.Iteration, finding.Place, finding.Title)
+// labelKey names one finding of one run for the labels file: its run and its position there, so two
+// findings with one place and title are judged apart; the place and title follow, for the person.
+func labelKey(run Run, position int, finding Finding) string {
+	return fmt.Sprintf("%s/%s/%d#%d: %s — %s", run.Arm, run.Range, run.Iteration, position+1, finding.Place, finding.Title)
+}
+
+// checkLabels refuses a label that is not "false" nor the id of a seeded defect or extra of the
+// finding's range, naming it: a typo must never earn credit.
+func (measurement *bench) checkLabels(all []Run) error {
+	known := map[string]map[string]bool{}
+	for _, defect := range append(slices.Clone(measurement.defects.Defects), measurement.defects.Extras...) {
+		if known[defect.Range] == nil {
+			known[defect.Range] = map[string]bool{"false": true}
+		}
+		known[defect.Range][defect.ID] = true
+	}
+	keys := map[string]bool{}
+	for _, run := range all {
+		for position, finding := range run.Findings {
+			key := labelKey(run, position, finding)
+			keys[key] = true
+			if label, labelled := measurement.labels[key]; labelled && !known[run.Range][label] {
+				return fmt.Errorf("label %q of %q is not false nor a defect or extra of range %s", label, key, run.Range)
+			}
+		}
+	}
+	for key := range measurement.labels {
+		if !keys[key] {
+			return fmt.Errorf("label %q names no finding of these runs", key)
+		}
+	}
+	return nil
 }
 
 // configuredCodexModel is the model of the user's Codex configuration ($CODEX_HOME, else ~/.codex),
@@ -738,7 +781,7 @@ func (measurement *bench) score(run *Run) {
 	found := map[string]bool{}
 	run.Found, run.Extras, run.Unmatched, run.Duplicates, run.False, run.Unjudged = nil, 0, 0, 0, 0, 0
 	for index, finding := range run.Findings {
-		label, labelled := measurement.labels[labelKey(*run, finding)]
+		label, labelled := measurement.labels[labelKey(*run, index, finding)]
 		run.Findings[index].Match = label
 		switch {
 		case !labelled:

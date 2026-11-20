@@ -20,25 +20,27 @@ checks take it (`review.ReadAnswer`, `review.CheckAnswer`), with a verdict of `a
 group is stopped (TERM, then KILL), so no paid review outlives its run.
 
 **Scoring.** A person judges every finding: `results/<time>.labels.json` maps each one
-(`arm/range/run: place — title`) to the seeded defect or known unseeded real issue (`extras`,
+(`arm/range/run#position: place — title`) to the seeded defect or known unseeded real issue (`extras`,
 `testdata/defects.json`) it reports, or to `false`. Only these labels count. Recall is the seeded
 defects found per run; precision is the findings judged real, of those judged; "extras per run" is
 how many real unseeded issues a run reports. A finding without a label is *unjudged*: it counts for
-nothing, the report lists it and says the metrics are partial.
+nothing, the report lists it and says the metrics are partial. A label that is not `false` nor an id
+of the finding's range, or that names no finding, stops the scoring with its key.
 
 A matcher helps the person: it proposes, for a finding whose place names a defect's file or
 function and whose place or title uses one of the defect's mechanism words, that defect (an extra
-wins a tie). After a run, from the repository's root and with no model call:
+wins a tie). Proposals go to `results/<time>.proposed.json`, which the scorer never reads. After a
+run, from the repository's root and with no model call:
 
 ```sh
-go run ./bench/review -rescore bench/review/results/<time>.jsonl -propose   # adds the proposals
-# read every label in results/<time>.labels.json; fix it, or set "false"
+go run ./bench/review -rescore bench/review/results/<time>.jsonl -propose   # writes the proposals
+# read each proposal; move it, corrected or as "false", into results/<time>.labels.json
 go run ./bench/review -rescore bench/review/results/<time>.jsonl            # the report from the labels
 ```
 
-Each run keeps the model and effort it asked for; for runs saved before that, pass them with the
-`-codex-model`, `-codex-effort`, `-claude-model` and `-claude-effort` flags, else the report says
-"unknown".
+Each run keeps the model and effort it asked for; for runs saved before that,
+`results/<time>.settings.json` holds the settings known, the `-codex-model`, `-codex-effort`,
+`-claude-model` and `-claude-effort` flags override, and anything else shows as "unknown".
 
 **Stages** (wrapped arms only): `prepare` is getting a source view slot and building the pinned
 view (`round.json` `prepare_seconds`); `wait` is getting a reviewer slot and the start lock

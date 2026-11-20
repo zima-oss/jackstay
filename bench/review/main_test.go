@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -55,12 +56,25 @@ func TestOnlyAPersonsLabelsCount(t *testing.T) {
 		{Place: "stock.go: Release", Title: "Not looked at yet"},
 	}}
 	measurement.labels = map[string]string{
-		labelKey(run, run.Findings[0]): "B1", labelKey(run, run.Findings[1]): "B1",
-		labelKey(run, run.Findings[2]): "E12", labelKey(run, run.Findings[3]): "false",
+		labelKey(run, 0, run.Findings[0]): "B1", labelKey(run, 1, run.Findings[1]): "B1",
+		labelKey(run, 2, run.Findings[2]): "E12", labelKey(run, 3, run.Findings[3]): "false",
+	}
+	if err := measurement.checkLabels([]Run{run}); err != nil {
+		t.Fatal(err)
 	}
 	measurement.score(&run)
 	if !slices.Equal(run.Found, []string{"B1"}) || run.Duplicates != 1 || run.Extras != 1 || run.False != 1 || run.Unjudged != 1 {
 		t.Fatalf("score: %+v", run)
+	}
+	for _, wrong := range []string{"B22", "A1", "", "E99"} {
+		measurement.labels[labelKey(run, 4, run.Findings[4])] = wrong
+		if err := measurement.checkLabels([]Run{run}); err == nil {
+			t.Errorf("label %q was taken for a cache finding", wrong)
+		}
+	}
+	twin := Run{Arm: "codex-jst", Range: "cache", Iteration: 1, Findings: []Finding{run.Findings[0], run.Findings[0]}}
+	if labelKey(twin, 0, twin.Findings[0]) == labelKey(twin, 1, twin.Findings[1]) {
+		t.Fatal("two findings with one place and title share a label")
 	}
 }
 
@@ -93,4 +107,38 @@ func TestEveryRangeOfTheFixtureHasItsFiles(t *testing.T) {
 			t.Errorf("%s: %s of %s does not hold %s (%v)", defect.ID, defect.File, step, defect.Symbol, err)
 		}
 	}
+}
+
+func TestProposalsNeverCountUntilAPersonMovesThem(t *testing.T) {
+	folder := t.TempDir()
+	run := Run{Arm: "codex-jst", Range: "cache", Iteration: 1, Outcome: "answered", Findings: []Finding{
+		{Place: "cache.go: Get", Title: "Get reads the map without the mutex"}}}
+	line, _ := json.Marshal(run)
+	path := filepath.Join(folder, "runs.jsonl")
+	if err := os.WriteFile(path, append(line, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	measurement := bench{log: io.Discard, proposeLabels: true}
+	inRepositoryRoot(t)
+	if err := measurement.rescore(path, []string{"codex-jst"}); err != nil {
+		t.Fatal(err)
+	}
+	proposed, _ := os.ReadFile(filepath.Join(folder, "runs.proposed.json"))
+	report, _ := os.ReadFile(filepath.Join(folder, "runs.md"))
+	if !strings.Contains(string(proposed), `"B1"`) || !strings.Contains(string(report), "| codex-jst | 1/1 | 1 |") {
+		t.Fatalf("a proposal counted, or was not written:\n%s\n%s", proposed, report)
+	}
+}
+
+// inRepositoryRoot moves the test into the repository's root, where rescore reads the fixture.
+func inRepositoryRoot(t *testing.T) {
+	t.Helper()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(filepath.Join("..", "..")); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
 }
