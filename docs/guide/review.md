@@ -62,7 +62,9 @@ It pins both commits now and starts the round under `jst bg` (`jst procs` lists 
 the same task is refused until the first ends. `--brief`, `--model`, `--effort` and `--timeout`
 belong to a round in the foreground. When the round ends, each session that submitted it gets a
 `review.finished` chat message (with chat enabled and a chat identity): outcome, round, report and
-next step. Without chat, read `jst review last --task parser` once `jst procs` no longer lists it.
+next step. Without chat, once `jst procs` no longer lists it, the end of its log (the path
+`--background` printed) says this request's outcome and report; `jst review last` alone could show
+an older round when the run ended before it made an attempt.
 If the run dies first, its sessions are told it was lost; submit it again.
 
 Run Codex reviews outside an agent sandbox: Codex must be able to save its login
@@ -81,8 +83,7 @@ out, and a symlink appears as a plain file holding its target. Beyond it, a revi
 rest of the machine, read-only, and use the network, your full `PATH`, your proxy and CA settings
 and its own provider's login. It cannot write outside its own temporary folder, read `~/.ssh`,
 `~/.aws`, `~/.config/gh` and the other credential folders, the keychain, the other reviewer's login
-or `.env` files (on Linux, Codex: those in the checkout and the source view, at most 12 folders
-deep, that exist when the run starts), or see token-like environment variables other than its
+or `.env` files (on Linux, Codex can read `.env` files: that part waits for a redesign), or see token-like environment variables other than its
 provider's. Claude Code uses `Read`, `Glob`, `Grep`, `WebFetch` and `WebSearch`; Codex has
 read-only shell navigation and search. Managed Claude Code policies, managed hooks included, still
 apply. The [design](../design/review.md#34-the-run) lists the profile whole.
@@ -96,7 +97,7 @@ incomplete verdict leaves a failed attempt that `jst review last` shows.
 ```sh
 jst review origin/main..HEAD --task parser-fix --reviewer codex
 jst review origin/main..HEAD --task parser-fix --reviewer codex
-jst review check origin/main..HEAD --task parser-fix && jst gh pr-land --title 'Fix the parser'
+jst review check origin/main..HEAD --task parser-fix && jst land --title 'Fix the parser'
 ```
 
 Review, fix and commit, review again, then check. `jst review check` exits 0 only when a real
