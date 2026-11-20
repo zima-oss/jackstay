@@ -5,19 +5,14 @@ Status: built. Decisions: [W-052](../decisions/W-052-guard-dead-end-and-clean-co
 
 ## 0. Why
 
-- **Advice is a way out** (W-052). A refusal names a command the guard lets through that does what
-  was meant, or a step after which the refused command passes (`git tag archive/<name> <name>`
-  before `git branch -D`: the tag then holds the commits). Advice whose step leaves the guard's
-  answer unchanged is a dead end, and the session has to stop and ask. `jst discard` (section 1) is the way out for
-  the rules that refuse throwing uncommitted changes away (`git-restore-worktree`,
-  `git-checkout-path`, `git-checkout-index-force`, `git-reset-hard`, `git-read-tree-reset`).
-- **A gate on a clean copy is jackstay's** (section 3), so a session never makes one by hand and
-  leaves registered worktrees and logs in the system's temporary folder behind.
-- **The copy is a clone, not a worktree.** Inside Claude Code's sandbox `git worktree add` fails
-  (the sandbox keeps `.git/worktrees` read-only except the session's own worktree), and a session
-  may run its gate there. A clone that shares the repository's objects
-  (`objects/info/alternates`) works in the sandbox, is quick and small, and registers nothing in the
-  repository.
+- **Advice is a way out** (W-052): a refusal names a command the guard lets through, or a step after
+  which the refused command passes (`git tag archive/<name> <name>` before `git branch -D`). Advice
+  that leaves the answer unchanged is a dead end. `jst discard` (section 1) is the way out for the
+  rules that refuse throwing uncommitted changes away.
+- **A gate on a clean copy is jackstay's** (section 3), so no session leaves hand-made worktrees and
+  logs in the temporary folder.
+- **The copy is a clone sharing the repository's objects, not a worktree**: inside Claude Code's
+  sandbox `git worktree add` fails (`.git/worktrees` is read-only), and the clone registers nothing.
 
 ## 1. `jst discard <path>…`
 
@@ -67,191 +62,112 @@ tree (after `..` and links); a path in a merge conflict (unmerged: "finish the m
 a path git reports nothing for and that is not untracked (`nothing uncommitted in <path>`,
 exit 0). The paths are all checked before any is changed: one refused path means nothing is done.
 
-**Output**, one line per kept item and one summary:
+**Output**: one line per kept item, naming its entry and the `jst trash restore` that brings it
+back, then one summary line. Exit 0 every path done; 1 one failed midway (the line says which and
+in what state: after the move, `jst trash restore ENTRY` puts the file back); 2 refused before
+anything was done.
 
-```
-jst discard: src/a.go: your edits kept as 20261117-101500-1 (jst trash restore 20261117-101500-1)
-jst discard: src/a.go: the staged version kept as 20261117-101500-2 (jst trash restore 20261117-101500-2 --to <path>)
-jst discard: 2 paths back to HEAD; 2 kept in jackstay's trash for trash.keep_days (7) days
-```
+**Restore.** An entry records, beside `jst trash`'s fields, `via: "discard"` and `replaced`: the
+kind (file, link, none), executable bit and SHA-256 of what discard prepared from HEAD, taken
+before installing it. `jst trash restore ENTRY` replaces an occupied destination only when it
+still matches that identity, else refuses ("is there already … use --to PATH"). It exchanges a
+checked copy with the destination, verifies the displaced file, and puts a concurrent change back
+where possible, keeping recovered versions otherwise. An empty destination is installed with a
+no-replacement rename (a checked copy staged beside it across volumes); a destination that appears
+meanwhile is left alone; a failed rename keeps the current file and the entry. A `staged` entry is
+restored as a working file, not staged (the line says so).
 
-Exit 0 when every path was done; 1 when one failed midway (the line says which and what state it
-is in: a failure after the move leaves the file missing from the working copy and its copy in the
-trash, so `jst trash restore ENTRY` puts it back); 2 when refused before anything was done.
-
-**Restore.** An entry records, besides `jst trash`'s fields, `via: "discard"` and `replaced`: what
-`jst discard` prepared from HEAD — its kind (file, link, none), executable bit, and the SHA-256 of
-its contents or link target. Discard takes this identity from the prepared replacement before
-installing it. `jst trash restore ENTRY` can replace an occupied destination only when the target's
-kind, executable bit and SHA-256 all equal that recorded identity. Otherwise it refuses ("is
-there already … use --to PATH"). To replace a known target, restore exchanges a checked copy
-with the destination, then verifies the displaced file. A concurrent change is put back where
-possible. Recovered versions remain available if that exchange cannot be reversed safely. An
-empty destination is installed with a no-replacement rename, staging a checked copy beside the
-target first if the volumes differ. A failed rename leaves the current
-file and the trash entry in place. A destination that appears while restoring to an empty path is
-left alone. A `staged` entry is restored as a working file, not staged again
-(the restore line says so).
-
-**Package.** `internal/discard`, registered as `jst discard`; `internal/trash` holds `Keep` and the
-restore rule above. `jst discard` is a
-command of its own, not `jst trash --discard`, because the guard's advice names it and an agent
-looks for the verb it means.
+**Package.** `internal/discard` (`jst discard`, a verb of its own because the guard's advice names
+it); `internal/trash` holds `Keep` and the restore rule.
 
 ## 2. Advice that is a way out (the guard)
 
-**The rule.** No row's advice leads to a refusal: every command a row's `Instead` names passes the
-guard in the situation the row refused, and a step the advice says to take "first" or "before" is
-followed by a command that then passes (the refused one, or one it names).
+**The rule.** Every command a row's `Instead` names passes the guard in the situation the row
+refused, and a step to take "first" or "before" is followed by a command that then passes. The
+advice is each row's `Instead` in `internal/guard/rules.go` (gist: [guard.md](guard.md) section 0).
+The rows that refuse dropping uncommitted changes (`git-checkout-path`, `git-restore-worktree`,
+`git-checkout-index-force`, `git-reset-hard`, `git-read-tree-reset`) name `jst discard <path>`. The
+stash is never advised for dropping changes (every worktree shares it and a drop is refused);
+`git-checkout-force` and `git-switch-discard` advise `git stash push -u`, then `git switch`. Only the
+advice changed: the rows still refuse the raw destructive form.
 
-**The rows' advice** (`internal/guard/rules.go`; [guard.md](guard.md) section 4 states the rule):
-
-| row | `Instead` |
-|-----|---------------|
-| `git-checkout-path` | `` `jst discard <path>` `` puts the path back to HEAD and keeps your changes in jackstay's trash (`jst trash restore <entry>` brings them back); to take files from another commit, `jst discard <path>` first, then `git checkout <commit> -- <path>` (a folder must also hold no untracked or ignored file: `git status --ignored <path>` lists them, `jst trash <path>` moves them); to change branch, `git switch <branch>` |
-| `git-restore-worktree` | `` `git restore --staged <path>` `` only unstages; to drop the edits, `jst discard <path>`: it keeps them in jackstay's trash (`jst trash restore <entry>` brings them back) |
-| `git-checkout-index-force` | `` `jst discard <path>` `` puts the files back from HEAD and keeps the changes in jackstay's trash; `git checkout-index --prefix=<scratch>/` writes a copy elsewhere |
-| `git-reset-hard` | `` `jst discard <path>` `` drops uncommitted changes and keeps them in jackstay's trash; `git reset --keep <commit>` moves the branch and refuses to lose local changes |
-| `git-read-tree-reset` | `` `git read-tree -u -m <tree>` `` refuses to lose local changes; drop them first with `jst discard <path>`, then `git read-tree -u -m <tree>` |
-
-The stash is not advised for dropping changes: it is shared by every worktree and a drop is
-refused, so a session cannot clean up after it. `git-checkout-force` and `git-switch-discard` advise
-"`git stash push -u`, then `git switch <branch>`" (the switch passes; the stash keeps the work).
-
-**Rows still refuse the raw destructive form**: only the advice is a way out; what the judges
-refuse is unchanged. The dynamic advice the judges compose (`rm`'s, `zsh-glob`'s, the merge note of
-`git-checkout-path`) is checked by the same test (below).
-
-**The test** (`internal/guard/advice_test.go`, an integration test: real git):
-
-1. A fixture repository in the situation the rows refuse: a tracked file edited and another
-   staged, an untracked file, a branch `done` merged into `main`, a commit `archived` held only by
-   a branch, a remote `origin` (a bare clone), a stash entry.
-2. **Every command an advice names passes.** For every row of `table`, and for every finding the
-   corpus (`tests/guard/corpus.jsonl`) produces (so the judges' composed texts are covered), each
-   back-quoted snippet of `Instead` is classified: a command (its first word is a program the guard
-   reads or `jst`) or a fragment (an option, a `Card:` line, a placeholder — an explicit list in the
-   test; a snippet that is neither fails the test, so a new row cannot slip by). Placeholders are
-   filled from the fixture (`<path>` the edited file, `<branch>`/`<name>` `done`, `<commit>` HEAD,
-   `<tree>` `HEAD^{tree}`, `<remote>` origin, `<entry>` an id, `<scratch>` the session scratch, `…`
-   `.`), and `guard.Decide` in the fixture must find nothing. The fixture also has a folder with an
-   ignored file in it, for the folder form of `git-checkout-path`'s scenario.
-3. **Every "first" leads somewhere.** A row whose `Instead` says "first" or "before" must have a
-   scenario in the test: the fixture where the row refuses (checked: `Decide` refuses it), the
-   advised step run for real, then the command the advice leads to (the refused one, or the one it
-   names after "then") — `Decide` must now find nothing. A row with "first"/"before" and no
-   scenario fails the test. Scenarios: `git-checkout-path` (discard, then `git checkout HEAD~1 --
-   <path>`; and for a folder holding an ignored file: discard, `jst trash` the ignored file, then the
-   checkout), `git-read-tree-reset` (discard, then `read-tree -u -m`), `git-branch-reset` and
-   `git-branch-force-delete` (the tag, then the branch command), `git-clean-force` and `find-delete`
-   (look, then `jst trash`).
-4. The test runs `jst discard` itself through the package (not the binary) so step 3 uses the real
-   discard.
+**The test** (`internal/guard/advice_test.go`, real git) builds a fixture in the refused situation
+(an edited and a staged file, an untracked file, a merged branch `done`, a commit held only by a
+branch, a bare `origin`, a stash entry, a folder with an ignored file). For every row and every
+finding the corpus produces (so composed advice is covered), each back-quoted snippet of `Instead`
+is a command or a listed fragment (anything else fails the test); placeholders are filled from the
+fixture, and `guard.Decide` must find nothing. A row whose advice says "first" or "before" must have
+a scenario: the row refuses, the advised step runs for real (`jst discard` through the package),
+then the command it leads to must pass. Scenarios: `git-checkout-path` (also for a folder with an
+ignored file), `git-read-tree-reset`, `git-branch-reset`, `git-branch-force-delete`,
+`git-clean-force`, `find-delete`.
 
 ## 3. `jst test <scope> --commit REV`: the scope on a clean copy
 
 **Flag**: `--commit REV` (any scope; meant for `gate`). `REV` is resolved in the checkout
-(`rev-parse --verify REV^{commit}`), so `--commit HEAD` is "this commit, clean". The scope runs as
-the commit defines it: jackstay.json is read from the copy.
+(`rev-parse --verify REV^{commit}`), so `--commit HEAD` is "this commit, clean"; `jackstay.json` is
+read from the copy.
 
-**The copy** — a **clone sharing the repository's objects**, not a worktree (section 0: a worktree
-cannot be made inside the sandbox, and a registered worktree is what hand-made gates leave
-behind):
+1. Under `<jackstay home>/<project>/clean-copies/<short commit>-<8 random hex>/` (never the system
+   temporary folder) jackstay writes `owner` (`jst test <pid> <start-micros>`, the owner words of
+   `internal/pinned`) and makes the copy in `<repository folder name>/`: `git init` with the
+   source's object format, the repository's absolute object folder in `objects/info/alternates`,
+   `git fetch --no-tags --update-head-ok` of its branches, remote-tracking branches and tags, and
+   `git checkout --detach <commit>`, hooks off. The copy has **the repository's own refs**
+   (`origin/main` is the repository's, not its local `main`) and its remotes' URLs. Nothing is
+   written in the repository.
+2. **The project's name** is `--project`, else the live checkout's (its normal default included),
+   else the nearest `jackstay.json` at REV from the matching subfolder. It is written to the copy's
+   `.git/jackstay-project` (`config.CopyMarker`, read first by `config.ProjectName`), so nested
+   commands share it. The scope's settings are validated in the committed tree.
+3. The scope runs with the copy as its checkout (the same subfolder), so receipts, marks, bars,
+   durations and the lock are the project's own; its run lines' `worktree` is the copy and `head`
+   the commit.
+4. The copy folder is removed on every way out: after the last line, on a timeout, and on a stop
+   (SIGINT, SIGTERM, SIGHUP: removed before jackstay ends by the signal), also during its making.
+5. A kill cannot be caught: the next `jst test --commit` of the project first removes every copy
+   whose `owner` is gone (an unreadable owner counts as alive).
 
-1. Under `<jackstay home>/<project>/clean-copies/<short commit>-<8 random hex>/` (never the system temp
-   folder), jackstay writes `owner` (`jst test <pid> <start-micros>`, the same owner words and liveness
-   check as `jst review`'s lock reason) and makes the copy in `<repository folder name>/` inside it:
-   `git init --quiet --object-format=<source format>`, with the storage format from
-   `git rev-parse --show-object-format`. The repository's object folder as an absolute path (`git rev-parse
-   --path-format=absolute --git-path objects`) written to `objects/info/alternates`, then `git fetch --quiet --no-tags --update-head-ok <top>
-   '+refs/heads/*:refs/heads/*' '+refs/remotes/*:refs/remotes/*' '+refs/tags/*:refs/tags/*'` and
-   `git checkout --quiet --detach <commit>`, hooks off. The copy has **the repository's own refs**
-   — its branches, its remote-tracking branches (`origin/main` is the repository's `origin/main`,
-   not its local `main`), its tags — and each of its remotes' URLs
-   (`remote.<name>.url`, `remote.<name>.fetch`): the same `for-each-ref` as the repository, a
-   clean status, a small `.git`. Nothing is written in the repository.
-2. **The project's identity.** An explicit `--project` sets the name. Otherwise jackstay takes
-   the name from the live checkout's project metadata when readable, including its normal
-   checkout-based default. With missing or unreadable live metadata it looks up the nearest
-   `jackstay.json` at REV, starting from the corresponding subfolder. The scope's settings are
-   always validated in the committed tree. The effective name is written to the copy's
-   `.git/jackstay-project` so commands run within the copy share that name.
-3. The scope runs with the copy as its checkout: `root` and the working folder are the copy (the
-   same subfolder when jackstay was called below the top), so receipts, marks, bars, durations and the
-   lock are the project's own. The run lines' `worktree` is the copy (under `clean-copies/`) and
-   their `head` the commit.
-4. The copy folder (the copy and `owner`) is removed on every way out: after the scope's last line
-   (passed or failed), on a timeout (the scope ends through its normal path), and on a stop
-   (SIGINT, SIGTERM, SIGHUP: the folder is removed before jackstay ends itself by that signal — `endBy`
-   is wrapped so the removal comes first). A stop that comes while the copy is made ends the call
-   with the folder removed.
-5. A kill (SIGKILL, a crash, a reboot) cannot be caught: the next `jst test --commit` of the project
-   first removes every copy folder whose `owner` names a process that is gone (the same rule as
-   `review.RemoveStaleTrees`: an owner that cannot be read counts as alive).
-
-Every selected command runs afresh, even when a matching receipt exists. `--commit` exits 2
-(`not-started`) with `--resume`, an invalid commit, or a failure to make the copy. The error
-includes Git's response when available.
-
-**Limits:** submodules are not checked out in the copy;
-the copy has no ignored files (no `.build`, no `node_modules`): a step that needs them builds
-them, which is the point of a clean copy.
-
-**Package.** What `jst review` and the copy share is in `internal/pinned`: the owner words
-(`OwnWords(prefix)`, `Alive(prefix, words)`) and the random name; `jst review`'s tree code calls
-them. The rest differs by kind (a locked worktree, a folder with an `owner` file), so each keeps
-its own sweep. `jst review` keeps its locked worktrees (Codex runs outside the sandbox, so they can
-be made). The copy is made and removed by `internal/cleancopy` which `internal/testing/cleancopy.go` calls; the marker's name is `config.CopyMarker`,
-and `config.CopyProject` (called first by `config.ProjectName`) reads it.
+Every command runs afresh, even with a matching receipt. `--commit` is exit 2 (`not-started`) with
+`--resume`, an invalid commit, or a copy that cannot be made (Git's words included). The copy has no
+submodules and no ignored files: a step that needs them builds them. `internal/cleancopy` makes and
+removes it; `internal/pinned` holds what it shares with review's pinned trees (owner words,
+liveness, the random name).
 
 ## 4. One git runner
 
-`jst discard` and the clean copy run git through `internal/gitcli`, which is already "the one place
-jackstay runs git" (its own process group ended at the deadline, `LC_ALL=C`, and the variables that point git at another repository or change how it reads a pathspec or prints a diff removed — `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_CONFIG`, `GIT_*_PATHSPECS`, `GIT_EXTERNAL_DIFF` and the like; configuration such as `GIT_CONFIG_PARAMETERS` and transport settings such as `GIT_SSH_COMMAND` are kept, since an agent sandbox's proxy needs them), with
-hooks and fsmonitor turned off on the line (`-c core.hooksPath=/dev/null`). `jst review` keeps its
-runner (the process model, [implementation.md](implementation.md) section 5.2), which does the same through `internal/supervise`.
+`jst discard` and the clean copy run git through `internal/gitcli`: its own process group ended at
+the deadline, `LC_ALL=C`, the variables that point git elsewhere or change pathspecs or diffs
+removed (`GIT_DIR`, `GIT_INDEX_FILE`, `GIT_CONFIG`, `GIT_*_PATHSPECS`, `GIT_EXTERNAL_DIFF`; config
+and transport settings such as `GIT_CONFIG_PARAMETERS` and `GIT_SSH_COMMAND` kept for the sandbox's
+proxy), hooks and fsmonitor off (`-c core.hooksPath=/dev/null`).
 
 ## 5. The AGENTS block
 
-The AGENTS block (`internal/adopt/block`) says:
-
-- under the guard: "to drop uncommitted changes, `jst discard <path>…` (they are kept in jackstay's
-  trash: `jst trash restore <entry>`), never `git restore`/`git checkout --`, which the guard
-  refuses";
-- under tests: "`jst test gate --commit HEAD` runs the gate on a clean copy of a commit, made and
-  removed by jackstay — never by hand with `git worktree add` or `mktemp`".
+The AGENTS block ([adopt.md](adopt.md) section 8) names `jst discard` for dropping changes and
+`jst test gate --commit HEAD` for a gate on a clean copy.
 
 ## 6. Tests
 
-- `internal/discard`: an edited file, a staged and edited file (two entries), a new staged file
-  (gone from disk and index, kept), a staged rename (both names), a staged deletion with the file
-  made again on disk (kept) and the same with an ignored file, a mode-only change, a link, a file
-  deleted in the working copy, a folder with several changes, an untracked file (named, not
-  touched), a conflicted path and a submodule (refused, nothing changed), a path outside the tree,
-  outside a work tree, a restore over HEAD's version (replaces), over a changed file, a changed mode and a link
-  (refused), a failure after the move (the entry restores it). Integration (real git).
-- `internal/trash`: `Keep`, the replace rule.
-- `internal/guard`: `advice_test.go` (section 2: every advised command is judged by the guard and must pass).
-- `internal/testing`: `--commit` runs the scope in a copy at that commit (a file edited in the
-  checkout is not seen; `origin/main`, local `main` and the commit at three different tips resolve
-  in the copy as in the checkout; the same name inside the copy as in the checkout for a
-  project with a `project` key, one without it, a linked worktree of another folder name, and a
-  call with `--project`, for a nested `jst test` too; a commit reachable from no ref checks out
-  through the alternate; a lossy clean filter case for discard), removes it after a pass, a failure, a timeout and a stop (a fake signal
-  through the existing `listen`/`endBy` seams), sweeps a copy whose owner is gone and leaves a
-  live one, refuses `--resume`, leaves nothing in `TMPDIR`.
+- `internal/discard` (real git): edited, staged-and-edited (two entries), new staged, renamed,
+  deleted-and-recreated (also ignored), mode-only, link, deleted, folder and untracked paths;
+  refused conflicted, submodule and outside paths with nothing changed; restores over HEAD's
+  version (replaces) and over a changed file, mode or link (refused); a failure after the move.
+- `internal/trash`: `Keep` and the replace rule. `internal/guard`: `advice_test.go` (section 2).
+- `internal/testing`: `--commit` sees no checkout edit; resolves `origin/main`, local `main` and
+  the commit as the checkout does; keeps the project's name (with and without `project`, a linked
+  worktree, `--project`, a nested run); checks out a commit no ref holds; removes the copy after a
+  pass, a failure, a timeout and a stop; sweeps a dead owner's copy and keeps a live one; refuses
+  `--resume`; leaves nothing in `TMPDIR`.
 
 ## 7. Not done here
 
-- A jackstay.json `guard.deny` row's advice is the project's own text and is not walked.
-- Making `git reset --hard` pass on a clean tree (an exception the row lacks) — the advice no
-  longer needs it.
+A `guard.deny` row's advice is the project's own text and is not walked.
 
 ## 9. The guard's rules set per project: `guard.rules` (W-053)
 
-**Why.** Most refusals in practice are `zsh-glob`, a misread pattern that destroys nothing
-(measured); the rest are the
-destructive rules. A project needs to set how strict each rule is.
+**Why.** Most refusals are `zsh-glob`, a misread pattern that destroys nothing; the rest are the
+destructive rules. A project sets how strict each rule is.
 
 **The section.** `jackstay.json`'s `guard` has `rules`, beside `regenerable` and `deny`:
 
@@ -266,21 +182,18 @@ destructive rules. A project needs to set how strict each rule is.
 }
 ```
 
-- A key is a built-in row's id (section 2's table: `git-reset-hard` … `zsh-glob`). Its value takes
+- A key is a built-in row's id ([guard.md](guard.md) section 0: `git-reset-hard` … `zsh-glob`). Its value takes
   `level` — `refuse`, `warn` or `off` — and, for a rule about paths, `paths`. An unknown id, an
   unknown key, an unknown level, or `paths` on a rule that is not about paths is a problem `jackstay
-  check` reports, and the guard then applies the built-in rules only, as it does for any unusable
-  `guard` section (`config-unusable` warning).
+  check` reports, and the guard then applies the built-in rules only (`config-unusable`).
 - **Defaults**: `zsh-glob` warns; every other row refuses. A row not named keeps its default.
 - **Not configurable**: the parser's own refusals (a line it cannot read, a line over the budget,
   an unreadable tool call) are not rows: what the guard cannot read it cannot judge. Nor are the
   rows that say a command **cannot be judged** — `git-config-alias`, `git-config-worktree`,
   `env-split-string`, `card-push-unreadable-config`; naming one in `guard.rules` is a problem. The
   project's `guard.deny` rules are already the project's own.
-- **Every row takes a level** ([W-055](../decisions/W-055-every-guard-rule-configurable-now.md)).
-  A git judge that stopped at its first row would let a loosened row hide another (a
-  `--discard-changes` taken over `-C`), and no property over the corpus can see a hidden row, since
-  it is in neither list. The class is removed **by construction**: the git judges (`gitjudge.go`'s
+- **Every row takes a level** ([W-055](../decisions/W-055-every-guard-rule-configurable-now.md)),
+  so a loosened row must never hide another. That holds **by construction**: the git judges (`gitjudge.go`'s
   `gitChecks`, `push.go`) are **one check per row**. For each git subcommand a list of checks `{row, check}`; `check(job)`
   reads only the parsed invocation and git's answers, and returns its own row's finding or none
   (the reporting API takes no row id: the list supplies it, so a check cannot report another row).
@@ -342,18 +255,10 @@ destructive rules. A project needs to set how strict each rule is.
   defaults are data in `internal/config`
   (`config.GuardRules`), so `jst check` validates the section without importing the guard; a guard
   test pins that list to the table (same ids, same path rules).
-- **Telling the agent.** The hook answers a warned command with `hookSpecificOutput:
-  {hookEventName: "PreToolUse", additionalContext: "<the warning>"}` and **no**
-  `permissionDecision`: Claude Code's hooks reference (code.claude.com/docs/en/hooks, read
-  2026-11-17) says `additionalContext` passes the text into Claude's context on PreToolUse, while
-  an `allow` reason goes to the debug log only and `systemMessage` is shown to the user only. With
-  no decision the call goes through the user's own permission flow unchanged: a warning never
-  grants a permission. The guard's other warnings (`config-unusable`, a NUL byte, …) use the same
-  field (a `systemMessage` alone would never reach the agent), with `systemMessage` kept for the
-  user. A refusal is unchanged (`deny` with its reason).
-- The `zsh-glob` warning by default needs no jackstay.json change.
-- The AGENTS block says: a guard warning is the guard's word that the command may not do what it
-  says — read it; a project's own rule levels are in its jackstay.json.
+- **Telling the agent.** A warning reaches the agent as `additionalContext` and the person as
+  `systemMessage`, with no `permissionDecision`, so a warning never grants a permission
+  ([guard.md](guard.md), the hook contract). An `allow` reason would reach only the debug log, and
+  a `systemMessage` alone never reaches the agent.
 
 **Tests**: config — every problem above refused (a gate row named), a good section accepted;
 guard — the split's tests above; each level for a git row, `rm-recursive`, `find-delete` and
