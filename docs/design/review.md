@@ -484,9 +484,11 @@ with the Bash tool's background flag; the session is told when the call ends and
 - **Concurrency** is section 6's slots and nothing else: reviews of different tasks run at once, up
   to `max_concurrent` reviewer runs; there is no machine-wide worker.
 - **The result.** The run with `--request` marks the request running once it holds the task's lock
-  (a run whose request was replaced refuses, exit 2). When it ends, whatever its outcome, it removes
-  the request and writes one owed event per session, `<store>/.owed/<key hash>.json`, before giving
-  each to the chat's publisher (`internal/chatevent`, [chat.md](chat.md) section 10); a published
+  (a run whose request was replaced refuses, exit 2). When it ends, whatever its outcome, it writes,
+  under the request's lock and before removing the request, one owed event per session,
+  `<store>/.owed/<key hash>.json`, and the request's end, `<store>/.requests/<task hash>.last.json`
+  (outcome, next step, the commits: what `review.status` shows even for a run that made no
+  attempt); then it gives each event to the chat's publisher (`internal/chatevent`, [chat.md](chat.md) section 10); a published
   one is removed. What the chat could not take stays owed, and the chat pulls it when the session
   next reads its inbox or reaches its hook. The event carries the outcome word, the round, the
   report's path, the next step and `jst:review/<task>/<round>`. `jst review` is a plain foreground command with **one budget** for the whole call:

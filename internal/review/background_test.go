@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -193,5 +194,66 @@ func TestARunServingARequestMarksItRunningAndRefusesAReplacedOne(t *testing.T) {
 	saved, found, err := h.round.Store.ReadRequest("feature/x")
 	if err != nil || !found || !saved.Running {
 		t.Fatalf("the request was not marked running: %+v, %v, %v", saved, found, err)
+	}
+}
+
+func TestAResultIsSavedBeforeItsRequestIsRetired(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := h.background.Store
+	// The owed folder cannot be made: the result cannot be saved, so the request must stay.
+	if err := os.WriteFile(store.owedPath(), []byte("not a folder"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitClear}, &recording{}); err == nil {
+		t.Fatal("an unsaved result was not said")
+	}
+	if _, found, _ := store.ReadRequest("feature/x"); !found {
+		t.Fatal("the request was retired although its result was not saved")
+	}
+}
+
+func TestARunThatDiedIsToldToItsSessionsWithoutAnotherSubmission(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	if _, err := h.background.Submit(ctx, Submission{Revision: "HEAD", Subscriber: "s1"}); err != nil {
+		t.Fatal(err)
+	}
+	published := &recording{}
+	if err := h.background.DeliverOwed(ctx, "s1", published); err != nil || len(published.events) != 0 {
+		t.Fatalf("a live run was taken for lost: %+v, %v", published.events, err)
+	}
+	h.alive = false
+	if err := h.background.DeliverOwed(ctx, "s1", published); err != nil {
+		t.Fatal(err)
+	}
+	if len(published.events) != 1 || published.events[0].Meta["verdict"] != "lost" {
+		t.Fatalf("the session was not told its run died: %+v", published.events)
+	}
+	if _, found, _ := h.background.Store.ReadRequest("feature/x"); found {
+		t.Fatal("the dead request was kept")
+	}
+}
+
+func TestStatusSaysHowTheLatestRequestEndedEvenWithoutAnAttempt(t *testing.T) {
+	h := newBackgroundHarness(t)
+	ctx := context.Background()
+	submitted, err := h.background.Submit(ctx, Submission{Revision: "HEAD"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.background.Store.Finish(ctx, "feature/x", submitted.Request.ID,
+		Result{Status: ExitEnvironment, Next: "Codex has no login"}, &recording{}); err != nil {
+		t.Fatal(err)
+	}
+	h.alive = false
+	status, err := h.background.StatusOf("feature/x")
+	if err != nil || status.Running != nil || status.Last == nil || status.Last.Status != ExitEnvironment ||
+		status.Last.Request.Head != "c1" || status.Last.Next != "Codex has no login" {
+		t.Fatalf("status: %+v, %v", status, err)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/review"
@@ -44,8 +45,8 @@ func (store Store) publish(event chatevent.Event) error {
 	for _, attachment := range event.Attachments {
 		lines = append(lines, "attached: "+attachment.URI)
 	}
-	lines = append(lines, "event: "+event.Kind+"; call chat.ack once read.")
-	body := strings.Join(lines, "\n")
+	ending := "event: " + event.Kind + "; call chat.ack once read."
+	body := boundMessage(lines, ending, store.policy.MaxMessageBytes)
 	var failures []error
 	for _, recipient := range event.Recipients {
 		key := event.Key
@@ -96,7 +97,7 @@ func syncReviewNotifications(ctx context.Context, store Store, sessionID string)
 	if err != nil {
 		return nil // no review here, so nothing is owed here
 	}
-	return background.Store.DeliverOwed(ctx, sessionID, chatStore{store})
+	return background.DeliverOwed(ctx, sessionID, chatStore{store})
 }
 
 // chatStore publishes into an already opened store.
@@ -114,3 +115,24 @@ func (failure reviewNotificationSyncError) Error() string {
 	return "review notification sync: " + failure.cause.Error()
 }
 func (failure reviewNotificationSyncError) Unwrap() error { return failure.cause }
+
+// boundMessage joins lines and the ending into at most limit bytes: the first line (the summary)
+// and the ending always, the rest cut at a UTF-8 boundary, so an event is never refused for its
+// size every time it is retried.
+func boundMessage(lines []string, ending string, limit int) string {
+	whole := strings.Join(append(slices.Clone(lines), ending), "\n")
+	if limit <= 0 || len(whole) <= limit {
+		return whole
+	}
+	const marker = "\n…\n"
+	room := limit - len(ending) - len(marker)
+	head := strings.Join(lines, "\n")
+	if room <= 0 {
+		return strings.ToValidUTF8(whole[:limit], "")
+	}
+	cut := head[:min(room, len(head))]
+	for len(cut) > 0 && !utf8.ValidString(cut) {
+		cut = cut[:len(cut)-1]
+	}
+	return cut + marker + ending
+}

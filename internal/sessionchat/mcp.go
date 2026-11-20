@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
@@ -284,9 +285,16 @@ func (server *Server) call(raw json.RawMessage) any {
 		if err == nil && common != server.store.commonDirectory {
 			err = errors.New("MCP session repository changed")
 		}
+		if err == nil && (strings.TrimSpace(arguments.Base) == "" || strings.TrimSpace(arguments.Head) == "" ||
+			strings.TrimSpace(arguments.Task) == "" || len(arguments.Reviewers) == 0 || len(arguments.Reviewers) > 2) {
+			err = errors.New("review.submit needs base, head, task and one or two reviewers")
+		}
 		if err == nil {
 			var background review.Background
 			background, err = reviewBackground(here)
+			if err == nil {
+				err = sameRepository(ctx, background.RepositoryRoot, server.store.commonDirectory)
+			}
 			if err == nil {
 				var submitted review.Submitted
 				submitted, err = background.Submit(ctx, review.Submission{Revision: arguments.Base + ".." + arguments.Head,
@@ -324,6 +332,22 @@ func (server *Server) call(raw json.RawMessage) any {
 		return toolFailure("chat result exceeds its size limit; retry with a smaller inbox limit")
 	}
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": string(encoded)}}, "structuredContent": result}
+}
+
+// sameRepository refuses a review whose project root is in another repository than the chat's
+// session: a nested repository without a jackstay.json of its own would review its parent.
+func sameRepository(ctx context.Context, root, commonDirectory string) error {
+	common, err := (gitcli.Git{Dir: root}).CommonDir(ctx)
+	if err == nil {
+		common, err = filepath.EvalSymlinks(common)
+	}
+	if err != nil {
+		return err
+	}
+	if common != commonDirectory {
+		return errors.New("the review's project is in another repository than this chat session; open the chat in that repository")
+	}
+	return nil
 }
 
 // publicRequest leaves out the other sessions subscribed to a request.

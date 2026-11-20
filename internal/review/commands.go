@@ -199,9 +199,6 @@ func submitBackground(ctx context.Context, found opened, options Options, stdout
 		fmt.Fprintf(stderr, "jst review: %v\n", err)
 		return ExitUsage
 	}
-	if submitted.Warning != "" {
-		fmt.Fprintf(stderr, "jst review: %s\n", submitted.Warning)
-	}
 	request := submitted.Request
 	word := "started"
 	if submitted.Joined {

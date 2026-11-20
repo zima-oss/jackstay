@@ -116,8 +116,7 @@ type Background struct {
 // Submitted is a submission's answer.
 type Submitted struct {
 	Request Request
-	Joined  bool   // an equal request was already running and this one subscribed to it
-	Warning string // what went wrong on the side, the submission itself having succeeded
+	Joined  bool // an equal request was already running and this one subscribed to it
 }
 
 // ErrBusy is a task with another review running.
@@ -212,6 +211,9 @@ func (background Background) Submit(ctx context.Context, submission Submission) 
 					}
 				}
 				replaced.Subscribers = nil
+			} else if err := background.Store.owe(ctx, running.lostEvents()); err != nil {
+				// Saved before the request that names them is overwritten.
+				return nil, fmt.Errorf("telling the sessions of the dead review it was lost: %w", err)
 			}
 		}
 		identity, err := newRequestID()
@@ -227,13 +229,8 @@ func (background Background) Submit(ctx context.Context, submission Submission) 
 		return Submitted{}, err
 	}
 	if replaced != nil && len(replaced.Subscribers) > 0 {
-		// Told now when the chat takes it, else pulled later; failing to keep it is only said.
-		lost := replaced.lostEvents()
-		if err := background.Store.owe(ctx, lost); err != nil {
-			answer.Warning = "the sessions of the review it replaces could not be told it was lost: " + err.Error()
-		} else {
-			_ = background.Store.deliver(ctx, lost, chatevent.Default())
-		}
+		// Owed already; told now when the chat takes it, else pulled later.
+		_ = background.Store.deliver(ctx, replaced.lostEvents(), chatevent.Default())
 	}
 	if answer.Joined {
 		return answer, nil
@@ -383,13 +380,10 @@ func (store Store) markRunning(ctx context.Context, task, id string) error {
 	})
 }
 
-func (store Store) dropRequest(ctx context.Context, task, id string) error {
-	_, err := store.takeRequest(ctx, task, id)
-	return err
-}
-
-// takeRequest removes the task's request when it is id, and returns it.
-func (store Store) takeRequest(ctx context.Context, task, id string) (Request, error) {
+// retireRequest removes the task's request when it is id (or, with id "", whatever request is
+// there and dead says is dead). Under the request's lock and before the removal, before(request)
+// saves what must outlive it: a crash between the two leaves the request, never a lost result.
+func (store Store) retireRequest(ctx context.Context, task, id string, dead func(Request) bool, before func(Request) error) (Request, error) {
 	var taken Request
 	path := store.RequestPath(task)
 	held, err := durable.Lock(ctx, path)
@@ -404,8 +398,16 @@ func (store Store) takeRequest(ctx context.Context, task, id string) (Request, e
 	if err != nil {
 		return Request{}, err
 	}
-	if err := strictjson.UnmarshalOpen(data, &taken); err != nil || taken.ID != id {
+	if err := strictjson.UnmarshalOpen(data, &taken); err != nil {
 		return Request{}, err
+	}
+	if id != "" && taken.ID != id || id == "" && (dead == nil || !dead(taken)) {
+		return Request{}, nil
+	}
+	if before != nil {
+		if err := before(taken); err != nil {
+			return Request{}, err
+		}
 	}
 	if err := os.Remove(path); err != nil {
 		return Request{}, err
@@ -413,21 +415,111 @@ func (store Store) takeRequest(ctx context.Context, task, id string) (Request, e
 	return taken, durable.SyncFolder(filepath.Dir(path))
 }
 
+func (store Store) dropRequest(ctx context.Context, task, id string) error {
+	_, err := store.retireRequest(ctx, task, id, nil, nil)
+	return err
+}
+
 // Finish ends the run of request id: its subscriptions become owed `review.finished` events,
 // published now when the chat takes them. It never fails the review: what it could not do is said.
 func (store Store) Finish(ctx context.Context, task, id string, result Result, publisher chatevent.Publisher) error {
-	request, err := store.takeRequest(ctx, task, id)
+	var events []chatevent.Event
+	_, err := store.retireRequest(ctx, task, id, nil, func(request Request) error {
+		events = request.finishedEvents(result)
+		if err := store.owe(ctx, events); err != nil {
+			return err
+		}
+		return store.writeLast(request, result)
+	})
 	if err != nil {
 		return err
 	}
-	if request.ID == "" || len(request.Subscribers) == 0 {
-		return nil
+	return store.deliver(ctx, events, publisher)
+}
+
+// Last is how a task's latest background request ended: kept beside its request file, so the
+// status of a run that never made an attempt is not an older round's.
+type Last struct {
+	Request Request `json:"request"`
+	Status  int     `json:"status"`
+	Outcome string  `json:"outcome"`
+	Next    string  `json:"next"`
+	Folder  string  `json:"folder,omitempty"`
+	Round   int     `json:"round,omitempty"`
+	Ended   string  `json:"ended"`
+}
+
+func (store Store) lastPath(task string) string {
+	return filepath.Join(store.requestsPath(), taskKey(task)+".last.json")
+}
+
+func (store Store) writeLast(request Request, result Result) error {
+	last := Last{Request: request, Status: result.Status, Outcome: OutcomeWord(result.Status), Next: result.Next,
+		Folder: result.Folder, Ended: time.Now().UTC().Format(time.RFC3339)}
+	last.Request.Subscribers = nil
+	if result.Record != nil {
+		last.Round = result.Record.Round
 	}
-	events := request.finishedEvents(result)
-	if err := store.owe(ctx, events); err != nil {
+	data, err := json.MarshalIndent(last, "", "  ")
+	if err != nil {
 		return err
 	}
-	return store.deliver(ctx, events, publisher)
+	return durable.WriteAtomic(store.lastPath(request.Task), data, 0o600, maximumRequestBytes)
+}
+
+// ReadLast is how the task's latest background request ended, if one has.
+func (store Store) ReadLast(task string) (Last, bool, error) {
+	data, err := durable.ReadLimited(store.lastPath(task), maximumRequestBytes)
+	if errors.Is(err, fs.ErrNotExist) {
+		return Last{}, false, nil
+	}
+	if err != nil {
+		return Last{}, false, err
+	}
+	var last Last
+	if err := strictjson.UnmarshalOpen(data, &last); err != nil {
+		return Last{}, false, err
+	}
+	return last, true, nil
+}
+
+// ReapLost retires every request whose process is gone without having finished, telling its
+// sessions so: a run killed before Finish (a restart, a KILL) is not waited for forever.
+func (background Background) ReapLost(ctx context.Context) error {
+	listed, err := os.ReadDir(background.Store.requestsPath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var failures []error
+	for _, item := range listed {
+		name := item.Name()
+		if !strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".last.json") || strings.HasPrefix(name, ".") {
+			continue
+		}
+		data, err := durable.ReadLimited(filepath.Join(background.Store.requestsPath(), name), maximumRequestBytes)
+		var request Request
+		if err != nil || strictjson.UnmarshalOpen(data, &request) != nil || request.Task == "" || background.live(request) {
+			continue
+		}
+		_, err = background.Store.retireRequest(ctx, request.Task, "", func(current Request) bool {
+			return current.ID == request.ID && !background.live(current)
+		}, func(current Request) error {
+			return background.Store.owe(ctx, current.lostEvents())
+		})
+		if err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// DeliverOwed tells recipient what is owed to it, after retiring the requests that died.
+func (background Background) DeliverOwed(ctx context.Context, recipient string, publisher chatevent.Publisher) error {
+	reaped := background.ReapLost(ctx)
+	return errors.Join(reaped, background.Store.DeliverOwed(ctx, recipient, publisher))
 }
 
 func (request Request) event(summary, body string, meta map[string]string, attachments []chatevent.Attachment) chatevent.Event {
@@ -599,10 +691,14 @@ func BackgroundAt(folder, executable string) (Background, error) {
 // newest round or attempt.
 type Status struct {
 	Running *Request `json:"running,omitempty"`
-	Newest  *Entry   `json:"newest,omitempty"`
-	Outcome string   `json:"outcome,omitempty"`
-	Blocks  *bool    `json:"blocks,omitempty"`
-	Report  string   `json:"report,omitempty"`
+	// Last is how the latest background request ended, even one that made no attempt.
+	Last    *Last  `json:"last,omitempty"`
+	Newest  *Entry `json:"newest,omitempty"`
+	Commit  string `json:"commit,omitempty"` // what the newest round or attempt reviewed
+	Base    string `json:"base,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+	Blocks  *bool  `json:"blocks,omitempty"`
+	Report  string `json:"report,omitempty"`
 }
 
 // StatusOf reads where task stands.
@@ -614,6 +710,13 @@ func (background Background) StatusOf(task string) (Status, error) {
 	}
 	if found && background.live(request) {
 		status.Running = &request
+	}
+	last, found, err := background.Store.ReadLast(task)
+	if err != nil {
+		return Status{}, err
+	}
+	if found {
+		status.Last = &last
 	}
 	entries, err := background.Store.Entries(task)
 	if err != nil || len(entries) == 0 {
@@ -630,8 +733,13 @@ func (background Background) StatusOf(task string) (Status, error) {
 		code, _ := Disposition(background.Settings, record)
 		status.Outcome = OutcomeWord(code)
 		status.Blocks = &record.Outcome.Blocks
+		status.Commit, status.Base = record.Commit, record.Base
 	} else {
 		status.Outcome = "no round: " + failureWords(ReadRuns(newest.Path))
+		var attempt AttemptRecord
+		if data, err := os.ReadFile(filepath.Join(newest.Path, AttemptName)); err == nil && strictjson.UnmarshalOpen(data, &attempt) == nil {
+			status.Commit, status.Base = attempt.Commit, attempt.Base
+		}
 	}
 	return status, nil
 }

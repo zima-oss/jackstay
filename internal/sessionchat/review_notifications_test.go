@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/config"
@@ -215,5 +216,60 @@ func TestAProcessFindsItsOwnChatSessionByItsToken(t *testing.T) {
 	t.Setenv("JACKSTAY_CHAT_SESSION_TOKEN", "")
 	if found, err := identify(context.Background(), chat.repository.Root); err != nil || found != "" {
 		t.Fatalf("a process without a token has a session: %q, %v", found, err)
+	}
+}
+
+func TestASubmissionFromANestedRepositoryIsRefused(t *testing.T) {
+	chat := newReviewChat(t)
+	nested := testrepo.New(t, map[string]string{"file.txt": "nested\n"})
+	original := reviewBackground
+	reviewBackground = func(string) (review.Background, error) { return original(chat.repository.Root) }
+	nestedStore, err := StoreFor(nested.Root+"/.git", chat.store.policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(nested.Root); err != nil {
+		t.Fatal(err)
+	}
+	nestedSession, err := nestedStore.Register("nested", strings.Repeat("n", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(map[string]any{"name": "review.submit",
+		"arguments": map[string]any{"base": "HEAD^", "head": "HEAD", "task": "t", "reviewers": []string{"codex"}}})
+	response := (&Server{store: nestedStore, session: nestedSession}).call(encoded).(map[string]any)
+	if response["isError"] != true || !strings.Contains(response["content"].([]map[string]string)[0]["text"], "another repository") ||
+		len(chat.launched) != 0 {
+		t.Fatalf("a review of the parent repository was started from a nested one: %+v", response)
+	}
+}
+
+func TestAnIncompleteSubmissionIsRefused(t *testing.T) {
+	chat := newReviewChat(t)
+	submitter := chat.register(t, "submitter", strings.Repeat("s", 32))
+	for _, arguments := range []map[string]any{
+		{"base": "HEAD^", "task": "t", "reviewers": []string{"codex"}},
+		{"base": "HEAD^", "head": "HEAD", "reviewers": []string{"codex"}},
+		{"base": "HEAD^", "head": "HEAD", "task": "t", "reviewers": []string{}},
+	} {
+		encoded, _ := json.Marshal(map[string]any{"name": "review.submit", "arguments": arguments})
+		if response := (&Server{store: chat.store, session: submitter}).call(encoded).(map[string]any); response["isError"] != true {
+			t.Fatalf("an incomplete submission was taken: %v", arguments)
+		}
+	}
+	if len(chat.launched) != 0 {
+		t.Fatal("an incomplete submission started a run")
+	}
+}
+
+func TestALongEventFitsTheChatsMessageLimit(t *testing.T) {
+	long := strings.Repeat("é", 3000)
+	message := boundMessage([]string{"review of t: redesign due", long, "attached: jst:review/t/3"}, "event: review.finished; call chat.ack once read.", 4096)
+	if len(message) > 4096 || !utf8.ValidString(message) || !strings.HasPrefix(message, "review of t: redesign due") ||
+		!strings.HasSuffix(message, "call chat.ack once read.") {
+		t.Fatalf("message of %d bytes: %q…", len(message), message[:80])
+	}
+	if short := boundMessage([]string{"a", "b"}, "c", 4096); short != "a\nb\nc" {
+		t.Fatalf("a short message changed: %q", short)
 	}
 }
