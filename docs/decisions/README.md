@@ -55,3 +55,4 @@ is added in a pull request.
 | [W-083](W-083-no-macos-job-in-ci.md) | CI runs the gate on Linux only; the macOS-only code is checked by `just gate` on a Mac before an install and a release |
 | [W-085](W-085-adopt-lands-settings-and-files-apart.md) | `jst adopt --settings-only`: a change of `jackstay.json` and other files lands in two pull requests, settings first (rule D0) |
 | [W-087](W-087-review-pinned-source.md) | Reviewers navigate pinned Git snapshots and read patches on demand |
+| [W-090](W-090-compatibility-of-0-6-0.md) | 0.6.0: newer keys need `"jackstay_schema": 3` and an older pin is never handed one; internal limits are constants; Codex is the default reviewer again |
