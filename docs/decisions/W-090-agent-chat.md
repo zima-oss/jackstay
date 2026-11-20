@@ -1,5 +1,8 @@
 # W-090 — The agent chat in 0.6.0: Claude Code's model, extended
 
+This is the chat part of the 0.6.0 ruling W-090; its compatibility part is
+[W-090-compatibility-of-0-6-0](W-090-compatibility-of-0-6-0.md).
+
 Date: 2026-11-20.
 
 ## Context
@@ -39,7 +42,8 @@ The [chat design](../design/chat.md) gives the contract: the tool and record sch
 fit the store, the store on the shared durable package, delivery and its fallback, setup, the test
 plan and the decisions on its open questions. The socket's line format is undocumented, so the native layer
 is captured from a live session, pinned by a contract test and used only for verified Claude Code
-versions. 0.5.x chat state is not imported, and its limit keys stop having an effect.
+versions. 0.5.x chat state is not imported, and its limit keys are constants that schema 3 refuses as
+unknown keys.
 
 ## The open questions, decided (W-091)
 

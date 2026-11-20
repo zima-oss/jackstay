@@ -217,6 +217,8 @@ A send is answered at once with one outcome for the whole send:
 - `accepted`: stored durably; delivery follows per recipient;
 - `duplicate`: the same `idempotency_key` was already accepted; the original IDs are returned;
 - `subscribed`: a pure `notify_when_idle` subscription with no message (section 4.9);
+- `uncertain`: the store could not make the send durable (section 7.2); retry with the same
+  `idempotency_key`;
 - `refused`: nothing was stored, with a reason code (section 5.4).
 
 Each recipient then has its own **delivery**. A delivery has a **route**, the one way it is pushed
@@ -244,7 +246,6 @@ that is already `gone` (section 4.4). Every allowed transition, and nothing else
 | `sending` | `held`, `refused`, `dropped` | the engine's answer (`dropped`: `engine_queue_full`) |
 | `sending` | `pending` | a confirmed failure: nothing reached the engine (section 8.3) |
 | `pending` | `delivered` | a hook's announcement, recorded in the same locked step that pushes it (section 8.4) |
-| `delivered` | `delivered` | the Codex bridge steering an unacknowledged message into a later turn: only `steers` changes (section 9.2) |
 | `pending`, `sending`, `held` | `dropped` | `SessionEnd`, a dead process, or a closed mailbox (`recipient_ended`); from `sending` the pusher's later outcome is then dropped (compare-and-set) |
 | `pending`, `held` | `expired` | the sweep, at `expires_at` (reason `expired`, or `engine_held_unresolved` from `held`) |
 | `pending`, `delivered` | `read` | `chat.inbox` emitting the whole body in one response, while the body is visible (section 4.10); `chat.ack` with `read`; or a review mailbox's freeze (section 9.1) |
@@ -259,7 +260,7 @@ message pushed to the recipient is not reported as expired, whether or not its m
 acknowledged it.
 
 **What the receipts promise.**
-- The automatic routes push a message **at most once**, except the Codex bridge (section 9.2). A push
+- Every automatic route, the Codex bridge included, pushes a message **at most once** (W-091). A push
   whose result is unknown is never repeated, because Claude Code cannot recognise a repeat; it is
   `delivered` with `unconfirmed`. Its body stays hidden from the recipient (the engine may have held
   or refused it, section 4.10), the recipient sees only that one message's delivery is unconfirmed,
@@ -351,7 +352,7 @@ the message.
 
 | priority | Claude Code's SDK | jackstay delivers |
 |---|---|---|
-| `now` | interrupts | at once through the socket; with hooks only, at the next tool batch, and a `Stop` hook keeps the turn going while one is unannounced (section 8.4) |
+| `now` | interrupts (recent SDK versions may first move eligible work to the background for a person's message) | at once through the socket; with hooks only, at the next tool batch, and a `Stop` hook keeps the turn going while one is unannounced (section 8.4) |
 | `next` | read in the same turn after the current tool calls | at once through the socket, which a busy session reads between tool calls; with hooks only, at the next tool batch or prompt |
 | `later` | held until the turn ends | when the recipient is idle (which wakes it through the socket); with hooks only, at the next prompt |
 
@@ -388,7 +389,7 @@ Like Claude Code, jackstay refuses rather than floods:
 - an identical message (same sender, recipient and body hash) within 60 seconds without the same
   `idempotency_key` is refused (`repeated`);
 - two sessions that have exchanged 40 messages with no prompt from a person on either side
-  (`UserPromptSubmit` resets the count) are paused (`loop`); the detail tells the agent to ask its
+  (a person's prompt resets the count, section 8.2) are paused (`loop`); the detail tells the agent to ask its
   person.
 
 Events and notices from `jackstay` are not counted against these limits.
@@ -442,8 +443,11 @@ native delivery that is `pending`, `sending`, `held`, `refused`, or `delivered` 
 shows the recipient only its count ("2 messages wait for your engine's decision"), never its sender,
 summary or body. The other routes have no engine policy to defer to, and jackstay does not imitate
 `crossSessionInbound` there: the frame's "not consent" line protects them (W-091).
-A channel message is visible through `chat.thread` to every session of the account, since the related
-list limits only sending; its deliveries to others do not change that.
+A channel message is visible through `chat.thread` to every session of the account that has **no
+delivery** of it (the related list limits only sending). A session that has a delivery of it, being
+a subscriber, sees it in `chat.thread` only as its own delivery allows: until the body is visible
+by the rule above, the thread shows that a message is there and nothing of it, not even its ID, so
+naming the ID stays evidence of a frame the engine showed.
 
 **Deadlines are checked where they matter, not only by the sweep.** In the same locked step in which
 a pusher would set `sending` or `delivered`, in which `chat.inbox` or `chat.thread` would return a
@@ -536,7 +540,8 @@ Returns `address`, `name`, `ref`, `engine`, `key_source` (`engine`, `token` or `
 Returns `sessions`: each a `session_ref` plus `state`, `since`, `last_seen`, `delivery`,
 `ephemeral` and `reachable` (false when the related list forbids sending to it).
 
-**`chat.channels`**: the known channels. Input `{}`. Returns `channels`: each with `channel` (its
+**`chat.channels`**: the known channels. Input `{"cursor": "…"}` (optional), with pages under the
+size rule of `chat.inbox`, as for `chat.sessions`. Returns `channels`: each with `channel` (its
 address), `subscribers` (a count), `subscribed` and `writable`. Any channel may be subscribed to.
 
 **`chat.subscribe`**: subscribe to or leave one channel.
@@ -570,14 +575,16 @@ address), `subscribers` (a count), `subscribed` and `writable`. Any channel may 
     "idempotency_key": { "$ref": "#/$defs/idempotency_key" } } }
 ```
 
-Rules beyond the schema: `message` may be empty only with `notify_when_idle` (a pure subscription,
+At most 20 recipients are listed inline, the rest counted in `recipients_more` (the outbox lists them
+all). Rules beyond the schema: `message` may be empty only with `notify_when_idle` (a pure subscription,
 section 4.9); `request` and `notify_when_idle` are refused for a channel; `options` only with
 `expects: answer`. Result:
 
 ```json
 { "outcome": "accepted",
   "message_id": "msg_…", "thread_id": "msg_…", "request_id": "req_…",
-  "recipients": [ { "session": "web@fix-login [3fa9c1]", "state": "pending" } ] }
+  "recipients": [ { "session": "web@fix-login [3fa9c1]", "state": "pending" } ],
+  "recipients_more": 0 }
 ```
 
 `{ "outcome": "subscribed", "watching": "web@fix-login [3fa9c1]", "until": "…", "fired": false }` for a
@@ -591,7 +598,7 @@ pure subscription (`fired_at` is added when `fired` is true), or `{ "outcome": "
     "ids": { "type": "array", "maxItems": 50, "items": { "$ref": "#/$defs/message_id" } },
     "unread_only": { "type": "boolean", "default": true },
     "limit": { "type": "integer", "minimum": 1, "maximum": 50, "default": 20 },
-    "cursor": { "type": "string", "maxLength": 128 },
+    "cursor": { "type": "string", "maxLength": 512 },
     "mark_read": { "type": "boolean", "default": true } } }
 ```
 
@@ -669,7 +676,7 @@ The result is that of `chat.send`.
     "request_states": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/request_state" } },
     "thread_id": { "$ref": "#/$defs/message_id" },
     "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 },
-    "cursor": { "type": "string", "maxLength": 128 } } }
+    "cursor": { "type": "string", "maxLength": 512 } } }
 ```
 
 Without `message_id`: `messages` (newest first), each with `id`, `thread_id`, `to`, `summary`, `kind`,
@@ -688,7 +695,7 @@ is more; rows are never split.
     "thread_id": { "$ref": "#/$defs/message_id" },
     "channel": { "$ref": "#/$defs/channel" },
     "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 },
-    "cursor": { "type": "string", "maxLength": 128 } } }
+    "cursor": { "type": "string", "maxLength": 512 } } }
 ```
 
 Exactly one of `thread_id` and `channel` is given. With `thread_id`, the messages of that thread,
@@ -697,8 +704,9 @@ threads it missed. Each message has the fields of an `inbox` message without `st
 the size rules of `chat.inbox`, and `next_cursor` can continue inside a message's body. Reading a
 thread changes no receipt.
 
-A cursor is opaque to the caller: the server encodes in it the query, the position, and the offset
-inside a body. A cursor whose position no longer exists (the message was removed by retention)
+A cursor is opaque to the caller: it holds only the position and the offset inside a body, and
+the caller sends the same filters (and `ids`) with it; a cursor used with other filters is refused
+as `invalid`. `chat.sessions` also takes a `cursor` and pages the same way. A cursor whose position no longer exists (the message was removed by retention)
 continues from the next message.
 
 ### 5.3 Rendering for the model
@@ -782,7 +790,7 @@ write a caller can make large).
     "notices": { "type": "array", "maxItems": 32, "items": {
       "type": "object", "additionalProperties": false, "required": ["id", "kind", "about", "at", "state"],
       "properties": { "id": { "type": "string", "maxLength": 140 }, "kind": { "enum": ["idle", "ended", "not_delivered", "subscription_expired"] },
-                      "about": { "type": "string", "maxLength": 76 }, "message_id": { "$ref": "#/$defs/message_id" },
+                      "about": { "type": "string", "maxLength": 80 }, "message_id": { "$ref": "#/$defs/message_id" },
                       "at": { "type": "string" }, "state": { "enum": ["owed", "sending", "shown"] } } } },
     "stop_blocks": { "type": "integer", "minimum": 0, "maximum": 3 },
     "exchange": { "type": "object", "maxProperties": 64,
@@ -871,7 +879,6 @@ Each recipient's **delivery** is its own small file:
     "reason": { "enum": ["unconfirmed", "engine_refused", "engine_queue_full", "recipient_ended", "expired", "engine_held_unresolved"] },
     "pusher": { "type": "string", "maxLength": 64 },
     "attempts": { "type": "integer", "minimum": 0, "maximum": 4 },
-    "steers": { "type": "integer", "minimum": 0, "maximum": 3 },
     "whole": { "type": "boolean" },
     "next_attempt": { "type": "string" },
     "notice": { "enum": ["owed", "sending", "shown"] },
@@ -880,7 +887,7 @@ Each recipient's **delivery** is its own small file:
 
 `route` is chosen when the delivery is created and changes only from `native` to `hooks` (section
 8.3). `pusher` names the process that set `sending`; `attempts` (confirmed failures, at most 4) and
-`next_attempt` belong to the native route and the Codex bridge, and `steers` to the bridge alone.
+`next_attempt` belong to the native route and the Codex bridge.
 `whole` is true when a push carried the whole body (not cut to 4,000 or 2,000 characters). `notice` is set to `owed` with a final `refused`, `dropped` or
 `expired` state, and to `shown` once the sender has seen it (section 8.5).
 
@@ -911,8 +918,8 @@ are keys). Each is checked before a write, so the store never reaches a state it
 | what | bound | why this number |
 |---|---|---|
 | `message` (the body file) | 32 KiB of UTF-8 | a long report fits; bigger content is an attachment |
-| `summary` | 200 code points, one line | Claude Code's bound |
-| `to` | 300 code points, one line | Claude Code's bound |
+| `summary` | 200 code points, one line | the cap Claude Code's `SendMessage` tool applies to its summary (observed in its tool description, version 2.1.x) |
+| `to` | 300 code points, one line | the cap of Claude Code's `SendMessage` `to` (observed in its tool description, version 2.1.x) |
 | name | 64 code points | Claude Code's SDK cap on a peer's name |
 | `reason` | 2,000 code points | a paragraph |
 | `meta` | 16 keys, values 256 code points | channels' shape |
@@ -925,7 +932,7 @@ are keys). Each is checked before a write, so the store never reaches a state it
 | live sessions (not `gone`) | 256 per account | well above a machine's real parallelism |
 | live messages | 4,096 per account; events only below 90% (3,686) | 16 per session |
 | deliveries `pending`, `sending` or `held` per recipient | 50 | Claude Code's receiver queue |
-| sends per sender | 30 per 60 s | Claude Code's burst |
+| sends per sender | 30 per 60 s | jackstay's own number; Claude Code throttles bursts without publishing one |
 | exchange without a person | 40 messages per pair | cuts agent loops |
 | bytes of the whole store | 64 MiB, counted by charges (section 7.4): sends only below 63 MiB, events only below 90% | the last MiB is kept for journal and temporary files |
 | a message rendered without its body | 12 KiB, checked at the send (`too_large`) | so every result page can hold one message and advance (section 5.2) |
@@ -970,7 +977,7 @@ to it:
 
 | chat needs | from `internal/durable` | chat adds |
 |---|---|---|
-| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | how it treats `ErrNotSynced`: the new file is what readers see, so the change counts as made (a send is `accepted`); the folder is fsynced again before the lock is released, and a second failure is logged and reported by `jst doctor` |
+| atomic replace: a temporary file in the same folder, fsynced, renamed, the folder fsynced | `WriteAtomic` (with its byte limit), `MakeFolder`, `SyncFolder` | how it treats `ErrNotSynced`: the folder is fsynced again before the lock is released. If that works, the change is made (a send is `accepted`). If not, a crash could still undo it: the journal entry is kept, a send answers `uncertain`, and the sender retries with the same `idempotency_key`, which recovery resolves to `duplicate` or a fresh send; `jst doctor` reports the failure |
 | a bounded read: a file past its record's bound (section 6.4) is an error | `ReadLimited` (`ErrTooLarge`) | nothing |
 | one lock for the store, with a deadline | `LockFile` on `lock`, waited for with the caller's context | its deadlines: at most 2 s in a hook (then the hook does nothing, so a turn is never held up by chat), 5 s in a tool (then `store_busy`) |
 | a shared mode for readers | not offered: `LockFile` is exclusive | readers take the same exclusive lock for their short read. A shared mode, if it is added to `internal/durable` later, changes nothing else here: section 7.3 never relies on readers running together |
@@ -993,9 +1000,10 @@ that points at a read delivery, and every reader checks the delivery behind each
 1. under the lock, publish `journal/<id>` naming the operation: the whole entry is written to a
    temporary file and fsynced, then linked into `journal/` under its final name (a link never replaces
    an existing name), and the folder is fsynced, so an entry is never seen empty or half written;
-2. write the body, the envelope and every delivery, and, for a send with `notify_when_idle`, the
-   subscription on the recipient's session record;
-3. write the **commit record**; for a response, also rewrite the request's commit record to
+2. write the body, the envelope and every delivery; a send with `notify_when_idle` names its
+   subscription in the journal entry, and nothing else yet;
+3. write the **commit record**, then apply what follows from it: the subscription named in the
+   journal entry, on the recipient's session record; for a response, also rewrite the request's commit record to
    `answered` with `response_id`, and set the request's delivery to `acted` unless it is final;
 4. write the derived files: the `inbox` markers of the deliveries created `pending`, the `outbox`
    marker, the idempotency entry; update `usage.json`;
@@ -1037,8 +1045,11 @@ The sweep runs at most every 10 minutes, started by any writer, under the exclus
 - overdue deliveries and requests nobody touched are expired as in section 4.10;
 - a delivery **still needs its message** while it is `pending`, `sending` or `held`; or `delivered`
   with `unconfirmed` (the recipient may still ack it); or `delivered` without `whole` (the recipient
-  was told to read the rest); or while a notice is owed on it. A message is **done** when none of its
-  deliveries still needs it and its request is not `open`. A done message is kept 7 days after its
+  was told to read the rest); or `delivered` through the hooks or the bridge (nothing confirms that
+  Claude Code or Codex kept the text); or while a notice is owed on it. A message is **done** when none of its
+  deliveries still needs it and its request is not `open`. A message sent to or from a review
+  mailbox (a question, an answer, a note) also needs to stay until that mailbox is frozen (section
+  9.1), so neither retention nor pressure removes what the next round must read. A done message is kept 7 days after its
   last change (24 h for an event), then removed with everything it has;
 - a message that is not done is kept until 7 days after its `expires_at`; then it is removed, and any
   notice still owed on it is dropped with it;
@@ -1053,8 +1064,11 @@ room, and `usage.json` changes only when records are created or removed. It is t
 of which files exist, and recovery and the sweep rebuild it by listing the folders; a writer that
 finds it missing, or finds a journal entry, rebuilds it before admitting a growing write. A send is
 accepted only while the charges stay under 63 MiB and 4,096 messages after it; the last MiB is kept
-for journal and temporary files. Sessions and bindings are also bounded by count (256 each), so their
-charges are bounded too. When a send would pass a bound, the sweep runs first and,
+for journal and temporary files. Every other path that creates a record (a session, a binding, a channel, a marker, an idempotency
+entry, an event) passes the same check against its own charge (a marker or idempotency entry 512
+bytes, a channel 16 KiB); a session or binding that does not fit is refused, the hook logs it and
+does nothing, and the tool answers `capacity`. Sessions and bindings are also bounded by count (256
+each). When a send would pass a bound, the sweep runs first and,
 if room is still short, removes **done** messages oldest first before their 7 days are up. It never
 removes a message that is not done, so a body a recipient may still fetch, or an owed notice, is
 never lost to make room;
@@ -1099,7 +1113,7 @@ JSON from stdin and dispatches on `hook_event_name`:
 | event | chat | brief |
 |---|---|---|
 | `SessionStart` | write the binding (section 3.1); state `idle` | on `source: compact`, restore the brief (what `jst brief claude-hook` does in 0.5.x) |
-| `UserPromptSubmit` | state `busy`; reset loop counters; announce (section 8.4); show owed notices (section 8.5) | report a stale brief |
+| `UserPromptSubmit` | state `busy`; reset loop counters only for a person's prompt (below); announce (section 8.4); show owed notices (section 8.5) | report a stale brief |
 | `PostToolBatch` | state `busy` (the turn goes on); announce; show owed notices | |
 | `Stop` | hold the turn for `now` (section 8.4); if it does not hold: state `idle` | |
 | `StopFailure` | state `idle` | |
@@ -1107,6 +1121,12 @@ JSON from stdin and dispatches on `hook_event_name`:
 
 The dispatcher never fails a turn: any error is written to jackstay's log and the hook exits 0 with
 no output. Its time budget is 2 s, and the lock deadline of section 7.2 keeps it inside.
+**A person's prompt.** Claude Code also runs `UserPromptSubmit` for a peer's message, a scheduled
+prompt or a background agent's report. The loop counters are reset only for a prompt that carries
+none of the marks those have (a `<jackstay-message`, `<cross-session-message`, `<task-notification`
+or `<channel` frame at its start); when in doubt the counters are not reset, so the pause errs
+towards asking the person.
+
 `jst chat claude-hook` and `jst brief claude-hook` remain in 0.6.x as aliases that print a notice to
 use `jst hook claude`.
 
@@ -1135,9 +1155,10 @@ from a writer that descends from the recipient session as from its own child, wi
 decision a peer gets; a detached pusher is never such a writer, so the recipient's default and explicit
 inbound settings both apply, even when the only session open is the recipient itself. Any `jst chat serve` or hook that
 writes a native delivery, event or notice, or changes a session's state (a `Stop` making it idle),
-starts the pusher if it is not running and any native delivery is `pending` (a lock file
-`pusher.lock` keeps it single); it runs a **pass** at each store change and every 15 seconds, and
-exits only after 10 minutes in which no native delivery was `pending` at all, so work that becomes
+starts the pusher if it is not running and there is **pusher work**: a native delivery `pending`, an
+armed idle subscription, or a notice owed to a native session (a lock file `pusher.lock` keeps it
+single); it runs a **pass** at each store change and every 15 seconds, and exits only after 10
+minutes without pusher work, so work that becomes
 due later (a `later` message waiting for its recipient's idle) always has a pusher. A pass serves every `native` delivery in the store, whoever
 sent it. A delivery is **due** when its route is `native`, it is `pending`, `next_attempt` has
 passed, and its priority allows it now (`later` only to an `idle` recipient). For each due delivery
@@ -1235,7 +1256,8 @@ message:
 
 A notice is shown **at most once**, like a message. The hooks and `chat.inbox` mark exactly the
 notices they include `shown` in the same locked step that returns them. The pusher marks the notices
-of a native push `sending` first; a confirmed failure returns them to `owed`, an acceptance makes
+of a native push `sending` first (a `sending` notice older than 60 s, its pusher gone, becomes
+`shown`, never pushed again); a confirmed failure returns them to `owed`, an acceptance makes
 them `shown`, and a refusal, hold or unknown outcome makes them `shown` too, without a second push.
 Nothing is lost for good: the outbox holds every delivery receipt and its reason, and
 `chat.whoami` lists the session's idle notices of the last 24 h, so a sender can always ask. A notice is one line: what happened, to which message, and the reason, for example
@@ -1264,8 +1286,8 @@ therefore uses them only as an extra nudge, never as a route:
 
 ### 9.1 The reviewer talks with the author between rounds
 
-Codex is used mostly as the reviewer of `jst review`, which runs it without user MCP servers (W-090
-closes them for the reviewer). So the reviewer does not call chat tools; `jst review` speaks for it,
+Codex is used mostly as the reviewer of `jst review`, which runs it without user MCP servers (the 0.6.0
+ruling on the reviewer's access closes them). So the reviewer does not call chat tools; `jst review` speaks for it,
 through a **round mailbox**: a session record (`mailbox: true`) that stands for the reviewer between
 rounds.
 
@@ -1331,15 +1353,13 @@ changes:
   arrives mid-turn; an idle thread costs nothing.
 - **The first steer** works like a native push: the bridge sets `sending` under the lock, steers
   with the expected turn ID, and records the outcome: the app-server's acceptance makes it
-  `delivered` (`steers` 1); a confirmed failure (no active turn, the steer rejected) returns it to
+  `delivered`; a confirmed failure (no active turn, the steer rejected) returns it to
   `pending` with `attempts` + 1, for the next turn, and after four the bridge stops and it waits in
   `chat.inbox`; no answer makes it `delivered` with `unconfirmed`, and it is not steered again.
-- **Repeats.** As in 0.5.x, a message `delivered` (confirmed) that the recipient has not
-  acknowledged may be steered again into a later turn, because a Codex turn can end before its model
-  reads what was steered: this is the one route that may push a message more than once. Each repeat is
-  recorded before it is made (`steers` + 1 under the lock, with the turn ID in the log) and its outcome
-  only logged, since the receipt already says `delivered`. jackstay caps it at 3 steers per message, and the frame's last line tells the model to ignore a copy of a message
-  it already handled. After the third, the bridge stops; the message stays unread in `chat.inbox`.
+- **No repeats.** 0.5.x steered an unacknowledged message again into later turns. 0.6.0 does not:
+  delivery is at most once on every route (W-091). A Codex turn can end before its model reads what
+  was steered; such a message stays `delivered` and unread, and the recipient finds it with
+  `chat.inbox`.
 
 A bridged delivery becomes `read` or `acted` by the same rules as any other (section 4.2).
 
@@ -1421,7 +1441,7 @@ Under `jackstay_schema: 3` the `chat` section of `jackstay.json` has two keys:
   store), a separate choice from registering the server, and setup names it as such.
 - `related` (default absent: unrestricted): the list of section 2, at most 32 channel addresses.
 
-The `chat` section needs `"jackstay_schema": 3` (the compatibility part of W-090, already on
+The `chat` section needs `"jackstay_schema": 3` ([W-090, compatibility](../decisions/W-090-compatibility-of-0-6-0.md), already on
 `main`), which also made the 0.5.x limit keys (`max_message_bytes`, `max_pending`,
 `max_pending_per_session`, `max_sessions`, `retention_hours`, `codex_bridge.poll_interval_ms`,
 `codex_bridge.ack_timeout_seconds`) constants. This redesign removes the two keys left beside
@@ -1450,7 +1470,7 @@ confirmation (`--apply` without asking; `--plan` only shows):
   leaves alone.
 - **The sandbox.** The hooks and the MCP server run outside Claude Code's Bash sandbox; producers
   of events run inside it. Setup therefore adds `~/.jackstay/.all/chat` to the sandbox's writable
-  folders (W-090's rule: only the subfolders jst must write).
+  folders (the 0.6.0 ruling on setup: only the subfolders jst must write).
 - **Chat is enabled per repository.** Setup registers the server and the hooks for the machine, and
   says plainly that a repository's sessions take part only once its `jackstay.json` sets
   `"chat": {"enabled": true}` (section 11); it never sets that key itself. Sessions outside a
@@ -1467,7 +1487,7 @@ confirmation (`--apply` without asking; `--plan` only shows):
 - each live Claude Code session's binding: socket present, version in the verified range, so the
   session's delivery is `native`; otherwise which fallback it uses and why;
 - a 0.5.x state folder that can be removed;
-- 0.5.x chat keys that no longer have an effect.
+- 0.5.x chat keys, which schema 3 refuses as unknown, with what replaced each.
 
 ## 13. Trust
 
@@ -1588,7 +1608,7 @@ visibility, and states the first four properties and the deadline rule; it has n
   moved to hooks after four confirmed failures, and the switch-off after two unknown outcomes.
 - **Channels.** With the opt-in, a session started without the development flag still gets every
   message through its hooks; the push carries no body and changes no state.
-- **Codex bridge.** The 0.5.x fake app-server, now driving by notifications; the cap of 3 steers.
+- **Codex bridge.** The 0.5.x fake app-server, now driving by notifications; one steer per message, never repeated.
 - **Review mailbox.** A round with questions: requests reach a fake author session; answers and
   notes reach the next round's brief; a crash after the freeze rebuilds the same brief from the
   snapshot at the recorded path; an answer attempted during the freeze waits for the lock and is then
