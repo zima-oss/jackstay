@@ -168,6 +168,9 @@ type Usage struct {
 	CachedInput int64 `json:"cache_read_input_tokens"`
 	CacheWrite  int64 `json:"cache_creation_input_tokens"`
 	Output      int64 `json:"output_tokens"`
+	// Models are the models the session resolved to, and CostUSD its cost as Claude Code reports it.
+	Models  []string `json:"models,omitempty"`
+	CostUSD float64  `json:"cost_usd,omitempty"`
 }
 
 type response struct {
@@ -176,6 +179,8 @@ type response struct {
 	IsError    *bool           `json:"is_error"`
 	Structured json.RawMessage `json:"structured_output"`
 	Usage      *Usage          `json:"usage"`
+	CostUSD    *float64        `json:"total_cost_usd"`
+	ModelUsage map[string]any  `json:"modelUsage"`
 }
 
 func authenticationProblem(captured supervise.Captured) bool {
@@ -250,6 +255,13 @@ func Run(ctx context.Context, request runner.Request) runner.Result {
 		return finish(runner.OutcomeFailed, "could not save Claude Code's structured verdict")
 	}
 	if usage := answer.Usage; usage != nil && usage.Input >= 0 && usage.CachedInput >= 0 && usage.CacheWrite >= 0 && usage.Output >= 0 {
+		for model := range answer.ModelUsage {
+			usage.Models = append(usage.Models, model)
+		}
+		slices.Sort(usage.Models)
+		if answer.CostUSD != nil && *answer.CostUSD >= 0 {
+			usage.CostUSD = *answer.CostUSD
+		}
 		if data, err := json.Marshal(usage); err == nil {
 			_ = os.WriteFile(filepath.Join(request.Folder, UsageFile), data, 0o600)
 		}

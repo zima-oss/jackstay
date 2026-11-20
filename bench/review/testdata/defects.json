@@ -1,0 +1,29 @@
+{
+  "ranges": [
+    {"name": "orders", "step": "step1", "subject": "Read orders from files and reserve their lines"},
+    {"name": "cache", "step": "step2", "subject": "Cache lookups and release reserved stock"},
+    {"name": "pages", "step": "step3", "subject": "Pages, retries and an export to a report"}
+  ],
+  "defects": [
+    {"id": "A1", "range": "orders", "file": "order.go", "symbol": "ParseLine", "words": ["<=", "index out of range", "out of range", "off-by-one", "off by one", "panic", "bounds"],
+     "what": "the note loop reads fields[len(fields)]: every line with two or more fields panics"},
+    {"id": "A2", "range": "orders", "file": "order.go", "symbol": "ParseLine", "words": ["Atoi", "error", "ignored", "discard", "quantity 0", "non-numeric", "invalid quantity"],
+     "what": "a quantity that is not a number is read as 0 with no error"},
+    {"id": "A3", "range": "orders", "file": "order.go", "symbol": "LoadOrder", "words": ["close", "Close", "leak", "file handle", "descriptor"],
+     "what": "the opened file is never closed"},
+    {"id": "A4", "range": "orders", "file": "stock.go", "symbol": "ReserveLines", "words": ["capacity", "Reserve", "lock", "mutex", "race", "negative", "overbook", "over-reserve", "bypass"],
+     "what": "lines are added to Reserved without Reserve: no capacity check, no lock, negative quantities accepted"},
+    {"id": "B1", "range": "cache", "file": "cache.go", "symbol": "Get", "words": ["lock", "mutex", "race", "concurrent", "data race"],
+     "what": "Get reads the map without the mutex Put holds: a data race"},
+    {"id": "B2", "range": "cache", "file": "cache.go", "symbol": "Get", "words": ["expire", "expired", "After", "inverted", "reversed", "stale", "TTL", "never"],
+     "what": "the expiry test is inverted: fresh entries are misses and expired ones hits"},
+    {"id": "B3", "range": "cache", "file": "stock.go", "symbol": "Release", "words": ["negative", "below zero", "more than", "underflow", "validate", "Reserved", "count"],
+     "what": "Release accepts any count: Reserved can go below zero and Free above Capacity"},
+    {"id": "C1", "range": "pages", "file": "page.go", "symbol": "Page", "words": ["last page", "partial", "end >", "len(items)", "truncate", "dropped", "clamp", "short page"],
+     "what": "the last, partial page is returned as nil instead of its items"},
+    {"id": "C2", "range": "pages", "file": "retry.go", "symbol": "Retry", "words": ["return nil", "last error", "returns nil", "swallow", "lost", "discard", "success"],
+     "what": "after every attempt failed it returns nil, not the last error"},
+    {"id": "C3", "range": "pages", "file": "export.go", "symbol": "Export", "words": ["injection", "shell", "sh -c", "quote", "escape", "sanitize", "untrusted", "command"],
+     "what": "the pattern and paths go into a shell command line: command injection"}
+  ]
+}

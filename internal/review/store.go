@@ -216,6 +216,8 @@ type ReviewerRun struct {
 	Exit     int      `json:"exit"`
 	Outcome  string   `json:"outcome"`
 	Reason   string   `json:"reason"`
+	// WaitSeconds is the time from asking for a reviewer slot to holding it and the start lock.
+	WaitSeconds float64 `json:"wait_seconds,omitempty"`
 	// Reused names the earlier attempt whose answer this run is, "" for a run made now.
 	Reused string `json:"reused,omitempty"`
 }
@@ -239,6 +241,8 @@ type RoundRecord struct {
 	Runs          []ReviewerRun     `json:"runs"`
 	Outcome       Outcome           `json:"outcome"`
 	Summaries     map[string]string `json:"summaries"`
+	// PrepareSeconds is the time taken to get a source view slot and build the pinned view.
+	PrepareSeconds float64 `json:"prepare_seconds,omitempty"`
 }
 
 // AttemptName is an attempt's own record, written first, so a failed attempt keeps what it was for.

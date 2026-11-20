@@ -368,6 +368,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 
 	queueContext, cancelQueue := context.WithTimeout(ctx, time.Duration(settings.QueueMinutes)*time.Minute)
 	defer cancelQueue()
+	preparing := round.Machine.Now()
 	sourceSlot, err := round.takeSourceSlot(queueContext, settings.MaxConcurrent)
 	if err != nil {
 		return round.sourceFailure(planned, folder, fmt.Sprintf("waiting for a source view slot: %v", err))
@@ -395,6 +396,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 			return round.sourceFailure(planned, folder, fmt.Sprintf("writing the open findings to the source view: %v", err))
 		}
 	}
+	prepareSeconds := round.Machine.Now().Sub(preparing).Seconds()
 
 	runs := make([]ReviewerRun, len(names))
 	answers := make([]Answer, len(names))
@@ -414,7 +416,12 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		return round.sourceFailure(planned, folder, fmt.Sprintf("removing the temporary source view: %v", err))
 	}
 	tree = ""
-	return round.finish(settings, planned, names, options, folder, reusable, runs, answers)
+	finished := round.finish(settings, planned, names, options, folder, reusable, runs, answers)
+	if finished.Record != nil {
+		finished.Record.PrepareSeconds = prepareSeconds
+		_ = writeJSON(filepath.Join(finished.Folder, RecordName), *finished.Record)
+	}
+	return finished
 }
 
 // finish turns an attempt's runs, those made now and those reused, into its outcome: a round when
@@ -577,6 +584,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		return finish(runner.OutcomeFailed, err.Error())
 	}
 
+	waiting := round.Machine.Now()
 	slot, err := round.takeSlot(queueContext, settings.MaxConcurrent)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -597,6 +605,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		startLock.Release()
 		return finish(OutcomeNoSlot, "the queue time elapsed before the reviewer could start")
 	}
+	run.WaitSeconds = round.Machine.Now().Sub(waiting).Seconds()
 	agentCtx, agent := startAgent(ctx, name)
 	defer func() { endAgent(agent, run, reviewerFolder) }()
 	result := round.Machine.RunReviewer(agentCtx, runner.Request{

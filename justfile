@@ -144,3 +144,9 @@ release-snapshot:
     { cat .goreleaser.yaml; printf '\ndist: "%s"\n' "$folder/dist"; } > "$folder/goreleaser.yaml" && \
     JST_LICENCES="$folder/licenses" go run github.com/goreleaser/goreleaser/v2@v2.20.2 release --snapshot --skip=publish --config "$folder/goreleaser.yaml" && \
     echo "release-snapshot: the archives are in $folder/dist"
+
+# Measure the review wrapper (W-090): seeded defects, jst review vs direct, Codex and Claude Code.
+# It makes real, paid model calls; run it outside an agent's sandbox. Example: just review-bench -runs 5
+review-bench *arguments:
+    go build -trimpath -o .build/jst ./cmd/jst
+    go run ./bench/review -jst "$PWD/.build/jst" {{arguments}}
