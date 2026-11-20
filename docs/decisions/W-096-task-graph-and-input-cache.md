@@ -38,6 +38,12 @@ lookup. Two questions are left open, and the design works under the recommended 
 whether a cached pass may cross between a person's machine and CI (recommended: no crossing), and
 how scopes become CI jobs (recommended: one graph job per system).
 
-A follow-up for jackstay itself: its `x-go` and `x-integration` scopes both run the untagged Go
-tests in CI, so those tests run twice on one commit. The integration scope should run only the
-tests behind the `integration` tag, or CI should run one of the two scopes.
+The cache keeps verdicts, never outputs, so a scope whose files other scopes use, such as a build,
+is not cached.
+
+jackstay's own scopes change with the code, so that no test runs twice on one commit in Linux CI
+(land.md section 7.6): one Go scope runs `go test -race -tags integration ./...`, the unit and the
+integration tests each once, the `internal/docs` tests among them; `x-check` (formatting, vet,
+lint), `x-sec` (vulnerability and security scans) and `x-docs` (the site build and link check only)
+run no test of the Go scope. The local `gate` keeps all four, so a Mac also runs `go test` over the
+`*_darwin.go` code.

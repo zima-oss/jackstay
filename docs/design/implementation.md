@@ -1088,8 +1088,9 @@ The contract behind it:
 - `stopped` / `stopped-waiting`: asked to stop after the start, or while waiting for the lock
   (nothing ran); it ends by that signal. `gave-up` (75) and `not-started` (2) ran nothing; a
   command that cannot start is 127. `timed-out` (124) is a scope's (testing.md section 3);
-  `skipped`, `not-run` and `left-to-ci` are a graph's, and a scope served from the cache keeps its
-  stored `passed` marked `cached` ([land.md](land.md) section 7.2).
+  `skipped`, `not-run`, `left-to-ci` and `needs-other-system` are a graph's, and a scope served
+  from the cache keeps its stored `passed` marked `cached` ([land.md](land.md) sections 7.2 and
+  7.4).
 
 A command's own 2, 75–78 shows as `failed`, so the line, not the status, is read. An unwritable
 record line adds a `WARNING` just before it and never turns a pass into a failure.

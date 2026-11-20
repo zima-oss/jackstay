@@ -231,7 +231,7 @@ How several scopes run together, and when one is skipped because it passed befor
 the run unless `--keep-going`; a scope whose inputs have a counted pass in the cache is not run and
 is marked `cached`. A `steps` list is read as `deps`, so 0.5.x gates keep their order. What 0.6.0
 removes from 0.5.x (step marks, bars, `--resume`, the `resumed` and `refused` outcomes, the
-`resume` key, receipts reuse for a scope) is listed in its section 7.6.
+`resume` key, receipts reuse for a scope) is listed in its section 7.7.
 
 What stays here:
 

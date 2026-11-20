@@ -248,7 +248,7 @@ whose inputs already have a counted pass in the cache. The project declares whic
 and on which systems; CI is the gate for those, and a person's machine runs the rest. This follows
 [W-096](../decisions/W-096-task-graph-and-input-cache.md): a task graph and a cache by input hash,
 on the model of monorepo task runners, each with simple behaviour and written limits. It replaces
-the ordered lists of `steps`, the gate's step marks and bars, and `--resume` (section 7.6).
+the ordered lists of `steps`, the gate's step marks and bars, and `--resume` (section 7.7).
 
 **Prior art.** Nx runs a target after the targets named in its `dependsOn` and hashes a task from
 its `inputs`, its command, the runtime and the hashes of what it depends on
@@ -279,7 +279,7 @@ A system is Go's name for it: `darwin`, `linux`. The five keys need `"jackstay_s
 
 ```json
 "scopes": {
-  "x-build": {"run": ["just", "build"], "judge": "exit", "inputs": ["cmd/**", "internal/**", "go.*"]},
+  "x-build": {"run": ["just", "build"], "judge": "exit", "cache": false},
   "x-go":    {"run": ["just", "go"], "deps": ["x-build"]},
   "x-docs":  {"run": ["just", "docs"], "judge": "exit", "inputs": ["docs/**", "site/**"]},
   "x-ios":   {"run": ["just", "ios"], "deps": ["x-build"], "systems": ["darwin"]},
@@ -299,8 +299,10 @@ with no deps between its members runs in its declared order and stops at the fir
 0.5.x key `"resume": false` is read as `"cache": false`.
 
 `jst check` refuses an unknown name in `deps`, a cycle (naming it), `steps` and `deps` together,
-and a scope with `run` whose dep has `systems` that leave out one of the scope's own systems (it
-could never run there). Each refusal is also `not-started` (2) before anything runs.
+a scope with `run` whose dep has `systems` that leave out one of the scope's own systems (it could
+never run there), and a dep that needs test arguments (`{tests}` or a typed selector). Each refusal
+is also `not-started` (2) before anything runs. `jst check` warns about a scope with `run` that
+another scope depends on and that has no `cache` key (section 7.3, "Verdicts only").
 
 ### 7.2 The run
 
@@ -344,7 +346,7 @@ The last `jst test:` line reads the run as a whole:
 - **`passed`** when every scope asked for passed: by running now, or `cached` (the cache holds
   only counted passes of identical inputs, so a cached pass is the same claim), with `skipped` deps
   of a composite named. Only `passed` is a pass, as before; the detail says how much ran now:
-  `jst test: outcome=passed (gate, 41 s: x-docs=exited-0 cached, x-build=exited-0 cached,
+  `jst test: outcome=passed (gate, 41 s: x-docs=exited-0 cached, x-build=exited-0,
   x-go=passed, x-ios=passed)`. When nothing ran now, the detail says `nothing ran now: every scope
   cached`. A scope asked for that is exit-judged ends `exited-0`, cached or not.
 - **The failure** otherwise, by the order of testing.md section 2 (`failed` > `timed-out` >
@@ -409,9 +411,12 @@ and a rerun that passes is reported `passed` but cached on no hash that failed
 ([W-013](../decisions/W-013-quality-testing-declarative.md)). A node that ends `timed-out`,
 `unjudged` or `stopped` writes neither.
 
+**Verdicts only.** An entry records that a scope passed, never what it made: no output, no build
+product. So a scope whose files other scopes use, such as a build, sets `"cache": false`: a hit
+would skip it and leave the scopes after it without its files.
+
 **The store.** `<jackstay home>/<project>/cache/`: one entry per hash in the receipt's format,
-beside its failure notes. An entry is a verdict, not the output or a build product, so it is a few
-hundred bytes. It is pruned like receipts, by age, and at 10,000 entries per project (a constant)
+beside its failure notes. An entry is a few hundred bytes. It is pruned like receipts, by age, and at 10,000 entries per project (a constant)
 the oldest go first. In CI the same folder is kept in CI's own cache store: the workflow adopt
 writes restores it before the run and saves it after, under a key holding the system, so a rerun of
 a workflow or a merge commit with the same inputs skips what passed.
@@ -444,38 +449,65 @@ A scope is **covered on a system** when it runs in CI there: its own `ci` lists 
 scope covered on that system depends on it; and its `systems` include that system. A scope is
 **covered** when it is covered on some system.
 
-**Left here.** For a set of selected scopes and a meaning of covered, the nodes this machine runs
-are the nodes of the selected scopes' graphs that run on this system (their `systems`), need no
-test arguments (no `{tests}`, no typed selector) and are not covered; each runs with its deps,
-covered or not, since a scope runs only after its deps. `jst test changed` and `jst test uncovered`
-both run exactly that, through one graph (section 7.2); they differ only in the selected scopes and
-the meaning of covered:
+**Three groups.** `jst test changed` and `jst test uncovered` expand the graphs of their selected
+scopes and put every node with `run` (a composite only leads to its deps) in exactly one group, the
+first that fits:
 
-| command | selected scopes | covered means |
+1. **here**: it runs on this system (its `systems`) and is not covered in the command's sense;
+2. **ci**: it is covered on some system;
+3. **elsewhere**: neither; it is not covered, and its `systems` leave out this machine.
+
+| command | selected scopes | not covered, for **here**, means |
 |---|---|---|
-| `jst test changed` | the scopes matched by the changed paths | covered on some system |
-| `jst test uncovered` | every scope | covered on this machine's system |
+| `jst test changed` | the scopes matched by the changed paths | covered on no system |
+| `jst test uncovered` | every scope that needs no test arguments | not covered on this system |
+
+The **here** nodes run now through the graph (section 7.2), each with its deps from any group. The
+last line names the three groups:
+`jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; ci: x-docs, x-go;
+elsewhere: none)`. Its outcome, the first that applies:
+
+| outcome | when | exit | a pass? |
+|---|---|---|---|
+| a failure | a **here** node or a dep of one did not pass (section 7.2) | its own | no |
+| `needs-other-system` | `jst test changed` only: **elsewhere** is not empty; the line names each system and its scopes | 80 | no |
+| `passed` | **here** is not empty and passed | 0 | yes |
+| `left-to-ci` | **here** and **elsewhere** are empty: CI runs everything selected | 0 | no |
+
+`needs-other-system` before a pull request tells the person that a test of the change runs on no CI
+system and not on this machine: it needs another machine (`needs-other-system (darwin: x-ios)`).
+`jst test uncovered` lists **elsewhere** without changing its outcome, since an install vouches for
+this system only.
+
+Examples with the scopes of section 7.1 (`gate` has `ci: ["linux"]`, `x-ios` runs only on
+`darwin`), for a path no rule matches, which selects `gate`:
+
+- **`jst test changed` on a Mac**: **here** is `x-ios`, which runs after `x-build`; **ci** is
+  `x-build`, `x-docs`, `x-go`; the outcome is `passed` when they pass.
+- **`jst test changed` on Linux**: **here** is empty; **elsewhere** is `x-ios`; the outcome is
+  `needs-other-system (darwin: x-ios)`. A change only to `docs/` selects `x-docs`, which is in
+  **ci**: `left-to-ci`.
+- **`jst test uncovered` on a Mac**: nothing is covered on `darwin`, so **here** is every node:
+  the whole gate.
+- **`jst test uncovered` on Linux**: **here** is empty, since CI covers the rest on Linux; the
+  outcome is `left-to-ci`, and `x-ios` is listed under **elsewhere**.
+
+Where each command is used:
 
 - **Before a pull request**: `jst test changed` matches and ranks scopes by the changed paths as
-  today (`test.selection.order`, `gate` for a path no rule matches) and runs what is left here.
-  Example, with the scopes of section 7.1, on a Mac: a path no rule matches selects `gate`, which is
-  covered on Linux; `x-ios` in its graph runs only on `darwin`, so it is not covered, and it runs
-  here after `x-build`; `x-docs` and `x-go` are left to CI. When nothing is left here, nothing runs
-  and the line is `outcome=left-to-ci` (exit 0, not a pass), naming the CI jobs that run the
-  selected scopes.
-- **Before an install or a tag**: `jst test uncovered` runs what is left here on a clean copy of the
-  commit (`--commit REV`, default HEAD). Its `passed` record, for that commit, the project named by
-  that commit's `jackstay.json` and this system, is what `jst install` from a checkout needs:
-  without it, the install is refused and names `jst test uncovered`. For jackstay on a Mac that is
-  the whole gate: CI covers Linux only ([W-083](../decisions/W-083-no-macos-job-in-ci.md)). Before
-  a tag, a full gate on a Mac, including `jst test uncovered`, runs on the version-bump commit.
+  today (`test.selection.order`, `gate` for a path no rule matches).
+- **Before an install or a tag**: `jst test uncovered`, on a clean copy of the commit
+  (`--commit REV`, default HEAD). Its `passed` or `left-to-ci` record, for that commit, the project
+  named by that commit's `jackstay.json` and this system, is what `jst install` from a checkout
+  needs: without it, the install is refused and names `jst test uncovered`. For jackstay on a Mac
+  that is the whole gate: CI covers Linux only ([W-083](../decisions/W-083-no-macos-job-in-ci.md)).
+  Before a tag, a full gate on a Mac, including `jst test uncovered`, runs on the version-bump
+  commit.
 - **In CI**: the covered scopes run in jobs whose names the base's rules require; `jst doctor`
-  reports such a job the rules do not require. How scopes map to jobs is open (below). Whatever the
-  option, jackstay runs each scope once per job and cannot see inside a command, so the project
-  keeps the tests of its CI scopes on one system disjoint (section 7.5).
-- **The AGENTS block** states the split, generated from the scopes: "CI runs x-go, x-integration,
-  x-check, x-docs on Linux and is the gate. Before a pull request: `jst test changed`. Before an
-  install or a tag: `jst test uncovered`."
+  reports such a job the rules do not require. How scopes map to jobs is open (below).
+- **The AGENTS block** states the split, generated from the scopes: "CI runs x-go, x-check, x-sec,
+  x-docs on Linux and is the gate. Before a pull request: `jst test changed`. Before an install or
+  a tag: `jst test uncovered`."
 
 **Open: CI jobs and the graph.** How the scopes with `ci` become CI jobs is not decided. The
 options:
@@ -496,7 +528,8 @@ Everything else in this section holds under each option; only the job names doct
 ### 7.5 What it does not do
 
 - Run two nodes at once, or split one scope into shards: one node at a time.
-- Keep a scope's output or build products as cache outputs: the cache holds verdicts.
+- Keep what a scope makes. The cache holds verdicts only (section 7.3); a scope whose files other
+  scopes use sets `"cache": false` and runs every time.
 - Find overlap between scopes: `quick` inside `full` both run when both are asked for; the graph
   removes repeats of a scope, not of a test.
 - Keep a test from running twice in CI. jackstay schedules each scope once, but cannot see inside
@@ -505,7 +538,31 @@ Everything else in this section holds under each option; only the job names doct
   project's duty; jackstay does not check it.
 - Read a store other than this machine's or CI's own (section 7.3, "Open").
 
-### 7.6 What goes away
+### 7.6 jackstay's own scopes
+
+The configuration jackstay applies to itself with the code, so that no test runs twice on one
+commit in Linux CI. Each scope with `ci` tests a set no other one does:
+
+```json
+"scopes": {
+  "x-go":    {"run": ["go", "test", "-race", "-tags", "integration", "-json", "-count=1", "./..."],
+              "judge": "go-json", "ci": ["linux"]},
+  "x-check": {"run": ["just", "check"], "judge": "exit", "ci": ["linux"]},
+  "x-sec":   {"run": ["just", "security"], "judge": "exit", "ci": ["linux"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
+  "gate":    {"deps": ["x-check", "x-go", "x-sec", "x-docs"]}
+}
+```
+
+- `x-go`: the unit and the integration tests, each once, with the race detector; the
+  `internal/docs` Go tests are among them.
+- `x-check`: `gofmt`, `go vet` and the linter; no test.
+- `x-sec`: `govulncheck` and `gosec`; no test.
+- `x-docs`: the site build and its link check only; the `docs` recipe no longer runs `go test`.
+- `gate`: the local composite, with no `ci`. On a Mac it runs `x-go` too, which tests the
+  `*_darwin.go` code no CI job reaches; that is what `jst test uncovered` runs there.
+
+### 7.7 What goes away
 
 | 0.5.x | 0.6.0 |
 |---|---|
@@ -549,10 +606,13 @@ Everything else in this section holds under each option; only the job names doct
   from the cache; `timed-out`, `unjudged`, `stopped` write nothing; `--no-reuse` and
   `JACKSTAY_NO_REUSE` skip the read and still write; `"cache": false`; age and count pruning.
 - **Where tests run**: covered through `ci` and through a dependent, and not on a system its
-  `systems` leave out; the nodes left here for `jst test changed` and `jst test uncovered` from one
-  rule, with their deps: a covered `gate` whose graph holds a `darwin`-only scope running that scope
-  on macOS, and `left-to-ci` only when nothing is left here; `jst test uncovered` on Linux and
-  macOS, leaving out selector scopes, on a clean copy; the jobs of the option chosen for CI;
+  `systems` leave out; every node in exactly one of **here**, **ci** and **elsewhere**, for
+  `jst test changed` and `jst test uncovered`, with the four examples of section 7.4 as tests;
+  **here** running with deps from any group; `needs-other-system` (80) only from `jst test changed`
+  and only after **here** passed; `left-to-ci` only when **here** and **elsewhere** are empty;
+  `jst test uncovered` leaving out selector scopes, on a clean copy; `jst check` refusing a dep
+  that needs test arguments and warning about a depended-on scope with no `cache` key; the jobs of
+  the option chosen for CI;
   install refusing without its `passed` record for the commit, project and system; doctor reporting
   a `jst test SCOPE (SYSTEM)` job the rules do not require.
 - **GitHub pilot**, by hand in a disposable repository with synthetic content: required checks,
