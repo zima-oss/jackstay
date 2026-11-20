@@ -146,7 +146,7 @@ func (store Store) Clear(expected uint64) (Record, error) {
 
 func (store Store) update(expected uint64, change func(*Record) error) (Record, error) {
 	var record Record
-	err := durable.Update(context.Background(), store.path, 0o600, 0, func([]byte) ([]byte, error) {
+	err := durable.Update(context.Background(), store.path, 0o600, maxBriefBytes+1024, func([]byte) ([]byte, error) {
 		var err error
 		record, err = store.read()
 		if err != nil {

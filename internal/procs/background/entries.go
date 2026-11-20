@@ -98,7 +98,7 @@ func (place store) write(entry Entry) bool {
 	if err != nil {
 		return false
 	}
-	if err := os.MkdirAll(place.folder, 0o700); err != nil {
+	if err := durable.MakeFolder(place.folder, 0o700); err != nil {
 		return false
 	}
 	return durable.WriteAtomic(place.entryPath(entry.ID), data, 0o600, 0) == nil

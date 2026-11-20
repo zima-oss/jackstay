@@ -403,7 +403,7 @@ func WriteInRepo(root, relative string, data []byte) error {
 // WriteFileAtomic writes data to a temporary file in the same folder and renames it into place,
 // keeping an existing file's permissions.
 func WriteFileAtomic(target string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil { // #nosec G301 -- a folder of the project's own tree
+	if err := durable.MakeFolder(filepath.Dir(target), 0o755); err != nil { // #nosec G301 -- a folder of the project's own tree
 		return err
 	}
 	mode := os.FileMode(0o644)

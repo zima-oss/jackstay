@@ -368,7 +368,7 @@ func (store Store) Newest(task string) (RoundRecord, bool, error) {
 // writeFileWhole writes a file of jackstay's own (0600) through a temporary file in its folder.
 func writeFileWhole(target string, data []byte) error {
 	folder := filepath.Dir(target)
-	if err := os.MkdirAll(folder, 0o700); err != nil {
+	if err := durable.MakeFolder(folder, 0o700); err != nil {
 		return err
 	}
 	return durable.WriteAtomic(target, data, 0o600, 0)

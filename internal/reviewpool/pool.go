@@ -106,6 +106,7 @@ func Default() (Pool, error) {
 }
 
 func (pool Pool) statePath() string  { return filepath.Join(pool.Root, "state.json") }
+func (pool Pool) lockPath() string   { return filepath.Join(pool.Root, "state.lock") }
 func (pool Pool) workerPath() string { return filepath.Join(pool.Root, "worker.lock") }
 
 // Enqueue pins both revisions now. Repeated requests for the same repository, range,
@@ -740,7 +741,7 @@ func (pool Pool) edit(ctx context.Context, change func(*state) error) error {
 }
 
 func (pool Pool) editWhen(ctx context.Context, change func(*state) (bool, error)) error {
-	lock, err := durable.Lock(ctx, pool.statePath())
+	lock, err := durable.LockFile(ctx, pool.lockPath())
 	if err != nil {
 		return err
 	}
@@ -792,7 +793,7 @@ func (pool Pool) save(saved state) error {
 	if len(data) > maximumStateBytes {
 		return errors.New("review pool state exceeds size limit")
 	}
-	if err := os.MkdirAll(pool.Root, 0o700); err != nil {
+	if err := durable.MakeFolder(pool.Root, 0o700); err != nil {
 		return err
 	}
 	return durable.WriteAtomic(pool.statePath(), append(data, '\n'), 0o600, 0)

@@ -24,12 +24,17 @@ const LockTimeout = 30 * time.Second
 // ErrTooLarge is data, or a file, past the limit the caller gave.
 var ErrTooLarge = errors.New("larger than its limit")
 
+// ErrNotSynced is a write that replaced the file, but whose folder could not be fsynced: the new
+// content is what a reader sees now, though a crash may still bring the old one back.
+var ErrNotSynced = errors.New("written, but its folder was not synced")
+
 // LockPath is the lock file that guards path: a file beside it, path + ".lock".
 func LockPath(path string) string { return path + ".lock" }
 
 // WriteAtomic replaces the file at path with data, whole or not at all: a temporary file in the
 // same folder with the given mode, fsynced, renamed over path, then the folder fsynced. A limit
-// above zero refuses data longer than limit bytes (ErrTooLarge). The folder must exist.
+// above zero refuses data longer than limit bytes (ErrTooLarge). The folder must exist (MakeFolder).
+// An error that matches ErrNotSynced comes after the rename: the file holds data.
 func WriteAtomic(path string, data []byte, mode os.FileMode, limit int) error {
 	if limit > 0 && len(data) > limit {
 		return fmt.Errorf("%s: %d bytes: %w (%d)", path, len(data), ErrTooLarge, limit)
@@ -63,7 +68,36 @@ func WriteAtomic(path string, data []byte, mode os.FileMode, limit int) error {
 		return err
 	}
 	renamed = true
-	return SyncFolder(folder)
+	if err := SyncFolder(folder); err != nil {
+		return fmt.Errorf("%s: %w: %w", path, ErrNotSynced, err)
+	}
+	return nil
+}
+
+// MakeFolder makes folder and its missing parents with mode, like os.MkdirAll, and fsyncs the
+// parent of each folder it made, so the new folders survive a crash with what is written in them.
+func MakeFolder(folder string, mode os.FileMode) error {
+	var missing []string
+	for current := filepath.Clean(folder); ; current = filepath.Dir(current) {
+		if _, err := os.Lstat(current); err == nil {
+			break
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		missing = append(missing, current)
+		if filepath.Dir(current) == current {
+			break
+		}
+	}
+	if err := os.MkdirAll(folder, mode); err != nil {
+		return err
+	}
+	for index := len(missing) - 1; index >= 0; index-- {
+		if err := SyncFolder(filepath.Dir(missing[index])); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // SyncFolder fsyncs a folder, so a rename or a new name in it survives a crash.
@@ -110,25 +144,36 @@ func ReadLimited(path string, limit int) ([]byte, error) {
 	return data, nil
 }
 
-// Lock takes the lock that guards path (LockPath), making its folder when missing, and waits for
-// it until ctx ends or LockTimeout passes. The lock taken is the file at the lock's path, not one
-// removed meanwhile (flock.TryFile). The caller releases it.
+// Lock takes the lock that guards path (LockPath); see LockFile.
 func Lock(ctx context.Context, path string) (*flock.File, error) {
-	bounded, cancel := context.WithTimeoutCause(ctx, LockTimeout,
-		fmt.Errorf("%s: still held by another process after %s", LockPath(path), LockTimeout))
-	defer cancel()
-	return flock.WaitFile(bounded, LockPath(path))
+	return LockFile(ctx, LockPath(path))
 }
 
-// Update is a locked, bounded read-modify-write of the state file at path. Under the lock (Lock)
-// it reads the file (ReadLimited; nil when missing) and gives it to change; what change returns
-// is written whole (WriteAtomic, with mode and limit), and nil leaves the file as it is. The
-// file's folder is made (0700) when missing.
+// LockFile takes the lock file at lockPath, making its folder when missing, and waits for it until
+// ctx ends or LockTimeout passes. The lock taken is the file at the lock's path, not one removed
+// meanwhile (flock.TryFile). The caller releases it.
+func LockFile(ctx context.Context, lockPath string) (*flock.File, error) {
+	bounded, cancel := context.WithTimeoutCause(ctx, LockTimeout,
+		fmt.Errorf("%s: still held by another process after %s", lockPath, LockTimeout))
+	defer cancel()
+	return flock.WaitFile(bounded, lockPath)
+}
+
+// Update is a locked, bounded read-modify-write of the state file at path, under its own lock
+// (LockPath); see UpdateUnder.
 func Update(ctx context.Context, path string, mode os.FileMode, limit int, change func(current []byte) ([]byte, error)) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	return UpdateUnder(ctx, LockPath(path), path, mode, limit, change)
+}
+
+// UpdateUnder is a locked, bounded read-modify-write of the state file at path. Under the lock file
+// at lockPath (LockFile) it reads the file (ReadLimited; nil when missing) and gives it to change;
+// what change returns is written whole (WriteAtomic, with mode and limit), and nil leaves the file
+// as it is. The file's folder is made (MakeFolder, 0700) when missing.
+func UpdateUnder(ctx context.Context, lockPath, path string, mode os.FileMode, limit int, change func(current []byte) ([]byte, error)) error {
+	if err := MakeFolder(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	held, err := Lock(ctx, path)
+	held, err := LockFile(ctx, lockPath)
 	if err != nil {
 		return err
 	}

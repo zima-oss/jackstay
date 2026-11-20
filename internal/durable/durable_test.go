@@ -132,3 +132,31 @@ func TestUpdateGivesUpWhenTheLockIsHeldPastTheContext(t *testing.T) {
 		t.Fatalf("err %v, called %v", err, called)
 	}
 }
+
+func TestUpdateUnderTakesTheNamedLockAndMakeFolderMakesTheChain(t *testing.T) {
+	folder := t.TempDir()
+	path := filepath.Join(folder, "a", "b", "state.json")
+	lockPath := filepath.Join(folder, "named.lock")
+	held, err := flock.TryFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := UpdateUnder(ctx, lockPath, path, 0o600, 0, func([]byte) ([]byte, error) { return []byte("x"), nil }); err == nil {
+		t.Fatal("wrote under another's lock")
+	}
+	held.Release()
+	if err := UpdateUnder(context.Background(), lockPath, path, 0o600, 0, func([]byte) ([]byte, error) { return []byte("x"), nil }); err != nil {
+		t.Fatal(err)
+	}
+	if data, _ := os.ReadFile(path); string(data) != "x" {
+		t.Fatalf("read %q", data)
+	}
+	if _, err := os.Stat(LockPath(path)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a lock beside the file was made: %v", err)
+	}
+	if err := MakeFolder(filepath.Join(folder, "a", "b"), 0o700); err != nil {
+		t.Fatal("an existing folder:", err)
+	}
+}

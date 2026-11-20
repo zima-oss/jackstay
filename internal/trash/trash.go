@@ -260,7 +260,7 @@ func move(folder, given, project, session string, keepDays int, now time.Time, e
 		return entry, nil
 	}
 	entry.Held = false
-	if err := writeRecord(place, entry); err != nil {
+	if err := writeRecord(place, entry); err != nil && !errors.Is(err, durable.ErrNotSynced) {
 		entry.Held = true // the record on disk still holds it: kept until restored, never lost
 	}
 	return entry, nil

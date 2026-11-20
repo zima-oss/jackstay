@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/flock"
 )
 
 func chatFixture(t *testing.T) (Store, Store) {
@@ -373,5 +374,36 @@ func TestPerRecipientPendingCapLeavesSpaceForOtherSessions(t *testing.T) {
 	}
 	if _, _, err := store.Send(owner.ID, first.ID, "message", "available", "after", ""); err != nil {
 		t.Fatalf("acknowledgment did not free the slot: %v", err)
+	}
+}
+
+// The chat's writers share one lock, state.lock beside the state, with every earlier writer.
+func TestChatWritersWaitForTheStateLock(t *testing.T) {
+	common := filepath.Join(t.TempDir(), ".git")
+	if err := os.Mkdir(common, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := StoreFor(common, config.ChatPolicy{Enabled: true, MaxMessageBytes: 4096, MaxPending: 8, MaxSessions: 8, RetentionHours: 72})
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := flock.TryFile(filepath.Join(filepath.Dir(store.path), "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, registerErr := store.Register("waiting", "")
+		done <- registerErr
+	}()
+	select {
+	case err := <-done:
+		held.Release()
+		t.Fatalf("a writer went on under another's state.lock: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	held.Release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
