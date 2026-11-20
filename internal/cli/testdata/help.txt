@@ -1063,10 +1063,11 @@ usage: jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief
                  [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
 
 A cold review of one commit (default HEAD, against its first parent) or of BASE..REV, in
-rounds (docs/design/review.md). Choose codex or claude-code explicitly or set review.use
-in jackstay.json. A revision named like a subcommand is given after --.
+rounds (docs/design/review.md). The reviewer is Codex unless --reviewer or review.use in
+jackstay.json names codex, claude-code or both. A revision named like a subcommand is given
+after --.
   --task NAME         the task the rounds belong to (default: the branch)
-  --reviewer NAMES    reviewers, comma-separated (default: review.use)
+  --reviewer NAMES    reviewers, comma-separated (default: review.use, else codex)
   --brief FILE        a brief file added to the prompt
   --focus TEXT        where to look hardest (it never narrows the round)
   --fresh             start a new chain: a full review from BASE

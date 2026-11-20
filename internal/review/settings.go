@@ -97,6 +97,9 @@ func defaultReviewer(name string) ReviewerSettings {
 		Isolation: append([]string(nil), DefaultIsolation...)}
 }
 
+// DefaultReviewer is the reviewer a round runs when neither --reviewer nor `review.use` names one.
+const DefaultReviewer = "codex"
+
 // Defaults are the settings of a project with no `review` section.
 func Defaults() Settings {
 	reviewers := make(map[string]ReviewerSettings, len(KnownReviewers))
@@ -105,6 +108,7 @@ func Defaults() Settings {
 	}
 	return Settings{
 		Pool:             PoolSettings{Accepting: true, HistoryDays: 30, MaxPending: 32, MaxAttempts: 5, RetryInitialSeconds: 30, RetryCapSeconds: 900},
+		Use:              []string{DefaultReviewer},
 		Reviewers:        reviewers,
 		Severities:       []string{"blocker", "major", "minor"},
 		Blocking:         []string{"blocker"},

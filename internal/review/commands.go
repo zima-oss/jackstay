@@ -90,7 +90,7 @@ func runReview(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	reviewers := ""
 	asJSON := false
 	flags.StringVar(&options.Task, "task", "", "the task the rounds belong to (default: the branch)")
-	flags.StringVar(&reviewers, "reviewer", "", "reviewers, comma-separated (default: review.use)")
+	flags.StringVar(&reviewers, "reviewer", "", "reviewers, comma-separated (default: review.use, else codex)")
 	flags.StringVar(&options.BriefFile, "brief", "", "a brief file added to the prompt")
 	flags.StringVar(&options.Focus, "focus", "", "where to look hardest (never narrows the round)")
 	flags.BoolVar(&options.Fresh, "fresh", false, "start a new chain: a full review from BASE")
