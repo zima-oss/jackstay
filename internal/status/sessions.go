@@ -5,8 +5,6 @@ package status
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -77,7 +75,7 @@ func openCheckout(ctx context.Context, current string) (checkout, error) {
 	if err != nil {
 		return checkout{}, err
 	}
-	found := checkout{RepositoryID: localID(common), Root: top, Common: common, Worktrees: parseWorktrees(string(listed))}
+	found := checkout{RepositoryID: gitcli.CommonFolderID(common), Root: top, Common: common, Worktrees: parseWorktrees(string(listed))}
 	home, err := homedir.Home()
 	if err != nil {
 		return checkout{}, err
@@ -122,37 +120,9 @@ func (found checkout) worktreeOwning(location string) string {
 	return ownerOf(found.byPath, location)
 }
 
-// holds says path is inside one of the repository's worktrees. A path that no longer exists (a
-// job's folder renamed or removed while it runs) is judged by its words against the worktrees'
-// paths, so a running job is not hidden.
+// holds says path is inside one of the repository's worktrees.
 func (found checkout) holds(path string) bool {
-	if path == "" || !filepath.IsAbs(path) {
-		return false
-	}
-	if found.worktreeOwning(path) != "" {
-		return true
-	}
-	if _, err := os.Lstat(path); err == nil {
-		return false
-	}
-	cleaned := filepath.Clean(path)
-	for _, tree := range found.Worktrees {
-		for _, root := range []string{tree.Path, realPathOf(tree.Path)} {
-			if root != "" && (cleaned == root || strings.HasPrefix(cleaned, root+string(filepath.Separator))) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// realPathOf is the path with its links resolved, "" when it cannot be.
-func realPathOf(path string) string {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return ""
-	}
-	return resolved
+	return path != "" && found.worktreeOwning(path) != ""
 }
 
 func worktreeID(ctx context.Context, directory, expectedCommon string) string {
@@ -174,12 +144,7 @@ func worktreeID(ctx context.Context, directory, expectedCommon string) string {
 	if err != nil {
 		return ""
 	}
-	return localID(dir)
-}
-
-func localID(source string) string {
-	digest := sha256.Sum256([]byte(filepath.Clean(source)))
-	return "git:" + hex.EncodeToString(digest[:])
+	return gitcli.CommonFolderID(dir)
 }
 
 func parseWorktrees(raw string) []Worktree {

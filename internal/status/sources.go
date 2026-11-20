@@ -67,11 +67,14 @@ type BriefStatus struct {
 	Error string `json:"error,omitempty"`
 }
 
-// BackgroundStatus are the `jst bg` jobs started in the repository's worktrees.
+// BackgroundStatus are the `jst bg` jobs started in the repository. Unattributed counts jobs of
+// an older jst whose folder no longer exists, which may be this repository's: the report is then
+// partial.
 type BackgroundStatus struct {
-	Status string           `json:"status"`
-	Jobs   []background.Job `json:"jobs,omitempty"`
-	Error  string           `json:"error,omitempty"`
+	Status       string           `json:"status"`
+	Jobs         []background.Job `json:"jobs,omitempty"`
+	Unattributed int              `json:"unattributed"`
+	Error        string           `json:"error,omitempty"`
 }
 
 func readCards(root string, loaded config.Config) CardStatus {
@@ -201,7 +204,10 @@ func readBrief(root string) BriefStatus {
 	return BriefStatus{Status: "saved", Summary: summary}
 }
 
-// readBackground are the jobs whose folder is inside one of the repository's worktrees.
+// readBackground are the jobs started in this repository: by the repository identity `jst bg`
+// recorded at launch, which survives a renamed folder or a moved worktree. A job of an older jst
+// carries none and is placed by its folder while that exists; one whose folder is gone is counted
+// as unattributed rather than guessed.
 func readBackground(found checkout) BackgroundStatus {
 	jobs, err := background.Jobs()
 	if err != nil {
@@ -209,12 +215,24 @@ func readBackground(found checkout) BackgroundStatus {
 	}
 	result := BackgroundStatus{Status: stateNone}
 	for _, job := range jobs {
-		if found.holds(job.Cwd) {
+		switch {
+		case job.Repository != "":
+			if job.Repository == found.RepositoryID {
+				result.Jobs = append(result.Jobs, job)
+			}
+		case found.holds(job.Cwd):
 			result.Jobs = append(result.Jobs, job)
+		case !exists(job.Cwd):
+			result.Unattributed++
 		}
 	}
 	if len(result.Jobs) > 0 {
 		result.Status = "listed"
 	}
 	return result
+}
+
+func exists(path string) bool {
+	_, err := os.Lstat(path)
+	return err == nil
 }

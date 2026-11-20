@@ -2,11 +2,13 @@ package background
 
 // Job is one `jst bg` group as another command may read it: no command line, no session.
 type Job struct {
-	ID      string  `json:"id"`
-	Name    string  `json:"name,omitempty"`
-	State   string  `json:"state"`
-	Cwd     string  `json:"cwd"`
-	Started float64 `json:"started"`
+	ID    string `json:"id"`
+	Name  string `json:"name,omitempty"`
+	State string `json:"state"`
+	Cwd   string `json:"cwd"`
+	// Repository is the repository it was started in; "" for a job started by a jst before 0.6.0.
+	Repository string  `json:"repository,omitempty"`
+	Started    float64 `json:"started"`
 }
 
 // Jobs are the background groups of this machine with their states, read without changing
@@ -26,7 +28,7 @@ func jobsOf(host machine, place store) []Job {
 	found := []Job{}
 	for _, entry := range place.entries() {
 		found = append(found, Job{ID: entry.ID, Name: entry.nameOf(), State: look.state(table, entry),
-			Cwd: entry.Cwd, Started: entry.Started})
+			Cwd: entry.Cwd, Repository: entry.Repository, Started: entry.Started})
 	}
 	return found
 }

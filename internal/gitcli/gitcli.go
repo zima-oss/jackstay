@@ -15,6 +15,8 @@ package gitcli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -201,6 +203,27 @@ func (git Git) Line(ctx context.Context, args ...string) (string, error) {
 func (git Git) CommonDir(ctx context.Context) (string, error) {
 	line, err := git.Line(ctx, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	return strings.TrimSpace(line), err
+}
+
+// RepositoryID names the repository Dir is in on this machine: "git:" and the SHA-256 of its common
+// folder's real path. Linked worktrees share it, a moved linked worktree keeps it, and independent
+// clones differ even under one project name.
+func (git Git) RepositoryID(ctx context.Context) (string, error) {
+	common, err := git.CommonDir(ctx)
+	if err != nil {
+		return "", err
+	}
+	common, err = filepath.EvalSymlinks(common)
+	if err != nil {
+		return "", err
+	}
+	return CommonFolderID(common), nil
+}
+
+// CommonFolderID is RepositoryID of a common folder whose real path is already known.
+func CommonFolderID(common string) string {
+	digest := sha256.Sum256([]byte(filepath.Clean(common)))
+	return "git:" + hex.EncodeToString(digest[:])
 }
 
 // MainCheckout is the main checkout's top folder (the one that holds the common .git), whichever

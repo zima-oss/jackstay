@@ -145,20 +145,35 @@ func TestARepositoryWithoutJackstayIsReadWhole(t *testing.T) {
 	}
 }
 
-func TestAJobWhoseFolderWasRenamedIsStillShown(t *testing.T) {
+func TestJobsAreAttributedByTheRepositoryRecordedAtLaunch(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("JACKSTAY_HOME", home)
 	parent := t.TempDir()
 	root := repository(t, parent, "app")
 	other := repository(t, parent, "other")
-	for _, job := range []struct{ id, cwd string }{{"1800000000-1", filepath.Join(root, "renamed-away")},
-		{"1800000000-2", filepath.Join(other, "gone")}, {"1800000000-3", filepath.Join(parent, "app-sibling", "x")}} {
-		write(t, filepath.Join(home, ".all", "procs", job.id+".json"),
-			`{"id":"`+job.id+`","name":null,"supervisor":999999,"supervisor_start":1,"group":999998,"started":1,"leader_start":1,`+
-				`"deadline":null,"keep":true,"session":null,"watched":null,"cwd":"`+job.cwd+`","command":["make"],"status":"running"}`)
+	moved := filepath.Join(parent, "moved")
+	git(t, root, "worktree", "add", "-qb", "feature", filepath.Join(parent, "linked"))
+	git(t, root, "worktree", "move", filepath.Join(parent, "linked"), moved)
+	identity := readBoard(root).Repositories[0].RepositoryID
+	entry := func(id, cwd, repository string) {
+		write(t, filepath.Join(home, ".all", "procs", id+".json"),
+			`{"id":"`+id+`","name":null,"supervisor":999999,"supervisor_start":1,"group":999998,"started":1,"leader_start":1,`+
+				`"deadline":null,"keep":true,"session":null,"watched":null,"cwd":"`+cwd+`","repository":"`+repository+`",`+
+				`"command":["make"],"status":"running"}`)
 	}
+	entry("1800000000-1", filepath.Join(parent, "linked", "sub"), identity) // its worktree moved since
+	entry("1800000000-2", filepath.Join(root, "renamed-away"), identity)    // its folder renamed since
+	entry("1800000000-3", root, "git:another")                              // another repository at a reused path
+	entry("1800000000-4", other, "")                                        // an older jst, in another repository
 	found := readBoard(root).Repositories[0]
-	if len(found.Background.Jobs) != 1 || found.Background.Jobs[0].ID != "1800000000-1" {
+	if len(found.Background.Jobs) != 2 || found.Background.Jobs[0].ID != "1800000000-1" || found.Background.Jobs[1].ID != "1800000000-2" ||
+		found.Background.Unattributed != 0 {
 		t.Fatalf("jobs %+v", found.Background)
+	}
+
+	entry("1800000000-5", filepath.Join(root, "gone"), "") // an older jst, its folder gone: not guessed
+	report := readBoard(root)
+	if report.Repositories[0].Background.Unattributed != 1 || !report.Partial {
+		t.Fatalf("an unattributable job: %+v", report.Repositories[0].Background)
 	}
 }

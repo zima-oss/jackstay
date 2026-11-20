@@ -134,10 +134,14 @@ func chatText(chat ChatStatus) string {
 }
 
 func backgroundText(jobs BackgroundStatus) string {
+	text := jobs.Status
 	if jobs.Status == "listed" {
-		return fmt.Sprintf("%d job(s)", len(jobs.Jobs))
+		text = fmt.Sprintf("%d job(s)", len(jobs.Jobs))
 	}
-	return jobs.Status
+	if jobs.Unattributed > 0 {
+		text += fmt.Sprintf(", %d of an older jst whose folder is gone (`jst procs --all`)", jobs.Unattributed)
+	}
+	return text
 }
 
 func runText(run RunStatus) string {

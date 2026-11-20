@@ -28,6 +28,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/supervise"
 	"github.com/zima-oss/jackstay/internal/telemetry"
@@ -316,7 +317,8 @@ func (run *backgroundRun) begin(id string, group int, control stopper, started t
 	_, settings, _ := config.Load(run.here, []string{telemetry.SectionName})
 	_, commandMode := telemetry.SectionOf(settings.Section(telemetry.SectionName))
 	entry := Entry{ID: id, Name: run.asked.name, Supervisor: run.host.pid, Group: group, Started: epoch(started),
-		Keep: run.asked.keep, Cwd: run.here, Command: mask.Argv(run.asked.argv, commandMode), Status: "running", commandMasked: true}
+		Keep: run.asked.keep, Cwd: run.here, Repository: repositoryOf(run.here), Command: mask.Argv(run.asked.argv, commandMode),
+		Status: "running", commandMasked: true}
 	if leader, present, _ := run.host.row(group); present {
 		entry.LeaderStart = &leader.Start
 	}
@@ -351,6 +353,17 @@ func (run *backgroundRun) begin(id string, group int, control stopper, started t
 		control.Stop()
 	}
 	return found
+}
+
+// repositoryOf is the repository a folder is in, "" when Git cannot tell within a moment.
+func repositoryOf(folder string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	id, err := (gitcli.Git{Dir: folder}).RepositoryID(ctx)
+	if err != nil {
+		return ""
+	}
+	return id
 }
 
 // startWords is the line that says what supervises the command.
