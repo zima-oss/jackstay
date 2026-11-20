@@ -33,6 +33,9 @@ type Defects struct {
 		Subject string `json:"subject"`
 	} `json:"ranges"`
 	Defects []Defect `json:"defects"`
+	// Extras are real issues of the fixture that were not seeded: a finding of one is confirmed (it
+	// counts for precision) but not a seeded defect found (it does not count for recall).
+	Extras []Defect `json:"extras"`
 }
 
 // Defect is one seeded defect: where it is, the words a finding about it uses, and what it is.
@@ -62,6 +65,7 @@ type Run struct {
 	Outcome    string    `json:"outcome"`
 	Findings   []Finding `json:"findings"`
 	Found      []string  `json:"found"`      // seeded defects found
+	Extras     int       `json:"extras"`     // findings of a confirmed issue that was not seeded
 	Unmatched  int       `json:"unmatched"`  // findings that name no seeded defect
 	Duplicates int       `json:"duplicates"` // findings of a defect already found in this run
 }
@@ -508,36 +512,47 @@ func (b *bench) directClaude(run *Run, checkout, base, head string) (review.Answ
 	return answer, json.Unmarshal(envelope.Structured, &answer)
 }
 
-// score matches each finding to at most one seeded defect of its range: the finding must name the
+// match is the defect of list in run's range that finding names: the finding must name the
 // defect's file or symbol and use one of its words; the defect with the most words wins.
+func match(list []Defect, rangeName string, finding Finding) string {
+	text := strings.ToLower(finding.Place + " " + finding.Title + " " + finding.Detail)
+	where := strings.ToLower(finding.Place + " " + finding.Title)
+	best, bestScore := "", 0
+	for _, defect := range list {
+		if defect.Range != rangeName {
+			continue
+		}
+		if !strings.Contains(where, strings.ToLower(defect.File)) && !strings.Contains(where, strings.ToLower(defect.Symbol)) &&
+			!strings.Contains(text, strings.ToLower(defect.Symbol)) {
+			continue
+		}
+		score := 0
+		for _, word := range defect.Words {
+			if strings.Contains(text, strings.ToLower(word)) {
+				score++
+			}
+		}
+		if score > bestScore {
+			best, bestScore = defect.ID, score
+		}
+	}
+	return best
+}
+
+// score matches each finding to a seeded defect, else to a confirmed extra, else counts it unmatched.
 func (b *bench) score(run *Run) {
 	found := map[string]bool{}
 	for index, finding := range run.Findings {
-		text := strings.ToLower(finding.Place + " " + finding.Title + " " + finding.Detail)
-		where := strings.ToLower(finding.Place + " " + finding.Title)
-		best, bestScore := "", 0
-		for _, defect := range b.defects.Defects {
-			if defect.Range != run.Range {
-				continue
-			}
-			if !strings.Contains(where, strings.ToLower(defect.File)) && !strings.Contains(where, strings.ToLower(defect.Symbol)) &&
-				!strings.Contains(text, strings.ToLower(defect.Symbol)) {
-				continue
-			}
-			score := 0
-			for _, word := range defect.Words {
-				if strings.Contains(text, strings.ToLower(word)) {
-					score++
-				}
-			}
-			if score > bestScore {
-				best, bestScore = defect.ID, score
-			}
+		best := match(b.defects.Defects, run.Range, finding)
+		if best == "" {
+			best = match(b.defects.Extras, run.Range, finding)
 		}
 		run.Findings[index].Match = best
 		switch {
 		case best == "":
 			run.Unmatched++
+		case strings.HasPrefix(best, "E"):
+			run.Extras++
 		case found[best]:
 			run.Duplicates++
 		default:
@@ -591,8 +606,9 @@ func (b *bench) report(all []Run, arms []string, runs int, stamp string) string 
 	fmt.Fprintf(&out, "%d seeded defects over %d ranges (`bench/review/testdata`), %d sequential runs per arm and range, "+
 		"arms in turning order. Codex model %q, effort %q; Claude model %q, effort %q (both arms of a reviewer alike).\n\n",
 		len(b.defects.Defects), len(b.defects.Ranges), runs, b.codexModel, b.codexEffort, b.claudeModel, b.claudeEffort)
-	out.WriteString("Recall: seeded defects found per run, of those in the range. Precision: findings that name a seeded defect, " +
-		"of all findings (unmatched findings are listed below for a person to confirm). Mean ± standard deviation over runs.\n\n")
+	out.WriteString("Recall: seeded defects found per run, of those in the range. Precision: confirmed findings — a seeded " +
+		"defect, or one of the fixture's known real issues that were not seeded (`extras`) — of all findings; the findings " +
+		"that match neither are listed below for a person to judge. Mean ± standard deviation over runs.\n\n")
 	out.WriteString("| arm | runs answered | recall | precision | wall s | prepare s | wait s | model and tools s | tokens | cost USD | models |\n")
 	out.WriteString("|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, arm := range arms {
