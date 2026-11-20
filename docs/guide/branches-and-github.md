@@ -164,7 +164,9 @@ optional check does not block. When the rules require no check and `land.checks`
 not a gate for that base, so `jst land` stops ready for a person. When the rules cannot be read, the
 checks in `land.checks` are required; with none listed, it stops ready for a person.
 
-Where the base requires a merge queue, `jst land` hands the change to the host's queue.
+Where the base requires a merge queue, `jst land` hands the change to the host's queue. While it
+waits there, `jst land` judges the base's policy again at each new tip; a base that no longer lets
+the agent merge it takes the change out of the queue and stops ready for a person.
 
 ### The last line
 

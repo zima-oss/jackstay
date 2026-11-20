@@ -66,6 +66,8 @@ type GitHub interface {
 	Merge(ctx context.Context, number int, method, headSHA, title, body string) (githubapi.MergeResult, error)
 	// Enqueue puts a pull request (by its node id) in the merge queue at expectedHead; a write.
 	Enqueue(ctx context.Context, pullRequestID, expectedHead string) error
+	// Dequeue takes the pull request out of the merge queue; a write, never retried.
+	Dequeue(ctx context.Context, pullRequestID string) error
 	// WorkflowRun is one run by its id (one pushed out of the newest listed).
 	WorkflowRun(ctx context.Context, runID int64) (githubapi.WorkflowRun, error)
 	// MergeableState is REST's mergeable_state of a pull request: "behind", "clean", "blocked", …

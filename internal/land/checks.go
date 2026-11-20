@@ -300,6 +300,10 @@ func (work *session) prepareLanding(number int, deadline time.Time) (ready, int,
 		if err != nil || code != exitLanded {
 			return ready{}, code, err
 		}
+		if checked.Base != change.Base {
+			return ready{}, 0, failf(exitMoved, "#%d was retargeted from %s to %s while its checks were read; run it again",
+				number, change.Base, checked.Base)
+		}
 		if checked.BaseSHA != decision.baseSHA {
 			continue // the base moved while waiting: judge the policy at the new base
 		}

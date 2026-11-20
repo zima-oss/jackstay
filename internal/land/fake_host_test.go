@@ -49,6 +49,10 @@ type fakeHost struct {
 
 	// rules answer each Rules call in turn; the last repeats.
 	ruleCalls int
+	// dequeued are the changes taken out of the queue.
+	dequeued []int
+	// onEnqueue runs once the change is in the queue (what happens while it waits).
+	onEnqueue func()
 	// tip answers BranchTip (nil: the change's base commit).
 	tip func(branch string) string
 	// onRules runs inside each read of the rules, with its count (what the world does meanwhile).
@@ -190,6 +194,12 @@ func (host *fakeHost) Merge(_ context.Context, change hosting.Change, request ho
 	return hosting.Merged{Merged: true, SHA: "5ca1ab1e00000000000000000000000000000000"}, nil
 }
 
+func (host *fakeHost) Dequeue(_ context.Context, change hosting.Change) error {
+	host.record("dequeue #%d", change.Number)
+	host.dequeued = append(host.dequeued, change.Number)
+	return nil
+}
+
 func (host *fakeHost) BranchTip(_ context.Context, branch string) (string, error) {
 	host.record("branch-tip %s", branch)
 	if host.tip == nil {
@@ -207,6 +217,9 @@ func (host *fakeHost) Enqueue(_ context.Context, change hosting.Change, expected
 		return host.enqueueErr
 	}
 	host.enqueued = append(host.enqueued, expectedHead)
+	if host.onEnqueue != nil {
+		host.onEnqueue()
+	}
 	host.enqueuedAtRead = host.reads
 	return nil
 }

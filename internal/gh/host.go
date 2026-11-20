@@ -279,6 +279,14 @@ func (adapter *host) Enqueue(ctx context.Context, change hosting.Change, expecte
 	return adapter.github.Enqueue(ctx, change.ID, expectedHead)
 }
 
+// Dequeue takes the change out of GitHub's merge queue, by the change as read (its node ID).
+func (adapter *host) Dequeue(ctx context.Context, change hosting.Change) error {
+	if change.ID == "" {
+		return fmt.Errorf("pull request #%d was read without its node ID", change.Number)
+	}
+	return adapter.github.Dequeue(ctx, change.ID)
+}
+
 // BranchTip is the commit a branch is at on GitHub now.
 func (adapter *host) BranchTip(ctx context.Context, branch string) (string, error) {
 	return adapter.github.BranchTip(ctx, branch)

@@ -17,6 +17,8 @@ type policy struct {
 	baseSHA  string
 	headSHA  string
 	agentMay bool
+	// cardsInDescription: the base's file puts the Card line in the description.
+	cardsInDescription bool
 	// reasons say why the change is a person's.
 	reasons []string
 }
@@ -32,6 +34,18 @@ func (work *session) basePolicyAtTip() (config.Land, bool, error) {
 		return config.Land{}, false, failf(exitRefused, "%s cannot be fetched from %s: %v", work.base, work.remoteName, err)
 	}
 	return work.policyAt("refs/remotes/" + work.remoteName + "/" + work.base)
+}
+
+// fileAt is jackstay.json at a revision (nil when there is none).
+func (work *session) fileAt(revision string) []byte {
+	if _, err := work.git.Run(work.ctx, "cat-file", "-e", revision+":"+projectFile); err != nil {
+		return nil
+	}
+	data, err := work.git.Run(work.ctx, "show", revision+":"+projectFile)
+	if err != nil {
+		return nil
+	}
+	return data
 }
 
 // policyAt is the `land` section of jackstay.json at a revision: (zero, false) when the file or
@@ -66,6 +80,7 @@ func (work *session) judgePolicy(change hosting.Change) (policy, error) {
 	if decision.base, decision.hasBase, err = work.policyAt(change.BaseSHA); err != nil {
 		return policy{}, err
 	}
+	decision.cardsInDescription = cardsInDescription(work.fileAt(change.BaseSHA))
 	changed, hasChanged, err := work.policyAt(change.HeadSHA)
 	if err != nil {
 		return policy{}, err

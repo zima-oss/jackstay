@@ -38,25 +38,22 @@ func (work *session) finish(landing ready, deadline time.Time) (int, error) {
 	return work.write(landing, change, body, deadline)
 }
 
-// localChecks are what this checkout judges before the recheck: no commit here left behind, the
-// Card line of the description, and a merge method the repository allows. It returns the
-// description judged: the merge commit's message.
+// localChecks are what this checkout judges before the recheck: no commit here left behind, and a
+// merge method the repository allows (and, where the base's Card line is in the description, one
+// that lands it). It returns the merge commit's message: the description as read.
 func (work *session) localChecks(landing ready) (string, error) {
 	change := landing.change
 	if err := work.nothingLeftBehind(change.Number, change.HeadSHA); err != nil {
 		return "", err
 	}
 	method := methodOf(landing.base)
-	if err := cardsNeedAMergeCommit(method, work.cardSection()); err != nil {
+	if err := cardsNeedAMergeCommit(method, landing.cardsInDescription); err != nil {
 		return "", err
 	}
 	if landing.rules.MethodsRead && !slices.Contains(landing.rules.Methods, method) {
 		return "", failf(exitRefused, "the repository does not allow a %s merge (`land.method`); it allows: %v", method, landing.rules.Methods)
 	}
-	if work.cardSection() == nil {
-		return change.Body, nil
-	}
-	return work.judgeDescriptionOf(change)
+	return change.Body, nil
 }
 
 // recheck is step 5: the change, the rules and the required checks read again, then the change
@@ -117,6 +114,7 @@ func (work *session) write(landing ready, change hosting.Change, body string, de
 	if err != nil {
 		return 0, fmt.Errorf("whether #%d merged: %w", change.Number, err)
 	}
+	judgedTip := landing.change.BaseSHA
 	for queued && asked == nil && !landed.Merged() && landed.State == "open" {
 		more, err := work.sleepUntil(deadline, work.options.interval)
 		if err != nil {
@@ -124,6 +122,13 @@ func (work *session) write(landing ready, change hosting.Change, body string, de
 		}
 		if !more {
 			return 0, failf(exitPending, "#%d is still in the merge queue at the deadline; the remote branch is kept", change.Number)
+		}
+		if landing.agentMay {
+			// While it waits in the queue, the base moves: its policy is judged again at each new
+			// tip, and a base that no longer lets the agent merge takes it out of the queue.
+			if judgedTip, err = work.stillAgents(landed, judgedTip); err != nil {
+				return 0, err
+			}
 		}
 		if landed, err = work.readChange(change.Number); err != nil {
 			return 0, err
@@ -156,14 +161,33 @@ func (work *session) write(landing ready, change hosting.Change, body string, de
 	return exitLanded, nil
 }
 
-// cardsNeedAMergeCommit refuses `land.method: rebase` in a project whose Card line is in the
-// description: a rebase writes no merge commit, so the line would not land.
-func cardsNeedAMergeCommit(method hosting.Method, cards map[string]any) error {
-	if method == hosting.Rebase && cards != nil {
-		return failf(exitInvalid, "`land.method` is rebase, and this project's Card line is in the change request's "+
-			"description, which a rebase does not land: use squash or merge")
+// stillAgents judges the policy again when the base's tip moved past judgedTip while the change
+// waits in the host's queue. A base whose policy no longer lets the agent merge it (autonomy
+// withdrawn, a new human path), or that cannot be judged, takes the change out of the queue and
+// hands it to a person. It returns the tip judged.
+func (work *session) stillAgents(queued hosting.Change, judgedTip string) (string, error) {
+	tip, err := work.host.BranchTip(work.ctx, queued.Base)
+	if err != nil || tip == judgedTip {
+		return judgedTip, nil // unread: the next look asks again
 	}
-	return nil
+	moved := queued
+	moved.BaseSHA = tip
+	decision, err := work.judgePolicy(moved)
+	if err == nil && decision.agentMay {
+		return tip, nil
+	}
+	why := "its policy cannot be judged"
+	if err != nil {
+		why += ": " + err.Error()
+	} else {
+		why = strings.Join(decision.reasons, "; ")
+	}
+	if dequeueErr := work.host.Dequeue(work.ctx, queued); dequeueErr != nil {
+		return "", failf(exitUnexpected, "%s moved to %s while #%d was queued and %s, but taking it out of the queue failed: %v",
+			queued.Base, short(tip, 8), queued.Number, why, dequeueErr)
+	}
+	work.say("for a person: %s moved to %s while #%d was queued: %s", queued.Base, short(tip, 8), queued.Number, why)
+	return "", failf(exitForPerson, "#%d is out of the merge queue and ready for a person", queued.Number)
 }
 
 // requiredStillPass reads the checks afresh: a required check no longer passing means moved.

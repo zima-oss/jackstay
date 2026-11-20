@@ -62,6 +62,9 @@ type Fake struct {
 	edits   []BodyEdit
 	merges  []MergeCall
 	queued  []EnqueueCall
+	// dequeued and dequeueErr are Dequeue's record and answer.
+	dequeued   []string
+	dequeueErr error
 }
 
 // EnqueueCall is a recorded Enqueue.
@@ -224,6 +227,28 @@ func (fake *Fake) Enqueue(_ context.Context, pullRequestID, expectedHead string)
 	fake.mutex.Unlock()
 	_, err := next[struct{}](fake, "Enqueue", pullRequestID)
 	return err
+}
+
+// Dequeue records the request and answers nil, or as OnDequeue programs it.
+func (fake *Fake) Dequeue(_ context.Context, pullRequestID string) error {
+	fake.mutex.Lock()
+	fake.dequeued = append(fake.dequeued, pullRequestID)
+	fake.mutex.Unlock()
+	return fake.dequeueErr
+}
+
+// OnDequeue makes every Dequeue answer err.
+func (fake *Fake) OnDequeue(err error) {
+	fake.mutex.Lock()
+	defer fake.mutex.Unlock()
+	fake.dequeueErr = err
+}
+
+// Dequeues is every Dequeue's pull request ID, in order.
+func (fake *Fake) Dequeues() []string {
+	fake.mutex.Lock()
+	defer fake.mutex.Unlock()
+	return append([]string(nil), fake.dequeued...)
 }
 
 // WorkflowRuns answers as githubapi.Client.WorkflowRuns.

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/hosting"
-	"github.com/zima-oss/jackstay/internal/lint"
 	"github.com/zima-oss/jackstay/internal/remote"
 )
 
@@ -149,14 +148,13 @@ func (work *session) haveBase(change hosting.Change) error {
 	return nil
 }
 
-// newDescription is the new change request's description, judged before the push in a project
-// with cards; --card is refused for an open change.
-func (work *session) newDescription(open bool, line, root string) (string, error) {
-	section := work.cardSection()
+// newDescription is the new change request's description: --body-file's, with the --card line
+// added; without either, one from the branch's commits. --card is refused for an open change.
+func (work *session) newDescription(open bool, line string) (string, error) {
 	if open {
 		if line != "" {
 			return "", failf(exitInvalid, "--card is for the description of a new change request; this one is open already: "+
-				"edit its description on the host (it is judged again before the merge)")
+				"edit its description on the host (CI's lint of it runs again)")
 		}
 		return "", nil
 	}
@@ -170,15 +168,6 @@ func (work *session) newDescription(open bool, line, root string) (string, error
 	}
 	if line != "" {
 		body, given = withLine(body, line), true
-	}
-	if section != nil && !cardExempt(section, work.branch) {
-		if !given {
-			return "", failf(exitRefused, "this project asks for a `Card:` line in the description: pass --card ID "+
-				"(or --card none --reason TEXT), or a --body-file that has one")
-		}
-		if err := judgeDescription(section, lint.WorktreeFiles(work.ctx, root, work.git), body, work.branch); err != nil {
-			return "", err
-		}
 	}
 	if !given {
 		return work.filled(), nil

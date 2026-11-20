@@ -392,9 +392,9 @@ const cardSettings = `{"jackstay_schema": 3, "github": {"account": "someone", "r
 
 var firstCard = map[string]string{"cards/APP-1-x.md": "---\n{\"id\": \"APP-1\", \"state\": \"active\"}\n---\n# APP-1\n"}
 
-// The Card line is judged on the merge with the base it was judged at: a card added to the base
-// after the branch split is there.
-func TestACardAddedToTheBaseAfterTheSplitIsFound(t *testing.T) {
+// jst land writes the Card line and leaves judging it to CI: a card added to the base after the
+// branch split is CI's to find on the merge, so jst land opens the change with --card and lands it.
+func TestACardIsWrittenNotJudgedLocally(t *testing.T) {
 	land := newLandRepo(t, cardSettings, firstCard, nil)
 	place := land.side()
 	land.GitIn(place, "checkout", "-q", "main")
@@ -405,25 +405,85 @@ func TestACardAddedToTheBaseAfterTheSplitIsFound(t *testing.T) {
 	land.GitIn(place, "add", "-A")
 	land.GitIn(place, "commit", "-q", "-m", "card APP-2")
 	land.GitIn(place, "push", "-q", "origin", "main")
-	land.Git("push", "-q", "-u", "origin", "feat")
-	land.host.change = land.host.template
-	land.host.change.BaseSHA = land.remoteBranch("main")
-	land.host.change.Body = "What it does.\n\nCard: APP-2\n"
-	land.host.opened = true
-	out := land.expect(0, "landed")
-	contains(t, out, "its Card line is fine on the merge")
-	if len(land.host.merges) != 1 || land.host.merges[0].Body != "What it does.\n\nCard: APP-2\n" {
+	land.host.template.BaseSHA = land.remoteBranch("main")
+	land.expect(0, "landed", "--title", "a feature", "--card", "APP-2")
+	if len(land.host.opens) != 1 || land.host.opens[0].Body != "Card: APP-2\n" {
+		t.Fatalf("opens %+v", land.host.opens)
+	}
+	if len(land.host.merges) != 1 || land.host.merges[0].Body != "Card: APP-2\n" {
 		t.Fatalf("merges %+v", land.host.merges)
 	}
 }
 
-// A rebase lands no description, so a project whose Card line is in the description refuses it.
+// A rebase lands no description, so a base whose Card line is in the description refuses it.
 func TestARebaseIsRefusedWhereTheCardLineIsInTheDescription(t *testing.T) {
 	settings := strings.Replace(cardSettings, `"autonomy": "merge-when-green"`, `"autonomy": "merge-when-green", "method": "rebase"`, 1)
 	land := newLandRepo(t, settings, firstCard, nil)
 	out := land.expect(2, "invalid", "--title", "a feature", "--card", "APP-1")
 	contains(t, out, "a rebase does not land")
 	land.noMerge()
+}
+
+// The rebase guard reads the base's file: a branch that predates the base's Card policy is refused too.
+func TestTheRebaseGuardReadsTheBasesFile(t *testing.T) {
+	settings := strings.Replace(greenSettings, `"autonomy": "merge-when-green"`, `"autonomy": "merge-when-green", "method": "rebase"`, 1)
+	land := newLandRepo(t, settings, nil, nil)
+	place := land.side()
+	land.GitIn(place, "checkout", "-q", "main")
+	land.GitIn(place, "pull", "-q", "origin", "main")
+	withCards := strings.Replace(settings, `"land":`, `"cards": {"dir": "cards", "id": "APP-[0-9]+", "unit": "pr", "branch": "main", "since": "2026-01-01"}, "land":`, 1)
+	for name, text := range map[string]string{"jackstay.json": withCards, "cards/APP-1-x.md": firstCard["cards/APP-1-x.md"]} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(place, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(place, name), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	land.GitIn(place, "add", "-A")
+	land.GitIn(place, "commit", "-q", "-m", "cards on the base")
+	land.GitIn(place, "push", "-q", "origin", "main")
+	out := land.expect(2, "invalid", "--title", "a feature")
+	contains(t, out, "a rebase does not land")
+	land.noMerge()
+}
+
+// A change retargeted to another branch at the same commit while its checks are read is moved.
+func TestARetargetDuringTheWaitIsMoved(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	land.host.beforeRead = func(host *fakeHost, read int) {
+		if read == 3 {
+			host.change.Base = "release"
+		}
+	}
+	out := land.expect(4, "moved", "--title", "a feature")
+	contains(t, out, "retargeted from main to release")
+	land.noMerge()
+}
+
+// A base that withdraws autonomy while the change waits in the host's queue takes it out of the
+// queue and hands it to a person.
+func TestAQueuedChangeIsDequeuedWhenTheBaseWithdrawsAutonomy(t *testing.T) {
+	land := newLandRepo(t, greenSettings, nil, nil)
+	queued := requiresTest
+	queued.Queue = true
+	land.host.rules = []hosting.Rules{queued}
+	land.host.queueMergesAfter = 0
+	land.host.onEnqueue = func() {
+		place := land.side()
+		land.GitIn(place, "checkout", "-q", "main")
+		land.GitIn(place, "pull", "-q", "origin", "main")
+		if err := os.WriteFile(filepath.Join(place, "jackstay.json"), []byte(prepareSettings), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		land.GitIn(place, "commit", "-q", "-am", "a person withdraws autonomy")
+		land.GitIn(place, "push", "-q", "origin", "main")
+	}
+	out := land.expect(6, "ready for a person", "--title", "a feature")
+	contains(t, out, "`land.autonomy` is prepare on main")
+	if len(land.host.dequeued) != 1 || len(land.host.merges) != 0 {
+		t.Fatalf("dequeued %v, merges %+v", land.host.dequeued, land.host.merges)
+	}
 }
 
 // --- checks ------------------------------------------------------------------------------------

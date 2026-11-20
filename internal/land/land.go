@@ -324,10 +324,6 @@ func (work *session) run() (int, error) {
 	} else if !clean {
 		return 0, failf(exitInvalid, "the work tree is dirty: commit first, or the uncommitted changes are left behind")
 	}
-	root, err := work.gitLine("rev-parse", "--show-toplevel")
-	if err != nil {
-		return 0, failf(exitInvalid, "not a checkout: %v", err)
-	}
 	if err := work.connect(); err != nil {
 		return 0, err
 	}
@@ -344,13 +340,10 @@ func (work *session) run() (int, error) {
 	if open {
 		work.base = change.Base
 	}
-	if err := cardsNeedAMergeCommit(methodOf(work.policy), work.cardSection()); err != nil {
-		return 0, err
-	}
 	if !open && work.options.title == "" {
 		return 0, failf(exitInvalid, "a new change request needs --title")
 	}
-	body, err := work.newDescription(open, line, root)
+	body, err := work.newDescription(open, line)
 	if err != nil {
 		return 0, err
 	}
@@ -367,6 +360,9 @@ func (work *session) run() (int, error) {
 	}
 	basePolicy, baseHasPolicy, err := work.basePolicyAtTip()
 	if err != nil {
+		return 0, err
+	}
+	if err := cardsNeedAMergeCommit(methodOf(basePolicy), cardsInDescription(work.fileAt("refs/remotes/"+work.remoteName+"/"+work.base))); err != nil {
 		return 0, err
 	}
 	work.printPlan(open, ahead, rules, basePolicy, baseHasPolicy)

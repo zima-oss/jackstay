@@ -523,17 +523,14 @@ shape (`range`).
   downloads the pinned jackstay release with its checksums, and runs
   `jst lint pr --event "$GITHUB_EVENT_PATH"`. It is a workflow of its own, so an edit of the
   description restarts only this check. It runs only for branches of the same repository.
-- **Before a merge, locally**: `jst land`, in a project whose `cards.unit` is `pr`, after
-  the checks are green and before it merges, judges the description as the host holds it against
-  the files of the head it saw green; a failure stops it with exit 1. The description it judged is
-  the merge commit's message, and the merge is made only on the head it judged. The tree's rules
-  are the `card-line` workflow's to enforce as a required check: `jst land` adds no local gate on
-  a computed merge (W-092).
+- **Not locally, before a merge**: `jst land` judges no Card line itself. The `card-line`
+  workflow above judges the description and the tree's rules on the merge with the base, and the
+  base's rules require it: CI is the gate (W-092). An edit of the description runs it again, and
+  `jst land` reads the required checks afresh just before it merges.
 - **When `jst land` opens the pull request**: `--card ID` (repeatable; `--card none --reason TEXT`)
-  adds the line to the description it writes. In such a project it opens no pull request whose
-  description it cannot judge first (no `--card` and no `--body-file`) or whose description fails
-  the lines' rules; it stops before the push. `--card` for a pull request that is open already is
-  refused: its description is edited on GitHub, and judged before the merge.
+  adds the line to the description it writes. `--card` for a pull request that is open already is
+  refused: its description is edited on the host. A base whose Card line is in the description
+  refuses `land.method: rebase`, which lands no description.
 - **Before a push to the branch itself**: the guard refuses a `git push` that would move
   `cards.branch` unless every commit it adds has valid lines (`cards-push`), and refuses what it
   cannot read about such a push (`card-push-unreadable-config`): [guard.md](guard.md)
