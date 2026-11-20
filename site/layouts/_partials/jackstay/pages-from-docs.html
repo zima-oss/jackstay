@@ -3,26 +3,36 @@
 
   The file's first line `# Title` becomes the page's title, without its backticks (a title is plain
   text in the sidebar and the browser's tab), and leaves the body, as the theme prints the title
-  itself; README.md becomes the section's own page. The order in the sidebar follows the folder's
-  README.md: a page comes where the README first links to it, the rest after, by title. Each page
-  keeps the file it was made from in its `jackstay_source` param, which the link render hook
-  resolves links by.
+  itself; README.md becomes the section's own page. The folder's README.md orders everything: a
+  page comes where the README first links to it, the rest after, by title. Each page keeps the
+  file it was made from in its `jackstay_source` param, which the link render hook resolves links
+  by.
+
+  Groups (W-093): a `## ` heading of the README that `headings` names is a group. A file whose
+  first link in the README is under that heading goes to section/group/name; the group's page takes
+  the heading as its title, the README's text under it as its body, and its place from where the
+  heading is. A file under any other heading stays at section/name. A page moved into a group keeps
+  section/name as an alias, so its old address redirects.
 
   Context: a dict with
-    adapter  the content adapter's context (its .AddPage)
-    section  the site's section the pages go to: "guide"
-    folder   the folder the files are read from, as mounted under assets: "docs/guide"
-    groups   an optional dict, file name -> a group under the section ("codex.md": "integrations"):
-             the page goes to section/group/name, where the group's page is a content file of the
-             site (content/guide/integrations/_index.md)
-    type     an optional content type for the section and every page under it, its groups'
-             pages included: "docs" gives the guide Hextra's docs layout, with the sidebar
-             always beside the page and the previous and next pages below it
+    adapter   the content adapter's context (its .AddPage)
+    section   the site's section the pages go to: "guide"
+    folder    the folder the files are read from, as mounted under assets: "docs/guide"
+    headings  an optional dict, group -> its `## ` heading in the README ("agents": "Working with
+              several agents")
+    aliases   an optional dict, file name or group -> more old paths of its page (a slice)
+    type      an optional content type for the section and every page under it: "docs" gives
+              Hextra's docs layout, with the sidebar always beside the page and the previous and
+              next pages below it
+    weight    an optional place for the section's own page among the pages beside it
 */ -}}
 {{- $adapter := .adapter -}}
 {{- $section := .section -}}
 {{- $folder := .folder -}}
-{{- $groups := .groups | default dict -}}
+{{- $headings := .headings | default dict -}}
+{{- $moreAliases := .aliases | default dict -}}
+{{- $groupOf := dict -}}
+{{- range $group, $heading := $headings }}{{ $groupOf = merge $groupOf (dict $heading $group) }}{{ end -}}
 {{- $cascade := dict -}}
 {{- with .type }}{{ $cascade = dict "type" . }}{{ end -}}
 {{- $readme := resources.Get (printf "%s/README.md" $folder) -}}
@@ -39,29 +49,58 @@
   {{- end -}}
   {{- $params := dict "jackstay_source" (printf "%s/%s" $folder $name) -}}
   {{- if eq $name "README.md" -}}
-    {{- $adapter.AddPage (dict
+    {{- $page := dict
       "kind" "section"
       "path" $section
       "title" $title
       "params" $params
       "cascade" $cascade
       "content" (dict "mediaType" "text/markdown" "value" $body)
-    ) -}}
+    -}}
+    {{- with $.weight }}{{ $page = merge $page (dict "weight" .) }}{{ end -}}
+    {{- $adapter.AddPage $page -}}
   {{- else -}}
-    {{- $weight := 1000 -}}
+    {{- $weight := 1000000 -}}
+    {{- $where := $section -}}
     {{- $mention := printf "](%s" $name -}}
     {{- if strings.Contains $order $mention -}}
-      {{- $weight = add (len (index (split $order $mention) 0)) 1 -}}
+      {{- $before := index (split $order $mention) 0 -}}
+      {{- $weight = add (len $before) 1 -}}
+      {{- with findRESubmatch `(?m)^## (.+)$` $before -}}
+        {{- with index $groupOf (index (index . (sub (len .) 1)) 1) -}}
+          {{- $where = printf "%s/%s" $section . -}}
+        {{- end -}}
+      {{- end -}}
     {{- end -}}
-    {{- $where := $section -}}
-    {{- with index $groups $name }}{{ $where = printf "%s/%s" $section . }}{{ end -}}
+    {{- $base := strings.TrimSuffix ".md" $name -}}
+    {{- $aliases := slice -}}
+    {{- if ne $where $section }}{{ $aliases = $aliases | append (printf "/%s/%s/" $section $base) }}{{ end -}}
+    {{- range index $moreAliases $name }}{{ $aliases = $aliases | append . }}{{ end -}}
     {{- $adapter.AddPage (dict
       "kind" "page"
-      "path" (printf "%s/%s" $where (strings.TrimSuffix ".md" $name))
+      "path" (printf "%s/%s" $where $base)
       "title" $title
       "weight" $weight
+      "aliases" $aliases
       "params" $params
       "content" (dict "mediaType" "text/markdown" "value" $body)
     ) -}}
   {{- end -}}
+{{- end -}}
+{{- range $group, $heading := $headings -}}
+  {{- $marker := printf "\n## %s\n" $heading -}}
+  {{- if not (strings.Contains $order $marker) -}}
+    {{- errorf "pages-from-docs: %s/README.md has no heading %q for the group %s" $folder $heading $group -}}
+  {{- end -}}
+  {{- $after := index (split $order $marker) 1 -}}
+  {{- $text := index (split $after "\n## ") 0 -}}
+  {{- $adapter.AddPage (dict
+    "kind" "section"
+    "path" (printf "%s/%s" $section $group)
+    "title" $heading
+    "weight" (add (len (index (split $order $marker) 0)) 1)
+    "aliases" (index $moreAliases $group | default slice)
+    "params" (dict "jackstay_source" (printf "%s/README.md" $folder))
+    "content" (dict "mediaType" "text/markdown" "value" $text)
+  ) -}}
 {{- end -}}
