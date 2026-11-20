@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -324,6 +325,16 @@ func TestReviewStatusOfAnotherCloneOfTheSameProjectIsNotShown(t *testing.T) {
 		t.Fatal(err)
 	}
 	chat.running = false
+	// A clear round of the task saved in the store both clones share.
+	shared := chat.background(t).Store
+	round := filepath.Join(shared.TaskPath("t"), "round-1")
+	if err := os.MkdirAll(round, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record, _ := json.Marshal(review.RoundRecord{Task: "t", Round: 1, Chain: 1, Base: "b", Commit: "c"})
+	if err := os.WriteFile(filepath.Join(round, review.RecordName), record, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	clone := testrepo.New(t, map[string]string{
 		"jackstay.json": `{"jackstay_schema":3,"project":"review-chat-test","chat":{"enabled":true}}`,
 		"file.txt":      "first\n",
@@ -345,7 +356,8 @@ func TestReviewStatusOfAnotherCloneOfTheSameProjectIsNotShown(t *testing.T) {
 	if response["isError"] == true {
 		t.Fatalf("status: %+v", response)
 	}
-	if status := response["structuredContent"].(map[string]any); status["last"] != nil || status["running"] != nil {
+	if status := response["structuredContent"].(map[string]any); status["last"] != nil || status["running"] != nil ||
+		status["report"] != "" || status["outcome"] != nil || status["blocks"] != nil {
 		t.Fatalf("a clone was shown another clone's review: %+v", status)
 	}
 }

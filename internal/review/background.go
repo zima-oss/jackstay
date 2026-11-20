@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
@@ -424,12 +425,39 @@ func BackgroundAt(folder, executable string) (Background, error) {
 	if err != nil {
 		return Background{}, err
 	}
-	repository, err := (gitRepository{root: found.Root}).CommonDir(context.Background())
+	repository, err := repositoryIdentity(found.Root)
 	if err != nil {
 		return Background{}, err
 	}
 	return Background{RepositoryRoot: found.Root, Repository: repository, Settings: settings, Repo: RepositoryAt(found.Root),
-		Store: store, Executable: executable, Launch: DetachedLaunch, Now: time.Now, Started: 10 * time.Second}, nil
+		Store: store, Executable: executable, Launch: launchDetached, Now: time.Now, Started: 10 * time.Second}, nil
+}
+
+// folderOf says whether the round or attempt folder was made by request id.
+func (store Store) folderOf(folder, id string) bool {
+	var attempt AttemptRecord
+	data, err := os.ReadFile(filepath.Join(folder, AttemptName)) // #nosec G304 -- a folder of this store
+	return err == nil && strictjson.UnmarshalOpen(data, &attempt) == nil && attempt.Request == id
+}
+
+// launchDetached is the Launch BackgroundAt gives; tests replace it.
+var launchDetached Launch = DetachedLaunch
+
+// repositoryIdentity is the repository of root: its Git common folder and that folder's device and
+// inode, so a clone made later at the same path is another repository, and linked worktrees are one.
+func repositoryIdentity(root string) (string, error) {
+	folder, err := (gitRepository{root: root}).CommonDir(context.Background())
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(folder)
+	if err != nil {
+		return "", err
+	}
+	if identity, ok := info.Sys().(*syscall.Stat_t); ok {
+		return fmt.Sprintf("%s#%d:%d", folder, identity.Dev, identity.Ino), nil
+	}
+	return folder, nil
 }
 
 // Status is where a task's background reviews in this repository stand: the request running, if
@@ -461,9 +489,14 @@ func (background Background) StatusOf(task string) (Status, error) {
 	}
 	for index := len(ends) - 1; index >= 0; index-- {
 		if background.ours(ends[index].Request) {
-			status.Last = &ends[index]
-			if status.Last.Folder != "" {
-				status.Report = filepath.Join(status.Last.Folder, "report.md")
+			last := ends[index]
+			// A folder pruned and taken again by a later review is not this end's: say none.
+			if last.Folder != "" && !background.Store.folderOf(last.Folder, last.Request.ID) {
+				last.Folder, last.Round = "", 0
+			}
+			status.Last = &last
+			if last.Folder != "" {
+				status.Report = filepath.Join(last.Folder, "report.md")
 			}
 			break
 		}
