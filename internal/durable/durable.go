@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/zima-oss/jackstay/internal/flock"
 )
 
@@ -75,30 +77,24 @@ func WriteAtomic(path string, data []byte, mode os.FileMode, limit int) error {
 }
 
 // MakeFolder makes folder and its missing parents with mode, like os.MkdirAll, then fsyncs every
-// folder above it, so folder survives a crash with what is written in it. The parent of a folder
-// this call made must sync, or the call fails. A folder that is already there is synced too, as far
-// up as it may be opened: another process, or an earlier call whose sync failed, may have made it,
-// and its being there does not say its entry is on disk.
+// folder above it, so folder survives a crash with what is written in it. Whether this call made a
+// folder does not matter: another process, or an earlier call whose sync failed, may have made it,
+// and its being there does not say its entry is on disk. A folder that will not sync fails the call
+// when this process may write in it (it may hold a new entry); the walk ends quietly at the first
+// folder this process may not write in, where nothing of its own can be pending.
 func MakeFolder(folder string, mode os.FileMode) error {
 	absolute, err := filepath.Abs(folder)
 	if err != nil {
 		return err
 	}
-	made := map[string]bool{}
-	for current := absolute; filepath.Dir(current) != current; current = filepath.Dir(current) {
-		if _, err := os.Lstat(current); !errors.Is(err, os.ErrNotExist) {
-			break
-		}
-		made[filepath.Dir(current)] = true
-	}
 	if err := os.MkdirAll(absolute, mode); err != nil {
 		return err
 	}
 	for current, parent := absolute, filepath.Dir(absolute); parent != current; current, parent = parent, filepath.Dir(parent) {
+		if unix.Access(parent, unix.W_OK) != nil {
+			return nil
+		}
 		if err := syncFolder(parent); err != nil {
-			if errors.Is(err, os.ErrPermission) && !made[parent] {
-				return nil // no folder below this one was made here: synced as far as it may be opened
-			}
 			return err
 		}
 	}

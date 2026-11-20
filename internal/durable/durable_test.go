@@ -161,7 +161,7 @@ func TestUpdateUnderTakesTheNamedLockAndMakeFolderMakesTheChain(t *testing.T) {
 	}
 }
 
-func TestMakeFolderFailsWhenANewFoldersParentDoesNotSyncAndARetrySyncsIt(t *testing.T) {
+func TestMakeFolderFailsWhileAParentWillNotSyncAndARetrySyncsIt(t *testing.T) {
 	root := t.TempDir()
 	folder := filepath.Join(root, "store", "inner")
 	failing := filepath.Join(root, "store")
@@ -174,8 +174,10 @@ func TestMakeFolderFailsWhenANewFoldersParentDoesNotSyncAndARetrySyncsIt(t *test
 		return SyncFolder(path)
 	}
 	t.Cleanup(func() { syncFolder = SyncFolder })
-	if err := MakeFolder(folder, 0o700); err == nil {
-		t.Fatal("a new folder's parent did not sync, and MakeFolder said nothing")
+	for attempt := range 2 { // the second finds the folders made, and must not take them for synced
+		if err := MakeFolder(folder, 0o700); err == nil {
+			t.Fatalf("attempt %d: a parent did not sync, and MakeFolder said nothing", attempt)
+		}
 	}
 	syncFolder = func(path string) error { synced = append(synced, path); return SyncFolder(path) }
 	synced = nil
