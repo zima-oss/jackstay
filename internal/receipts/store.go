@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
@@ -147,41 +148,11 @@ func (store Store) Write(receipt Receipt) (string, error) {
 		return "", err
 	}
 	place := store.receiptPath(receipt.Key)
-	if err := writeAtomically(place, append(data, '\n')); err != nil {
+	if err := durable.WriteAtomic(place, append(data, '\n'), 0o600, 0); err != nil {
 		return "", err
 	}
 	store.Prune()
 	return place, nil
-}
-
-// writeAtomically writes a file whole or not at all; the temporary is removed on every failure.
-func writeAtomically(place string, data []byte) error {
-	temporary, err := os.CreateTemp(filepath.Dir(place), filepath.Base(place)+".*.partial")
-	if err != nil {
-		return err
-	}
-	written := false
-	defer func() {
-		if !written {
-			_ = os.Remove(temporary.Name())
-		}
-	}()
-	if _, err := temporary.Write(data); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporary.Name(), place); err != nil {
-		return err
-	}
-	written = true
-	return nil
 }
 
 // Remove takes the key's receipt away: the key is being run again, or a run of it did not pass.

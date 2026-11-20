@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
-	"syscall"
 	"time"
+
+	"github.com/zima-oss/jackstay/internal/durable"
 )
 
 // Overview is a content-free count of retained repository chat activity.
@@ -20,24 +20,15 @@ type Overview struct {
 // ReadOverview inspects chat state without creating a directory, lock, or state file.
 // Retention is applied in memory, so the counts agree with the next normal store read.
 func (store Store) ReadOverview() (Overview, error) {
-	file, err := os.OpenFile(store.path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	data, err := durable.ReadLimited(store.path, stateLimit)
 	if errors.Is(err, os.ErrNotExist) {
 		return Overview{}, nil
 	}
-	if err != nil {
-		return Overview{}, err
-	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return Overview{}, errors.New("chat state is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 12<<20+1))
-	if err != nil {
-		return Overview{}, err
-	}
-	if len(data) > 12<<20 {
+	if errors.Is(err, durable.ErrTooLarge) {
 		return Overview{}, errors.New("chat state exceeds limit")
+	}
+	if err != nil {
+		return Overview{}, err
 	}
 	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
 		return Overview{}, errors.New("chat state: expected an object")

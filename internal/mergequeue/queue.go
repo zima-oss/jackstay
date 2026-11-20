@@ -10,16 +10,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/delivery"
-	"github.com/zima-oss/jackstay/internal/flock"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/strictjson"
@@ -98,7 +96,10 @@ func (service Service) withLock(ctx context.Context, action func(string, string)
 	if err != nil {
 		return nil, err
 	}
-	lock, err := flock.WaitFile(ctx, place+".lock")
+	if err := durable.MakeFolder(filepath.Dir(place), 0o700); err != nil {
+		return nil, err
+	}
+	lock, err := durable.Lock(ctx, place)
 	if err != nil {
 		return nil, err
 	}
@@ -107,18 +108,12 @@ func (service Service) withLock(ctx context.Context, action func(string, string)
 }
 
 func read(place string) (*State, error) {
-	file, err := os.OpenFile(place, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
+	data, err := durable.ReadLimited(place, delivery.Limit)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	defer func() { _ = file.Close() }()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return nil, errors.New("queue state is not a regular file")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, delivery.Limit+1))
-	if err != nil || len(data) > delivery.Limit {
-		return nil, errors.New("queue state cannot be read or is too large")
+	if err != nil {
+		return nil, fmt.Errorf("queue state cannot be read: %w", err)
 	}
 	var state State
 	if err := strictjson.Unmarshal(data, &state); err != nil {
@@ -147,28 +142,10 @@ func save(place string, state *State) error {
 	if err != nil || len(data) >= delivery.Limit {
 		return errors.New("queue state exceeds its size limit")
 	}
-	if err := os.MkdirAll(filepath.Dir(place), 0o700); err != nil {
+	if err := durable.MakeFolder(filepath.Dir(place), 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(place), ".queue-*")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.Remove(temporary.Name()) }()
-	defer func() { _ = temporary.Close() }()
-	if err := temporary.Chmod(0o600); err != nil {
-		return err
-	}
-	if _, err := temporary.Write(append(data, '\n')); err != nil {
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		return err
-	}
-	if err := temporary.Close(); err != nil {
-		return err
-	}
-	return os.Rename(temporary.Name(), place)
+	return durable.WriteAtomic(place, append(data, '\n'), 0o600, 0)
 }
 
 func (service Service) resolve(ctx context.Context, ref string) (string, error) {

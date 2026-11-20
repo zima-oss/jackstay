@@ -448,3 +448,19 @@ func TestListDoesNotCreateStateAndRefusesSpecialFiles(t *testing.T) {
 		t.Fatal("FIFO state was accepted")
 	}
 }
+
+// The pool's editors share one lock, state.lock in the pool's folder, with every earlier editor.
+func TestPoolEditsWaitForTheStateLock(t *testing.T) {
+	pool, _, _ := fixture(t)
+	held, err := flock.TryFile(filepath.Join(pool.Root, "state.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	called := false
+	if err := pool.edit(ctx, func(*state) error { called = true; return nil }); err == nil || called {
+		t.Fatalf("an edit went on under another's state.lock: %v, called %v", err, called)
+	}
+}
