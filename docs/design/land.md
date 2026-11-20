@@ -1,12 +1,13 @@
 # `jst land`: a thin landing behind a small hosting adapter; where tests run
 
-Status: specification for 0.6.0, not built. It follows [W-090](../decisions/W-090-landing.md)
-(one forge-neutral `jst land`, hosting adapters, two autonomy modes chosen explicitly) and
-[W-092](../decisions/W-092-thin-land-and-where-tests-run.md) (the landing stays thin; where tests
-run is the project's declared split between local and CI). It keeps
+Status: for 0.6.0; sections 1 to 4 and 6 are built, 5 and 7 are not yet. It follows
+[W-090](../decisions/W-090-landing.md) (one forge-neutral `jst land`, hosting adapters, two autonomy
+modes chosen explicitly) and [W-092](../decisions/W-092-thin-land-and-where-tests-run.md) (the
+landing stays thin; where tests run is the project's declared split between local and CI). It keeps
 [W-047](../decisions/W-047-release-redesign-fixed-settings-no-one-off-imports.md) (`jackstay.json`
-changes alone and is a person's to merge) and [W-019](../decisions/W-019-repeated-findings-mean-redesign.md)
-(a landing never switches, pulls or rebases this checkout).
+changes alone and is a person's to merge) and
+[W-019](../decisions/W-019-repeated-findings-mean-redesign.md) (a landing never switches, pulls or
+rebases this checkout).
 
 ## What it is, and what it is not
 
@@ -14,10 +15,11 @@ changes alone and is a person's to merge) and [W-019](../decisions/W-019-repeate
 rules require, and merges with the head that was checked. CI is the gate: what CI runs is what
 blocks a merge. Tests that CI cannot run are run locally, as the project declares (section 7).
 
-Not in it: a local gate on a computed merge tree, landing-evidence records and a reconcile after the
+Not in it: a local gate on the tree's rules, landing-evidence records and a reconcile after the
 merge, carrying a review across base merges, publishing jackstay's statuses to the host, provenance
 as a landing condition (provenance stays in release and install), and jackstay's own merge queue.
-The host's native merge queue is used where the base requires one.
+The agent never puts a change in the host's native merge queue: the queue merges later, on a base
+jackstay has not judged, which is an auto-merge. A person queues it (section 3.3).
 
 `jst gh pr-land`, the other `jst gh` commands and the unreleased `jst queue` are removed in 0.6.0,
 with no aliases (section 6).
@@ -54,13 +56,17 @@ names `jst adopt`.
 
 ```go
 type Host interface {
-    Change(ctx context.Context, ref ChangeRef) (Change, error) // by number, URL or head branch
+    Name() string
+    DefaultBranch(ctx context.Context) (string, error)
+    Change(ctx context.Context, ref ChangeRef) (Change, bool, error) // by number, or the open one from a head branch
+    OpenChanges(ctx context.Context, head string) ([]Change, error)
     Open(ctx context.Context, request NewChange) (Change, error)
-    Checks(ctx context.Context, change Change) ([]Check, error)
+    Checks(ctx context.Context, change Change) ([]Check, error)        // head and test merge
     Rules(ctx context.Context, branch string) (Rules, error)
+    BranchTip(ctx context.Context, branch string) (string, error)     // the base's tip, for the recheck
     UpdateBranch(ctx context.Context, change Change, expectedHead string) error // merges the base in
-    Merge(ctx context.Context, change Change, method Method, expectedHead string) (Merged, error)
-    Enqueue(ctx context.Context, change Change, expectedHead string) error     // native queue
+    Merge(ctx context.Context, change Change, request MergeRequest) (Merged, error) // method, head, message
+    Enqueue(ctx context.Context, change Change, expectedHead string) error     // native queue, a person's
 }
 ```
 
@@ -105,12 +111,21 @@ checks.
 3. **Checks.** Wait for the required checks, judged by section 4.
 4. **Freshness.** When the base's rules require the branch to be up to date and it is behind,
    update it on the host and go back to step 2.
-5. **Recheck.** Read the change, the base tip and the rules again, and read the checks afresh
-   (today's `checkLandingEvidence` compares identities only; this adds the check read). A moved
-   head, base or test merge, changed rules, or a required check no longer passing stops with
-   `moved`; the next run starts at step 2.
-6. **Merge.** Ask the host to merge with the head from step 5, or enqueue it when the rules require
-   a queue. A lost answer is settled by reading the change, never by a second request.
+5. **Recheck.** After the local checks of the description (below), read the rules and the checks
+   afresh, the base's tip on the host, and last the change. A moved head, base, test merge or
+   description, a retarget, changed rules, or a required check no longer passing stops with
+   `moved`; the next run starts at step 2. Every read of the change is bound to the base the plan
+   named.
+6. **Merge.** Ask the host to merge with the head and the description from step 5 as the merge
+   commit's message; with `--confirm` on a base that requires a queue, enqueue it instead. A lost
+   answer is settled by reading the change, never by a second request.
+
+The description is the merge commit's message, and a check read by commit cannot vouch for one
+version of it. So where the base's file has `cards` with `unit` `pr`, `jst land` judges the Card
+line of the exact description it sends, and where it has `changes`, the changelog rule (D1), on the
+in-memory merge of the head with the judged base (pr-land's safety check, kept): at the opening and
+before the recheck. A base whose Card line is in the description refuses `method: rebase`, which
+lands no description.
 7. **Clean up.** Delete the remote branch only under today's lease and checks (merged at that head,
    no other open change on it, push destinations verified). `jst tidy` removes the local branch.
 
@@ -121,23 +136,26 @@ exits 0 with the change merged, so `jst land && jst tidy …` never runs on an u
 
 | state | exit | when |
 |---|---|---|
-| `landed` | 0 | merged, or accepted by the host's queue and merged within the wait |
-| `ready for a person` | 6 | `prepare`, `--prepare`, a human path, a base that requires no check or whose rules cannot be read |
+| `landed` | 0 | merged; with `--confirm` on a base with a queue, merged by the queue within the wait |
+| `ready for a person` | 6 | `prepare`, `--prepare`, a human path, a base that requires a merge queue, a base that requires no check or whose rules cannot be read |
 | `planned` | 0 | `--plan` |
 | `refused` | 1 | a required check failed or was cancelled; a draft; a conflict; an unsupported operation |
 | `invalid` | 2 | usage, configuration, no account |
 | `pending` | 3 | checks or the queue still pending at the deadline |
-| `moved` | 4 | head, base or test merge moved |
+| `moved` | 4 | head, base, test merge or description moved, or the change was retargeted |
 | `unexpected` | 5 | a host answer jackstay does not expect |
 
 ### 3.3 Who may merge
 
-The agent merges only in `merge-when-green`, and only a change that touches no human path. For any
-other change `jst land` stops ready for a person, who either merges on the host's page or runs
-`jst land --confirm` at a terminal and types the change's number. A person's change still goes
-through steps 1 to 5 before the stop, so it is handed over with its checks passed; `--confirm`
-repeats steps 2 to 5 after the number is typed, then merges. `--confirm` is refused without a
-terminal and with `--prepare`.
+The agent merges only in `merge-when-green`, only a change that touches no human path, and only on
+a base that does not require the host's merge queue (a queued change merges later, without
+jackstay's policy: no auto-merge). For any other change `jst land` stops ready for a person, who
+either merges or queues it on the host's page or runs `jst land --confirm` at a terminal and types
+the change's number. A person's change still goes through steps 1 to 5 before the stop, so it is
+handed over with its checks passed and its description judged (a failing one is refused, not
+handed over); `--confirm` always asks for the number, repeats steps 2 to 5
+after it is typed, then merges (or queues). `--confirm` is refused without a terminal and with
+`--prepare`.
 
 Three things keep that true for an agent:
 - **`jst lint pr`, rule D0**, keeps a change to `jackstay.json` alone in its pull request, judged by
@@ -173,7 +191,9 @@ agent calling the host's API directly is outside it.
   (exit 6), saying the rules could not be read. It never turns an optional check into a blocker.
 - **Rules read and requiring none**, `checks` empty: CI is not a gate for this base, so
   `merge-when-green` stops ready for a person, saying so in the plan; doctor reports it as an
-  error. This is the GitHub default for a new repository.
+  error. This is the GitHub default for a new repository. The checks that do register are waited
+  for and reported; when none registers within 120 seconds there is nothing to wait for, and it
+  stops ready for a person then rather than at the deadline.
 
 ## 5. Adopt, setup and doctor
 
@@ -254,7 +274,8 @@ A test scope gains one key: `ci`, the operating systems on which CI runs it (abs
   `prepare`, `--prepare`, `--confirm` without a terminal; rules unread with and without `checks`;
   rules requiring none.
 - **Races**, deterministic: head moved before the merge, base moved during the wait, a check rerun
-  red before the recheck, a lost merge answer with the change merged, a queue that holds it.
+  red before the recheck, a lost merge answer with the change merged, a queue that holds it, a
+  retarget, a description edited after the checks.
 - **Guard**: `gh pr merge` and `glab mr merge` refused with and without a `land` section.
 - **Where tests run**: `jst test changed` requiring only uncovered scopes; `jst test uncovered` on
   Linux and macOS; release and install refusing without its receipt.

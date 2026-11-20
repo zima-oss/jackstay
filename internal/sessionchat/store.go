@@ -433,5 +433,5 @@ func (store Store) update(change func(*snapshot) (bool, error)) error {
 }
 
 func retainedMessage(message Message, created, cutoff time.Time) bool {
-	return created.After(cutoff) || message.From == systemSender && !message.Acknowledged
+	return created.After(cutoff) || (message.From == systemSender || message.From == legacySystemSender) && !message.Acknowledged
 }

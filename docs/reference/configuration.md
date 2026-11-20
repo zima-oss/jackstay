@@ -93,9 +93,9 @@ Says which GitHub account, remote and repository jackstay uses, and how long its
 | Key | Type | What it does |
 |---|---|---|
 | `account` | string | Names the GitHub login jackstay acts as outside GitHub Actions, whatever account `gh` has active. |
-| `remote` | string | Names the remote that `jst sync`, `jst start`, `jst tidy` and `jst gh` use; without it they take `origin`, else the remote `main` (then `master`) tracks, else the only remote. |
+| `remote` | string | Names the remote that `jst sync`, `jst start`, `jst tidy` and `jst land` use; without it they take `origin`, else the remote `main` (then `master`) tracks, else the only remote. |
 | `repository` | string | Names the repository as `owner/name` when it is not to be read from the remote's URL. |
-| `wait` | object | Sets the defaults of `jst gh ci-wait`, `run-wait` and `pr-land`; their flags still win. |
+| `wait` | object | Sets the defaults of `jst checks wait`, `jst checks run-wait` and `jst land`; their flags still win. |
 | `wait.interval_seconds` | number | Waits this many seconds between looks at GitHub (default 20). |
 | `wait.log_lines` | integer | Shows this many lines of a failed step's log (default 25). |
 | `wait.timeout_seconds` | number | Gives up waiting on GitHub after this many seconds (default 1800). |
@@ -130,6 +130,18 @@ Declares the number series that `jst id` hands out, by series name.
 | `*.files` | string | Gives the path pattern of the series' files, with `{n}` once in the file's name where the number is. |
 | `*.width` | integer | Pads the number with zeros to this many digits, 1 to 9 (default 1). |
 
+## `land`
+
+Says how `jst land` lands a change: who merges, which method, which checks are required and which paths only a person lands.
+
+| Key | Type | What it does |
+|---|---|---|
+| `autonomy` | string | Chooses who merges: `merge-when-green` (the agent, when the required checks pass and no human path is touched) or `prepare` (a person). |
+| `checks` | list of strings | Names checks required in addition to the base's rules, never fewer. |
+| `host` | string | Names the code host's adapter (`github`); unset, the push remote's host. |
+| `human_paths` | list of strings | Lists globs of paths only a person lands, besides jackstay.json, CI workflows and .claude/settings.json. |
+| `method` | string | Chooses the merge method asked of the host: `squash` (the default), `merge` or `rebase`. |
+
 ## `lock`
 
 Turns on the machine-wide lock that heavy test runs take in turn.
@@ -149,17 +161,6 @@ Sets the deadlines of `jst bg`.
 |---|---|---|
 | `default_minutes` | number | Stops a `jst bg` command after this many minutes when `--for` is not given (default 30). |
 | `max_minutes` | number | Caps any `jst bg` deadline at this many minutes (default 240). |
-
-## `queue`
-
-Turns on the local merge candidate queue and says what it lands on.
-
-| Key | Type | What it does |
-|---|---|---|
-| `base_ref` | string | Names the full ref the queue merges onto (`refs/heads/main`, or a fetched `refs/remotes/…`); required when the queue is enabled. |
-| `enabled` | boolean | Turns on `jst queue` for this repository. |
-| `require_pull_request` | boolean | Refuses a handoff that has no pull request: `jst queue add` then needs `--pr`. |
-| `review_task` | string | Requires a current, clear `jst review` round of this task for the pinned base-to-head range before handoff. |
 
 ## `receipts`
 

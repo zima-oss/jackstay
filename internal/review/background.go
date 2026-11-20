@@ -27,9 +27,9 @@ import (
 // A review run in the background (section 6) is a `jst bg` job running `jst review` with
 // `--request ID`. Its request, `<store>/.requests/<task key>.json`, pins what it reviews and keeps
 // the chat sessions subscribed to its result. One task has at most one live request: a second
-// submission of the same review joins it, a different one is refused while it runs. When the run
-// ends it turns each subscription into an owed `review.finished` event, `<store>/.owed/<key>.json`,
-// kept until the chat has stored it.
+// submission of the same review joins it, a different one is refused while it runs. How the request
+// ended is kept in one end record, `<store>/.ends/<task key>-<id>.json` (ending.go), from which each
+// session's `review.finished` event is made until the chat has stored it.
 
 // maximumRequestBytes bounds a request file; it holds a handful of short strings.
 const maximumRequestBytes = 64 << 10
