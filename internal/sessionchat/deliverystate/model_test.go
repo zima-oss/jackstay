@@ -21,6 +21,7 @@ type variant struct {
 	deadlineSkipsRequest  bool // as written: a pass's or reader's deadline check expires the delivery only
 	deadlineNeedsPending  bool // round 1: a deadline closed a request only while its delivery could expire
 	freezeIgnoresPushes   bool // rounds 1 and 2: a freeze closed its questions while one was being steered
+	markBeforeShow        bool // before W-096: a notice was marked shown, then its page returned
 }
 
 type passState struct {
@@ -44,6 +45,8 @@ type world struct {
 	alive           bool
 	deliveryNotices int
 	requestNotices  int
+	deliveryShows   int // times the delivery's notice reached the sender (2 stands for more than once)
+	requestShows    int // times the request's notice reached the sender
 }
 
 type step struct {
@@ -55,7 +58,7 @@ var passNames = [2]string{"pass-1", "pass-2"}
 
 // The distinct states TLC finds for the two modules (docs/design/chat-model/README.md).
 const (
-	deliveryStates = 7104
+	deliveryStates = 27056
 	sendStates     = 335
 )
 
@@ -277,6 +280,32 @@ func successors(w world, rules variant) []step {
 		}
 	}
 
+	// The sender's inbox returns an owed notice (section 8.5): marked shown only after its page is
+	// returned, so a stop between the two returns it again (at least once, W-096).
+	oneMore := func(shows int) int { return min(shows+1, 2) }
+	show := func(name string, notice Notice, mark func(*world), shows func(*world) *int) {
+		if notice != NoticeOwed {
+			return
+		}
+		marked := w
+		mark(&marked)
+		*shows(&marked) = oneMore(*shows(&w))
+		add(name+" is shown and marked", marked)
+		if rules.markBeforeShow {
+			lost := w
+			mark(&lost)
+			add(name+" is marked, then the step stops before its page", lost)
+			return
+		}
+		again := w
+		*shows(&again) = oneMore(*shows(&w))
+		add(name+" is shown, then the step stops before the mark", again)
+	}
+	show("the delivery's notice", w.delivery.Notice, func(next *world) { next.delivery.Notice = NoticeShown },
+		func(next *world) *int { return &next.deliveryShows })
+	show("the request's notice", w.request.Notice, func(next *world) { next.request.Notice = NoticeShown },
+		func(next *world) *int { return &next.requestShows })
+
 	if w.alive {
 		ended := w
 		ended.alive = false
@@ -305,13 +334,15 @@ func invariant(w world) string {
 	case w.pushedClose:
 		return "NoPushStartsAfterClose: a push of a closed request began"
 	case w.deliveryNotices > 1 || w.requestNotices > 1:
-		return "NoticeOnce: one record owes two notices"
+		return "NoticeOwedOnce: one record owes two notices"
 	case w.isRequest && w.delivery.State == Expired && w.request.State == Closed &&
 		w.deliveryNotices+w.requestNotices != 1:
-		return "NoticeOnce: a request and its delivery expired together with more than one notice"
+		return "NoticeOwedOnce: a request and its delivery expired together with more than one notice"
 	case (w.delivery.State == Refused || w.delivery.State == Dropped) && w.deliveryNotices != 1,
 		w.delivery.State == Expired && w.deliveryNotices+w.requestNotices < 1:
-		return "NoticeOnce: a final delivery owes no notice"
+		return "NoticeOwedOnce: a final delivery owes no notice"
+	case w.delivery.Notice == NoticeShown && w.deliveryShows < 1, w.request.Notice == NoticeShown && w.requestShows < 1:
+		return "NoticeAtLeastOnce: a notice was marked shown and never reached the sender"
 	case w.request.State == Answered && !Final(w.delivery.State):
 		return "RequestAgrees: an answered request's delivery is not final"
 	case w.lateOpen:
@@ -408,9 +439,10 @@ func TestTheSpecBeforeTheModelBreaksAProperty(t *testing.T) {
 		rules variant
 		want  string
 	}{
-		{"two expiry notices for one request (section 4.4)", variant{separateRequestExpiry: true}, "NoticeOnce"},
+		{"two expiry notices for one request (section 4.4)", variant{separateRequestExpiry: true}, "NoticeOwedOnce"},
 		{"a freeze leaving its questions pushable (section 9.1)", variant{freezeLeavesDelivery: true}, "NoPushStartsAfterClose"},
-		{"a deadline check that forgets the request (section 4.10)", variant{deadlineSkipsRequest: true}, "NoticeOnce"},
+		{"a deadline check that forgets the request (section 4.10)", variant{deadlineSkipsRequest: true}, "NoticeOwedOnce"},
+		{"a notice marked shown before its page (section 8.5, before W-096)", variant{markBeforeShow: true}, "NoticeAtLeastOnce"},
 		{"an overdue read of a delivered request (section 4.10, review round 1)", variant{deadlineNeedsPending: true}, "DeadlineClosesRequest"},
 		{"a freeze beside a steer under way (section 9.1, review rounds 1 and 2)", variant{freezeIgnoresPushes: true}, "NoWriteAfterFreeze"},
 	}
@@ -422,5 +454,22 @@ func TestTheSpecBeforeTheModelBreaksAProperty(t *testing.T) {
 			}
 			t.Logf("%s after:\n  %s", result.violation, strings.Join(result.trace, "\n  "))
 		})
+	}
+}
+
+// One notice shown never stands for another: a delivery's refusal shown, then the request's expiry
+// notice marked without reaching the sender, breaks NoticeAtLeastOnce (review round 2).
+func TestOneShownNoticeDoesNotMaskAnother(t *testing.T) {
+	w := world{
+		delivery:      Delivery{Route: Native, State: Refused, Notice: NoticeShown},
+		request:       Request{State: Closed, Notice: NoticeShown},
+		isRequest:     true,
+		engine:        "none",
+		alive:         true,
+		deliveryShows: 1,
+	}
+	w.deliveryNotices, w.requestNotices = 1, 1
+	if broken := invariant(w); !strings.HasPrefix(broken, "NoticeAtLeastOnce") {
+		t.Fatalf("want NoticeAtLeastOnce, got %q", broken)
 	}
 }
