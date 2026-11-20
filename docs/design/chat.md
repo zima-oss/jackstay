@@ -270,10 +270,10 @@ response, the sweep's `unconfirmed`), the late outcome is dropped and logged. Ex
   the reason in its outbox and decides whether to send it again.
 - A doorbell carries no text, so a repeated doorbell is harmless, and its silence means nothing: the
   receipt that counts is the recipient's read (W-095).
-- `read` means the server returned the whole body to one of the recipient's tool calls, or the
-  recipient acknowledged it; it is what the server emitted, not proof that the model took it in.
-  `read` and `acted` come from the recipient's own tool calls (and `read` also from a review
-  mailbox's freeze, section 9.1). They are its declaration, not proof of work; a sender that needs proof asks for it in a request (section 4.4).
+- `read` means the server returned the whole body to one of the recipient's tool calls, the
+  recipient acknowledged it, or a review mailbox froze with it unread (section 9.1). A tool
+  response's `read` is what the server emitted, not proof that the model took it in; the recipient's
+  `read` and `acted` are its declaration, not proof of work; a sender that needs proof asks for it in a request (section 4.4).
 - An explicit `chat.inbox` call returns what the recipient asks for among the visible messages
   (section 4.10). So a model that both reads the inbox and is steered by the bridge may see a message
   twice; that is its own choice.
@@ -364,7 +364,7 @@ is long because the store, not the recipient's memory, holds the message.
 
 | priority | Claude Code's SDK | jackstay rings the doorbell |
 |---|---|---|
-| `now` | interrupts (recent SDK versions may first move eligible work to the background for a person's message) | at the next tool batch through the hooks, at once through the socket when idle, and a `Stop` hook keeps the turn going while one is unread (section 8.4); named as urgent |
+| `now` | interrupts (recent SDK versions may first move eligible work to the background for a person's message) | at the next tool batch through the hooks, at once through the socket when idle; a `Stop` hook holds the turn the first time it sees a new one, at most 3 times in a row (section 8.4); named as urgent |
 | `next` | read in the same turn after the current tool calls | at the next tool batch or prompt through the hooks, at once through the socket when idle |
 | `later` | held until the turn ends | when the recipient is idle (which wakes it through the socket); through the hooks, at the next prompt |
 
@@ -426,7 +426,9 @@ Events and notices from `jackstay` are not counted against these limits.
 - an armed subscription records the recipient's `idle_generation` (a counter its idle increments,
   section 6.1) and fires on the first idle with a higher one, or when the recipient becomes `gone`,
   whichever comes first, so the idle that came before the message never counts; then it ends;
-- at `until` without either, the watcher is owed a notice that the subscription expired;
+- at `until` without either, the watcher is owed a notice that the subscription expired: the sweep,
+  which every operation runs when it is due (section 7.4), finds it, and so does any step that looks
+  at the recipient's subscriptions; an idle or an end seen after `until` never counts for it;
 - a repeat of the same standalone subscription (same watcher and recipient) while one exists renews
   `until` and returns the same outcome; one that fired within the last 60 s (found as the watcher's
   `idle` notice about that recipient, kept 24 h) returns `subscribed` with `fired` and `fired_at`,
@@ -804,11 +806,14 @@ write a caller can make large).
                       "at": { "type": "string" }, "state": { "enum": ["owed", "shown"] } } } },
     "notices_rung_at": { "type": "string" },
     "stop_blocks": { "type": "integer", "minimum": 0, "maximum": 3 },
+    "ring_failures": { "type": "integer", "minimum": 0 },
+    "ring_next": { "type": "string" },
     "exchange": { "type": "object", "maxProperties": 64,
       "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 40 } } } }
 ```
 
-`exchange` holds the loop counter per peer (section 4.8). `notices` holds idle notices owed to this
+`exchange` holds the loop counter per peer (section 4.8). `ring_failures` and `ring_next` pace the
+native doorbell after confirmed failures (section 8.3). `notices` holds idle notices owed to this
 session (section 4.9), `about` being the other session's address; a shown one is kept 24 h for a
 repeated subscription's answer, and the oldest shown one is removed to make room before an owed one
 is added (when all 32 are owed, the oldest owed is dropped and logged). `idle_generation` counts the
@@ -1091,7 +1096,8 @@ lock, releases it, pushes, then takes the lock again to record the outcome.
 
 ### 7.4 Retention and capacity
 
-The sweep runs at most every 10 minutes, started by any writer, under the exclusive lock:
+The sweep runs at most every 10 minutes, started by any operation that finds it due (`swept.json`
+keeps when it last ran), under the exclusive lock:
 
 - a `sending` delivery older than 60 s becomes `delivered` with `unconfirmed` (its bridge pass died
   after recording it, so the steer may have happened);

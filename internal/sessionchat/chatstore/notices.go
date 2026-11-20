@@ -29,6 +29,8 @@ type OwedNotice struct {
 	messageID string
 	hash      string // the recipient's hash, for a delivery's notice
 	noticeID  string // the session notice's ID
+	// At is when the notice became owed: what a doorbell compares with notices_rung_at.
+	At string
 }
 
 // collectNotices lists what the session is owed, oldest message first, at most limit of them, and
@@ -53,7 +55,7 @@ func (transaction *transaction) collectNotices(session Session, sessions []Sessi
 			return nil, 0, err
 		}
 		if found.commit.Notice == string(deliverystate.NoticeOwed) && found.envelope.Request != nil {
-			owed = append(owed, OwedNotice{source: onRequest, messageID: id,
+			owed = append(owed, OwedNotice{source: onRequest, messageID: id, At: found.commit.Closed,
 				Line: id + " (" + found.envelope.Request.RequestID + ") to " + found.envelope.To + ": expired unanswered"})
 		}
 		for _, hash := range found.envelope.Recipients {
@@ -68,7 +70,7 @@ func (transaction *transaction) collectNotices(session Session, sessions []Sessi
 			if recipient, ok := byHash[hash]; ok {
 				recipientAddress = fullAddress(recipient)
 			}
-			owed = append(owed, OwedNotice{source: onDelivery, messageID: id, hash: hash,
+			owed = append(owed, OwedNotice{source: onDelivery, messageID: id, hash: hash, At: delivery.At,
 				Line: id + " to " + recipientAddress + ": " + receiptWords(delivery)})
 		}
 	}
@@ -76,7 +78,7 @@ func (transaction *transaction) collectNotices(session Session, sessions []Sessi
 		if notice.State != string(deliverystate.NoticeOwed) {
 			continue
 		}
-		owed = append(owed, OwedNotice{source: onSession, noticeID: notice.ID, Line: sessionNoticeWords(notice)})
+		owed = append(owed, OwedNotice{source: onSession, noticeID: notice.ID, At: notice.At, Line: sessionNoticeWords(notice)})
 	}
 	if len(owed) <= limit {
 		return owed, 0, nil
