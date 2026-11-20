@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/procs"
+	"github.com/zima-oss/jackstay/internal/review/access"
 )
 
 // fakeCodex is a shell script standing in for Codex: it records its argv, environment and
@@ -77,7 +79,8 @@ func setup(t *testing.T, mode string) Request {
 	}
 	return Request{Command: program, Effort: "medium", Timeout: 10 * time.Second, Isolation: []string{"--ephemeral"},
 		Tree: tree, Folder: filepath.Join(dir, "run"), Prompt: []byte("the prompt\n"), SchemaPath: filepath.Join(dir, "schema.json"),
-		Environ: []string{"PATH=/usr/bin:/bin", "HOME=/home/x", "CLAUDE_SESSION=1", "JACKSTAY_HOME=/w", "OPENAI_API_KEY=k", "GIT_DIR=/g"}}
+		Environ: []string{"PATH=/usr/bin:/bin", "HOME=/home/x", "CLAUDE_SESSION=1", "JACKSTAY_HOME=/w", "OPENAI_API_KEY=k", "GIT_DIR=/g",
+			"GH_TOKEN=t", "ANTHROPIC_API_KEY=a", "HTTPS_PROXY=http://proxy:3128", "SSL_CERT_FILE=/ca.pem", "SSH_AUTH_SOCK=/s", "TMPDIR=/caller"}}
 }
 
 func read(t *testing.T, request Request, name string) string {
@@ -114,13 +117,16 @@ func TestRunDone(t *testing.T) {
 		t.Fatalf("argv: %v", argv)
 	}
 	env := read(t, request, "env")
-	for _, gone := range []string{"CLAUDE_SESSION", "JACKSTAY_HOME", "OPENAI_API_KEY", "GIT_DIR"} {
-		if strings.Contains(env, gone+"=") {
+	for _, gone := range []string{"CLAUDE_SESSION", "JACKSTAY_HOME", "GIT_DIR", "GH_TOKEN", "ANTHROPIC_API_KEY", "SSH_AUTH_SOCK", "TMPDIR=/caller"} {
+		if strings.Contains(env, gone) {
 			t.Errorf("%s reached Codex", gone)
 		}
 	}
-	if !strings.Contains(env, "HOME=/home/x") {
-		t.Error("HOME did not reach Codex")
+	for _, kept := range []string{"HOME=/home/x", "OPENAI_API_KEY=k", "HTTPS_PROXY=http://proxy:3128", "SSL_CERT_FILE=/ca.pem",
+		"PATH=/usr/bin:/bin", "TMPDIR=" + Temporary(request)} {
+		if !strings.Contains(env, kept) {
+			t.Errorf("%s did not reach Codex", kept)
+		}
 	}
 	events, _ := os.ReadFile(filepath.Join(request.Folder, "events.jsonl"))
 	if !strings.Contains(string(events), "turn.completed") {
@@ -128,10 +134,14 @@ func TestRunDone(t *testing.T) {
 	}
 }
 
-func TestPinnedSourceUsesScopedReadProfile(t *testing.T) {
+func TestPinnedSourceUsesTheReviewerAccessProfile(t *testing.T) {
 	request := setup(t, "done")
 	request.PinnedSource = true
 	request.Isolation = append(request.Isolation, "--skip-git-repo-check")
+	if err := os.WriteFile(filepath.Join(request.Tree, ".env.local"), []byte("X=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request.MCPServers = map[string]access.MCPServer{"docs": {Command: "docs-server", Args: []string{"--stdio"}}}
 	result := Run(context.Background(), request)
 	if result.Outcome != OutcomeDone {
 		t.Fatalf("%+v", result)
@@ -143,25 +153,42 @@ func TestPinnedSourceUsesScopedReadProfile(t *testing.T) {
 	if slices.Contains(argv, "--sandbox") {
 		t.Fatalf("legacy sandbox would override permission profile: %v", argv)
 	}
-	if !strings.Contains(pinnedFilesystem("", ""), `":slash_tmp"="deny"`) ||
-		!strings.Contains(pinnedFilesystem("", ""), `":tmpdir"="deny"`) {
-		t.Fatal("temporary directories must not retain ambient read access")
-	}
-	sourceDirectory, err := canonicalPath(request.Tree)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, want := range []string{
 		"--skip-git-repo-check", "--strict-config", `default_permissions="jackstay_review"`,
-		pinnedFilesystem(sourceDirectory, ""),
-		"permissions.jackstay_review.network.enabled=false",
+		"permissions.jackstay_review.network.enabled=true",
 		"project_doc_max_bytes=0",
-		"shell_environment_policy.inherit=none",
-		`shell_environment_policy.set.PATH="/usr/bin:/bin"`,
+		`shell_environment_policy.inherit="all"`,
+		`mcp_servers.docs={command="docs-server",args=["--stdio"]}`,
 	} {
 		if !slices.Contains(argv, want) {
 			t.Errorf("missing %q in %v", want, argv)
 		}
+	}
+	filesystem := ""
+	for _, word := range argv {
+		if strings.HasPrefix(word, "permissions.jackstay_review.filesystem=") {
+			filesystem = word
+		}
+	}
+	home := homedir.AccountHome()
+	temporary, _ := canonicalPath(Temporary(request))
+	wants := []string{`":root"="read"`, strconv.Quote(filepath.Join(home, ".ssh")) + `="none"`,
+		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`,
+		strconv.Quote(temporary) + `="write"`}
+	roots := envGlobRoots(request, home)
+	for _, root := range roots {
+		wants = append(wants, globKey(root, ".env"), globKey(root, ".env.*"))
+	}
+	for _, want := range wants {
+		if !strings.Contains(filesystem, want) {
+			t.Errorf("the filesystem table lacks %s: %s", want, filesystem)
+		}
+	}
+	if len(roots) == 0 && strings.Contains(filesystem, "/**/.env") {
+		t.Errorf("this platform denies no .env pattern, yet the table has one: %s", filesystem)
+	}
+	if strings.Count(filesystem, `="write"`) != 1 {
+		t.Fatalf("the reviewer may write somewhere besides its own folder: %s", filesystem)
 	}
 	if argv[len(argv)-1] != "-" {
 		t.Fatalf("prompt must arrive on stdin: %v", argv)
@@ -180,50 +207,6 @@ func TestPinnedVersionRequirement(t *testing.T) {
 		if got := supportsPinnedSource(version); got != supported {
 			t.Errorf("version %q supported = %v", version, got)
 		}
-	}
-}
-
-func TestPinnedRuntimeDirectoryDoesNotExposeReviewOrRepository(t *testing.T) {
-	binaryDirectory := t.TempDir()
-	program := filepath.Join(binaryDirectory, "codex")
-	if err := os.WriteFile(program, []byte("#!/bin/sh\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	request := Request{Command: program, Tree: t.TempDir(), Folder: t.TempDir(), RepositoryRoot: t.TempDir()}
-	canonicalBinary, err := canonicalPath(binaryDirectory)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := pinnedRuntimeDirectory(request); got != canonicalBinary {
-		t.Fatalf("safe executable directory = %q, want %q", got, canonicalBinary)
-	}
-	if profile := pinnedFilesystem(request.Tree, canonicalBinary); !strings.Contains(profile, strconv.Quote(canonicalBinary)+`="read"`) {
-		t.Fatalf("runtime directory missing from %q", profile)
-	}
-	for name, change := range map[string]func(*Request){
-		"repository": func(value *Request) { value.RepositoryRoot = binaryDirectory },
-		"source":     func(value *Request) { value.Tree = filepath.Join(binaryDirectory, "projected") },
-		"artifacts":  func(value *Request) { value.Folder = filepath.Join(binaryDirectory, "attempt") },
-		"unknown":    func(value *Request) { value.RepositoryRoot = "" },
-	} {
-		t.Run(name, func(t *testing.T) {
-			candidate := request
-			change(&candidate)
-			if got := pinnedRuntimeDirectory(candidate); got != "" {
-				t.Fatalf("unsafe directory granted: %q", got)
-			}
-		})
-	}
-
-	linkedDirectory := t.TempDir()
-	linked := filepath.Join(linkedDirectory, "codex")
-	if err := os.Symlink(program, linked); err != nil {
-		t.Fatal(err)
-	}
-	request.Command = linked
-	request.RepositoryRoot = binaryDirectory
-	if got := pinnedRuntimeDirectory(request); got != "" {
-		t.Fatalf("symlinked executable inside repository granted: %q", got)
 	}
 }
 
@@ -402,15 +385,42 @@ func TestCheckEnvironment(t *testing.T) {
 	}
 }
 
-func TestEnvironmentAndLoginWords(t *testing.T) {
-	kept := Environment([]string{"PATH=/bin", "CODEX_HOME=/c", "TERM=x", "LC_ALL=C"})
-	if strings.Join(kept, " ") != "PATH=/bin CODEX_HOME=/c LC_ALL=C" {
-		t.Fatal(kept)
-	}
+func TestLoginWords(t *testing.T) {
 	if !IsLoginFailure("Failed to refresh token: 401") || IsLoginFailure("stream disconnected; reconnecting") {
 		t.Fatal("login words")
 	}
 	if codexLogLines("2026 ERROR codex_core: x\nplain line\n") != "2026 ERROR codex_core: x" {
 		t.Fatal("log lines")
 	}
+}
+
+func TestTheProjectsInheritWinsAndEveryKeyIsOnce(t *testing.T) {
+	request := setup(t, "done")
+	request.PinnedSource = true
+	request.Isolation = []string{"-c", "shell_environment_policy.inherit=none"}
+	request.Environ = []string{"CLAUDE_CONFIG_DIR=" + filepath.Join(homedir.AccountHome(), ".claude")} // the same folder twice
+	argv := Argv(request, filepath.Join(request.Folder, "answer.json"))
+	filesystem := ""
+	for _, word := range argv {
+		if strings.HasPrefix(word, "permissions.jackstay_review.filesystem=") {
+			filesystem = word
+		}
+	}
+	claude, _ := canonicalPath(filepath.Join(homedir.AccountHome(), ".claude"))
+	if count := strings.Count(filesystem, strconv.Quote(claude)+"="); count != 1 {
+		t.Fatalf("a key appears %d times: %s", count, filesystem)
+	}
+	defaults := slices.Index(argv, `shell_environment_policy.inherit="all"`)
+	project := slices.Index(argv, "shell_environment_policy.inherit=none")
+	if defaults < 0 || project < defaults {
+		t.Fatalf("the project's inherit does not come after jackstay's default: %v", argv)
+	}
+}
+
+// globKey is the profile's entry denying files named name under root.
+func globKey(root, name string) string {
+	if resolved, err := canonicalPath(root); err == nil {
+		root = resolved
+	}
+	return strconv.Quote(strings.TrimSuffix(root, "/")+"/**/"+name) + `="none"`
 }

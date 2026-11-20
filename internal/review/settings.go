@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/access"
 	"github.com/zima-oss/jackstay/internal/review/claude"
 	"github.com/zima-oss/jackstay/internal/review/runner"
 )
@@ -25,6 +27,8 @@ type ReviewerSettings struct {
 	Effort         string
 	TimeoutMinutes int
 	Isolation      []string
+	// MCPServers are the MCP servers given back to this reviewer (`mcp_servers`); none by default.
+	MCPServers map[string]access.MCPServer
 }
 
 // Settings are a project's `review` section with every default filled in.
@@ -49,13 +53,16 @@ type Settings struct {
 // DefaultIsolation is the default set of isolation flags (docs/design/review.md section 1).
 var DefaultIsolation = []string{
 	"--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
-	"-c", "mcp_servers={}", "-c", "features.apps=false", "-c", "shell_environment_policy.inherit=none",
+	"-c", "mcp_servers={}", "-c", "features.apps=false",
 }
 
 // KnownReviewers are the reviewers jackstay knows how to run.
 var KnownReviewers = []string{"codex", claude.Name}
 
 var efforts = []string{"minimal", "low", "medium", "high", "xhigh"}
+
+// mcpName is the name of an MCP server given back to a reviewer: one word in both CLIs' syntax.
+var mcpName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // ownedWords are argv words jackstay sets itself and refuses in `isolation`.
 var ownedWords = []string{
@@ -132,6 +139,14 @@ func SettingsOf(loaded config.Config) (Settings, []string) {
 			}
 			if value, ok := entry["isolation"]; ok {
 				reviewer.Isolation = textsOf(value)
+			}
+			if servers, ok := entry["mcp_servers"].(map[string]any); ok {
+				reviewer.MCPServers = map[string]access.MCPServer{}
+				for server, value := range servers {
+					definition, _ := value.(map[string]any)
+					command, _ := definition["command"].(string)
+					reviewer.MCPServers[server] = access.MCPServer{Command: command, Args: textsOf(definition["args"])}
+				}
 			}
 			settings.Reviewers[name] = reviewer
 		}
@@ -211,6 +226,14 @@ func (settings Settings) problems() []string {
 		}
 		if reviewer.TimeoutMinutes < 1 || reviewer.TimeoutMinutes > 120 {
 			problem("`review.reviewers.%s.timeout_minutes` is %d: 1–120", name, reviewer.TimeoutMinutes)
+		}
+		for server, definition := range reviewer.MCPServers {
+			if !mcpName.MatchString(server) {
+				problem("`review.reviewers.%s.mcp_servers` names %q: letters, digits, `_` and `-`, at most 64", name, server)
+			}
+			if strings.TrimSpace(definition.Command) == "" {
+				problem("`review.reviewers.%s.mcp_servers.%s.command` is empty", name, server)
+			}
 		}
 		if name == claude.Name {
 			if len(reviewer.Isolation) > 0 {

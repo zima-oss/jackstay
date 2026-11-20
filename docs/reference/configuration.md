@@ -237,10 +237,14 @@ Configures `jst review`: the reviewers, what they are told, and how findings dec
 | `repeat_rounds` | integer | Says a place is to be redesigned once it draws a finding this many rounds running, at least 2 (default 2). |
 | `repeat_severities` | list of strings | Lists the severities that count as repeats for redesign (default every severity but the last). |
 | `reviewers` | map of objects | Overrides the built-in reviewers' settings, by name: `codex` or `claude-code`. |
-| `reviewers.*` | object | Overrides one built-in reviewer's command, model, effort, deadline and isolation flags. |
+| `reviewers.*` | object | Overrides one built-in reviewer's command, model, effort, deadline, isolation flags and MCP servers. |
 | `reviewers.*.command` | string | Runs the reviewer as this program, a name on `PATH` or an absolute path (default `codex` for Codex, `claude` for Claude Code). |
 | `reviewers.*.effort` | string | Sets the reviewer's reasoning effort; empty passes none (default `medium` for Codex, the CLI's own for Claude Code). |
 | `reviewers.*.isolation` | list of strings | Replaces Codex's default isolation flags with these words; words jackstay owns are refused, and Claude Code takes none. |
+| `reviewers.*.mcp_servers` | map of objects | Gives these MCP servers back to the reviewer, by name: `command` and `args` (needs `"jackstay_schema": 3`); the user's own stay closed. |
+| `reviewers.*.mcp_servers.*` | object | One MCP server given back to the reviewer. |
+| `reviewers.*.mcp_servers.*.args` | list of strings | Passes these arguments to the MCP server. |
+| `reviewers.*.mcp_servers.*.command` | string | Runs the MCP server as this program. |
 | `reviewers.*.model` | string | Passes this model to the reviewer; empty keeps the CLI's own default. |
 | `reviewers.*.timeout_minutes` | integer | Stops one reviewer run after this many minutes, 1 to 120 (default 20). |
 | `round_limit` | integer | Stops after this round and asks the owner, at least 2 (default 6). |
