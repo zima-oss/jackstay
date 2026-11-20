@@ -16,7 +16,7 @@ compares its Git tree with the tested candidate. Local lanes require the target 
 also require GitHub to confirm the exact merged commit reachable from the target.
 Batching and provider-side exact-tree enforcement remain separate from manual handoff.
 
-The primary feature is a durable queue owned by jackstay, with one writer per repository and one tested candidate at a time. It works without GitHub's native merge queue. The first slice is a manual single-PR lane in a disposable repository. It proves candidate identity, crash recovery and the conditions for safe landing. Ordered batches, failure bisection and a service process follow after that slice. [Issue #3](https://github.com/zima-oss/jackstay/issues/3) · [Backlog brief](backlog.md#b6-pilot-a-merge-queue-3)
+The primary feature is a durable queue owned by jackstay, with one writer per repository and one tested candidate at a time. It works without GitHub's native merge queue. The first slice is a manual single-PR lane in a disposable repository. It proves candidate identity, crash recovery and the conditions for safe landing. Ordered batches, failure bisection and a service process follow after that slice. [Issue #3](https://github.com/zima-oss/jackstay/issues/3) · [Backlog brief](https://github.com/zima-oss/jackstay/issues/3)
 
 ## Product contract and plan availability
 
