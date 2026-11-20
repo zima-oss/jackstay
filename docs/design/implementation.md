@@ -653,7 +653,9 @@ approving, the maintainer has run `just gate` on a Mac on the tagged commit
 
 1. Refuse a tag that is not annotated, not the commit checked out, not on main, or not
    `v` + `internal/version`'s `Version`.
-2. `just gate` on the tagged tree.
+2. The Linux CI job of `jst test` on the tagged commit, by [land.md](land.md) sections 7.4 ("A
+   commit already checked") and 7.6: on a commit whose check already succeeded it runs only the
+   uncached security scope (`x-sec`); otherwise the whole graph.
 3. GoReleaser builds, signs and notarises with that tag (`GORELEASER_CURRENT_TAG`,
    `--skip=publish,announce`).
 4. `actions/attest` signs build provenance for each archive, bound to the repository, workflow and

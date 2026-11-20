@@ -291,7 +291,8 @@ A system is Go's name for it: `darwin`, `linux`. The five keys need `"jackstay_s
 **A scope with no `run`** (a composite, such as `gate`) carries only its `deps`, with `ci`,
 `systems` and `when`. It runs nothing and checks nothing of its own: `requires` and every other run
 setting (`judge`, `timeout`, `lock_wait`, `lock`, `env`, `inputs`, `cache`) belong to scopes with
-`run`. It passes when every dep that runs on this system passed, and at least one did.
+`run`. It passes when every dep eligible on this system (section 7.2) passed, and at least one
+did.
 
 **`steps` is read as `deps`.** A scope's `steps` list is its `deps` in the same order, in schema 2
 and 3, so a schema-2 project keeps working unchanged; a scope with both is an error in
@@ -304,12 +305,10 @@ one that fails makes the list `not-started` before any of its deps runs; a dep r
 does not run them. In schema 3 a composite's `requires` are refused (below).
 
 `jst check` refuses an unknown name in `deps`, a cycle (naming it), `steps` and `deps` together,
-a scope with `run` whose dep has `systems` that leave out one of the scope's own systems (it could
-never run there), `ci` listing a system that a scope with `run` in the scope's graph leaves out
-(naming that scope; section 7.4), a dep that needs test arguments (`{tests}` or a typed selector), and, in schema
-3, `requires` or another run setting on a composite (naming the scope, and telling the person to
-move the check to the dep that needs it). Each refusal
-is also `not-started` (2) before anything runs. `jst check` warns about a scope with `run` that
+`ci: [S]` on a scope that is not S-eligible (section 7.2; naming the first dep on the path that
+breaks it), a dep that needs test arguments (`{tests}` or a typed selector), and, in schema 3,
+`requires` or another run setting on a composite (naming the scope, and telling the person to move
+the check to the dep that needs it). Each refusal is also `not-started` (2) before anything runs. `jst check` warns about a scope with `run` that
 another scope depends on and that has no `cache` key (section 7.3, "Verdicts only").
 
 ### 7.2 The run
@@ -324,9 +323,9 @@ another scope depends on and that has no `cache` key (section 7.3, "Verdicts onl
 3. **One at a time.** Nodes run one after another, in that order, each under its own `timeout`,
    lock and leftovers (testing.md sections 3 and 6). No two run at once in 0.6.0.
 4. **Each node, in turn**, is settled by the first of these that applies:
-   1. **Not on this system**: its `systems` leave out this machine, or it has `run` and a dep is
-      `skipped`. It is `skipped`. A `skipped` dep is not a failed one: a composite ignores it
-      (section 7.1), and nothing else is stopped by it.
+   1. **Not on this system**: it is not eligible on this machine's system (below). It is
+      `skipped`. A `skipped` dep is not a failed one: a composite ignores it (section 7.1), and
+      nothing else is stopped by it.
    2. **A dep did not pass**: a dep ended other than `passed`, `exited-0` or `skipped`. It is
       `not-run`.
    3. **`requires`**: its checks run, every time, before the cache is looked at. One that fails
@@ -347,6 +346,20 @@ or one of two that only a graph has:
 |---|---|---|
 | `skipped` | not on this system (step 4.1): ignored by a composite, not a failure | no |
 | `not-run` | a dep did not pass (step 4.2), or an earlier failure ended the run (step 5) | no |
+
+**Eligible on a system.** The one rule for where a scope can run, used by step 4.1, by `jst check`
+(section 7.1) and by coverage (section 7.4). For a system S:
+
+- a scope with `run` is **S-eligible** when its `systems` (absent: any) include S and every one of
+  its deps is S-eligible;
+- a composite is **S-eligible** when its `systems` (absent: any) include S and at least one of its
+  deps is S-eligible; a dep that is not S-eligible is one it ignores.
+
+On this machine's system, a node that is not eligible is exactly a `skipped` one, so a composite
+passes when every eligible dep passed and at least one did (section 7.1). Where a scope is not
+S-eligible, the first dep on the path that breaks it is the first not-S-eligible dep in declared
+order of a scope with `run`, or the first dep of a composite none of whose deps is S-eligible,
+followed down to a scope whose own `systems` leave S out.
 
 The last `jst test:` line reads the run as a whole:
 
@@ -457,19 +470,17 @@ store, not change the hash.
 
 ### 7.4 Local and CI
 
-A scope is **covered on a system** S when it runs in CI there: its own `ci` lists S, or a scope
-covered on S depends on it; and it and every scope with `run` in its graph run on S (their
-`systems`, through every dep). A scope is **covered** when it is covered on some system. So `ci`
-never claims a scope whose graph cannot run on that system: `jst check` refuses `ci: [S]` on a scope
-whose graph holds a scope with `run` that leaves S out, naming it.
+A scope is **covered on a system** S when it is S-eligible (section 7.2) and its own `ci` lists S
+or a scope covered on S depends on it. A scope is **covered** when it is covered on some system.
+`jst check` refuses `ci: [S]` on a scope that is not S-eligible (section 7.1).
 
 **Three groups.** `jst test changed` and `jst test uncovered` expand the graphs of their selected
 scopes and put every node with `run` in exactly one group, the first that fits; a composite only
 leads to its deps:
 
-1. **here**: it runs on this system (its `systems`) and is not covered in the command's sense;
+1. **here**: it is eligible on this system and is not covered in the command's sense;
 2. **ci**: it is covered on some system;
-3. **elsewhere**: neither; it is not covered, and its `systems` leave out this machine.
+3. **elsewhere**: neither; it is not covered, and it is not eligible on this system.
 
 | command | selected scopes | not covered, for **here**, means |
 |---|---|---|
@@ -518,10 +529,15 @@ Where each command is used:
   CI covers Linux only ([W-083](../decisions/W-083-no-macos-job-in-ci.md)). Before a tag, a full
   gate on a Mac, including `jst test uncovered`, runs on the version-bump commit.
 - **In CI**: the covered scopes run in jobs whose names the base's rules require; `jst doctor`
-  reports such a job the rules do not require. How scopes map to jobs is open (below). A release
-  workflow does not run the graph again: before publishing, it requires the successful required
-  `jst test` checks for the exact tagged commit, as the host reports them for that commit, and
-  fails naming a missing one. Only the scopes with `"cache": false` run in it again.
+  reports such a job the rules do not require. How scopes map to jobs is open (below).
+- **A commit already checked**: the one rule against repeating CI work on a commit. A CI job of
+  the graph, whatever its shape, for a commit on which a check of the same name on the same system
+  already succeeded, as the host reports it for that commit, runs no test: it runs only the scopes
+  in its graph whose own `cache` is `false`, with their deps, and ends `passed` with the detail
+  `already checked: CHECK` naming that check (exit 0). It counts as `passed` under the last-line
+  rule: the host's check is the record of a counted pass for that exact commit. A release
+  workflow, a manual dispatch and a rerun all meet this rule; there is no rule of their own. The
+  input cache (section 7.3) stays a speed-up across commits.
 - **The AGENTS block** states the split, generated from the scopes: "CI runs x-go, x-check, x-sec,
   x-docs on Linux and is the gate. Before a pull request: `jst test changed`. Before an install or
   a tag: `jst test uncovered`."
@@ -580,10 +596,11 @@ commit in Linux CI. Each scope with `ci` tests a set no other one does:
 - `gate`: the local composite, with no `ci`. On a Mac it runs `x-go` too, which tests the
   `*_darwin.go` code no CI job reaches; that is what `jst test uncovered` runs there.
 
-jackstay's release workflow does not run the Linux gate again. Before publishing, it requires the
-successful required `jst test` checks for the exact tagged commit, as GitHub reports them for that
-commit, and fails naming the missing check when there is none. It runs `x-sec` itself, since its
-security checks belong to the time of the release.
+jackstay's release workflow runs the Linux CI job on the tagged commit before publishing. By the
+rule of section 7.4 ("A commit already checked"), when GitHub reports that job's check succeeded on
+that commit (from its run on `main`), the job runs only `x-sec`, whose security checks belong to the
+time of the release, and ends `passed` naming the check; otherwise it runs the whole graph. A failure
+of either stops the release.
 
 ### 7.7 What goes away
 
@@ -611,7 +628,8 @@ security checks belong to the time of the release.
 - **Guard**: `gh pr merge` and `glab mr merge` refused with and without a `land` section.
 - **The graph**: a dep shared by two scopes runs once; the order of section 7.2 for a diamond, for
   `steps` lists (0.5.x order kept) and for several scopes asked for; a cycle, an unknown dep,
-  `steps` with `deps`, and a dep on fewer systems refused by `jst check` and `not-started` (2); a
+  `steps` with `deps`, and `ci` on a scope that is not eligible refused by `jst check` and
+  `not-started` (2); a
   failure stops the run and leaves the rest `not-run`, and `--keep-going` runs only the nodes whose
   deps passed; a composite passes when its deps passed, with a `skipped` dep named, and is `skipped`
   (79) when all are; a node with `run` after a `skipped` dep is `skipped`; a dep `skipped` for
@@ -633,9 +651,8 @@ security checks belong to the time of the release.
   `JACKSTAY_NO_REUSE` skip the read and still write; `"cache": false`, and a scope depending on
   one directly or through another neither read nor written; age and count pruning; a workflow
   restoring the default branch's entries.
-- **Where tests run**: covered through `ci` and through a dependent, and not on a system its own
-  `systems` or those of a scope with `run` in its graph leave out; `jst check` refusing `ci` on a
-  scope whose graph holds such a scope, naming it; every node in exactly one of **here**, **ci** and **elsewhere**, for
+- **Where tests run**: covered through `ci` and through a dependent, only where the scope is
+  eligible (section 7.2); every node in exactly one of **here**, **ci** and **elsewhere**, for
   `jst test changed` and `jst test uncovered`, with the four examples of section 7.4 as tests;
   **here** running with deps from any group; `needs-other-system` (80) only from `jst test changed`
   and only after **here** passed; `left-to-ci` from `jst test changed` only when **here** and
@@ -644,8 +661,14 @@ security checks belong to the time of the release.
   `jst test uncovered` leaving out selector scopes, on a clean copy; `jst check` refusing a dep
   that needs test arguments and warning about a depended-on scope with no `cache` key; the jobs of
   the option chosen for CI;
-  jackstay's release workflow failing, naming the check, when the tagged commit has no successful
-  required `jst test` check, and running `x-sec`; install accepting a `passed` or `left-to-ci` record of `jst test uncovered` for the commit,
+  a CI job on a commit whose same check already succeeded on that system running only the scopes
+  whose own `cache` is `false`, with their deps, and ending `passed` with `already checked: CHECK`;
+  the same job running the whole graph when that check is missing, failed, of another name or of
+  another system; the release workflow, a manual dispatch and a rerun meeting the rule alike;
+  S-eligibility: an unrestricted composite over a `darwin`-only composite is eligible on Linux
+  through its other deps and `ci: ["linux"]` on it is accepted, while `ci: ["linux"]` on the
+  `darwin`-only composite is refused naming the `darwin`-only scope with `run` beneath it, and a
+  scope with `run` over that composite is not Linux-eligible; install accepting a `passed` or `left-to-ci` record of `jst test uncovered` for the commit,
   project and system, and refusing without one; doctor reporting
   a `jst test SCOPE (SYSTEM)` job the rules do not require.
 - **GitHub pilot**, by hand in a disposable repository with synthetic content: required checks,
