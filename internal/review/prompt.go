@@ -96,8 +96,9 @@ func verdictForm(data PromptData) string {
 	form.WriteString("  taken as an outcome. A process killed between two writes (a session stopped, Ctrl-C, sleep, a\n")
 	form.WriteString("  reboot) is `ordinary`: a finding when, after restart and recovery, the state stays wrong or a\n")
 	form.WriteString("  message is lost or doubled.\n")
-	form.WriteString("  A finding that only asks to cover more exotic cases never takes a blocking severity (W-096):\n")
-	form.WriteString("  a mechanism keeps clear limits and writes down what it does not do.\n")
+	form.WriteString("  A finding that only asks to cover more exotic cases, `unusual` with an empty `ordinary_path`,\n")
+	form.WriteString("  never takes a blocking severity (W-096): a mechanism keeps clear limits and writes down what it\n")
+	form.WriteString("  does not do.\n")
 	if data.Triage {
 		form.WriteString("  An `unusual` finding with an empty `ordinary_path` is rare too, however `severe` (W-094).\n")
 		form.WriteString("  An `unusual` and `mild` finding is rare: it is recorded for later, not fixed now.\n")

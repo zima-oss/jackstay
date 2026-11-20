@@ -240,7 +240,8 @@ which its setup arises by accident (empty when none does, and for an `ordinary` 
 answers every open finding, `fixed` or `open`. A transient local disk error in an ordinary call is
 rare (the error need only reach the caller); a process killed between two writes is `ordinary`, a
 finding when recovery leaves the state wrong or a message lost or doubled (W-094). A finding that
-only asks to cover more exotic cases never takes a blocking severity (W-096). The schema
+only asks to cover more exotic cases (`unusual`, with an empty `ordinary_path`) never takes a
+blocking severity (W-096). The schema
 sets `additionalProperties: false` and every member required (`[]` where empty).
 
 jackstay reads `answer.json` with `internal/strictjson` (one value, no member twice, no unknown member, 1

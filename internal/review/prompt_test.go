@@ -56,7 +56,7 @@ func TestADiskErrorIsRareAndAKillIsOrdinary(t *testing.T) {
 			"taken as an outcome",
 			"killed between two writes",
 			"message is lost or doubled",
-			"more exotic cases never takes a blocking severity (W-096)",
+			"`unusual` with an empty `ordinary_path`,\n  never takes a blocking severity (W-096)",
 		} {
 			if !strings.Contains(form, want) {
 				t.Errorf("triage %v: the verdict form lacks %q:\n%s", triage, want, form)

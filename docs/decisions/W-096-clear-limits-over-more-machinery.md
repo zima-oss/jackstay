@@ -16,8 +16,8 @@ commit.
 - A place that keeps drawing corner cases is narrowed, or an existing solution is taken, rather than
   growing more machinery. Before inventing something, look at how others have already solved it.
 - CI does not run the same test twice on one commit, and jobs and steps are not duplicated.
-- A review finding that only asks to cover more exotic cases never takes a blocking severity. The
-  reviewer's prompt says so.
+- A review finding that only asks to cover more exotic cases (rated `unusual`, with no ordinary-work
+  path, W-094) never takes a blocking severity. The reviewer's prompt says so.
 
 ## Consequences
 
