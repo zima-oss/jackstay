@@ -19,17 +19,20 @@ import (
 
 const exportUsage = `usage: jst receipts export KEY
 
-Write a versioned record for a stored counted pass to stdout. The SHA-256 of those exact bytes
-is printed to stderr. The record includes the checkout HEAD and the measured input manifest.
+Writes the record of a stored counted pass (with its HEAD and input manifest) to standard output,
+and the SHA-256 of its exact bytes to standard error.
 
-exit: 0 exported; 1 no usable export or a read/write failure; 2 bad request.`
+exit: 0 exported; 1 no usable export or a read/write failure; 2 bad request.
+
+example: jst receipts export "$receipt_key" > evidence.json`
 
 const verifyUsage = `usage: jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE
 
-Verify the record against the expected file digest, checkout HEAD and receipt key. Obtain these
-expected values independently of FILE. No receipt store or Git repository is needed.
+Take DIGEST, SHA and KEY from a source other than FILE. Needs no receipt store or Git repository.
 
-exit: 0 verified; 1 unverified or unreadable evidence; 2 bad request.`
+exit: 0 verified; 1 unverified or unreadable evidence; 2 bad request.
+
+example: jst receipts verify --sha256 "$expected_digest" --head "$expected_head" --key "$expected_key" evidence.json`
 
 const evidenceSchema = 1
 
