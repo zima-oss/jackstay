@@ -250,6 +250,9 @@ type plan struct {
 	follows                      int
 	ledger                       []LedgerFinding
 	streaks                      map[string]int
+	// limitCleared: the newest round reached the limit and nothing of it blocks by today's rule,
+	// so the rounds after it need no owner's word.
+	limitCleared bool
 }
 
 func (round Round) plan(ctx context.Context, task, commit, givenBase string, settings Settings, options Options) (plan, *Result) {
@@ -272,7 +275,12 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, set
 		planned.number = record.Round + 1
 		planned.chain = record.Chain
 	}
-	if newest != nil && newest.Round >= round.Settings.RoundLimit && newest.Outcome.Blocks && !options.PastLimit {
+	// Whether the newest round still blocks is read from its ledger by today's predicate, not from
+	// the flag it saved: a rule that changed since (W-094) applies to it as `jst review check` does.
+	if newest != nil && newest.Round >= round.Settings.RoundLimit && !ledgerBlocks(round.Settings, newest.Outcome.Ledger) {
+		planned.limitCleared = true
+	}
+	if newest != nil && newest.Round >= round.Settings.RoundLimit && ledgerBlocks(round.Settings, newest.Outcome.Ledger) && !options.PastLimit {
 		result := Result{Status: ExitOwner, Next: fmt.Sprintf(
 			"round %d reached the limit of %d and still blocks: the owner decides; a further round needs --past-limit after the owner's word",
 			newest.Round, round.Settings.RoundLimit)}
@@ -471,7 +479,7 @@ func (round Round) finish(settings Settings, planned plan, names []string, optio
 		record.Summaries[name] = answers[position].Summary
 	}
 	record.Outcome = Advance(settings, planned.ledger, planned.streaks, answered, planned.number, planned.commit)
-	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit
+	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit && !planned.limitCleared
 	status, next := Disposition(settings, record)
 	if err := writeJSON(filepath.Join(folder, RecordName), record); err != nil {
 		return Result{Status: ExitReviewer, Folder: folder, Next: "the round's record could not be written: " + err.Error()}
@@ -497,13 +505,17 @@ func (round Round) sourceFailure(planned plan, folder, reason string) Result {
 
 // Disposition is a round's exit status and next step (section 7: redesign before the owner).
 func Disposition(settings Settings, record RoundRecord) (int, string) {
+	recheck := ""
+	if settings.Triage {
+		recheck = "re-check each blocking rating (an unusual and severe finding blocks only with an ordinary-work path, W-094), "
+	}
 	switch {
 	case len(record.Outcome.RedesignDue) > 0:
 		return ExitRedesign, "redesign, do not patch (W-019): " + strings.Join(record.Outcome.RedesignDue, "; ")
 	case record.Round >= settings.RoundLimit && record.Outcome.Blocks:
-		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: ask the owner", record.Round, settings.RoundLimit)
+		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: %sthen ask the owner", record.Round, settings.RoundLimit, recheck)
 	case record.Outcome.Blocks:
-		return ExitBlocks, "fix the open blocking findings, then run the next round"
+		return ExitBlocks, recheck + "fix the blocking findings that stand, then run the next round"
 	}
 	return ExitClear, "nothing blocks"
 }
