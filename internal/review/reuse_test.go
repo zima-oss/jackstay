@@ -224,3 +224,33 @@ func TestAReusedRunIsMarkedInTheIndex(t *testing.T) {
 		}
 	}
 }
+
+func TestALongerDeadlineReusesTheAnswerGiven(t *testing.T) {
+	approve := Answer{Verdict: "approve", Summary: "clear"}
+	h, fake := twoReviewers(t, map[string][]any{"codex": {approve}, "claude-code": {codex.OutcomeTimeout, approve}})
+	ctx := context.Background()
+	h.round.Run(ctx, Options{})
+	if result := h.round.Run(ctx, Options{Timeout: 40}); result.Status != ExitClear || fake.calls["codex"] != 1 {
+		t.Fatalf("a longer deadline paid Codex again: %+v, calls %v", result, fake.calls)
+	}
+}
+
+func TestAFailedRetryMarksTheReusedRunInTheIndex(t *testing.T) {
+	approve := Answer{Verdict: "approve", Summary: "clear"}
+	h, _ := twoReviewers(t, map[string][]any{"codex": {approve}, "claude-code": {codex.OutcomeTimeout, codex.OutcomeTimeout}})
+	ctx := context.Background()
+	first := h.round.Run(ctx, Options{})
+	if again := h.round.Run(ctx, Options{}); again.Status != ExitReviewer {
+		t.Fatalf("%+v", again)
+	}
+	lines, _, _ := h.round.Store.ReadIndex()
+	marked := false
+	for _, line := range lines {
+		if line.Attempt == 2 && line.Reviewer == "codex" {
+			marked = line.Reused == filepath.Base(first.Folder)
+		}
+	}
+	if !marked {
+		t.Fatalf("the second attempt's codex line is not marked reused: %+v", lines)
+	}
+}

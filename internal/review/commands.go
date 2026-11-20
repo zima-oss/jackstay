@@ -432,9 +432,13 @@ func runList(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 		if line.Round != nil {
 			round = strconv.Itoa(*line.Round)
 		}
-		fmt.Fprintf(stdout, "%s  %-30s round %-3s attempt %-3d %-8s %-12s blocks=%t realistic=%d rare=%d %.0fs %s\n",
+		reused := ""
+		if line.Reused != "" {
+			reused = " reused from " + line.Reused
+		}
+		fmt.Fprintf(stdout, "%s  %-30s round %-3s attempt %-3d %-8s %-12s blocks=%t realistic=%d rare=%d %.0fs %s%s\n",
 			line.At, line.Task, round, line.Attempt, line.Reviewer, line.Outcome, line.Blocks, line.Realistic, line.Rare,
-			line.Seconds, short(line.Commit))
+			line.Seconds, short(line.Commit), reused)
 	}
 	return 0
 }

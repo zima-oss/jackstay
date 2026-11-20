@@ -115,10 +115,14 @@ func (saved reused) adopt(folder string) (ReviewerRun, error) {
 	return run, writeJSON(filepath.Join(folder, "run.json"), run)
 }
 
+// reviewersOf are who answers: each reviewer's settings less its deadline, which changes how long
+// it may take, not what it answers (a retry with a longer --timeout reuses what was answered).
 func reviewersOf(settings Settings, names []string) []ReviewerSettings {
 	reviewers := make([]ReviewerSettings, 0, len(names))
 	for _, name := range names {
-		reviewers = append(reviewers, settings.Reviewers[name])
+		reviewer := settings.Reviewers[name]
+		reviewer.TimeoutMinutes = 0
+		reviewers = append(reviewers, reviewer)
 	}
 	return reviewers
 }

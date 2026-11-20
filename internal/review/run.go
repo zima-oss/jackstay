@@ -688,7 +688,7 @@ func failedLines(planned plan, runs []ReviewerRun, folder string) []IndexLine {
 	lines := make([]IndexLine, 0, len(runs))
 	for _, run := range runs {
 		lines = append(lines, IndexLine{At: run.Ended, Task: planned.task, Attempt: planned.attempt, Reviewer: run.Reviewer,
-			Commit: planned.commit, Base: planned.base, Outcome: run.Outcome, Seconds: run.Seconds, Path: folder})
+			Commit: planned.commit, Base: planned.base, Outcome: run.Outcome, Seconds: run.Seconds, Path: folder, Reused: run.Reused})
 	}
 	return lines
 }

@@ -19,7 +19,7 @@ not an enemy; efficiency comes first, everything else is insurance against accid
 - After a crash or a failed reviewer, only the reviewers whose answer is missing run again. A
   saved answer is reused when its attempt asked the same question of the same reviewer settings:
   the round, the commits, the prompt, the schema, the review policy, and each reviewer's command,
-  model, effort and isolation.
+  model, effort and isolation (not its deadline: a retry with a longer one reuses what was answered).
 - Codex and Claude Code get one access profile: everything readable, read-only, with the network,
   the user's `PATH`, proxy, CA and provider settings; closed only are writes outside the reviewer's
   own temporary folder, the account's secrets and token-like variables other than the provider's
@@ -29,6 +29,8 @@ not an enemy; efficiency comes first, everything else is insurance against accid
   per arm, recall and precision, time per stage, model and cost (`just review-bench`).
 
 ## Consequences
+
+The four parts land as separate changes, in the order above; each holds from its own change on.
 
 `jst review pool` and the `review.pool` key are gone; there was no release with them. A review run
 in the background is listed and stopped with `jst procs`. A changed model, effort, command or

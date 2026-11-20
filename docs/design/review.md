@@ -395,7 +395,7 @@ and exit is 5; the successful answers stay in its folder, readable.
 
 **Only the missing answers are paid for again** ([W-090](../decisions/W-090-review-of-0-6-0.md)). `attempt.json` records the attempt's
 **binding**: a digest of the round number, the task, the commits (base, head, previous), the review
-policy and content policy, each selected reviewer's settings (command, model, effort, isolation),
+policy and content policy, each selected reviewer's settings (command, model, effort, isolation; not its deadline),
 and the digests of the prompt, the verdict schema and the `--brief` file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
 starting reviewers, a run looks through the task's earlier attempts (never rounds), newest first,
 for one with its own binding; a reviewer's `answer.json` there is reused when it reads and checks as a
