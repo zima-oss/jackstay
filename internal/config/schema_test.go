@@ -125,6 +125,9 @@ func TestNewerKeysNeedSchema3AndAnOlderSchemaSaysSo(t *testing.T) {
 		`{"jackstay_schema":2,"status":{"repos":["."]}}`,
 		`{"jackstay_schema":2,"test":{"selection":{"order":[]}}}`,
 		`{"jackstay_schema":2,"test":{"scopes":{"unit":{"run":["x"],"report":"r.xml"}}}}`,
+		`{"jackstay_schema":2,"test":{"scopes":{"x-go":{"run":["x"],"ci":["linux"]}}}}`,
+		`{"jackstay_schema":2,"test":{"scopes":{"x-ios":{"run":["x"],"systems":["darwin"]}}}}`,
+		`{"jackstay_schema":2,"test":{"scopes":{"gate":{"deps":["x-go"]},"x-go":{"run":["x"]}}}}`,
 		`{"jackstay_schema":2,"receipts":{"commands":[{"argv":["x"],"judge":"go-json"}]}}`,
 		`{"jackstay_schema":1,"land":{"autonomy":"prepare"}}`,
 		`{"jackstay_schema":2,"land":{"autonomy":"merge-when-green"}}`,
@@ -148,6 +151,34 @@ func TestNewerKeysNeedSchema3AndAnOlderSchemaSaysSo(t *testing.T) {
 	}
 	if problems := SectionProblems(parsed).Of(""); len(problems) != 1 || !strings.Contains(problems[0], "upgrade jackstay") {
 		t.Fatalf("a newer schema: %v", problems)
+	}
+}
+
+func TestOnlyAScopeSaysWhereItRunsAndASchema3CompositeChecksNothing(t *testing.T) {
+	problemsOf := func(text string) []string {
+		parsed, err := Parse([]byte(text))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return SectionProblems(parsed).Of("test")
+	}
+	if found := problemsOf(`{"jackstay_schema":3,"receipts":{"toolchain":[]},"test":{"scopes":{"x-go":{"run":["x"],"ci":["linux"],"systems":["linux","darwin"]},` +
+		`"gate":{"deps":["x-go"]}},"steps":{"build":{"run":["y"],"deps":["x-go"]}}}}`); len(found) != 0 {
+		t.Fatalf("a scope with ci, systems and deps, a step with deps: %v", found)
+	}
+	if found := problemsOf(`{"jackstay_schema":3,"test":{"steps":{"build":{"run":["x"],"ci":["linux"]}}}}`); len(found) == 0 {
+		t.Fatal("a step with ci was accepted")
+	}
+	if found := strings.Join(problemsOf(`{"jackstay_schema":3,"receipts":{"toolchain":[]},"test":{"scopes":{"x-go":{"run":["x"]},`+
+		`"gate":{"deps":["x-go"],"requires":[{"run":["y"],"why":"z"}]}}}}`), "; "); !strings.Contains(found, "test.scopes.gate.requires") {
+		t.Fatalf("requires on a schema-3 composite: %s", found)
+	}
+	if found := problemsOf(`{"jackstay_schema":2,"receipts":{"toolchain":[]},"test":{"scopes":{"x-go":{"run":["x"]},` +
+		`"gate":{"steps":["x-go"],"requires":[{"run":["y"],"why":"z"}]}}}}`); len(found) != 0 {
+		t.Fatalf("a schema-2 list keeps its requires: %v", found)
+	}
+	if found := strings.Join(problemsOf(`{"jackstay_schema":3,"test":{"scopes":{"x-go":{"run":["x"]},"gate":{"deps":["x-go"]}}}}`), "; "); !strings.Contains(found, "receipts.toolchain") {
+		t.Fatalf("deps without receipts.toolchain: %s", found)
 	}
 }
 

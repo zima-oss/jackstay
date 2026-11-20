@@ -1083,10 +1083,30 @@
                 "pattern": "\\S",
                 "type": "string"
               },
+              "ci": {
+                "description": "Lists the systems (`linux`, `darwin`) whose CI job, `jst test ci (SYSTEM)`, runs this scope and what it depends on; CI is the gate for them.",
+                "items": {
+                  "enum": [
+                    "linux",
+                    "darwin"
+                  ],
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "cwd": {
                 "description": "Runs the command in this folder of the checkout instead of its root.",
                 "pattern": "\\S",
                 "type": "string"
+              },
+              "deps": {
+                "description": "Names the scopes or steps that must pass before this one, in this order; each runs once per run of `jst test`.",
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
               },
               "durations": {
                 "description": "Records each test class's seconds for `{slow}` (default on for `full` and `display` under `swift-test`).",
@@ -1220,8 +1240,20 @@
                 "type": "object"
               },
               "steps": {
-                "description": "Runs these steps or scopes in order instead of `run`, stopping at the first that does not pass.",
+                "description": "Names steps or scopes instead of `run`, read as `deps`: each runs once, in this order, stopping at the first that does not pass.",
                 "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "systems": {
+                "description": "Lists the systems (`linux`, `darwin`) the scope runs on at all; elsewhere it is `skipped` (default any).",
+                "items": {
+                  "enum": [
+                    "linux",
+                    "darwin"
+                  ],
                   "pattern": "\\S",
                   "type": "string"
                 },
@@ -1303,6 +1335,13 @@
               "cwd": {
                 "pattern": "\\S",
                 "type": "string"
+              },
+              "deps": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
               },
               "durations": {
                 "type": "boolean"

@@ -286,7 +286,9 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 | `scopes` | map of objects | Declares the scopes `jst test <scope>` runs: `focused`, `changed`, `quick`, `full`, `display`, `gate`, or `x-` extras. |
 | `scopes.*` | object | Defines one scope: the command it runs or the steps it lists, how it is judged, and when the project runs it. |
 | `scopes.*.base` | string | Gives the ref that `{base}` in the words stands for; `--base REF` overrides it. |
+| `scopes.*.ci` | list of strings | Lists the systems (`linux`, `darwin`) whose CI job, `jst test ci (SYSTEM)`, runs this scope and what it depends on; CI is the gate for them. |
 | `scopes.*.cwd` | string | Runs the command in this folder of the checkout instead of its root. |
+| `scopes.*.deps` | list of strings | Names the scopes or steps that must pass before this one, in this order; each runs once per run of `jst test`. |
 | `scopes.*.durations` | boolean | Records each test class's seconds for `{slow}` (default on for `full` and `display` under `swift-test`). |
 | `scopes.*.empty_exit` | integer | Reads this exit status (1 to 125) as no tests collected when the JUnit report confirms zero cases (`junit` only). |
 | `scopes.*.env` | map of strings | Sets these environment variables for the run; they are recorded. |
@@ -307,7 +309,8 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 | `scopes.*.slow` | object | Defines which test classes `{slow}` skips, from their recorded durations. |
 | `scopes.*.slow.case_seconds` | number | Skips a class whose median slowest case takes at least this many seconds. |
 | `scopes.*.slow.class_seconds` | number | Skips a class whose median total takes at least this many seconds. |
-| `scopes.*.steps` | list of strings | Runs these steps or scopes in order instead of `run`, stopping at the first that does not pass. |
+| `scopes.*.steps` | list of strings | Names steps or scopes instead of `run`, read as `deps`: each runs once, in this order, stopping at the first that does not pass. |
+| `scopes.*.systems` | list of strings | Lists the systems (`linux`, `darwin`) the scope runs on at all; elsewhere it is `skipped` (default any). |
 | `scopes.*.timeout` | number | Stops the whole process tree after this many seconds of the command's run (default `test.timeout`). |
 | `scopes.*.veto` | regex | Fails a run when a line of its output matches this pattern (RE2), whatever its status. |
 | `scopes.*.when` | string | Says when the project runs this scope, one line that `jst test list` prints. |

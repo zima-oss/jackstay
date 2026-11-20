@@ -15,11 +15,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -59,6 +61,10 @@ var Stage3Sections = []string{"$schema", "chat", "brief", "status", "land"}
 // "jackstay_schema": 3.
 var stage3RunKeys = []string{"selector", "report", "reports", "empty_exit", "xcresult_bundles"}
 
+// stage3GraphKeys are the keys of the task graph (docs/design/land.md section 7.1) that need
+// "jackstay_schema": 3: `deps` on a scope or step, `ci` and `systems` on a scope.
+var stage3GraphKeys = []string{"deps", "ci", "systems"}
+
 // Schema3Keys are the keys of config that need "jackstay_schema": 3, by their path: what a
 // jackstay before 0.6.0 does not know.
 func Schema3Keys(config Config) []string {
@@ -85,7 +91,7 @@ func Schema3Keys(config Config) []string {
 		runs := objectOf(test[kind])
 		for _, name := range sortedKeys(runs) {
 			run := objectOf(runs[name])
-			for _, key := range stage3RunKeys {
+			for _, key := range append(slices.Clone(stage3RunKeys), stage3GraphKeys...) {
 				if has(run, key) {
 					found = append(found, fmt.Sprintf("test.%s.%s.%s", kind, name, key))
 				}
@@ -331,8 +337,15 @@ var testRun = object(
 	"base", str(), "slow", object("class_seconds", number(), "case_seconds", number()), "durations", boolean(),
 	"expect", texts(), "resume", boolean(), "selector", str(),
 	"report", str(), "reports", texts(), "empty_exit", integer(), "xcresult_bundles", texts(),
-	"requires", list(object("run", texts(), "why", str(), "timeout", number())),
+	"requires", list(object("run", texts(), "why", str(), "timeout", number())), "deps", texts(),
 )
+
+// testScope is a scope: a run, and the systems CI runs it on (`ci`) and it runs on (`systems`).
+var testScope = func() *schemaType {
+	scope := object("ci", texts(), "systems", texts())
+	maps.Copy(scope.keys, testRun.keys)
+	return scope
+}()
 
 var chatSection = object(
 	"enabled", boolean(),
@@ -344,7 +357,7 @@ var testSection = object(
 	"judge", str(), "timeout", number(), "expect", texts(),
 	"selection", object("order", texts(), "rules", list(object("glob", str(), "scope", str()))),
 	"leftovers", list(object("glob", str(), "fail", boolean())),
-	"scopes", mapOf(testRun), "steps", mapOf(testRun),
+	"scopes", mapOf(testScope), "steps", mapOf(testRun),
 )
 
 func boundedValue(values map[string]any, shape *schemaType, name string) int {
@@ -818,11 +831,35 @@ func sectionCheck(section string, config Config) []string {
 	case "telemetry":
 		found = telemetryProblems(objectOf(config["telemetry"]))
 	case "test":
-		scopes := objectOf(objectOf(config["test"])["scopes"])
-		for _, scopeName := range sortedKeys(scopes) {
-			if has(objectOf(scopes[scopeName]), "steps") && !has(objectOf(config["receipts"]), "toolchain") {
-				found = append(found, "`receipts.toolchain` must be written out when a scope lists steps: the commands whose output names the toolchain (`[[\"go\", \"version\"]]`), part of each step's key, or [] for none")
-				break
+		found = testGraphProblems(config)
+	}
+	return found
+}
+
+// testGraphProblems are the test section's rules that read other keys of the file: a scope with
+// deps needs receipts.toolchain for its steps' keys, and in schema 3 a scope with no `run` carries
+// no `requires` (docs/design/land.md section 7.1).
+func testGraphProblems(config Config) []string {
+	var found []string
+	test := objectOf(config["test"])
+	scopes := objectOf(test["scopes"])
+	for _, scopeName := range sortedKeys(scopes) {
+		scope := objectOf(scopes[scopeName])
+		if (has(scope, "steps") || has(scope, "deps")) && !has(objectOf(config["receipts"]), "toolchain") {
+			found = append(found, "`receipts.toolchain` must be written out when a scope lists steps or deps: the commands whose output names the toolchain (`[[\"go\", \"version\"]]`), part of each step's key, or [] for none")
+			break
+		}
+	}
+	if schema, _ := numberOf(config["jackstay_schema"]); schema < 3 {
+		return found
+	}
+	for _, kind := range []string{"scopes", "steps"} {
+		entries := objectOf(test[kind])
+		for _, name := range sortedKeys(entries) {
+			entry := objectOf(entries[name])
+			if !has(entry, "run") && has(entry, "requires") {
+				found = append(found, fmt.Sprintf("`test.%s.%s.requires`: a scope with no `run` runs nothing and checks nothing in schema 3; "+
+					"move the check to the dep that needs it", kind, name))
 			}
 		}
 	}
