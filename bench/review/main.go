@@ -157,6 +157,13 @@ func (measurement *bench) main(arms []string, runs int, out string) error {
 			return fmt.Errorf("no model is configured for %s: name one with -%s-model", arm, strings.SplitN(arm, "-", 2)[0])
 		}
 	}
+	// The same holds for effort: Claude Code's default is not jackstay's to guess, and a calling
+	// session's own CLAUDE_EFFORT would reach the direct arm only.
+	for _, arm := range arms {
+		if strings.HasPrefix(arm, "claude") && measurement.claudeEffort == "" {
+			return fmt.Errorf("no effort is named for %s: name one with -claude-effort, for both Claude arms", arm)
+		}
+	}
 	if measurement.work, err = os.MkdirTemp("", "review-bench-"); err != nil {
 		return err
 	}
@@ -700,7 +707,8 @@ func (measurement *bench) directClaude(run *Run, checkout, base, head string) (r
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
 	started := time.Now()
-	captured, runErr := supervise.Capture(ctx, append([]string{"claude"}, args...), checkout, os.Environ(), []byte(directPrompt(base, head)))
+	environment := slices.DeleteFunc(os.Environ(), func(pair string) bool { return strings.HasPrefix(pair, "CLAUDE_EFFORT=") })
+	captured, runErr := supervise.Capture(ctx, append([]string{"claude"}, args...), checkout, environment, []byte(directPrompt(base, head)))
 	if runErr == nil && captured.Status != 0 {
 		runErr = fmt.Errorf("exit status %d", captured.Status)
 	}
