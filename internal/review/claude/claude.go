@@ -138,7 +138,9 @@ func Settings(home string, environ []string) string {
 		}
 	}
 	for _, glob := range access.SecretFileGlobs {
-		deny = append(deny, "Read("+glob+")")
+		for _, tool := range []string{"Read", "Glob", "Grep"} {
+			deny = append(deny, tool+"("+glob+")")
+		}
 	}
 	data, _ := json.Marshal(map[string]any{"permissions": map[string]any{"deny": deny}, "disableAllHooks": true})
 	return string(data)

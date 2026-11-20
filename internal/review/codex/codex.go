@@ -79,6 +79,10 @@ func Argv(request Request, answerPath string) []string {
 	if request.Effort != "" {
 		argv = append(argv, "-c", fmt.Sprintf("model_reasoning_effort=%q", request.Effort))
 	}
+	if request.PinnedSource {
+		// A default the project's isolation flags may override: they come after it.
+		argv = append(argv, "-c", `shell_environment_policy.inherit="all"`)
+	}
 	argv = append(argv, request.Isolation...)
 	for _, name := range sortedNames(request.MCPServers) {
 		server := request.MCPServers[name]
@@ -94,8 +98,7 @@ func Argv(request Request, answerPath string) []string {
 		argv = append(argv, "--strict-config", "-c", `default_permissions="jackstay_review"`,
 			"-c", Filesystem(request, homedir.AccountHome()),
 			"-c", "permissions.jackstay_review.network.enabled=true",
-			"-c", "project_doc_max_bytes=0",
-			"-c", `shell_environment_policy.inherit="all"`)
+			"-c", "project_doc_max_bytes=0")
 	}
 	return append(argv, "-")
 }
@@ -113,14 +116,19 @@ func Filesystem(request Request, home string) string {
 	}
 	denied := access.SecretPaths(home, access.Codex, environ)
 	roots := []string{request.Tree, request.RepositoryRoot}
-	if request.RepositoryRoot != "" {
-		roots = append(roots, filepath.Dir(request.RepositoryRoot)) // the checkouts beside it
+	if beside := filepath.Dir(request.RepositoryRoot); request.RepositoryRoot != "" && beside != home && beside != "/" {
+		roots = append(roots, beside) // the checkouts beside it, unless that is the whole account
 	}
-	denied = append(denied, access.SecretFiles(roots, 6, 2048)...)
+	denied = append(denied, access.SecretFiles(roots, 6, 2048, 50000)...)
+	seen := map[string]bool{}
 	for _, path := range denied {
 		if resolved, err := canonicalPath(path); err == nil {
 			path = resolved
 		}
+		if seen[path] { // a TOML table takes each key once
+			continue
+		}
+		seen[path] = true
 		entries = append(entries, strconv.Quote(path)+`="none"`)
 	}
 	if temporary, err := canonicalPath(Temporary(request)); err == nil {

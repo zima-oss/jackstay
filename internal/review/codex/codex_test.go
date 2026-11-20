@@ -386,3 +386,33 @@ func TestLoginWords(t *testing.T) {
 		t.Fatal("log lines")
 	}
 }
+
+func TestAnEnvFileFoundTwiceIsOneEntryAndTheProjectsInheritWins(t *testing.T) {
+	request := setup(t, "done")
+	request.PinnedSource = true
+	checkout := filepath.Join(filepath.Dir(request.Tree), "checkout")
+	if err := os.MkdirAll(checkout, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkout, ".env"), []byte("X=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request.RepositoryRoot = checkout // found under the checkout and again under the folder beside it
+	request.Isolation = []string{"-c", "shell_environment_policy.inherit=none"}
+	argv := Argv(request, filepath.Join(request.Folder, "answer.json"))
+	filesystem := ""
+	for _, word := range argv {
+		if strings.HasPrefix(word, "permissions.jackstay_review.filesystem=") {
+			filesystem = word
+		}
+	}
+	resolved, _ := canonicalPath(filepath.Join(checkout, ".env"))
+	if count := strings.Count(filesystem, strconv.Quote(resolved)+"="); count != 1 {
+		t.Fatalf("the .env key appears %d times: %s", count, filesystem)
+	}
+	defaults := slices.Index(argv, `shell_environment_policy.inherit="all"`)
+	project := slices.Index(argv, "shell_environment_policy.inherit=none")
+	if defaults < 0 || project < defaults {
+		t.Fatalf("the project's inherit does not come after jackstay's default: %v", argv)
+	}
+}

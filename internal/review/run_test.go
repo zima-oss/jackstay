@@ -536,3 +536,15 @@ func TestPromptReferencesBriefWithoutEmbeddingItsContents(t *testing.T) {
 		t.Fatalf("review failed: %+v", result)
 	}
 }
+
+func TestTheKeptArgvNamesMCPServersWithoutTheirArguments(t *testing.T) {
+	argv := redactedArgv([]string{"codex", "-c", `mcp_servers.docs={command="docs",args=["--token","made-up"]}`, "-c", "mcp_servers={}",
+		"--mcp-config", `{"mcpServers":{"docs":{"args":["--token","made-up"]}}}`})
+	joined := strings.Join(argv, " ")
+	if strings.Contains(joined, "made-up") || !strings.Contains(joined, "mcp_servers.docs=<redacted>") || !strings.Contains(joined, "mcp_servers={}") {
+		t.Fatalf("argv: %v", argv)
+	}
+	if empty := redactedArgv([]string{"--mcp-config", `{"mcpServers":{}}`}); empty[1] != `{"mcpServers":{}}` {
+		t.Fatalf("the empty configuration was hidden: %v", empty)
+	}
+}

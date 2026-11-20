@@ -269,7 +269,8 @@ round's report merges their findings by `place`.
     Codex; `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR` and the Bedrock or Vertex
     credentials when that is its provider, for Claude Code. Codex's shell inherits it
     (`shell_environment_policy.inherit="all"`, with Codex's own default exclusion of key-like
-    names kept).
+    names kept); jackstay sets it before the project's isolation flags, so a project's own
+    `shell_environment_policy` wins.
   - **secrets are not read**: `~/.ssh`, `~/.aws`, `~/.azure`, `~/.gnupg`, `~/.kube`,
     `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.config/gh`, `~/.config/gcloud`,
     `~/.config/hub`, `~/.config/op`, `~/.git-credentials`, `~/.password-store`, `~/.vault-token`,
@@ -278,19 +279,22 @@ round's report merges their findings by `place`.
     state** (Claude Code is denied `$CODEX_HOME`, else `~/.codex`; Codex is denied `~/.claude`,
     `~/.claude.json` and `$CLAUDE_CONFIG_DIR`); and `.env` / `.env.*` files. Their contents are
     also left out of the generated patches (`changes/*.patch`); the change index still names them.
-    Claude Code: `Read`, `Glob` and `Grep` deny rules for each path and `Read(**/.env)`,
-    `Read(**/.env.*)`, through `--settings`, enforced at every read. Codex: each path `"none"` in
-    the profile; its rules take paths, not patterns, so the `.env` files are those found when the run
-    starts under the source view, the live checkout and the folder beside it (the neighbouring
-    checkouts), 6 folders deep, past dependency and cache folders, 2,048 at most. A `.env` elsewhere,
-    deeper, or made during the run is not denied to Codex: the limit of this profile.
+    Claude Code: `Read`, `Glob` and `Grep` deny rules for each path and for `//**/.env` and
+    `//**/.env.*` (anchored at the filesystem's root, not at its working folder), through
+    `--settings`, enforced at every read. Codex: each path `"none"` in the profile; its rules take
+    paths, not patterns, so the `.env` files are those found when the run starts under the source
+    view, the live checkout and the folder beside it (the neighbouring checkouts; not when that
+    folder is the account's home), 6 folders deep, past dependency and cache folders, at most 2,048
+    files and 50,000 entries visited, each listed once. A `.env` elsewhere, deeper, past those bounds,
+    or made during the run is not denied to Codex: the limit of this profile.
   - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
     `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
     local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,
     `disableAllHooks`. `review.reviewers.<name>.mcp_servers` gives chosen servers back, and their
-    tools only.
+    tools only; `run.json` keeps their names, not their arguments, which may hold a credential.
   Checked against Codex 0.169.0 and Claude Code 2.1.328 on macOS (2026-11-20): both were denied
-  `~/.ssh` and an untracked `.env` of the checkout, listed `/usr/share`, and fetched
+  `~/.ssh`, the untracked `.env` of the checkout and of a checkout beside it, and the other
+  reviewer's login, listed `/usr/share`, and fetched
   `https://example.com`; Codex's shell had the user's full `PATH` and no `GH_TOKEN` set in the
   caller, and wrote nothing outside its folder.
 - **argv** (Codex): as in section 1, then the access profile as `-c` permission settings,

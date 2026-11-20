@@ -71,12 +71,15 @@ func TestSecretsAreTheAccountsKeysAndTheEnvFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	found := SecretFiles([]string{root, ""}, 3, 100)
+	found := SecretFiles([]string{root, "", root}, 3, 100, 1000)
 	want := []string{filepath.Join(root, ".env"), filepath.Join(root, "service/.env.production")}
 	if !slices.Equal(found, want) {
-		t.Fatalf("found %v, want %v (not past the depth, not in .git, not .envrc)", found, want)
+		t.Fatalf("found %v, want %v (once each, not past the depth, not in .git or node_modules, not .envrc)", found, want)
 	}
-	if limited := SecretFiles([]string{root}, 3, 1); len(limited) != 1 {
+	if limited := SecretFiles([]string{root}, 3, 1, 1000); len(limited) != 1 {
 		t.Fatalf("the limit: %v", limited)
+	}
+	if bounded := SecretFiles([]string{root}, 3, 100, 1); len(bounded) != 0 {
+		t.Fatalf("the walk went past its visits: %v", bounded)
 	}
 }

@@ -65,8 +65,9 @@ func SecretPaths(home, reviewer string, environ []string) []string {
 	return paths
 }
 
-// SecretFileGlobs are files a reviewer is never allowed to read wherever they are: `.env` files.
-var SecretFileGlobs = []string{"**/.env", "**/.env.*"}
+// SecretFileGlobs are files a reviewer is never allowed to read wherever they are: `.env` files,
+// anchored at the filesystem's root (Claude Code's `//` form), not at the reviewer's working folder.
+var SecretFileGlobs = []string{"//**/.env", "//**/.env.*"}
 
 // tokenLike are names of variables that carry a credential.
 var tokenLike = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIAL|COOKIE|SESSION_?KEY|(^|_)AUTH($|_))`)
@@ -147,20 +148,27 @@ type MCPServer struct {
 }
 
 // skippedFolders hold dependencies, caches or Git's own data: no project's `.env` lives there.
-var skippedFolders = []string{".git", "node_modules", "vendor", ".venv", "target", ".cache", "Library", ".build"}
+var skippedFolders = []string{".git", "node_modules", "vendor", ".venv", "target", ".cache", "Library", ".build",
+	".npm", ".cargo", ".rustup", "go", ".gradle", ".m2", "Pods", "DerivedData"}
 
-// SecretFiles are the `.env` files under roots, found by walking each at most depth folders deep and
-// at most limit files in all, past folders that hold dependencies or caches: a reviewer whose rules
-// take only paths is denied each one. It is a snapshot: a file elsewhere, deeper, or made later is
-// not in it.
-func SecretFiles(roots []string, depth, limit int) []string {
+// SecretFiles are the `.env` files under roots, found by walking each at most depth folders deep,
+// at most limit files and visiting at most visits entries in all, past folders that hold
+// dependencies or caches; each path once. A reviewer whose rules take only paths is denied each
+// one. It is a snapshot: a file elsewhere, deeper, past the bounds, or made later is not in it.
+func SecretFiles(roots []string, depth, limit, visits int) []string {
 	var found []string
+	seen := map[string]bool{}
+	visited := 0
 	for _, root := range roots {
 		if root == "" {
 			continue
 		}
 		_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil || len(found) >= limit {
+			visited++
+			if visited > visits || len(found) >= limit {
+				return filepath.SkipAll
+			}
+			if err != nil {
 				if entry != nil && entry.IsDir() && path != root {
 					return filepath.SkipDir
 				}
@@ -173,7 +181,8 @@ func SecretFiles(roots []string, depth, limit int) []string {
 				}
 				return nil
 			}
-			if name := entry.Name(); name == ".env" || strings.HasPrefix(name, ".env.") {
+			if name := entry.Name(); (name == ".env" || strings.HasPrefix(name, ".env.")) && !seen[path] {
+				seen[path] = true
 				found = append(found, path)
 			}
 			return nil
