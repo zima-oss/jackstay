@@ -172,6 +172,7 @@ func tarGz(t *testing.T, files map[string]string) []byte {
 // run is one run of install.sh, by the shell named, against the fake release.
 type run struct {
 	exit   int
+	stdout string // what a terminal shows, when the command is run under script
 	stderr string
 	record string // the fake jst's arguments; "" when it never ran
 	prefix string
@@ -218,10 +219,13 @@ func runCommand(t *testing.T, command *exec.Cmd, fake *release, path string, env
 		"JACKSTAY_PREFIX=" + prefix,
 		"JST_RECORD=" + record,
 	}, environment...)
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	if command.Stdout == nil {
+		command.Stdout = &stdout
+	}
 	command.Stderr = &stderr
 	err := command.Run()
-	result := run{stderr: stderr.String(), prefix: prefix}
+	result := run{stdout: stdout.String(), stderr: stderr.String(), prefix: prefix}
 	if exitError, ok := err.(*exec.ExitError); ok {
 		result.exit = exitError.ExitCode()
 	} else if err != nil {
@@ -467,8 +471,11 @@ func TestInstalledSetupRunsOnlyWithATerminal(t *testing.T) {
 	fake.publish(t, "v1.2.4", "")
 	paths := pathWithout(t)
 	direct := runScript(t, "sh", fake, paths)
-	if direct.exit != 0 || !strings.HasPrefix(direct.record, "install\n") {
+	if direct.exit != 0 || !strings.HasPrefix(direct.record, "install\n") || strings.Contains(direct.record, "setup") {
 		t.Fatalf("nonterminal install ran setup: exit %d, arguments %q", direct.exit, direct.record)
+	}
+	if !strings.Contains(direct.stderr, "no terminal here, so machine setup does not start: run `jst setup` in a terminal") {
+		t.Fatalf("a nonterminal install did not say setup was left:\n%s", direct.stderr)
 	}
 	installer := installScript(t)
 	var command *exec.Cmd
@@ -482,6 +489,9 @@ func TestInstalledSetupRunsOnlyWithATerminal(t *testing.T) {
 	if want := "setup\n--prefix\n" + interactive.prefix + "\n"; interactive.exit != 0 || interactive.record != want {
 		t.Fatalf("terminal install: exit %d, arguments %q, want %q\n%s",
 			interactive.exit, interactive.record, want, interactive.stderr)
+	}
+	if output := interactive.stdout + interactive.stderr; !strings.Contains(output, "a terminal is here, so machine setup starts now") {
+		t.Fatalf("a terminal install did not say setup starts before starting it:\n%s", output)
 	}
 }
 
