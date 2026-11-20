@@ -33,8 +33,8 @@ is a conflict.
                    terminal --apply asks; without one it needs this flag); an existing one is kept
   --reviewer WHO   codex (recommended), claude-code, or codex,claude-code: who runs jst review
                    (review.use); written over the project's value
-  --chat on|off    the agent chat here (chat.enabled; off recommended); written over the project's
-                   value. Without these, --apply at a terminal asks what jackstay.json does not
+  --chat on|off    the agent chat here (chat.enabled, once jackstay.json is schema 3; off
+                   recommended); written over the project's value. Without these, --apply at a terminal asks what jackstay.json does not
                    answer, offering this machine's answer from jst setup; without a terminal it
                    writes none and the plan's choices say what applies
   --profile PATH   an organisation's profile; --apply records it in jackstay.json
@@ -102,7 +102,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 2
 		}
 	}
-	if mode == "apply" && plan.AsksAutonomy() {
+	if mode == "apply" && plan.AsksAutonomy() && len(plan.Conflicts) == 0 {
 		if !atTerminal(stdin, stdout) {
 			fmt.Fprintf(stderr, "jst adopt: this apply writes a `land` section, and who merges is a person's choice: "+
 				"give --autonomy %s or --autonomy %s (there is no terminal to ask at)\n", config.AutonomyMergeWhenGreen, config.AutonomyPrepare)
@@ -121,6 +121,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err := plan.Apply(); err != nil {
 			if errors.Is(err, ErrConflicts) {
 				writeText(stdout, plan)
+				// Answers given at the terminal are not lost: they can be passed again as flags.
+				if flags := askedFlags(plan); flags != "" {
+					fmt.Fprintf(stderr, "jst adopt: the answers given: %s\n", flags)
+				}
 				fmt.Fprintf(stderr, "jst adopt: %d conflict(s) left: nothing written\n", len(plan.Conflicts))
 				return 1
 			}
@@ -403,4 +407,15 @@ func writeApplied(out io.Writer, plan *Plan, settingsOnly bool) {
 	default:
 		fmt.Fprintf(out, "jst adopt: %d change(s) written; `jst adopt --plan` should now find nothing\n", len(plan.Changes))
 	}
+}
+
+// askedFlags are the answers asked at the terminal, as the flags that give them again.
+func askedFlags(plan *Plan) string {
+	var flags []string
+	for _, choice := range plan.Choices {
+		if choice.From == "asked" {
+			flags = append(flags, "--"+choice.ID+" "+choice.Value)
+		}
+	}
+	return strings.Join(flags, " ")
 }

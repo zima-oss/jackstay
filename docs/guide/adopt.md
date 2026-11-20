@@ -89,7 +89,7 @@ recommended answer first, and offers this machine's answer from `jst setup` when
 | Question | Answers, recommended first | Written to |
 |---|---|---|
 | `reviewer`: who runs `jst review` | `codex`, `claude-code`, `codex,claude-code` | `review.use` |
-| `chat`: the agent chat in this repository | `off`, `on` | `chat.enabled` (needs a pin of 0.6.0 or later; not asked before) |
+| `chat`: the agent chat in this repository | `off`, `on` | `chat.enabled` (asked once `jackstay.json` is schema 3) |
 
 A value the project already sets is never asked again (an empty `review.use` counts: each run then
 names its reviewer). Without a terminal adopt writes no answer, and the plan's `choices` say what

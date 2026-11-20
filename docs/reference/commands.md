@@ -1050,8 +1050,8 @@ is a conflict.
                    terminal --apply asks; without one it needs this flag); an existing one is kept
   --reviewer WHO   codex (recommended), claude-code, or codex,claude-code: who runs jst review
                    (review.use); written over the project's value
-  --chat on|off    the agent chat here (chat.enabled; off recommended); written over the project's
-                   value. Without these, --apply at a terminal asks what jackstay.json does not
+  --chat on|off    the agent chat here (chat.enabled, once jackstay.json is schema 3; off
+                   recommended); written over the project's value. Without these, --apply at a terminal asks what jackstay.json does not
                    answer, offering this machine's answer from jst setup; without a terminal it
                    writes none and the plan's choices say what applies
   --profile PATH   an organisation's profile; --apply records it in jackstay.json

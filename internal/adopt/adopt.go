@@ -522,40 +522,28 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 // the profile's, else the person's answer when there is a person to ask, else nothing is written and
 // the plan says what applies and how to choose.
 func (planner *planner) choose(original, document *jsondoc.Object) error {
-	// The pin this apply ends with: the project's, or this jackstay's when one is written. A question
-	// whose key that pin cannot read is not asked.
-	pin, _ := getString(document.Object("adopt"), "pin")
-	pinWords := "this project is pinned to " + pin
-	if pin == "" || planner.options.Pin {
-		pin = "v" + planner.options.Version
-		pinWords = "this jackstay is " + pin
-	}
-	// A pinned file not yet at schema 3 is in the 0.5.x upgrade (land.md section 5): schema-3 keys
-	// wait for its third step, as landSection decides.
-	originalPin, _ := getString(original.Object("adopt"), "pin")
+	// A schema-3 question is asked only of a file that is schema 3 already: the steps that take a
+	// project there (land.md section 5) are adopt's own, and the next apply asks it (W-096).
 	originalSchema, _ := original.Get("jackstay_schema")
-	upgrading := originalPin != "" && fmt.Sprint(originalSchema) != fmt.Sprint(config.Schema)
+	beforeSchema3 := fmt.Sprint(originalSchema) != fmt.Sprint(config.Schema)
 	for _, question := range choices.All() {
 		choice := Choice{ID: question.ID, Key: question.Key.Name()}
 		ownValue, own := question.Key.Read(original)
 		fromProfile, profiled := question.Key.Read(document)
 		answer, given := planner.options.Answers[question.ID]
 		switch {
-		case given && question.Schema3 && upgrading:
-			return &UsageError{fmt.Sprintf("--%s: %s is a schema-3 key, and this project is in the upgrade from 0.5.x: "+
-				"give it with the upgrade's third step (schema 3)", question.ID, question.Key.Name())}
+		case given && question.Schema3 && beforeSchema3:
+			return &UsageError{fmt.Sprintf("--%s: %s is a schema-3 key, and jackstay.json is not schema 3 yet: give it to "+
+				"the first jst adopt --apply after the file is schema 3", question.ID, question.Key.Name())}
 		case given:
 			choice.Value, choice.From, choice.Written = answer, "--"+question.ID, true
 		case own:
 			choice.Value, choice.From = ownValue, "this project's jackstay.json"
 		case profiled:
 			choice.Value, choice.From = fromProfile, "the profile's defaults"
-		case question.Schema3 && upgrading:
+		case question.Schema3 && beforeSchema3:
 			choice.Value = question.Recommended()
-			choice.From = fmt.Sprintf("not asked: %s waits for the upgrade's third step (schema 3)", question.Key.Name())
-		case question.Schema3 && pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0:
-			choice.Value = question.Recommended()
-			choice.From = fmt.Sprintf("not asked: %s needs jackstay %s or later, and %s", question.Key.Name(), config.Schema3Release, pinWords)
+			choice.From = fmt.Sprintf("not asked: %s is asked by the first apply after jackstay.json is schema 3", question.Key.Name())
 		case planner.options.Ask != nil:
 			offered, _ := choices.Offered(question, "", false, planner.options.Defaults)
 			asked, err := planner.options.Ask(question, offered)

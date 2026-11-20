@@ -11,7 +11,7 @@ import (
 )
 
 func TestAdoptAsksOnlyWhatTheProjectDoesNotSettle(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "review": {"use": ["claude-code"]}}`})
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p", "review": {"use": ["claude-code"]}, "land": {"autonomy": "prepare"}}`})
 	options := optionsFor(root)
 	options.Version = "0.6.0"
 	var asked []string
@@ -49,7 +49,7 @@ func TestAnOlderPinIsNotAskedAboutChat(t *testing.T) {
 		return question.Recommended(), nil
 	}
 	made := apply(t, options)
-	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "waits for the upgrade") {
+	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "asked by the first apply after jackstay.json is schema 3") {
 		t.Fatalf("chat %+v", chat)
 	}
 }
@@ -102,13 +102,13 @@ func TestChatIsNotAskedWhenThisApplyWritesAnOlderPin(t *testing.T) {
 		return question.Recommended(), nil
 	}
 	made := plan(t, options)
-	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "this jackstay is v0.5.0") {
+	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "asked by the first apply after jackstay.json is schema 3") {
 		t.Fatalf("chat %+v", chat)
 	}
 }
 
 func TestAdoptWritesAnAnswerGivenAndSaysWhatAppliesWithoutOne(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p"}`})
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p", "land": {"autonomy": "prepare"}}`})
 	options := optionsFor(root)
 	options.Version = "0.6.0"
 	options.Answers = map[string]string{"reviewer": "codex,claude-code"}
@@ -154,8 +154,8 @@ func TestAnAnswerThatEnablesAWorkflowGetsItsPin(t *testing.T) {
 	}
 }
 
-// In the upgrade from 0.5.x (a pinned file not yet at schema 3) chat is a schema-3 key that waits
-// for the third step: it is not asked, and a --chat is refused, so steps 1 and 2 go through.
+// Chat, a schema-3 key, is asked only of a file that is schema 3 already: not in any step of the
+// upgrade from 0.5.x, where a --chat is refused, so the steps go through.
 func TestChatWaitsForTheUpgradesSchemaStep(t *testing.T) {
 	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}}`})
 	options := optionsFor(root)
@@ -167,7 +167,7 @@ func TestChatWaitsForTheUpgradesSchemaStep(t *testing.T) {
 		return question.Recommended(), nil
 	}
 	made := apply(t, options)
-	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "waits for the upgrade's third step") {
+	if chat := made.Choices[1]; chat.Written || !strings.Contains(chat.From, "asked by the first apply after jackstay.json is schema 3") {
 		t.Fatalf("chat %+v", chat)
 	}
 	if text := read(t, root, "jackstay.json"); strings.Contains(text, `"chat"`) || !strings.Contains(text, `"pin": "v0.6.0"`) {
@@ -175,7 +175,7 @@ func TestChatWaitsForTheUpgradesSchemaStep(t *testing.T) {
 	}
 	options.Ask, options.Pin = nil, false
 	options.Answers = map[string]string{"chat": "on"}
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "--chat: chat.enabled is a schema-3 key") {
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "--chat: chat.enabled is a schema-3 key, and jackstay.json is not schema 3 yet") {
 		t.Fatalf("--chat in the upgrade: %v", err)
 	}
 }
@@ -183,11 +183,11 @@ func TestChatWaitsForTheUpgradesSchemaStep(t *testing.T) {
 // With conflicts left nothing is written, so nothing is asked: the answers would be lost.
 func TestNothingIsAskedOfAPlanWithConflicts(t *testing.T) {
 	root := project(t, map[string]string{
-		"jackstay.json": `{"jackstay_schema": 3, "project": "p", "land": {"autonomy": "prepare"}}`,
+		"jackstay.json": `{"jackstay_schema": 3, "project": "p"}`,
 		"AGENTS.md":     "<!-- jackstay-adopt: begin agents-block sha256:000000000000 -->\nno end\n",
 	})
-	code, stdout, stderr := runIn(t, true, "\n\n", "--apply", root)
-	if code != 1 || strings.Contains(stdout, "Which reviewer runs") {
+	code, stdout, stderr := runIn(t, true, "\n\n\n", "--apply", root)
+	if code != 1 || strings.Contains(stdout, "Which reviewer runs") || strings.Contains(stdout, "Who merges") {
 		t.Fatalf("exit %d, asked with conflicts left:\n%s%s", code, stdout, stderr)
 	}
 }
