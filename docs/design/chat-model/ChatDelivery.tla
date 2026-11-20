@@ -73,8 +73,16 @@ ChecksDeadline(kind) == kind \in {"claim", "ring-refused", "read-whole", "ack-re
 
 DeadlineFires(dl, ev) == ev.overdue /\ dl.state \in Expirable /\ ChecksDeadline(ev.kind)
 
+\* An event that belongs to one route never applies to another, before the deadline is checked.
+OnItsRoute(dl, kind) ==
+    CASE kind = "claim"        -> dl.route = "bridge"
+      [] kind = "ring-refused" -> dl.route = "native"
+      [] kind = "freeze"       -> dl.route = "mailbox"
+      [] OTHER                 -> TRUE
+
 Apply(dl, ev) ==
-    IF DeadlineFires(dl, ev) THEN Ok(Expire(dl))
+    IF ~OnItsRoute(dl, ev.kind) THEN No(dl)
+    ELSE IF DeadlineFires(dl, ev) THEN Ok(Expire(dl))
     ELSE CASE ev.kind = "claim" ->
                 IF dl.state = "pending" /\ dl.route = "bridge" /\ dl.attempts < MaxAttempts
                 THEN Ok([dl EXCEPT !.state = "sending", !.pusher = ev.pusher]) ELSE No(dl)
@@ -124,7 +132,8 @@ ExpireRequest(r, dl) ==
 \* A closure writes the request's record, then the delivery's; a crash between them is repaired by
 \* the next step, before anything else, so a closed question is never claimed.
 ApplyMessage(r, dl, ev) ==
-    IF dl.request /\ r.state = "expired" /\ dl.state \in Expirable
+    IF ~OnItsRoute(dl, ev.kind) THEN [ok |-> FALSE, rq |-> r, d |-> dl]
+    ELSE IF dl.request /\ r.state = "expired" /\ dl.state \in Expirable
     THEN LET repaired == Expire(dl)
              after    == Apply(repaired, ev)
          IN [ok |-> TRUE, rq |-> r, d |-> IF after.ok THEN after.d ELSE repaired]
@@ -237,7 +246,7 @@ Crash(p) ==
 (* refuses (the connection closed) refuses the delivery. A hook's ring changes nothing at all.   *)
 
 DoorbellRefused ==
-    /\ alive
+    /\ alive /\ d.route = "native"
     /\ LET r == Step(Ev("ring-refused", "", "none", overdue)) IN r.ok /\ SetMsg(r)
     /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
@@ -254,8 +263,11 @@ InboxReads ==
     /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown,
                    pushedClosed, overdue, alive>>
 
+\* A read that marks nothing still repairs a closure cut short first (section 4.4): a closed request's
+\* pending delivery is expired, never shown.
 InboxReadsAgain ==
     /\ Calls /\ ~overdue /\ Visible(d) /\ ~requestKnown
+    /\ ~(isRequest /\ rq.state = "expired" /\ d.state \in Expirable)
     /\ requestKnown' = TRUE
     /\ KeepMsg
     /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown,

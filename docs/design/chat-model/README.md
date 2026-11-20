@@ -64,7 +64,7 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | `CommitHasFiles` | send | a commit record never stands for files that are gone |
 | `RequestAgrees` | send | the request a response answers is answered or closed once, never overwritten |
 
-TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **7,104** distinct states for a delivery (32,181
+TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **7,104** distinct states for a delivery (31,458
 generated, the temporal properties checked over the whole graph) and **335** for a send (607
 generated) with no error. The Go exploration reaches the same 7,104 and 335 states, and its tests
 fail if either count changes, so the two forms cannot drift apart unnoticed. Before W-095, when the

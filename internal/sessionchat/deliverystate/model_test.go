@@ -182,7 +182,7 @@ func successors(w world, rules variant) []step {
 
 	// The native doorbell (section 8.3): a ring the engine takes or ignores changes nothing; one it
 	// refuses (the connection closed) refuses the delivery. A hook's ring changes nothing at all.
-	if w.alive {
+	if w.alive && w.delivery.Route == Native {
 		if refused, ok := w.apply(Event{Kind: RingRefused, Overdue: w.overdue}, rules); ok {
 			add("the engine refuses the doorbell", refused)
 		}
@@ -196,7 +196,8 @@ func successors(w world, rules variant) []step {
 			}
 			add("chat.inbox reads it whole", read)
 		}
-		if Visible(w.delivery) && !w.overdue && !w.requestKnown {
+		closedPending := w.isRequest && w.request.State == Closed && Expirable(w.delivery.State)
+		if Visible(w.delivery) && !w.overdue && !closedPending && !w.requestKnown {
 			again := w
 			again.requestKnown = true
 			add("chat.inbox returns it again", again)

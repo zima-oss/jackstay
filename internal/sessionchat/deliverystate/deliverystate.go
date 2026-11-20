@@ -207,7 +207,25 @@ func Apply(delivery Delivery, event Event) (Delivery, error) {
 	return next, nil
 }
 
+// onItsRoute reports whether an event that belongs to one route may apply to the delivery: only the
+// bridge claims, only the native socket refuses a doorbell, only a mailbox freezes. It is checked
+// before the deadline, so an event of another route never expires or closes anything.
+func onItsRoute(delivery Delivery, kind Kind) bool {
+	switch kind {
+	case Claim:
+		return delivery.Route == Bridge
+	case RingRefused:
+		return delivery.Route == Native
+	case Freeze:
+		return delivery.Route == Mailbox
+	}
+	return true
+}
+
 func apply(delivery Delivery, event Event) (Delivery, error) {
+	if !onItsRoute(delivery, event.Kind) {
+		return delivery, ErrNotAllowed
+	}
 	// Deadlines first (section 4.10): a step that would steer, read, ack or answer an overdue
 	// pending delivery expires it instead, and goes on as if it had expired already.
 	if event.Overdue && Expirable(delivery.State) && checksDeadline(event.Kind) {
@@ -401,6 +419,9 @@ func ExpireRequest(request Request, delivery Delivery) (Request, Delivery, error
 // before the event applies; so a pass's or a reader's deadline check never expires one without the
 // other, and a read past the deadline of a delivered request still closes the request.
 func ApplyMessage(request Request, delivery Delivery, event Event) (Request, Delivery, error) {
+	if !onItsRoute(delivery, event.Kind) {
+		return request, delivery, ErrNotAllowed
+	}
 	// A request's closure writes two files, its commit record and then its delivery; a crash
 	// between them leaves the request closed and its delivery pending. Every step repairs that
 	// first, so a closed question is never claimed.

@@ -264,8 +264,8 @@ response, the sweep's `unconfirmed`), the late outcome is dropped and logged. Ex
 **What the receipts promise.**
 - A message's text reaches the recipient's model only through the recipient's own reads
   (`chat.inbox`, `chat.thread`, `jst chat inbox`); on the bridge, also through one steer, **at most
-  once** (W-091). Only `chat.inbox` and `chat.ack` change a receipt: a thread read shows the text of
-  a visible delivery, `pending` included, and leaves it `pending`. A steer whose result is unknown is
+  once** (W-091). A thread read shows the text of a visible delivery, `pending` included, and
+  changes no receipt. A steer whose result is unknown is
   never repeated, because Codex cannot recognise a repeat; it is `delivered` with `unconfirmed`, and the sender sees
   the reason in its outbox and decides whether to send it again.
 - A doorbell carries no text, so a repeated doorbell is harmless, and its silence means nothing: the
