@@ -7,7 +7,7 @@ was for from a `Card:` line in the commit message, instead of hashes typed into 
 
 ## `jst id`: one counter per project
 
-```sh
+```text
 jst id next SERIES [--count N] [--json]   # hand out the next number(s), recorded
 jst id list [SERIES] [--json]             # what was handed out, when, by which session
 jst id peek SERIES                        # what next would hand out; nothing recorded
@@ -37,7 +37,7 @@ file with it exists. `jst lint tree` catches two files with one number before th
 
 ## `jst new` and `jst view`: one file per record
 
-```sh
+```text
 jst new SERIES --slug SLUG [--card ID] [--set KEY=VALUE]...
 jst view SERIES [--where KEY=VALUE]... [--format table|list|json]
 ```
@@ -97,7 +97,7 @@ Card: none (dependency update)
 - `since`: commits before it are read loosely. `first_new`: cards from this number on keep
   `"commits": []`; nothing writes hashes into them.
 
-```sh
+```text
 jst cards [ID...] [--json] [--ref REF]   # each card's state and what landed for it
 jst cards --check [--json]               # only disagreements between cards and history; exit 1 for one
 jst cards --stale [--commit-map FILE]    # hashes in cards' commits fields that are not on the branch
@@ -115,7 +115,7 @@ after it, `jst cards compare` lists what was lost.
 
 ## `jst lint range` and `jst lint tree`
 
-```sh
+```text
 jst lint range A..B        # every commit in the range has valid Card lines
 jst lint tree [--rev REV]  # the tree's rules
 ```
