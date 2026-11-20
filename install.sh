@@ -238,10 +238,11 @@ main() {
 
   say "jackstay $version is installed: $prefix/bin/jst"
   # Machine setup asks a person: it starts only when both ends are a terminal, and says so first.
-  if ! [ -t 0 ] || ! [ -t 1 ]; then
-    say "no terminal here, so machine setup does not start: run \`jst setup\` in a terminal for it"
-  elif ! JACKSTAY_TELEMETRY=off "$prefix/bin/jst" setup --help >/dev/null 2>&1; then
+  # A release without it is told apart first, so no advice names a command it cannot run.
+  if ! JACKSTAY_TELEMETRY=off "$prefix/bin/jst" setup --help >/dev/null 2>&1; then
     say "this jst has no machine setup (\`jst setup\`); \`jst doctor\` says what is left"
+  elif ! [ -t 0 ] || ! [ -t 1 ]; then
+    say "no terminal here, so machine setup does not start: run \`jst setup\` in a terminal for it"
   else
     say "a terminal is here, so machine setup starts now: it shows what it would change on this"
     say "machine and asks before each change; Ctrl-C stops it and leaves the installation as it is"

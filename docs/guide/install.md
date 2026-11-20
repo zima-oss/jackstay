@@ -98,7 +98,7 @@ Running `jst setup` in a terminal offers apply, show and skip; with piped input 
 the plan. The quick installer runs that interactive setup after a successful install only when both
 input and output are terminals, and says before it starts that setup shows each change and asks
 before making it; without a terminal it says that setup did not start and that `jst setup` runs
-it. Before changing an existing shell profile or Claude Code settings,
+it. A release without `jst setup` is told apart, with `jst doctor` named instead. Before changing an existing shell profile or Claude Code settings,
 setup shows the change and saves the original content in a
 unique `*.jackstay-backup-*` file beside it and shows that path. It refuses a symlink, an
 unusual file, a profile with a different jackstay PATH entry, malformed settings, or a sandbox
