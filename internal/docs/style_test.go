@@ -456,3 +456,34 @@ func TestPlaceholdersAndSplitting(t *testing.T) {
 		t.Errorf("joinContinuations = %q %v", joined, kinds)
 	}
 }
+
+// commitHash is an abbreviated or full commit hash written as code (`2407f44`): digits and letters
+// a-f, at least one of each.
+var commitHash = regexp.MustCompile("`([0-9a-f]{7,40})`")
+
+// TestNoCommitHashesInPublicPages: docs/STYLE.md rule 8. A hash names a commit of someone's history,
+// which a reader of the guide or the roadmap cannot use; name the release, the pull request or the
+// decision instead.
+func TestNoCommitHashesInPublicPages(t *testing.T) {
+	root := repoRoot(t)
+	for _, file := range markdownFiles(t, root) {
+		if !strings.HasPrefix(file, "docs/guide/") && !strings.HasPrefix(file, "docs/roadmap/") && file != "README.md" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, file)) // #nosec G304 -- a document of this repository
+		if err != nil {
+			t.Fatal(err)
+		}
+		lines := strings.Split(string(data), "\n")
+		for n, kind := range classify(lines) {
+			if kind != prose {
+				continue
+			}
+			for _, match := range commitHash.FindAllStringSubmatch(lines[n], -1) {
+				if strings.ContainsAny(match[1], "abcdef") && strings.ContainsAny(match[1], "0123456789") {
+					t.Errorf("%s:%d: %s looks like a commit hash (docs/STYLE.md rule 8)", file, n+1, match[1])
+				}
+			}
+		}
+	}
+}

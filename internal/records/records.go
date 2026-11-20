@@ -35,8 +35,8 @@ var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,79}$`)
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "new", Summary: "SERIES --slug S: a record as a file of its own, numbered by the counter", Usage: newHelp, Run: runNew},
-		cli.Command{Name: "view", Summary: "SERIES: the records' table, printed (never committed)", Usage: viewHelp, Run: runView},
+		cli.Command{Name: "new", Summary: "a numbered record as a file of its own", Usage: newHelp, Run: runNew},
+		cli.Command{Name: "view", Summary: "print a series' records as a table", Usage: viewHelp, Run: runView},
 	)
 }
 

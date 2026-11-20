@@ -3,6 +3,7 @@ package wait
 // help is `jst wait --help`: the usage lines, then each option.
 const help = usage + `
 
+A line longer than 1 MiB ends a pattern match with exit 1.
 Exactly one condition:
   --pid PID          until that process has ended
   --file PATH        until the file exists
@@ -18,7 +19,6 @@ Common options:
   --timeout SECONDS  the deadline (default 540)
   --tail N           how many of the file's last lines to print on the way out (default 20)
 
-Pattern matching ends with exit 1 if a line is longer than 1 MiB.
 exit: 0 it happened; 1 it cannot happen any more, or the log ended the wait in failure;
 2 the request is wrong; 3 the deadline came first.
 

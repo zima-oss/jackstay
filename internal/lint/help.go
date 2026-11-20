@@ -3,11 +3,10 @@ package lint
 // pullRequestHelp is `jst lint pr --help`.
 const pullRequestHelp = `usage: jst lint pr (--event FILE | --pr N | --body-file F) [--rev REV] [--base B] [--head H] [--head-branch NAME]
 
-Exactly one source of the description:
+Exactly one of --event, --pr, --body-file gives the description.
   --event FILE        a GitHub pull_request event file
   --pr N              that pull request, read from GitHub
   --body-file F       a description in a file
-Options:
   --rev REV           judge that commit's tree instead of the working tree
   --base B            the base commit
   --head H            the head commit

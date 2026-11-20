@@ -261,16 +261,78 @@ func helpCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	return 2
 }
 
+// group is a heading of `jst help`: the commands of one kind of work, by their first word.
+type group struct {
+	title string
+	first []string
+}
+
+// groups are the headings of `jst help`, in the order work happens. A command whose first word is
+// in none of them is listed last, under "Other" (cmd/jst's tests keep that list empty).
+var groups = []group{
+	{"Tests and processes", []string{"test", "receipts", "baseline", "lock", "bg", "procs", "wait"}},
+	{"Branches and landing", []string{"start", "sync", "tidy", "discard", "trash", "gh", "queue"}},
+	{"Review", []string{"review"}},
+	{"Chat and agents", []string{"chat", "brief", "guard", "status", "owner", "log", "stats"}},
+	{"Setup and health", []string{"install", "uninstall", "setup", "doctor", "adopt", "check", "profile", "patterns", "version", "help"}},
+	{"Maintenance", []string{"changes", "release", "cards", "lint", "id", "new", "view"}},
+}
+
+// startHere is the last line of `jst help`.
+const startHere = "Start here: `jst doctor` checks this machine, `jst adopt --plan` shows what jackstay would\n" +
+	"write in a project, and `jst COMMAND --help` explains any command.\n"
+
+// Grouped are the table's command names under the headings of `jst help`, in its order; the last
+// heading, "Other", holds the commands no group names and is left out when there are none.
+func Grouped() []Heading {
+	var headings []Heading
+	placed := map[string]bool{}
+	for _, entry := range groups {
+		heading := Heading{Title: entry.title}
+		for _, first := range entry.first {
+			for _, name := range Names() {
+				if word, _, _ := strings.Cut(name, " "); word == first {
+					heading.Names = append(heading.Names, name)
+					placed[name] = true
+				}
+			}
+		}
+		headings = append(headings, heading)
+	}
+	other := Heading{Title: "Other"}
+	for _, name := range Names() {
+		if !placed[name] {
+			other.Names = append(other.Names, name)
+		}
+	}
+	if len(other.Names) > 0 {
+		headings = append(headings, other)
+	}
+	return headings
+}
+
+// Heading is one heading of `jst help` and the commands under it.
+type Heading struct {
+	Title string
+	Names []string
+}
+
 func writeUsage(out io.Writer) {
-	names := Names()
 	width := 0
-	for _, name := range names {
+	for _, name := range Names() {
 		width = max(width, len(name))
 	}
 	var text strings.Builder
-	text.WriteString("usage: jst COMMAND [ARGS...]\n\n")
-	for _, name := range names {
-		fmt.Fprintf(&text, "  jst %-*s  %s\n", width, name, commands[name].Summary)
+	text.WriteString("usage: jst COMMAND [ARGS...]\n")
+	for _, heading := range Grouped() {
+		if len(heading.Names) == 0 {
+			continue
+		}
+		text.WriteString("\n" + heading.Title + "\n")
+		for _, name := range heading.Names {
+			fmt.Fprintf(&text, "  jst %-*s  %s\n", width, name, commands[name].Summary)
+		}
 	}
+	text.WriteString("\n" + startHere)
 	_, _ = io.WriteString(out, text.String())
 }
