@@ -7,9 +7,11 @@
 
 - **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`
   (`jst test list` names them and when each is due). Only `passed` is a pass: read the last
-  `jst test:` line. After a failure, `jst test last`, not a rerun.
+  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its
+  output file).
   Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit).
   Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Instead of `gh pr checks --watch` or `gh run watch`**, run `jst checks wait` or
   `jst checks run-wait`; `jst checks status` reads them once. jackstay acts as `github.account`.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a

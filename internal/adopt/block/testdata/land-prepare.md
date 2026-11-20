@@ -6,7 +6,9 @@
 ### Instead of a hand-written command
 
 - **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test -- COMMAND`.
-  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`.
+  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`
+  (a run not logged names its output file).
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Instead of `gh pr checks --watch` or `gh run watch`**, run `jst checks wait` or
   `jst checks run-wait`; `jst checks status` reads them once. jackstay acts as `github.account`.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a

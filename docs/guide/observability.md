@@ -78,7 +78,7 @@ It checks:
 - the guard's failures in the last 7 days, per project (`failed-open` should be zero);
 - which projects' guards were heard from: a project you `--expect` that never called is a problem,
   so a missing hook is noticed;
-- Claude Code's sandbox: whether `~/.jackstay` is writable from it;
+- Claude Code's sandbox: whether it may write the folders jst needs there, and only those (no evidence);
 - the lock's folder;
 - inside a project, whether it is up to date with this jackstay (`jst adopt --plan`);
 - on macOS, the signing setting and the live binary's signature.
@@ -103,7 +103,7 @@ the checkout it runs in. Every flag and exit status: `jst owner --help`.
 ## What can go wrong
 
 - **`jst log` shows nothing for a session**: the session ran inside a sandbox that cannot write
-  `~/.jackstay`, so its spans were lost. `jst doctor` says so (`sandbox-blocks-state`); the fix is
+  the journal's folder, so its spans were lost; `jst setup` adds it. `jst doctor` says so (`sandbox-blocks-state`); the fix is
   in [Claude Code](claude-code.md#the-sandbox).
 - **Unreadable lines**: `jst log` and `jst stats` count lines they could not decode and say so on
   standard error.

@@ -136,9 +136,17 @@ every other character is `%XX` of its UTF-8 bytes; an empty name is `unknown`.
     <project>/telemetry/                    the project's journal (observability.md)
 
 A log line is one JSON object appended in one write, so processes never mix lines; a log that
-cannot be written never fails its tool. A sandboxed session records only when `~/.jackstay` is in
-`sandbox.filesystem.allowWrite` (`jst doctor` checks). Every session of the account may write here,
-so receipts, cache entries and the run record can be forged: a known limit, not a boundary (guard.md).
+cannot be written never fails its tool, except `jst test`, which checks its evidence first.
+`jst setup` lets Claude Code's sandbox write only what jst writes from a sandboxed command
+(`doctor.SandboxGrants`: the journals, the heavy-suite lock with its queue and holder note,
+`procs`, `chat`, `session-chat`, `context-brief`, each project's `ids`, the trash). Evidence (receipts and
+failure notes, gate marks and bars, review rounds, the run log, the delivery record, the expected
+projects) stays read-only there, so a sandboxed agent cannot forge a pass (#59): `jst test` and
+`jst review` run outside it. Before running, `jst test` appends-opens the run log, makes and removes
+a file in the project's receipts, gate marks and bars (`receipts.UnwritableEvidence`) and removes
+the receipt or mark it replaces; when one fails it runs nothing. Outside the sandbox every session
+of the account may write here, so receipts, cache entries, marks and the run record can be forged: a known limit,
+not a boundary (guard.md).
 
 ### 3.2 The project file: `jackstay.json`
 
@@ -828,8 +836,9 @@ The prefix is `--prefix`, else the running binary's install, else `~/.local`. Ev
 function of `doctor.Inputs`, so tests use fixtures and a fixed clock. A finding has a **kind**;
 problems make exit 1 and each names its **fix** ([W-078](../decisions/W-078-setup-after-install.md);
 `TestEveryProblemNamesItsFix`): a broken install's is the one-liner with `JACKSTAY_PREFIX='P'`
-(never an uninstall); `sandbox-blocks-state`'s an `allowWrite` entry, a narrower `denyWrite` or
-another `JACKSTAY_HOME`, never removing a deny.
+(never an uninstall); `sandbox-blocks-state`'s `jst setup`, a narrower `denyWrite` or another
+`JACKSTAY_HOME`, never removing a deny; `sandbox-writes-evidence`'s `jst setup` for an entry naming
+the home itself, else narrowing the entry by hand.
 
 | check | finding |
 |-------|---------|
@@ -842,14 +851,17 @@ another `JACKSTAY_HOME`, never removing a deny.
 | on macOS: the signing setting, the identity, the live signature (section 7.4) | `codesign-setting-unreadable`, `codesign-identity-invalid`, `codesign-uninspected`, `binary-not-signed` |
 | the guard's spans of the last 7 days in every project's journal | `failed-open`, `config-error` per project; ignored tools as a fact |
 | each project's `guard-seen` mark and the expected list | note `guard-quiet` (quiet over 3 days); `expected-never-called`; `guard-never-called` (no mark, nothing expected); `expected-unreadable` |
-| `~/.claude/settings.json`'s sandbox enabled and `~/.jackstay` not writable by it | `sandbox-blocks-state` |
-| the lock's folder can be made and written | `lock-unwritable` |
+| `~/.claude/settings.json`'s sandbox enabled and a grant (for each project folder and expected project) not writable by it | `sandbox-blocks-state` |
+| an `allowWrite` entry covering or reaching into an evidence path no `denyWrite` covers | `sandbox-writes-evidence` |
+| the lock and its queue, or else the lock's folder, can be written | `lock-unwritable` |
 | the project around the working folder is adopted (`adopt.Check`, [adopt.md](adopt.md) section 10) | `adoption` |
 
 `--json` prints `{"facts": {…}, "problems": [{"kind", "text", "fix"}], "notes": [{"kind", "text"}]}`;
 as text each problem is followed by `  fix: …`. The sandbox check reads only the account's
 `~/.claude/settings.json`; a pattern's part before its first `*?[` is resolved as a real path and
-the rest matched per element (`**` any number); a `denyWrite` covering `~/.jackstay` wins.
+the rest matched per element (`**` any number); a `denyWrite` covering a grant wins. Setup removes
+only `allowWrite` entries naming the home itself, makes each grant before naming it, and writes
+the settings through the ordered model adopt uses, with a backup beside them.
 
 **`--expect NAME` / `--forget NAME`** change `~/.jackstay/.all/expected-projects` (sorted marker
 names) under `flock` on `expected-projects.lock` (up to 30 s), written atomically; `--forget` also

@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:87bb35b7520e — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:7e06e9debf3b — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,
@@ -41,8 +41,10 @@ the same rules hold.
 
 - **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`
   (`jst test list` names them and when each is due). Only `passed` is a pass: read the last
-  `jst test:` line. After a failure, `jst test last`, not a rerun.
+  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its
+  output file).
   Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit). No scope fits: `jst test -- COMMAND`.
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a
   log line matches.
 - **Instead of `git worktree add` or `remove`**, run `jst start NAME` and, once it is merged,
@@ -58,8 +60,9 @@ the same rules hold.
   the expected digest, revision and key from a trusted source, never from the receipt.
 - **When the guard refuses** a command, run what it names instead, never a workaround. Read a
   `jst guard let this command run, with a warning` line before going on.
-- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`
-  or `codex,claude-code` for others); `--background` returns at once and the result comes as a chat
+- **Review**, outside the agent sandbox (it records the round): `jst review BASE..REV --task NAME`
+  (the project's reviewers; `--reviewer claude-code` or `codex,claude-code` for others);
+  `--background` returns at once and the result comes as a chat
   event; `jst review check BASE..REV --task NAME` says if it is clear.
   Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.
 - **Numbers** come from `jst id next SERIES`, never by hand.

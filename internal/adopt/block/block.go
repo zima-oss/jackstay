@@ -76,8 +76,9 @@ var items = []item{
 	{id: "land", commands: []string{"land"}, wanted: hasSection("land"), text: landText},
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
-		"- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`\n" +
-			"  or `codex,claude-code` for others); `--background` returns at once and the result comes as a chat\n" +
+		"- **Review**, outside the agent sandbox (it records the round): `jst review BASE..REV --task NAME`\n" +
+			"  (the project's reviewers; `--reviewer claude-code` or `codex,claude-code` for others);\n" +
+			"  `--background` returns at once and the result comes as a chat\n" +
 			"  event; `jst review check BASE..REV --task NAME` says if it is clear.\n" +
 			"  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
@@ -129,19 +130,24 @@ func testText(config map[string]any) string {
 	scopes := section(section(config, "test"), "scopes")
 	if len(scopes) == 0 {
 		return "- **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test -- COMMAND`.\n" +
-			"  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`."
+			"  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`\n" +
+			"  (a run not logged names its output file).\n" + evidenceText
 	}
 	text := "- **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`\n" +
 		"  (`jst test list` names them and when each is due). Only `passed` is a pass: read the last\n" +
-		"  `jst test:` line. After a failure, `jst test last`, not a rerun."
+		"  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its\n" +
+		"  output file)."
 	if _, gate := scopes["gate"]; gate {
 		text += "\n  Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit)."
 	}
 	if section(section(config, "test"), "selection") != nil {
 		text += "\n  Preview path-based selection with `jst test plan changed --base REF`."
 	}
-	return text + " No scope fits: `jst test -- COMMAND`."
+	return text + " No scope fits: `jst test -- COMMAND`.\n" + evidenceText
 }
+
+// evidenceText says where the commands that record evidence run (#59).
+const evidenceText = "  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox."
 
 func guardText(config map[string]any) string {
 	text := "- **When the guard refuses** a command, run what it names instead, never a workaround. Read a\n" +

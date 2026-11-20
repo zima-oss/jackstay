@@ -100,8 +100,12 @@ The install changes nothing outside its prefix. These steps are yours:
 
 `jst setup --plan` turns `jst doctor` findings into a setup list. `--json` gives the same list as
 data. Setup can put the installed prefix's `bin` first on `PATH` in zsh, bash, sh, dash or ksh's
-profile. It can also add jackstay's state folder to Claude Code's
-`sandbox.filesystem.allowWrite` when the sandbox is enabled and no deny rule covers the folder.
+profile. When Claude Code's sandbox is enabled, it can let the sandbox write the folders of the
+jackstay home jst writes from it (logs, locks, chat, jobs, the brief, ids, the trash), each in
+`sandbox.filesystem.allowWrite`, and replace an entry naming the whole home, so evidence (receipts,
+gate marks, review rounds, the run log) stays read-only there. No deny rule may cover a folder it
+adds. The plan shows the entries removed and added; the settings file keeps its order and gets a
+backup beside it.
 Other findings carry doctor's manual fix. Fish and other shells need their own configuration,
 so setup only reports their PATH repair.
 

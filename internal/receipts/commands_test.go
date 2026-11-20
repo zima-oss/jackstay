@@ -1,6 +1,7 @@
 package receipts
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -129,5 +130,70 @@ func TestTestLastShowsAGateAndAScope(t *testing.T) {
 	LastCommand([]string{"--project", "alpha"}, nil, &out, &errs)
 	if !strings.HasSuffix(strings.TrimSpace(out.String()), "outcome=exited-0 (60 s, tests counted: 40)") {
 		t.Fatalf("%s", out.String())
+	}
+}
+
+// Inside Claude Code's sandbox the run log's folder is read-only (#59): jst test, raw or by scope,
+// runs nothing there and says to run it outside the sandbox.
+func TestTestRunsNothingWhereItCannotRecordItsEvidence(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	shared := filepath.Join(home, ".all")
+	if err := os.MkdirAll(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(shared, 0o700) })
+	marker := filepath.Join(t.TempDir(), "ran")
+	for _, args := range [][]string{{"--", "touch", marker}, {"unit"}} {
+		var stdout, stderr bytes.Buffer
+		if code := TestCommand(args, nil, &stdout, &stderr); code != StatusUnusable ||
+			!strings.Contains(stderr.String(), "Run it outside the sandbox.") || !strings.Contains(stderr.String(), "outcome=not-started") {
+			t.Fatalf("%v: exit %d: %s", args, code, &stderr)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the command ran")
+	}
+}
+
+// An owner's deny rule on one piece of evidence, with the run log's folder writable, still stops
+// a run: each piece is checked where it is.
+func TestUnwritableEvidenceNamesEachProtectedPiece(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	if path := UnwritableEvidence("demo"); path != "" {
+		t.Fatalf("a writable home: %s", path)
+	}
+	if entries, _ := os.ReadDir(home); len(entries) != 0 {
+		t.Fatalf("the check left something behind: %v", entries)
+	}
+	for _, name := range []string{"receipts", "gate-marks", "gate-bars"} {
+		folder := filepath.Join(home, "demo", name)
+		if err := os.MkdirAll(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(folder, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		if path := UnwritableEvidence("demo"); path != folder {
+			t.Errorf("%s protected: %q", name, path)
+		}
+		if err := os.Chmod(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runLog := filepath.Join(home, ".all", "runs.jsonl")
+	if err := os.MkdirAll(filepath.Dir(runLog), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runLog, nil, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(runLog, 0o600) })
+	if path := UnwritableEvidence(""); path != runLog {
+		t.Fatalf("a read-only run log in a writable folder: %q", path)
 	}
 }

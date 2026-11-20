@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -22,7 +23,10 @@ const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] |
 const setupHelp = setupUsage + `
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
-POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
+POSIX shell profile, and let Claude Code's enabled sandbox write only the folders of the jackstay
+home jst writes from it (the journal, the lock, chat, jobs, the brief, ids, the trash), replacing
+an entry that names the whole home. Evidence (receipts, gate marks, review rounds, the run log)
+stays read-only to the sandbox; jst test and jst review run outside it.
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
   --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
@@ -38,8 +42,9 @@ land section; the project's jackstay.json decides.
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
 terminal offers apply, show and skip. An existing profile is copied to a
-unique backup beside it before replacement. Unsupported shells and conflicting profiles are
-left for the owner. Open a new shell after applying a PATH repair.
+unique backup beside it before replacement; the settings file keeps its keys in order. A profile
+or settings file that is a symbolic link is named and left for the owner, as are unsupported
+shells and conflicting profiles. Open a new shell after applying a PATH repair.
 
 exit: 0 planned or applied; 1 an applicable repair failed; 2 the request is wrong.
 
@@ -58,6 +63,8 @@ type SetupItem struct {
 	original    []byte
 	replacement []byte
 	mode        os.FileMode
+	// grants are the paths a sandbox repair makes before it writes the settings.
+	grants []string
 }
 
 // SetupPlan retains doctor's manual findings; setup never guesses repairs for them.
@@ -123,6 +130,7 @@ func quotedShellWord(value string) string {
 
 func planSetup(report Report, home, shell string) SetupPlan {
 	plan := SetupPlan{Items: []SetupItem{}}
+	sandboxPlanned := false
 	for _, finding := range report.Problems {
 		item := SetupItem{ID: finding.Kind, Status: "manual", Text: finding.Text, Fix: finding.Fix}
 		if finding.Kind == "path-not-first" {
@@ -154,26 +162,59 @@ func planSetup(report Report, home, shell string) SetupPlan {
 				item.Fix = "put the install's bin folder first on PATH in your shell's configuration"
 			}
 		}
-		if finding.Kind == "sandbox-blocks-state" {
-			item.ID = "sandbox"
-			item.Path, _ = report.Facts["settings"].(string)
-			stateHome, _ := report.Facts["home"].(string)
-			if item.Path != "" && stateHome != "" {
-				original, replacement, mode, err := prepareSandbox(item.Path, stateHome)
-				if err == nil {
-					item.Status = "ready"
-					item.Fix = "add the state folder to sandbox.filesystem.allowWrite in " + item.Path
-					item.Add = stateHome
-					item.Diff = settingsDiff(item.Path, original, replacement)
-					item.original, item.replacement, item.mode = original, replacement, mode
-				} else {
-					item.Fix = finding.Fix + "; setup cannot apply it: " + err.Error()
-				}
+		if finding.Kind == "sandbox-blocks-state" || finding.Kind == "sandbox-writes-evidence" {
+			if sandboxPlanned {
+				continue
 			}
+			sandboxPlanned = true
+			item = planSandbox(report, finding)
 		}
 		plan.Items = append(plan.Items, item)
 	}
 	return plan
+}
+
+// planSandbox is the one sandbox repair for doctor's sandbox findings: allowWrite gets the
+// grants (SandboxGrants) and loses entries naming the whole jackstay home.
+func planSandbox(report Report, finding Finding) SetupItem {
+	item := SetupItem{ID: "sandbox", Status: "manual", Text: finding.Text, Fix: finding.Fix}
+	item.Path, _ = report.Facts["settings"].(string)
+	stateHome, _ := report.Facts["home"].(string)
+	projects, _ := report.Facts["sandbox_projects"].([]string)
+	if item.Path == "" || stateHome == "" {
+		return item
+	}
+	grants := SandboxGrants(stateHome, projects)
+	original, replacement, mode, change, err := prepareSandbox(item.Path, stateHome, projects)
+	switch {
+	case errors.Is(err, errNothingToChange):
+		item.Fix = finding.Fix
+	case err != nil:
+		item.Fix = finding.Fix + "; setup cannot apply it: " + err.Error()
+		return item
+	default:
+		item.Status = "ready"
+		item.Text = "let Claude Code's sandbox write only the jackstay folders jst writes from it (the journal, the lock, chat, " +
+			"jobs, the brief, ids, the trash); receipts, gate marks, review rounds and the run log stay read-only there, so " +
+			"`jst test` and `jst review`, which record them, run outside the sandbox"
+		item.Fix = "change sandbox.filesystem.allowWrite in " + item.Path
+		item.Add = strings.Join(change.Added, "\n")
+		item.Diff = sandboxDiff(item.Path, change)
+		item.original, item.replacement, item.mode, item.grants = original, replacement, mode, grants
+	}
+	if len(change.Kept) > 0 {
+		quoted := make([]string, len(change.Kept))
+		for index, entry := range change.Kept {
+			quoted[index] = strconv.Quote(entry)
+		}
+		note := "still lets the sandbox write evidence: narrow " + strings.Join(quoted, ", ") + " in " + item.Path + " yourself"
+		if item.Status == "ready" {
+			item.Fix += "; " + note
+		} else {
+			item.Fix = note
+		}
+	}
+	return item
 }
 
 // RunSetup is jst setup. Mutations require an interactive choice or --yes with a selected ID.
@@ -374,7 +415,9 @@ func executeSetup(plan SetupPlan, yes bool, selected map[string]bool, stdin io.R
 			var backup string
 			var err error
 			if item.ID == "sandbox" {
-				backup, err = replaceWithBackup(item.Path, item.original, item.replacement, item.mode)
+				if err = makeGrants(item.grants); err == nil {
+					backup, err = replaceWithBackup(item.Path, item.original, item.replacement, item.mode)
+				}
 			} else {
 				backup, err = applyProfile(item.Path, item.Add)
 			}
@@ -453,12 +496,16 @@ func readProfile(path string) ([]byte, os.FileMode, error) {
 		return nil, 0, err
 	}
 	defer func() { _ = root.Close() }()
+	if info, err := root.Lstat(filepath.Base(path)); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, _ := root.Readlink(filepath.Base(path))
+		return nil, 0, fmt.Errorf("%s is a symbolic link (to %s): setup does not write through a link; make the change in the file it names yourself", path, target)
+	}
 	file, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0o600, nil
 	}
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("%s: %w", path, err)
 	}
 	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
@@ -467,7 +514,7 @@ func readProfile(path string) ([]byte, os.FileMode, error) {
 	}
 	const limit = 1 << 20
 	if !info.Mode().IsRegular() || info.Size() > limit {
-		return nil, 0, fmt.Errorf("profile is not a regular file smaller than 1 MiB")
+		return nil, 0, fmt.Errorf("%s is not a regular file smaller than 1 MiB", path)
 	}
 	content, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if len(content) > limit {

@@ -7,9 +7,11 @@
 
 - **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`
   (`jst test list` names them and when each is due). Only `passed` is a pass: read the last
-  `jst test:` line. After a failure, `jst test last`, not a rerun.
+  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its
+  output file).
   Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit).
   Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Instead of `gh pr checks --watch` or `gh run watch`**, run `jst checks wait` or
   `jst checks run-wait`; `jst checks status` reads them once. jackstay acts as `github.account`.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a
@@ -32,8 +34,9 @@
   checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,
   `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
   (`gh pr merge` is refused), never run `--confirm`.
-- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`
-  or `codex,claude-code` for others); `--background` returns at once and the result comes as a chat
+- **Review**, outside the agent sandbox (it records the round): `jst review BASE..REV --task NAME`
+  (the project's reviewers; `--reviewer claude-code` or `codex,claude-code` for others);
+  `--background` returns at once and the result comes as a chat
   event; `jst review check BASE..REV --task NAME` says if it is clear.
   Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with

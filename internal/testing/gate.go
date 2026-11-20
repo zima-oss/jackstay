@@ -338,7 +338,14 @@ func (proj *project) writeMark(key, step string, ended result, head string, adap
 }
 
 // removeMark takes a key's mark away: a run of the step on it ended with no verdict, or runs now.
-func (proj *project) removeMark(key string) { _ = os.Remove(proj.markPath(key)) }
+// removeMark takes a key's mark away; an error when one stays (a missing mark is none).
+func (proj *project) removeMark(key string) error {
+	err := receipts.RemoveFile(proj.markPath(key))
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return fmt.Errorf("the mark %s cannot be removed (%v): a failure of this run could not undo it; run it outside the sandbox", proj.markPath(key), err)
+}
 
 // readMark is a mark usable now for the key, or why not.
 func (proj *project) readMark(key, step, head string, adapterVersion int) (*mark, string) {
@@ -550,12 +557,19 @@ func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked
 		proj.say("step %s: runs (\"resume\": false)", path.name)
 	}
 	proj.say("step %s: %s", path.name, shellWords(found.argv))
+	var ended result
 	if key != "" {
 		// The step runs again: its old pass no longer speaks for this tree, also if this run is
-		// stopped before it can say anything. A pass writes a new mark.
-		proj.removeMark(key)
+		// stopped before it can say anything. A pass writes a new mark. A mark that cannot be
+		// removed could not be undone by a failure: the step does not start, and the gate records
+		// that like any other outcome.
+		if err := proj.removeMark(key); err != nil {
+			ended = proj.notStarted(err.Error())
+		}
 	}
-	ended := proj.runLeaf(chosen, nil, gateID, true)
+	if ended.outcome == "" {
+		ended = proj.runLeaf(chosen, nil, gateID, true)
+	}
 	if ended.signalled {
 		return &ended.status, true
 	}
@@ -568,7 +582,7 @@ func (proj *project) gateStep(path leafPath, gateID string, resume bool, checked
 	case key != "" && ended.outcome == receipts.OutcomeFailed:
 		proj.writeBar(key, path.name, ended)
 	case key != "":
-		proj.removeMark(key)
+		_ = proj.removeMark(key) // removed before the step ran; nothing new to undo
 	}
 	if !passed {
 		status := ended.status
