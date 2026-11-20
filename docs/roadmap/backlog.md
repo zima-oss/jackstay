@@ -228,6 +228,6 @@ works. It must report the observed delivery boundary for each host.
    workspace and measure discovery, delivery and acknowledgment on live agent turns.
 2. Extend the [GitHub Free queue pilot](merge-queue-pilot.md#github-free-manual-pilot)
    with provider-side exact-candidate enforcement before piloting automatic landing or batching.
-3. Follow the acceptance steps in the [compaction brief](context-brief.md),
-   [workspace board](workspace-board.md), and [reviewer pool](reviewer-pool.md)
+3. Follow the acceptance steps in the [compaction brief](context-brief.md) and
+   [workspace board](workspace-board.md)
    specifications before adding more hosts or managed scheduling.

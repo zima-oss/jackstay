@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:5223ad553426 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:861ace2ef184 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed on this machine. Reach for it before a hand-written shell loop:
@@ -58,10 +58,8 @@ the same rules hold.
   on.
 - **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
   project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
+  `--background` starts it under `jst bg` and returns; the result comes as a chat event.
   `jst review check BASE..REV --task NAME` checks the saved round.
-- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
-  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
-  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.
 - **Numbers** come from `jst id next SERIES`, never by hand.
 - **What happened**: `jst log --session ID` (or `--trace ID`) and `jst stats REPORT` — after a
   surprising failure, before asking.

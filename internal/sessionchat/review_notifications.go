@@ -3,47 +3,114 @@ package sessionchat
 import (
 	"context"
 	"crypto/sha256"
-	"fmt"
+	"encoding/hex"
+	"errors"
+	"os"
+	"slices"
+	"strings"
 
-	"github.com/zima-oss/jackstay/internal/reviewpool"
+	"github.com/zima-oss/jackstay/internal/chatevent"
+	"github.com/zima-oss/jackstay/internal/review"
 )
 
+// systemSender is the sender of jackstay's own events; no client session can have it as an ID.
+const systemSender = "jackstay"
+
+func init() {
+	chatevent.Register(publisher{})
+	chatevent.RegisterIdentifier(identify)
+}
+
+// publisher stores jackstay's events in the chat of the event's repository, one message per
+// recipient, keyed by the event's key so a repeat stores nothing new.
+type publisher struct{}
+
+func (publisher) Publish(ctx context.Context, event chatevent.Event) error {
+	if len(event.Recipients) == 0 {
+		return nil
+	}
+	store, _, err := loadChatAt(ctx, event.Worktree)
+	if err != nil {
+		return err
+	}
+	return store.publish(event)
+}
+
+func (store Store) publish(event chatevent.Event) error {
+	lines := []string{event.Summary}
+	if event.Body != "" {
+		lines = append(lines, event.Body)
+	}
+	for _, attachment := range event.Attachments {
+		lines = append(lines, "attached: "+attachment.URI)
+	}
+	lines = append(lines, "event: "+event.Kind+"; call chat.ack once read.")
+	body := strings.Join(lines, "\n")
+	var failures []error
+	for _, recipient := range event.Recipients {
+		key := event.Key
+		if len(event.Recipients) > 1 || len(key) > 128 {
+			digest := sha256.Sum256([]byte(event.Key + "\x00" + recipient))
+			key = "event/" + hex.EncodeToString(digest[:24])
+		}
+		if _, _, err := store.send(systemSender, recipient, "message", body, key, "", true); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// identify is the chat session of this process in worktree: the one its session token names, once
+// that session has registered (through `jst chat serve` or the Claude Code hook).
+func identify(ctx context.Context, worktree string) (string, error) {
+	token := os.Getenv("JACKSTAY_CHAT_SESSION_TOKEN")
+	if token == "" {
+		return "", nil
+	}
+	store, _, err := loadChatAt(ctx, worktree)
+	if err != nil {
+		return "", nil // chat is not enabled here: no session to tell
+	}
+	identity, err := store.tokenID(token)
+	if err != nil {
+		return "", err
+	}
+	sessions, err := store.Sessions()
+	if err != nil {
+		return "", err
+	}
+	if !slices.ContainsFunc(sessions, func(session Session) bool { return session.ID == identity }) {
+		return "", errors.New("this session's chat identity has not registered yet")
+	}
+	return identity, nil
+}
+
+// syncReviewNotifications publishes the review results still owed to the session: a result whose
+// publication failed when its review ended is pulled here, when the session next looks.
+func syncReviewNotifications(ctx context.Context, store Store, sessionID string) error {
+	here, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	background, err := review.BackgroundAt(here, "")
+	if err != nil {
+		return nil // no review here, so nothing is owed here
+	}
+	return background.Store.DeliverOwed(ctx, sessionID, chatStore{store})
+}
+
+// chatStore publishes into an already opened store.
+type chatStore struct{ store Store }
+
+func (target chatStore) Publish(_ context.Context, event chatevent.Event) error {
+	return target.store.publish(event)
+}
+
+// reviewNotificationSyncError is a failure to publish owed review results, apart from the chat's
+// own delivery: the Codex bridge retries it without treating the chat as broken.
 type reviewNotificationSyncError struct{ cause error }
 
 func (failure reviewNotificationSyncError) Error() string {
 	return "review notification sync: " + failure.cause.Error()
 }
 func (failure reviewNotificationSyncError) Unwrap() error { return failure.cause }
-
-// syncReviewNotifications moves durable queue events into the recipient's chat
-// inbox. The queue marks each event only after chat accepts it; repeating after
-// an interrupted write uses the same chat idempotency key.
-func syncReviewNotifications(ctx context.Context, store Store, sessionID string) error {
-	if store.commonDirectory == "" {
-		return nil
-	}
-	pool, err := reviewpool.Default()
-	if err != nil {
-		return err
-	}
-	events, err := pool.Undelivered(ctx, sessionID, store.commonDirectory)
-	if err != nil {
-		return err
-	}
-	for _, event := range events {
-		body := fmt.Sprintf("Review %s attempt %d %s (exit %d). Call review.status for details, then chat.ack.",
-			event.JobID, event.Attempt, event.Status, event.Exit)
-		key := fmt.Sprintf("review-pool/%s/%d/%s/%s", event.JobID, event.Attempt, event.Status, sessionID)
-		if event.Generation != "" {
-			digest := sha256.Sum256([]byte(key + "/" + event.Generation))
-			key = fmt.Sprintf("review-pool/v2/%x", digest)
-		}
-		if _, _, err := store.notifyReview(sessionID, body, key); err != nil {
-			return err
-		}
-		if err := pool.MarkDelivered(ctx, event, sessionID); err != nil {
-			return err
-		}
-	}
-	return nil
-}

@@ -419,6 +419,9 @@ finding; `--focus` only says where to look hardest.
     attempt-2/ …                          an attempt that did not become a round
       source/                            temporary pinned view while a review runs
   .trees/                                 legacy locked worktrees, if any
+  .requests/<task hash>.json              the task's review running in the background (section 6)
+  .requests/<task hash>-<id>.log          its output
+  .owed/<key hash>.json                   a `review.finished` event the chat has not yet taken
 ```
 
 `attempt.json` is written first, so a failed attempt keeps what it was for (task, attempt, commit,
@@ -462,7 +465,31 @@ A review takes minutes. A session runs it as it runs other long commands ([imple
     jst bg --for 37 --name review-<task> -- jst review [REV] …
 
 with the Bash tool's background flag; the session is told when the call ends and reads
-`jst review last`. `jst review` is a plain foreground command with **one budget** for the whole call:
+`jst review last`. `jst review … --background` does that itself and returns at once (W-090: the
+0.5.x reviewer pool, its store, worker and nine subcommands, folded into `jst review`):
+- **Submission.** It resolves `REV` (and `BASE`) to commit ids now and, under the lock of the
+  task's request file `<store>/.requests/<task hash>.json`, writes the request (id, task, the
+  worktree, the commits, the reviewers, `--fresh`, `--past-limit`, `--focus`, the chat sessions to
+  tell) and starts, detached in a session of its own, `jst bg --for <budget + 1> --name
+  review-<task> -- jst review --task T --reviewer R --request ID -- BASE..REV`. The `jst bg` entry is
+  the durable record of the pending run (`jst procs`). It waits, at most 10 s, for the run to take
+  the task's lock, so `jst bg` finds the session it belongs to among its parents. The chat's
+  `review.submit` tool is the same submission.
+- **One request per task.** While the request's process lives (its id and start in the process
+  table; without a table, until its deadline), an equal submission (same worktree, task, commits,
+  reviewers and flags) joins it, adding its session (at most 32), and a different one is refused
+  (exit 2, "task busy"). A request whose process is gone is replaced: an equal one carries its
+  sessions over, and a different one leaves each of them a `review.finished` event saying it was
+  lost.
+- **Concurrency** is section 6's slots and nothing else: reviews of different tasks run at once, up
+  to `max_concurrent` reviewer runs; there is no machine-wide worker.
+- **The result.** The run with `--request` marks the request running once it holds the task's lock
+  (a run whose request was replaced refuses, exit 2). When it ends, whatever its outcome, it removes
+  the request and writes one owed event per session, `<store>/.owed/<key hash>.json`, before giving
+  each to the chat's publisher (`internal/chatevent`, [chat.md](chat.md) section 10); a published
+  one is removed. What the chat could not take stays owed, and the chat pulls it when the session
+  next reads its inbox or reaches its hook. The event carries the outcome word, the round, the
+  report's path, the next step and `jst:review/<task>/<round>`. `jst review` is a plain foreground command with **one budget** for the whole call:
 `queue_minutes` (one shared window for source admission, reviewer slots and the start lock) plus the longest
 `timeout_minutes` plus 2 (the tree, the probe, the report, stopping a group). It prints the budget
 on its first line, and the documented `--for` is that budget rounded up (37 with the defaults:
@@ -486,6 +513,8 @@ slot.
 
     jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,…] [--brief FILE] [--focus TEXT]
               [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
+    jst review [REV | BASE..REV] --background [--task NAME] [--reviewer NAME,…] [--focus TEXT]
+              [--fresh] [--past-limit]                  the same round under `jst bg`, section 6
     jst review last [--task NAME] [--json]          the newest round's report, or the newest attempt's failure
     jst review check [--task NAME] BASE..REV        is BASE..REV reviewed and clear? (below)
     jst review list [--task NAME] [--rebuild] [--json]
@@ -540,6 +569,7 @@ is checked as `REV^..REV`.
 |---|---|
 | `internal/review` | the settings and their validator; the prompt (embedded template and schema); rounds, chains, triage, places and W-019; the store, index and pruning; the commands (`cli.Register`) |
 | `internal/review/codex` | the Codex runner (it knows no rounds or locks: the caller's start lock is released through a callback at Codex's first answer): argv, environment, stdin, deadline and process group, the event stream (first-answer signal, auth failure), outputs, outcomes |
+| `internal/chatevent` | the event a producer publishes into the chat and the `Publisher` the chat registers ([chat.md](chat.md) section 10); without a chat, publishing answers "unavailable" and the event stays owed |
 
 Reused, not duplicated: `internal/config` (the `review` keys added to `config.Table`; `Load` with
 `need: ["review"]`), `internal/project` (`Open`, the root, the name, `Repo` for `brief`/`cite`

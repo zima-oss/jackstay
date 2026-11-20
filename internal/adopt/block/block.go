@@ -76,11 +76,8 @@ var items = []item{
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
 		"- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the\n" +
 			"  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.\n" +
+			"  `--background` starts it under `jst bg` and returns; the result comes as a chat event.\n" +
 			"  `jst review check BASE..REV --task NAME` checks the saved round.")},
-	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
-		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
-			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
-			"  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(

@@ -14,7 +14,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/gitcli"
-	"github.com/zima-oss/jackstay/internal/reviewpool"
+	"github.com/zima-oss/jackstay/internal/review"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 )
 
@@ -168,8 +168,8 @@ func toolDefinitions() []map[string]any {
 		{"chat.inbox", "Read pending messages addressed to this session", map[string]any{"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, nil, true},
 		{"chat.reply", "Reply to a message addressed to this session", map[string]any{"message_id": stringField(64), "body": stringField(16384), "idempotency_key": stringField(128)}, []string{"message_id", "body", "idempotency_key"}, false},
 		{"chat.ack", "Acknowledge one message addressed to this session", map[string]any{"message_id": stringField(64)}, []string{"message_id"}, false},
-		{"review.submit", "Queue a review of pinned commits in this repository and subscribe to the outcome", map[string]any{"base": stringField(200), "head": stringField(200), "task": stringField(200), "reviewers": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"codex", "claude-code"}}, "minItems": 1, "maxItems": 2}}, []string{"base", "head", "task", "reviewers"}, false},
-		{"review.status", "Read a request submitted by this session in this repository", map[string]any{"job_id": stringField(24)}, []string{"job_id"}, true},
+		{"review.submit", "Start `jst review BASE..HEAD` in the background on pinned commits of this repository; the result comes to this session as a review.finished chat message. An equal review already running is joined", map[string]any{"base": stringField(200), "head": stringField(200), "task": stringField(200), "reviewers": map[string]any{"type": "array", "items": map[string]any{"type": "string", "enum": []string{"codex", "claude-code"}}, "minItems": 1, "maxItems": 2}}, []string{"base", "head", "task", "reviewers"}, false},
+		{"review.status", "Where a review task of this repository stands: the review running in the background, and the newest round or attempt", map[string]any{"task": stringField(200)}, []string{"task"}, true},
 	}
 	result := make([]map[string]any, 0, len(fields))
 	for _, entry := range fields {
@@ -198,7 +198,6 @@ func (server *Server) call(raw json.RawMessage) any {
 		Head           string   `json:"head"`
 		Task           string   `json:"task"`
 		Reviewers      []string `json:"reviewers"`
-		JobID          string   `json:"job_id"`
 	}
 	if len(envelope.Arguments) > 0 && strictjson.Unmarshal(envelope.Arguments, &arguments) != nil {
 		return toolFailure("invalid arguments")
@@ -210,7 +209,7 @@ func (server *Server) call(raw json.RawMessage) any {
 		"chat.reply":    {"message_id": true, "body": true, "idempotency_key": true},
 		"chat.ack":      {"message_id": true},
 		"review.submit": {"base": true, "head": true, "task": true, "reviewers": true},
-		"review.status": {"job_id": true},
+		"review.status": {"task": true},
 	}
 	if permitted, found := allowed[envelope.Name]; found && len(envelope.Arguments) > 0 {
 		members, err := strictjson.Members(envelope.Arguments)
@@ -286,26 +285,34 @@ func (server *Server) call(raw json.RawMessage) any {
 			err = errors.New("MCP session repository changed")
 		}
 		if err == nil {
-			var pool reviewpool.Pool
-			pool, err = reviewpool.Default()
+			var background review.Background
+			background, err = reviewBackground(here)
 			if err == nil {
-				var job reviewpool.Job
-				var created bool
-				job, created, err = pool.EnqueueForSession(ctx, reviewpool.Request{Repository: here, Base: arguments.Base, Head: arguments.Head, Task: arguments.Task, Reviewers: arguments.Reviewers}, server.session.ID, server.store.commonDirectory)
-				result = map[string]any{"job": publicReviewJob(job), "created": created}
+				var submitted review.Submitted
+				submitted, err = background.Submit(ctx, review.Submission{Revision: arguments.Base + ".." + arguments.Head,
+					Task: arguments.Task, Reviewers: arguments.Reviewers, Subscriber: server.session.ID})
+				result = map[string]any{"request": publicRequest(submitted.Request), "joined": submitted.Joined}
 			}
 		}
 		cancel()
 	case "review.status":
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		var pool reviewpool.Pool
-		pool, err = reviewpool.Default()
-		if err == nil {
-			var job reviewpool.Job
-			job, err = pool.StatusForSession(ctx, arguments.JobID, server.session.ID, server.store.commonDirectory)
-			result = map[string]any{"job": publicReviewJob(job)}
+		var here string
+		here, err = os.Getwd()
+		if err != nil {
+			break
 		}
-		cancel()
+		var background review.Background
+		background, err = reviewBackground(here)
+		if err == nil {
+			var status review.Status
+			status, err = background.StatusOf(arguments.Task)
+			if status.Running != nil {
+				running := publicRequest(*status.Running)
+				result = map[string]any{"running": running, "newest": status.Newest, "outcome": status.Outcome, "blocks": status.Blocks, "report": status.Report}
+			} else {
+				result = map[string]any{"newest": status.Newest, "outcome": status.Outcome, "blocks": status.Blocks, "report": status.Report}
+			}
+		}
 	default:
 		return toolFailure("unknown tool")
 	}
@@ -319,11 +326,21 @@ func (server *Server) call(raw json.RawMessage) any {
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": string(encoded)}}, "structuredContent": result}
 }
 
-func publicReviewJob(job reviewpool.Job) map[string]any {
-	return map[string]any{"id": job.ID, "base": job.Base, "head": job.Head, "task": job.Task,
-		"reviewers": job.Reviewers, "status": job.Status, "attempts": job.Attempts,
-		"exit": job.Exit, "not_before": job.NotBefore, "failure_class": job.FailureClass, "policy_id": job.PolicyID}
+// publicRequest leaves out the other sessions subscribed to a request.
+func publicRequest(request review.Request) map[string]any {
+	return map[string]any{"id": request.ID, "task": request.Task, "base": request.Base, "head": request.Head,
+		"reviewers": request.Reviewers, "running": request.Running, "created": request.Created, "log": request.Log}
 }
+
+// reviewBackground submits reviews with this binary; tests replace it.
+var reviewBackground = func(folder string) (review.Background, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return review.Background{}, err
+	}
+	return review.BackgroundAt(folder, executable)
+}
+
 func toolFailure(reason string) map[string]any {
 	return map[string]any{"content": []map[string]string{{"type": "text", "text": reason}}, "isError": true}
 }

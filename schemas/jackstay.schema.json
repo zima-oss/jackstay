@@ -746,17 +746,6 @@
         "max_concurrent": {
           "type": "integer"
         },
-        "pool": {
-          "additionalProperties": false,
-          "properties": {
-            "accepting": {
-              "default": true,
-              "description": "Accept new review jobs from this repository. Existing jobs remain available for processing and retry.",
-              "type": "boolean"
-            }
-          },
-          "type": "object"
-        },
         "queue_minutes": {
           "type": "integer"
         },

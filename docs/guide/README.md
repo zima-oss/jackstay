@@ -34,7 +34,6 @@ from a verified release.
 - [Changelogs and releases](releases.md) covers collection, preparation and publication steps.
 - [What jackstay did](observability.md) covers the local timeline, inventory, journal and diagnostics.
 - [Workspace board](workspace-board.md) compares local task, queue, test and chat evidence across named repositories.
-- [Reviewer pool](../roadmap/reviewer-pool.md) defines the local queue and its explicit worker.
 
 ## Agent integrations
 

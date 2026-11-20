@@ -29,10 +29,8 @@
   `jackstay.json` (`github.account`).
 - **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
   project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
+  `--background` starts it under `jst bg` and returns; the result comes as a chat event.
   `jst review check BASE..REV --task NAME` checks the saved round.
-- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
-  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
-  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/trunk..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a

@@ -200,11 +200,6 @@ func (store Store) Send(from, recipientID, kind, body, key, replyTo string) (Mes
 	return store.send(from, recipientID, kind, body, key, replyTo, false)
 }
 
-// notifyReview uses a reserved sender that no client session can register.
-func (store Store) notifyReview(recipientID, body, key string) (Message, bool, error) {
-	return store.send("review-pool", recipientID, "message", body, key, "", true)
-}
-
 func (store Store) send(from, recipientID, kind, body, key, replyTo string, system bool) (Message, bool, error) {
 	if recipientID == "" || recipientID == from {
 		return Message{}, false, errors.New("recipient must be another session")
@@ -438,5 +433,5 @@ func (store Store) update(change func(*snapshot) (bool, error)) error {
 }
 
 func retainedMessage(message Message, created, cutoff time.Time) bool {
-	return created.After(cutoff) || message.From == "review-pool" && !message.Acknowledged
+	return created.After(cutoff) || message.From == systemSender && !message.Acknowledged
 }

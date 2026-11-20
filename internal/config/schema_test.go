@@ -47,9 +47,8 @@ func TestJSONSchemaDescribesRuntimeStructure(t *testing.T) {
 	if properties["test"].(map[string]any)["properties"].(map[string]any)["scopes"].(map[string]any)["additionalProperties"] == nil {
 		t.Fatal("dynamic test scope names must be accepted")
 	}
-	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
-	if accepting := pool["accepting"].(map[string]any); accepting["type"] != "boolean" || accepting["default"] != true {
-		t.Fatalf("review pool admission schema: %+v", accepting)
+	if _, found := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"]; found {
+		t.Fatal("review.pool is gone with the reviewer pool (folded into jst review)")
 	}
 	brief := properties["brief"].(map[string]any)["properties"].(map[string]any)["max_age_hours"].(map[string]any)
 	if brief["minimum"] != float64(BriefMaxAgeHoursMinimum) || brief["maximum"] != float64(BriefMaxAgeHoursMaximum) ||
@@ -128,7 +127,6 @@ func TestNewerKeysNeedSchema3AndAnOlderSchemaSaysSo(t *testing.T) {
 		`{"jackstay_schema":2,"chat":{"enabled":false}}`,
 		`{"jackstay_schema":2,"brief":{"max_age_hours":24}}`,
 		`{"jackstay_schema":2,"status":{"repos":["."]}}`,
-		`{"jackstay_schema":2,"review":{"pool":{"accepting":true}}}`,
 		`{"jackstay_schema":2,"test":{"selection":{"order":[]}}}`,
 		`{"jackstay_schema":2,"test":{"scopes":{"unit":{"run":["x"],"report":"r.xml"}}}}`,
 		`{"jackstay_schema":2,"receipts":{"commands":[{"argv":["x"],"judge":"go-json"}]}}`,

@@ -1061,6 +1061,8 @@ jst review: [REV | BASE..REV]: a cold review in rounds (docs/design/review.md)
 
 usage: jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] [--focus TEXT]
                  [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
+       jst review [REV | BASE..REV] --background [--task NAME] [--reviewer NAME,...] [--focus TEXT]
+                 [--fresh] [--past-limit]
 
 A cold review of one commit (default HEAD, against its first parent) or of BASE..REV, in
 rounds (docs/design/review.md). The reviewers are --reviewer, else review.use in
@@ -1076,10 +1078,15 @@ A revision named like a subcommand is given after --.
   --timeout MIN       minutes per run, for this call
   --past-limit        a round past review.round_limit, after the owner's word
   --json              the result as one JSON object instead of the summary
+  --background        start the round under jst bg (pinned to the commits now) and return; the
+                      result comes to this session as a review.finished chat event when chat is
+                      on, else read it with jst review last. An equal review already running is
+                      joined; a different one of the same task is refused until it ends
 
 exit: 0 the round does not block; 1 it blocks; 2 usage or configuration; 3 a place is due for
 redesign; 4 the round limit is reached, the owner decides; 5 a reviewer gave no usable answer;
-6 the environment refuses (a sandbox, no login, reviewer unavailable).
+6 the environment refuses (a sandbox, no login, reviewer unavailable). With --background: 0 started
+or joined; 2 refused.
 
 example: jst review origin/main..HEAD --task parser-fix --reviewer codex
 
@@ -1087,7 +1094,6 @@ commands under it (each answers --help):
   jst review check  [--task NAME] BASE..REV: is this change reviewed and clear?
   jst review last   [--task NAME] [--json]: the newest round's report, or the newest attempt's failure
   jst review list   [--task NAME] [--rebuild] [--json]: the reviews kept
-  jst review pool   queue, inspect and maintain local reviews across sessions
   jst review prune  remove tasks past review.keep_days, now
   jst review show   TASK ROUND [--json]: one round's report
 
@@ -1130,34 +1136,6 @@ The reviews kept.
 exit: 0 the list; 2 the request or configuration, or the index cannot be read or written anew.
 
 example: jst review list --task parser-fix
-
-==> jst review pool --help
-jst review pool: queue, inspect and maintain local reviews across sessions
-
-usage: jst review pool add --repo ABSOLUTE_PATH --base REF --head REF --task NAME --reviewer NAMES
-       jst review pool list [--json]
-       jst review pool inspect [--json]
-       jst review pool prune [--apply] [--json]
-       jst review pool migrate [--apply] [--json]
-       jst review pool subscribers JOB_ID [--json]
-       jst review pool unsubscribe JOB_ID SESSION_ID --generation TOKEN [--apply] [--json]
-       jst review pool next
-       jst review pool retry JOB_ID
-
-A local, persistent, opt-in queue shared by agent sessions. add pins both Git revisions now;
-NAMES is codex, claude-code, or both separated by a comma. next runs one queued review in
-the foreground from its saved repository. It starts no background daemon. retry requeues a
-failed attempt without changing its commits. list reads local jobs; inspect reports queue
-health and notification handoffs without repository or session details. prune previews
-expired terminal history; migrate previews a queue schema upgrade. Both require --apply
-to write. prune retains active work and terminal outcomes awaiting chat delivery.
-subscribers shows recipient IDs and the job generation. unsubscribe previews closing
-one subscription, and requires --apply and that generation to make the change.
-
-exit: 0 request or maintenance succeeded, or no pending job; 1, 3, 4 a completed review verdict;
-2 invalid request or queue state; 5, 6 review failed; 2 when another worker holds the pool.
-
-example: jst review pool add --repo /path/to/repo --base main --head HEAD --task parser --reviewer codex
 
 ==> jst review prune --help
 jst review prune: remove tasks past review.keep_days, now

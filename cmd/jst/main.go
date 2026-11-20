@@ -31,7 +31,6 @@ import (
 	_ "github.com/zima-oss/jackstay/internal/records"
 	_ "github.com/zima-oss/jackstay/internal/release"
 	_ "github.com/zima-oss/jackstay/internal/review"
-	_ "github.com/zima-oss/jackstay/internal/reviewpool"
 	_ "github.com/zima-oss/jackstay/internal/sessionchat"
 	_ "github.com/zima-oss/jackstay/internal/stats"
 	_ "github.com/zima-oss/jackstay/internal/testing"
