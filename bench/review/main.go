@@ -91,7 +91,7 @@ type bench struct {
 }
 
 func main() {
-	var arms, out string
+	var arms, out, rescore string
 	var runs int
 	measurement := bench{log: os.Stderr}
 	flag.StringVar(&measurement.jst, "jst", "", "the jst binary to measure (absolute)")
@@ -102,9 +102,16 @@ func main() {
 	flag.StringVar(&measurement.codexEffort, "codex-effort", "medium", "Codex's reasoning effort, for both Codex arms")
 	flag.StringVar(&measurement.claudeEffort, "claude-effort", "", "Claude Code's effort, for both Claude arms")
 	flag.StringVar(&out, "out", "bench/review/results", "where the raw runs and the report are written")
-	flag.DurationVar(&measurement.timeout, "timeout", 15*time.Minute, "one run's deadline")
+	flag.DurationVar(&measurement.timeout, "timeout", 40*time.Minute, "one run's deadline (past jst review's own 37-minute budget)")
+	flag.StringVar(&rescore, "rescore", "", "score the runs of this .jsonl again with testdata/defects.json and rewrite its report; no model call")
 	flag.Parse()
-	if err := measurement.main(strings.Split(arms, ","), runs, out); err != nil {
+	var err error
+	if rescore != "" {
+		err = measurement.rescore(rescore, strings.Split(arms, ","))
+	} else {
+		err = measurement.main(strings.Split(arms, ","), runs, out)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "review bench:", err)
 		os.Exit(1)
 	}
@@ -132,6 +139,13 @@ func (measurement *bench) main(arms []string, runs int, out string) error {
 	if measurement.claudeModel == "" {
 		measurement.claudeModel = configuredClaudeModel()
 	}
+	// jackstay's reviewers ignore the user's configuration: without one model named for both arms of
+	// a reviewer, the two arms could compare different models.
+	for _, arm := range arms {
+		if strings.HasPrefix(arm, "codex") && measurement.codexModel == "" || strings.HasPrefix(arm, "claude") && measurement.claudeModel == "" {
+			return fmt.Errorf("no model is configured for %s: name one with -%s-model", arm, strings.SplitN(arm, "-", 2)[0])
+		}
+	}
 	if measurement.work, err = os.MkdirTemp("", "review-bench-"); err != nil {
 		return err
 	}
@@ -148,7 +162,6 @@ func (measurement *bench) main(arms []string, runs int, out string) error {
 	if err != nil {
 		return err
 	}
-	defer func() { _ = raw.Close() }()
 	var all []Run
 	for iteration := 1; iteration <= runs; iteration++ {
 		// The order of the arms turns each iteration, so drift over the hours hits every arm alike.
@@ -157,12 +170,21 @@ func (measurement *bench) main(arms []string, runs int, out string) error {
 			for _, arm := range order {
 				run := measurement.one(arm, position, iteration)
 				all = append(all, run)
-				line, _ := json.Marshal(run)
-				_, _ = raw.Write(append(line, '\n'))
+				line, err := json.Marshal(run)
+				if err == nil {
+					_, err = raw.Write(append(line, '\n'))
+				}
+				if err != nil {
+					_ = raw.Close()
+					return fmt.Errorf("keeping the raw runs: %w", err) // no report without its evidence
+				}
 				fmt.Fprintf(measurement.log, "%s %-14s %-7s run %d: %-10s found %s, %d unmatched, %.0f s\n", time.Now().Format("15:04:05"),
 					arm, run.Range, iteration, run.Outcome, strings.Join(run.Found, ","), run.Unmatched, run.Wall)
 			}
 		}
+	}
+	if err := raw.Close(); err != nil {
+		return fmt.Errorf("keeping the raw runs: %w", err)
 	}
 	report := measurement.report(all, arms, runs, stamp)
 	path := filepath.Join(out, stamp+".md")
@@ -173,10 +195,53 @@ func (measurement *bench) main(arms []string, runs int, out string) error {
 	return nil
 }
 
-// configuredCodexModel is the model of the user's Codex configuration, which a direct run uses.
+// rescore scores the runs saved in path again and rewrites the report beside it.
+func (measurement *bench) rescore(path string, arms []string) error {
+	root, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(root, "bench", "review", "testdata", "defects.json"))
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &measurement.defects); err != nil {
+		return err
+	}
+	saved, err := os.ReadFile(path) // #nosec G304 -- the operator's own results
+	if err != nil {
+		return err
+	}
+	var all []Run
+	runs := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(saved)), "\n") {
+		var run Run
+		if err := json.Unmarshal([]byte(line), &run); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		if run.Outcome == "answered" {
+			measurement.score(&run)
+		}
+		runs = max(runs, run.Iteration)
+		all = append(all, run)
+		if run.Arm == "codex-jst" && len(run.Models) > 0 {
+			measurement.codexModel = run.Models[0]
+		}
+	}
+	stamp := strings.TrimSuffix(filepath.Base(path), ".jsonl")
+	report := measurement.report(all, arms, runs, stamp)
+	return os.WriteFile(strings.TrimSuffix(path, ".jsonl")+".md", []byte(report), 0o600)
+}
+
+// configuredCodexModel is the model of the user's Codex configuration ($CODEX_HOME, else ~/.codex),
+// which a direct run uses; "" when it names none.
 func configuredCodexModel() string {
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml")) // #nosec G304 -- the user's own configuration
+	folder := os.Getenv("CODEX_HOME")
+	if folder == "" {
+		home, _ := os.UserHomeDir()
+		folder = filepath.Join(home, ".codex")
+	}
+	data, err := os.ReadFile(filepath.Join(folder, "config.toml")) // #nosec G304 G703 -- the user's own configuration, named by their environment
 	if err != nil {
 		return ""
 	}
@@ -191,8 +256,12 @@ func configuredCodexModel() string {
 
 // configuredClaudeModel is the model of the user's Claude Code settings, which a direct run uses.
 func configuredClaudeModel() string {
-	home, _ := os.UserHomeDir()
-	data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json")) // #nosec G304 -- the user's own settings
+	folder := os.Getenv("CLAUDE_CONFIG_DIR")
+	if folder == "" {
+		home, _ := os.UserHomeDir()
+		folder = filepath.Join(home, ".claude")
+	}
+	data, err := os.ReadFile(filepath.Join(folder, "settings.json")) // #nosec G304 G703 -- the user's own settings, named by their environment
 	if err != nil {
 		return ""
 	}
@@ -340,6 +409,7 @@ func (measurement *bench) wrapped(run *Run, base, head, task string) (review.Ans
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, measurement.jst, args...) // #nosec G204 -- the binary being measured
+	graceful(command)
 	command.Dir = filepath.Join(measurement.work, "fixture")
 	command.Env = append(os.Environ(), "JACKSTAY_HOME="+measurement.home)
 	var stdout, stderr bytes.Buffer
@@ -390,6 +460,14 @@ func (measurement *bench) wrapped(run *Run, base, head, task string) (review.Ans
 	}
 	var answer review.Answer
 	return answer, json.Unmarshal(data, &answer)
+}
+
+// graceful makes a run's deadline ask the program to stop (an interrupt, which jst review passes
+// to its reviewers' process groups) and wait for it, before killing it: a paid review is never left
+// running while the next arm starts.
+func graceful(command *exec.Cmd) {
+	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
+	command.WaitDelay = time.Minute
 }
 
 // codexTokens are the tokens of a Codex run's turn.completed events.
@@ -451,6 +529,7 @@ func (measurement *bench) directCodex(run *Run, checkout, base, head string) (re
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, "codex", args...) // #nosec G204 -- the reviewer measured
+	graceful(command)
 	command.Dir = checkout
 	command.Stdin = strings.NewReader(directPrompt(base, head))
 	events, err := os.Create(filepath.Join(folder, "events.jsonl")) // #nosec G304 -- the bench's own folder
@@ -464,12 +543,27 @@ func (measurement *bench) directCodex(run *Run, checkout, base, head string) (re
 	run.Model = time.Since(started).Seconds()
 	run.Models = []string{measurement.codexModel}
 	run.Tokens = codexTokens(filepath.Join(folder, "events.jsonl"))
+	if runErr != nil {
+		return review.Answer{}, fmt.Errorf("codex failed: %w", runErr)
+	}
 	data, err := os.ReadFile(answerPath) // #nosec G304 -- the bench's own folder
 	if err != nil {
-		return review.Answer{}, fmt.Errorf("codex gave no answer (%v)", runErr)
+		return review.Answer{}, fmt.Errorf("codex gave no answer: %w", err)
 	}
+	return complete(data)
+}
+
+// complete is a direct arm's answer held to the wrapped arm's rules: one object of the schema, not
+// an incomplete verdict.
+func complete(data []byte) (review.Answer, error) {
 	var answer review.Answer
-	return answer, json.Unmarshal(data, &answer)
+	if err := json.Unmarshal(data, &answer); err != nil {
+		return review.Answer{}, fmt.Errorf("the answer does not read: %w", err)
+	}
+	if answer.Verdict != "approve" && answer.Verdict != "changes" {
+		return review.Answer{}, fmt.Errorf("the verdict is %q, not a completed review", answer.Verdict)
+	}
+	return answer, nil
 }
 
 func (measurement *bench) directClaude(run *Run, checkout, base, head string) (review.Answer, error) {
@@ -485,6 +579,7 @@ func (measurement *bench) directClaude(run *Run, checkout, base, head string) (r
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, "claude", args...) // #nosec G204 -- the reviewer measured
+	graceful(command)
 	command.Dir = checkout
 	command.Stdin = strings.NewReader(directPrompt(base, head))
 	var stdout bytes.Buffer
@@ -504,8 +599,12 @@ func (measurement *bench) directClaude(run *Run, checkout, base, head string) (r
 			Output      int64 `json:"output_tokens"`
 		} `json:"usage"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || len(envelope.Structured) == 0 {
-		return review.Answer{}, fmt.Errorf("claude gave no structured answer (%v, %s)", runErr, envelope.Subtype)
+	if runErr != nil {
+		return review.Answer{}, fmt.Errorf("claude failed: %w", runErr)
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &envelope); err != nil || envelope.Subtype != "success" ||
+		len(envelope.Structured) == 0 || string(envelope.Structured) == "null" {
+		return review.Answer{}, fmt.Errorf("claude gave no structured answer (%s)", envelope.Subtype)
 	}
 	for model := range envelope.ModelUsage {
 		run.Models = append(run.Models, model)
@@ -513,13 +612,13 @@ func (measurement *bench) directClaude(run *Run, checkout, base, head string) (r
 	slices.Sort(run.Models)
 	run.CostUSD = envelope.CostUSD
 	run.Tokens = envelope.Usage.Input + envelope.Usage.CachedInput + envelope.Usage.CacheWrite + envelope.Usage.Output
-	var answer review.Answer
-	return answer, json.Unmarshal(envelope.Structured, &answer)
+	return complete(envelope.Structured)
 }
 
-// match is the defect of list in run's range that finding names: the finding must name the
-// defect's file or symbol and use one of its words; the defect with the most words wins.
-func match(list []Defect, rangeName string, finding Finding) string {
+// match is the defect of list in run's range that finding names, with its score: the finding must
+// name the defect's file or symbol and use one of its words; the defect with the highest score wins,
+// a word in the place or title counting three, one in the detail one.
+func match(list []Defect, rangeName string, finding Finding) (string, int) {
 	text := strings.ToLower(finding.Place + " " + finding.Title + " " + finding.Detail)
 	where := strings.ToLower(finding.Place + " " + finding.Title)
 	best, bestScore := "", 0
@@ -531,9 +630,14 @@ func match(list []Defect, rangeName string, finding Finding) string {
 			!strings.Contains(text, strings.ToLower(defect.Symbol)) {
 			continue
 		}
+		// A word in the place or title says what the finding is about; one in the detail may be
+		// context (a neighbouring defect named in passing), so it weighs less.
 		score := 0
 		for _, word := range defect.Words {
-			if strings.Contains(text, strings.ToLower(word)) {
+			switch word = strings.ToLower(word); {
+			case strings.Contains(where, word):
+				score += 3
+			case strings.Contains(text, word):
 				score++
 			}
 		}
@@ -541,16 +645,18 @@ func match(list []Defect, rangeName string, finding Finding) string {
 			best, bestScore = defect.ID, score
 		}
 	}
-	return best
+	return best, bestScore
 }
 
-// score matches each finding to a seeded defect, else to a confirmed extra, else counts it unmatched.
+// score matches each finding to the seeded defect or confirmed extra it names best (an extra wins
+// a tie: a finding of a known unseeded issue never earns a seeded defect), else counts it unmatched.
 func (measurement *bench) score(run *Run) {
 	found := map[string]bool{}
+	run.Found, run.Extras, run.Unmatched, run.Duplicates = nil, 0, 0, 0
 	for index, finding := range run.Findings {
-		best := match(measurement.defects.Defects, run.Range, finding)
-		if best == "" {
-			best = match(measurement.defects.Extras, run.Range, finding)
+		best, bestScore := match(measurement.defects.Defects, run.Range, finding)
+		if extra, extraScore := match(measurement.defects.Extras, run.Range, finding); extraScore >= bestScore && extraScore > 0 {
+			best = extra
 		}
 		run.Findings[index].Match = best
 		switch {
@@ -609,15 +715,16 @@ func (measurement *bench) report(all []Run, arms []string, runs int, stamp strin
 	var out strings.Builder
 	fmt.Fprintf(&out, "# Review wrapper measurement, %s\n\n", stamp)
 	fmt.Fprintf(&out, "%d seeded defects over %d ranges (`bench/review/testdata`), %d sequential runs per arm and range, "+
-		"arms in turning order. Codex model %q, effort %q; Claude model %q, effort %q (both arms of a reviewer alike).\n\n",
+		"arms in turning order. Codex model %q (requested; Codex does not report the model it ran), effort %q; Claude model %q "+
+		"(requested; the models column shows what Claude Code reported), effort %q; both arms of a reviewer alike.\n\n",
 		len(measurement.defects.Defects), len(measurement.defects.Ranges), runs, measurement.codexModel, measurement.codexEffort, measurement.claudeModel, measurement.claudeEffort)
 	out.WriteString("Recall: seeded defects found per run, of those in the range. Precision: confirmed findings — a seeded " +
 		"defect, or one of the fixture's known real issues that were not seeded (`extras`) — of all findings; the findings " +
 		"that match neither are listed below for a person to judge. Mean ± standard deviation over runs.\n\n")
-	out.WriteString("| arm | runs answered | recall | precision | wall s | prepare s | wait s | model and tools s | tokens | cost USD | models |\n")
-	out.WriteString("|---|---|---|---|---|---|---|---|---|---|---|\n")
+	out.WriteString("| arm | runs answered | recall | precision | extras per run | wall s | prepare s | wait s | model and tools s | tokens | cost USD | models |\n")
+	out.WriteString("|---|---|---|---|---|---|---|---|---|---|---|---|\n")
 	for _, arm := range arms {
-		var recall, precision, wall, prepare, wait, model, tokens, cost stat
+		var recall, precision, extras, wall, prepare, wait, model, tokens, cost stat
 		answered, total := 0, 0
 		models := map[string]bool{}
 		for _, run := range all {
@@ -639,6 +746,7 @@ func (measurement *bench) report(all []Run, arms []string, runs int, stamp strin
 			if len(run.Findings) > 0 {
 				precision.add(float64(len(run.Findings)-run.Unmatched) / float64(len(run.Findings)))
 			}
+			extras.add(float64(run.Extras))
 			wall.add(run.Wall)
 			model.add(run.Model)
 			if strings.HasSuffix(arm, "-jst") {
@@ -658,8 +766,8 @@ func (measurement *bench) report(all []Run, arms []string, runs int, stamp strin
 			names = append(names, name)
 		}
 		sort.Strings(names)
-		fmt.Fprintf(&out, "| %s | %d/%d | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", arm, answered, total,
-			recall.text("%.2f"), precision.text("%.2f"), wall.text("%.0f"), prepare.text("%.1f"), wait.text("%.1f"),
+		fmt.Fprintf(&out, "| %s | %d/%d | %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n", arm, answered, total,
+			recall.text("%.2f"), precision.text("%.2f"), extras.text("%.1f"), wall.text("%.0f"), prepare.text("%.1f"), wait.text("%.1f"),
 			model.text("%.0f"), tokens.text("%.0f"), cost.text("%.3f"), strings.Join(names, ", "))
 	}
 	out.WriteString("\n## Defects found, by arm (runs that found each)\n\n| defect | what | ")

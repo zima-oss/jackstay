@@ -29,7 +29,8 @@
         "off-by-one",
         "off by one",
         "panic",
-        "bounds"
+        "bounds",
+        "len(fields)"
       ],
       "what": "the note loop reads fields[len(fields)]: every line with two or more fields panics"
     },
@@ -40,12 +41,16 @@
       "symbol": "ParseLine",
       "words": [
         "Atoi",
-        "error",
         "ignored",
+        "ignores the error",
         "discard",
+        "silently",
         "quantity 0",
+        "quantity of 0",
+        "as 0",
         "non-numeric",
-        "invalid quantity"
+        "invalid quantit",
+        "not a number"
       ],
       "what": "a quantity that is not a number is read as 0 with no error"
     },
@@ -70,14 +75,16 @@
       "symbol": "ReserveLines",
       "words": [
         "capacity",
-        "Reserve",
-        "lock",
-        "mutex",
-        "race",
+        "bypass",
+        "without Reserve",
+        "skips Reserve",
         "negative",
         "overbook",
         "over-reserve",
-        "bypass"
+        "oversell",
+        "without the lock",
+        "without locking",
+        "mutex"
       ],
       "what": "lines are added to Reserved without Reserve: no capacity check, no lock, negative quantities accepted"
     },
@@ -87,11 +94,10 @@
       "file": "cache.go",
       "symbol": "Get",
       "words": [
-        "lock",
-        "mutex",
         "race",
-        "concurrent",
-        "data race"
+        "mutex",
+        "lock",
+        "concurrent"
       ],
       "what": "Get reads the map without the mutex Put holds: a data race"
     },
@@ -103,12 +109,11 @@
       "words": [
         "expire",
         "expired",
-        "After",
         "inverted",
         "reversed",
         "stale",
-        "TTL",
-        "never"
+        "After",
+        "never returns"
       ],
       "what": "the expiry test is inverted: fresh entries are misses and expired ones hits"
     },
@@ -122,9 +127,10 @@
         "below zero",
         "more than",
         "underflow",
-        "validate",
-        "Reserved",
-        "count"
+        "over-release",
+        "exceed",
+        "double release",
+        "above Capacity"
       ],
       "what": "Release accepts any count: Reserved can go below zero and Free above Capacity"
     },
@@ -136,12 +142,12 @@
       "words": [
         "last page",
         "partial",
-        "end >",
-        "len(items)",
-        "truncate",
+        "final page",
+        "short page",
+        "truncat",
         "dropped",
         "clamp",
-        "short page"
+        "len(items)"
       ],
       "what": "the last, partial page is returned as nil instead of its items"
     },
@@ -152,12 +158,12 @@
       "symbol": "Retry",
       "words": [
         "return nil",
-        "last error",
         "returns nil",
+        "last error",
         "swallow",
-        "lost",
-        "discard",
-        "success"
+        "reports success",
+        "lost error",
+        "discards the error"
       ],
       "what": "after every attempt failed it returns nil, not the last error"
     },
@@ -171,10 +177,11 @@
         "shell",
         "sh -c",
         "quote",
+        "quoting",
         "escape",
         "sanitize",
         "untrusted",
-        "command"
+        "metacharacter"
       ],
       "what": "the pattern and paths go into a shell command line: command injection"
     }
@@ -234,7 +241,8 @@
         "no lines",
         "exit status 1",
         "exit code 1",
-        "nothing matches"
+        "nothing matches",
+        "zero matches"
       ],
       "what": "grep exits 1 when nothing matches, reported as a failure"
     },
@@ -250,6 +258,92 @@
         "concurrent"
       ],
       "what": "ReserveLines (from the orders range) races with Release"
+    },
+    {
+      "id": "E6",
+      "range": "orders",
+      "file": "stock.go",
+      "symbol": "ReserveLines",
+      "words": [
+        "partial",
+        "partly",
+        "partway",
+        "half-reserved",
+        "earlier lines",
+        "earlier reservations",
+        "rollback",
+        "roll back",
+        "atomic",
+        "left in place",
+        "leaves"
+      ],
+      "what": "a failed order leaves its earlier lines reserved"
+    },
+    {
+      "id": "E7",
+      "range": "orders",
+      "file": "stock.go",
+      "symbol": "ReserveLines",
+      "words": [
+        "nil stock",
+        "nil entry",
+        "nil pointer",
+        "nil"
+      ],
+      "what": "a nil stock entry panics"
+    },
+    {
+      "id": "E8",
+      "range": "orders",
+      "file": "order.go",
+      "symbol": "ParseLine",
+      "words": [
+        "omit its item",
+        "empty item",
+        "no item",
+        "missing item"
+      ],
+      "what": "a line with an empty item parses"
+    },
+    {
+      "id": "E9",
+      "range": "pages",
+      "file": "export.go",
+      "symbol": "Export",
+      "words": [
+        "option",
+        "dash",
+        "begin with -",
+        "operands",
+        "spaces"
+      ],
+      "what": "grep reads a pattern or path as an option; paths with spaces split"
+    },
+    {
+      "id": "E10",
+      "range": "pages",
+      "file": "export.go",
+      "symbol": "Export",
+      "words": [
+        "erase",
+        "destroy",
+        "truncat",
+        "previous report",
+        "existing report"
+      ],
+      "what": "a failed export truncates the previous report"
+    },
+    {
+      "id": "E11",
+      "range": "pages",
+      "file": "page.go",
+      "symbol": "Page",
+      "words": [
+        "alias",
+        "backing array",
+        "shares the"
+      ],
+      "what": "the returned page aliases the caller's slice"
     }
   ]
 }
