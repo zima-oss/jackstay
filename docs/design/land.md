@@ -1,9 +1,10 @@
 # `jst land`: one declarative landing, behind a hosting adapter
 
-Status: specification for 0.6.0, not built. It follows the owner's ruling W-090 for 0.6.0 (one
-forge-neutral `jst land` with a declarative policy and hosting adapters, GitHub first; two autonomy
-modes chosen explicitly at adopt and setup; approval checked by jackstay itself, with publishing to
-the host as an optional switch; CI provenance through GitHub attestations), and keeps
+Status: specification for 0.6.0, not built. It follows
+[W-090](../decisions/W-090-landing.md) (one forge-neutral `jst land` with a declarative policy and
+hosting adapters, GitHub first; two autonomy modes chosen explicitly at adopt and setup; approval
+checked by jackstay itself, with publishing to the host as an optional switch; CI provenance
+through GitHub attestations; the open questions of this design settled by W-091), and keeps
 [W-047](../decisions/W-047-release-redesign-fixed-settings-no-one-off-imports.md) (`jackstay.json`
 changes alone and is a maintainer's to merge), [W-019](../decisions/W-019-repeated-findings-mean-redesign.md)
 (this checkout is never switched, pulled or rebased by a landing) and
@@ -69,8 +70,8 @@ The `queue` section (never released) is not in schema 3 and is refused as an unk
 existing key changes meaning. `github.wait` keeps giving the defaults of the check wait.
 
 A project with no `land` section has no landing policy. `jst land` then refuses and names
-`jst adopt` to choose one; the `jst gh pr-land` alias keeps its 0.5.11 code path there, with one
-addition: a change that touches `jackstay.json` is never merged by it (section 9).
+`jst adopt` to choose one. `jst gh pr-land` is removed in 0.6.0 with no alias (section 9), so no
+jackstay command merges in such a project; a person merges on the host.
 
 ### 1.1 Upgrading a 0.5.x project
 
@@ -84,7 +85,8 @@ this order:
 2. Files: the workflows download 0.6.0.
 3. Settings, schema 3: `jackstay_schema: 3`, the `land` section, `$schema`. CI now runs 0.6.0.
 
-Then the AGENTS block is rewritten with the `land` items. Adopt does not plan step 3 while the pin
+Then the AGENTS block is rewritten with the `land` items. Until step 3 has landed there is no
+`land` section, so the three pull requests are merged by a person on the host. Adopt does not plan step 3 while the pin
 the workflows download is older than 0.6.0. Each step is a settings or files change, so a person
 merges the settings ones (section 4.2).
 
@@ -99,9 +101,10 @@ merges the settings ones (section 4.2).
   gate it, moving no ref.
 - **Attempt**: one pass of the engine over one set of inputs (base tip, head, policy, rules). Any
   input that moves ends the attempt.
-- **A person**: someone at a terminal, confirming at an interactive prompt (section 4.7). An agent
-  has no terminal on its standard input; a host approval cannot tell an agent from its owner when
-  both act as the same account.
+- **A person**: someone who types the change's number at an interactive terminal prompt
+  (`jst land --confirm`, section 4.7), or who merges on the host's own page. An agent has no
+  terminal on its standard input, and the guard refuses the host CLIs' merge commands (section 9);
+  a host approval cannot tell an agent from its owner when both act as the same account.
 
 ## 3. The hosting adapter
 
@@ -156,10 +159,11 @@ one, and whether the host says it merges cleanly. The base commit a change carri
 (the merge-queue pilot saw GitHub keep the old one after the base moved): the engine reads the base
 through `BranchTip`, and uses the host's test merge only when `Commit` shows its parents are the
 live base tip and the head, in that order, and its tree is the candidate's. `RequestState` says
-whether an auto-merge request or a queue entry exists for the change, and at which head. `Rules` carries the required checks (name and,
-where the host has one, the app that must report it), whether the base must be up to date, how many
-approvals the host requires, whether a merge queue is required, and the merge methods allowed, each
-with whether it could be read. `Check` is in section 6.1.
+whether an auto-merge request or a queue entry exists for the change, and at which head.
+
+`Rules` carries the required checks (name and, where the host has one, the app that must report
+it), whether the base must be up to date, how many approvals the host requires, whether a merge
+queue is required, and the merge methods allowed, each with whether it could be read. `Check` is in section 6.1.
 
 ### 3.2 Capabilities and degradation
 
@@ -188,10 +192,10 @@ by a fixed table; it never guesses. `jst doctor` prints the same map (section 8.
 | merge | `PUT /pulls/{number}/merge` with `sha` (expected head) and `merge_method` |
 | branch update | `PUT /pulls/{number}/update-branch` with `expected_head_sha` |
 | approvals | pull request reviews |
-| auto-merge | GraphQL `enablePullRequestAutoMerge` with `expectedHeadOid` |
+| auto-merge | GraphQL `enablePullRequestAutoMerge` with `expectedHeadOid`; built only if the pilot proves a stale candidate is refused (section 4.8) |
 | merge queue | GraphQL `enqueuePullRequest` with `expectedHeadOid` |
 | statuses | `POST /statuses/{sha}` |
-| provenance | artifact attestations for a subject digest, verified against the expected repository and signer workflow (section 3.5) |
+| provenance | `gh attestation verify` on the receipt file, with the expected repository and signer workflow (section 3.5) |
 | live base, commits | `GET /git/ref/heads/{branch}`, `GET /git/commits/{sha}` (as the queue's provider today) |
 | request state | GraphQL `autoMergeRequest` and `mergeQueueEntry` of the pull request |
 | releases, runs | as `internal/release` and `jst gh run-wait` today; the release pull request's management stays in `internal/release`, moved behind `Releaser` |
@@ -233,6 +237,11 @@ holds; the adapters are specified when they are built.
   and then asks the adapter whether that digest was attested by the trusted workflow, in that
   repository, on one of the trusted refs. Provenance adds to the receipt's checks; it never stands
   in for them.
+- The GitHub adapter answers by running `gh attestation verify FILE --repo OWNER/NAME
+  --signer-workflow OWNER/NAME/WORKFLOW` with `--source-ref` for each trusted ref (W-091), as the
+  account in `github.account`, the way jackstay already runs `gh auth token`. No Sigstore library
+  enters jackstay. Without `gh` on the PATH the check is refused, naming `gh`; doctor reports it
+  where `receipts.provenance` is set.
 - The landing record keeps the receipt's digest; provenance is not a `land` key in 0.6.0 (section 10).
 
 ## 4. The engine: `jst land`
@@ -345,8 +354,10 @@ then as `sent` with the host's answer. By `via`:
 
 - `direct`: merge with the expected head. When the host's rules require a queue, `direct` is
   refused by the host; `jst land` says so and names `via: queue`.
-- `auto-merge`: enable the host's auto-merge with the expected head. Allowed only with
-  `base: up-to-date`, the host's own "up to date" rule, `publish_statuses: true`, the jackstay
+- `auto-merge`: built in 0.6.0 only if the GitHub pilot (section 11) proves that the host refuses a
+  stale candidate under the conditions below (W-091); otherwise 0.6.0 ships without it and the
+  schema refuses the value. When built: enable the host's auto-merge with the expected head.
+  Allowed only with `base: up-to-date`, the host's own "up to date" rule, `publish_statuses: true`, the jackstay
   statuses required by the base's rules, and no bypass for the acting account where the host shows
   bypasses (doctor checks all of them, `jst land` again). Otherwise a base that moves after the
   request could land a tree no one gated.
@@ -535,7 +546,7 @@ is seen. Without a terminal, `--apply` needs `--autonomy merge-when-green|prepar
 `--publish-statuses`), or an existing `land.autonomy`; it never picks one silently. An existing
 `land` section is kept as it is; a changed answer is a settings change (W-085). Whoever runs adopt,
 the choice reaches the base only through a change to `jackstay.json`, which a person merges
-(section 4.2; the alias too, section 9): an agent can propose a mode, never put one in force.
+(section 4.2): an agent can propose a mode, never put one in force.
 Adopt also writes `receipts.provenance` with the gate workflow it writes (section 3.5), and plans
 the upgrade order of section 1.1.
 
@@ -572,11 +583,11 @@ shipped.
 
 | today | 0.6.0 |
 |---|---|
-| `jst gh pr-land` | `jst land`; an alias for 0.6.x that prints one line to stderr naming `jst land`. Which path it takes is below the table |
-| `jst gh pr-status` | `jst land status`; alias for 0.6.x |
-| `jst gh pr-find` | `jst land find`; alias for 0.6.x |
-| `jst gh ci-wait`, `ci-status` | `jst checks wait`, `jst checks status`; aliases for 0.6.x |
-| `jst gh run-wait` | `jst checks run-wait`; alias for 0.6.x |
+| `jst gh pr-land` | removed: `jst land` |
+| `jst gh pr-status` | removed: `jst land status` |
+| `jst gh pr-find` | removed: `jst land find` (same flags) |
+| `jst gh ci-wait`, `ci-status` | removed: `jst checks wait`, `jst checks status` (`--timeout`, `--interval`, `--lines`, `--any-head` as before) |
+| `jst gh run-wait` | removed: `jst checks run-wait` (same flags) |
 | `jst queue add`, `prepare`, `test` | removed: `jst land` prepares and gates the candidate |
 | `jst queue status`, `handoff` | removed: `jst land status`, and `jst land` in `prepare` |
 | `jst queue reconcile` | removed: `jst land reconcile` |
@@ -584,22 +595,13 @@ shipped.
 | `queue` in `jackstay.json` | refused (never released) |
 | `receipts attest-ci`, `verify-ci` | removed: `jst receipts verify --provenance` (section 3.5) |
 
-**The `pr-land` alias.**
-- In a project **with** a `land` section it runs `jst land`. `--pr` is `--change`, `--dry-run` is
-  `--plan`, `--no-merge` is `--prepare`; `--title`, `--body-file`, `--card`, `--reason`,
-  `--timeout`, `--interval` and `--lines` pass through. `--no-push`, `--no-create` and `--no-wait`
-  are refused with the reason: the engine's evidence needs those steps.
-- In a project **without** one it runs the 0.5.11 code path unchanged (`internal/gh`'s `prLand`
-  kept for 0.6.x): every flag, the push of an open pull request's new commits, `updateBehind`, and
-  0.5.11's check rule, where a failing check no rule requires still stops. One addition: a pull
-  request that touches `jackstay.json` is never merged by it; it stops before the merge, says a
-  person merges it (W-047), and exits 0. That keeps an agent from landing the change that would
-  choose its own autonomy.
-
-The other aliases map flag for flag: `ci-wait`'s `--timeout`, `--interval`, `--lines` and
-`--any-head` are `jst checks wait`'s; `run-wait`'s and `pr-find`'s flags are unchanged. The aliases
-are removed in 0.7.0. The upgrade page lists them, the order of section 1.1 and the change of
-section 6.2 for failing checks that no rule requires.
+There are no aliases (W-091). `jst gh` and `jst queue` are unknown commands in 0.6.0; `jst help`
+and the error of an unknown command name the replacement, and run nothing. `jst land` keeps
+`pr-land`'s flags where they mean the same (`--title`, `--body-file`, `--card`, `--reason`,
+`--timeout`, `--interval`, `--lines`); `--pr` is `--change`, `--dry-run` is `--plan`, `--no-merge`
+is `--prepare`, and `--no-push`, `--no-create` and `--no-wait` have no counterpart, since the
+engine's evidence needs those steps. The upgrade page lists the removed commands, the order of
+section 1.1 and the change of section 6.2 for failing checks that no rule requires.
 
 `jst land --help`:
 
@@ -644,8 +646,11 @@ come:
 - the receipts item gains, wanted with `receipts.provenance`: "Add `--provenance` to check that the
   project's CI attested the receipt."
 
-The guard gains a rule, on by default where a `land` section exists, that refuses the host CLIs'
-merge commands (`gh pr merge`, `glab mr merge`) and names `jst land`.
+The guard gains a rule (W-091), at `refuse` by default where a `land` section exists and
+configurable like every guard rule
+([W-055](../decisions/W-055-every-guard-rule-configurable-now.md)), that refuses the host CLIs'
+merge commands (`gh pr merge`, `glab mr merge`) and names `jst land`. A person merges on the host's
+own page, or with `jst land --confirm`.
 
 ## 10. Deferred
 
@@ -676,8 +681,11 @@ merge commands (`gh pr merge`, `glab mr merge`) and names `jst land`.
     open, an outstanding auto-merge request across a moved head, and `unsettled`.
   - Branch deletion kept after `landed-mismatch`, after a merge by a person, with a sibling open
     change, and with an unverified push destination.
-  - The `pr-land` alias: with a `land` section (flag mapping) and without one (0.5.11 behaviour,
-    and a change to `jackstay.json` not merged).
+  - `jst gh` and `jst queue` are unknown commands whose error names the replacement.
+  - The guard refuses `gh pr merge` and `glab mr merge` with a `land` section, and lets them run
+    without one.
+  - Provenance: `gh attestation verify` called with the trusted repository, workflow and refs;
+    refused without `gh` on the PATH.
 - **Races** (fake adapter, deterministic, no timing): the head moves between the gate and the merge
   (the host refuses the expected head; `moved`); the base moves after the final read (`merge-tree`:
   `landed-mismatch`; `up-to-date` with the host rule: refused); a rule changes during the attempt;
@@ -700,27 +708,22 @@ merge commands (`gh pr merge`, `glab mr merge`) and names `jst land`.
 - **Adopt and the block**: golden files for both autonomy modes, and for no `land` section; the
   upgrade order of section 1.1 from a 0.5.11 project, with CI's pin read at each step.
 
-## 12. Open questions for the owner
+## 12. Decided (W-091)
 
-1. **Default base freshness**: `merge-tree` (cheap; a base race is detected after the merge, not
-   prevented) or `up-to-date` (every landing updates the branch and reruns CI; prevented when the
-   host enforces it)?
-2. **Adopt's recommended human paths**: `.github/workflows/**` and `.claude/settings.json`, or only
-   `jackstay.json` (the owner's words were "settings and the listed paths")?
-3. **"A person"** is someone typing the change's number at a terminal prompt. Enough, or should a
-   person's merge on the host also be required to come from a different account?
-4. **Setup's role**: setup keeps machine defaults that adopt offers first (section 8.2). Or should
-   setup not ask at all, and only print each project's choice?
-5. **The `jst gh` aliases** through 0.6.x, removed in 0.7.0, or removed in 0.6.0 outright?
-6. **A review carried across a clean base merge** (section 4.3): acceptable, or must every new head
-   be reviewed?
-7. **Provenance verification**: a Sigstore library in jackstay (a new dependency, Apache-2.0) or
-   calling `gh attestation verify` (needs `gh` installed, as `gh auth token` already does)?
-8. **The guard rule** refusing `gh pr merge` and `glab mr merge` by default where `land` exists.
-9. **The `pr-land` alias without a `land` section** now stops before merging a change to
-   `jackstay.json` (section 9). A small change of 0.5.11 behaviour for safety: agreed?
-10. **`via: auto-merge`** rests on the host refusing a stale candidate, which the GitHub pilot must
-    prove per merge method (section 4.5). If the pilot fails, should 0.6.0 ship without
-    `auto-merge`?
-11. **The upgrade** takes three pull requests (section 1.1). Acceptable, or should 0.5.12 learn to
-    read schema 3 first so that one settings change suffices?
+The owner settled the open questions of this design on 2026-11-20; the body above follows them.
+
+1. **Base freshness** defaults to `merge-tree`.
+2. **Human-only paths** that adopt offers: `jackstay.json` (always one), `.github/workflows/**` and
+   `.claude/settings.json`.
+3. **A person** is a change number typed at the terminal (`jst land --confirm`), or a merge on the
+   host.
+4. **Setup** keeps machine defaults that adopt offers first.
+5. **`jst gh pr-land`, its neighbours and the queue commands** are removed in 0.6.0, with no
+   aliases.
+6. **A review carries** across a clean merge of the base (section 4.3).
+7. **Provenance** is verified by calling `gh attestation verify`.
+8. **The guard** refuses `gh pr merge` and `glab mr merge` where a `land` section exists.
+9. **The `pr-land` alias** question falls away with the alias.
+10. **`via: auto-merge`** ships in 0.6.0 only if the GitHub pilot proves that a stale candidate is
+    refused.
+11. **The upgrade** in three pull requests (section 1.1) is accepted.
