@@ -21,6 +21,8 @@ const (
 	opRespond = "respond"
 	// opFire is an idle subscription's firing (section 7.3): always rolled forward.
 	opFire = "fire"
+	// opObserve is an idle or an end with the work it triggers: always rolled forward.
+	opObserve = "observe"
 )
 
 // journalEntry names an operation in progress and what follows from its commit.
@@ -43,6 +45,8 @@ type journalEntry struct {
 	Asks string `json:"asks,omitempty"`
 	// Firing is what an opFire entry finishes.
 	Firing *firing `json:"firing,omitempty"`
+	// Observed is what an opObserve entry finishes.
+	Observed *observation `json:"observed,omitempty"`
 }
 
 type subscriptionPlan struct {
@@ -116,6 +120,13 @@ func (transaction *transaction) recover() (resolved []string, kept int, err erro
 			return resolved, kept, readErr
 		case readErr != nil || entry.ID != name || entry.Op == "":
 			transaction.moveBroken(name)
+			continue
+		}
+		if entry.Op == opObserve && entry.Observed != nil {
+			if _, err := transaction.applyObservation(*entry.Observed); err != nil {
+				return resolved, kept, err
+			}
+			resolved = append(resolved, entry.ID)
 			continue
 		}
 		if entry.Op == opFire && entry.Firing != nil {

@@ -45,6 +45,10 @@ func (transaction *transaction) collectNotices(session Session, sessions []Sessi
 		if err != nil {
 			continue
 		}
+		// The clock first: a deadline passed since the last step owes its notice now.
+		if err := transaction.settleMessage(&found); err != nil {
+			return nil, 0, err
+		}
 		if found.commit.Notice == string(deliverystate.NoticeOwed) && found.envelope.Request != nil {
 			owed = append(owed, OwedNotice{source: onRequest, messageID: id,
 				Line: id + " (" + found.envelope.Request.RequestID + ") to " + found.envelope.To + ": expired unanswered"})

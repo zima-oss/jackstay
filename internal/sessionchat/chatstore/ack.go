@@ -65,7 +65,7 @@ func (store *Store) Ack(ctx context.Context, key, reference, state, note string)
 		if stepErr != nil && !errors.Is(stepErr, deliverystate.ErrNotAllowed) {
 			return stepErr
 		}
-		if note != "" && updated.Note != note && !deliverystate.Final(deliverystate.State(before)) {
+		if note != "" && updated.Note != note && updated.State != before {
 			updated.Note = note
 			if err := transaction.writeDelivery(id, hash, updated); err != nil {
 				return err

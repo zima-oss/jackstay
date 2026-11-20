@@ -100,7 +100,7 @@ func (transaction *transaction) sweepMessage(found message) error {
 	for _, hash := range found.envelope.Recipients {
 		var delivery Delivery
 		if err := readRecord(transaction.place.delivery(found.envelope.ID, hash), deliveryBound, &delivery); err != nil {
-			continue
+			return nil // a delivery it cannot read may still need the message: leave it for a later sweep
 		}
 		entered, _ := parseStamp(delivery.At)
 		if delivery.State == string(deliverystate.Sending) && transaction.now.Sub(entered) >= staleSending {
@@ -279,7 +279,7 @@ func (transaction *transaction) done(found message) bool {
 	for _, hash := range found.envelope.Recipients {
 		var delivery Delivery
 		if err := readRecord(transaction.place.delivery(found.envelope.ID, hash), deliveryBound, &delivery); err != nil {
-			continue
+			return false // a delivery it cannot read may still need the message
 		}
 		deliveries = append(deliveries, delivery.table(found.envelope.Request != nil))
 		whole = append(whole, delivery.Whole)

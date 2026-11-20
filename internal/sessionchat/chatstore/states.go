@@ -67,15 +67,64 @@ func (transaction *transaction) observe(session Session, observed string, person
 	default:
 		return session, refuse(ReasonInvalid, "unknown observation %q", observed)
 	}
+	if observed == ObserveBusy {
+		// Busy fires nothing: a plain write.
+		if err := transaction.writeSession(session); err != nil {
+			return session, err
+		}
+		return transaction.reconcileWatchers(hashKey(session.Key))
+	}
+	// An idle or an end is journalled with the work it triggers (the subscriptions it fires, the
+	// deliveries an end drops), so a crash between the state and that work is finished by the next
+	// recovery, before any later observation can overwrite the state.
+	entry := journalEntry{Op: opObserve, ID: "observe-" + hashKey(session.Key)[:32],
+		Observed: &observation{Session: hashKey(session.Key), State: session.State, Since: session.Since,
+			Generation: session.IdleGeneration}}
+	if err := transaction.publishJournal(entry); err != nil && !errors.Is(err, os.ErrExist) {
+		return session, err
+	}
 	if err := transaction.writeSession(session); err != nil {
 		return session, err
 	}
-	if observed == ObserveGone {
+	result, err := transaction.applyObservation(*entry.Observed)
+	if err != nil {
+		return result, err
+	}
+	return result, transaction.removeJournal(entry.ID)
+}
+
+// observation is an idle or an end in progress (an opObserve journal entry).
+type observation struct {
+	Session    string `json:"session"`
+	State      string `json:"state"`
+	Since      string `json:"since"`
+	Generation int    `json:"generation"`
+}
+
+// applyObservation finishes an idle or an end: the state is on the session's record (a replay that
+// finds an older one writes it), an end's waiting deliveries are dropped, and the subscriptions are
+// reconciled. Every part is idempotent.
+func (transaction *transaction) applyObservation(observed observation) (Session, error) {
+	session, err := transaction.readSession(observed.Session)
+	if errors.Is(err, os.ErrNotExist) {
+		return session, nil
+	}
+	if err != nil {
+		return session, err
+	}
+	if session.IdleGeneration < observed.Generation || (observed.State == StateGone && session.State != StateGone) {
+		session.State, session.Since = observed.State, observed.Since
+		session.IdleGeneration = max(session.IdleGeneration, observed.Generation)
+		if err := transaction.writeSession(session); err != nil {
+			return session, err
+		}
+	}
+	if observed.State == StateGone {
 		if err := transaction.dropWaiting(session); err != nil {
 			return session, err
 		}
 	}
-	return transaction.reconcileWatchers(hashKey(session.Key))
+	return transaction.reconcileWatchers(observed.Session)
 }
 
 // dropWaiting moves the deliveries to a session that ended from pending or sending to
@@ -129,12 +178,14 @@ func (transaction *transaction) reconcileWatchers(hash string) (Session, error) 
 		armed := watcher.Armed || watcher.MessageID == ""
 		switch {
 		case kind != "":
+		case !ok || !transaction.now.Before(until):
+			// Past its until, the subscription has expired whatever happens now (an idle or an end
+			// seen later never counts for it).
+			kind = NoticeSubscriptionExpired
 		case armed && session.State == StateGone:
 			kind = NoticeEnded
 		case armed && session.State == StateIdle && session.IdleGeneration > watcher.ArmedGeneration:
 			kind = NoticeIdle
-		case !ok || !transaction.now.Before(until):
-			kind = NoticeSubscriptionExpired
 		}
 		if kind != "" {
 			id := subscriptionID(session, watcher)

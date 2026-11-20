@@ -726,3 +726,103 @@ func TestANewSubscriptionSeesAClosureCutShort(t *testing.T) {
 		t.Fatalf("the replaced subscription has its outcome: %v", kinds)
 	}
 }
+
+func TestAnIdleCutShortStillFiresBeforeTheNextObservation(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateBusy)
+	f.send("cc:a", SendInput{To: "b", NotifyWhenIdle: true})
+	// The idle was journalled and written, then the hook stopped before it fired anything.
+	if err := f.store.update(f.ctx, func(transaction *transaction) error {
+		session, err := transaction.readSession(hashKey("cc:b"))
+		if err != nil {
+			return err
+		}
+		session.State, session.IdleGeneration = StateIdle, session.IdleGeneration+1
+		entry := journalEntry{Op: opObserve, ID: "observe-test", Observed: &observation{Session: hashKey("cc:b"),
+			State: StateIdle, Since: stamp(transaction.now), Generation: session.IdleGeneration}}
+		if err := transaction.publishJournal(entry); err != nil {
+			return err
+		}
+		return transaction.writeSession(session)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveBusy, false); err != nil {
+		t.Fatal(err)
+	}
+	if notices := f.record("cc:a").Notices; len(notices) != 1 || notices[0].Kind != NoticeIdle {
+		t.Fatalf("the idle fired before busy overwrote it: %+v", notices)
+	}
+}
+
+func TestASubscriptionPastItsUntilExpiresEvenIfAnIdleComesLater(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateBusy)
+	f.send("cc:a", SendInput{To: "b", NotifyWhenIdle: true})
+	f.clock.advance(12*time.Hour + time.Second)
+	// No operation ran in between, so the first to see the expiry is the idle itself.
+	if err := writeRecord(f.store.place.swept(), sweptRecord{V: 1, At: stamp(f.clock.at)}, 256); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveIdle, false); err != nil {
+		t.Fatal(err)
+	}
+	if notices := f.record("cc:a").Notices; len(notices) != 1 || notices[0].Kind != NoticeSubscriptionExpired {
+		t.Fatalf("%+v", notices)
+	}
+}
+
+func TestADeliveryThatCannotBeReadKeepsItsMessage(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	sent := f.send("cc:a", SendInput{To: "b", Message: "unread"})
+	path := f.store.place.delivery(sent.MessageID, hashKey("cc:b"))
+	if err := os.WriteFile(path, []byte("{"), 0o600); err != nil { // read, but not a record
+		t.Fatal(err)
+	}
+	if err := f.store.update(f.ctx, func(transaction *transaction) error {
+		found, err := transaction.message(sent.MessageID)
+		if err != nil {
+			return err
+		}
+		if transaction.done(found) {
+			t.Error("an unreadable delivery counted as done")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestASendersInboxShowsAnExpiryTheSweepHasNotSeen(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	f.send("cc:a", SendInput{To: "b", Message: "decide", Request: &RequestInput{Expects: "decision"}, ExpiresInSeconds: 60})
+	f.clock.advance(time.Minute)
+	if err := writeRecord(f.store.place.swept(), sweptRecord{V: 1, At: stamp(f.clock.at)}, 256); err != nil {
+		t.Fatal(err)
+	}
+	if notices := f.inbox("cc:a", unread()).Notices; len(notices) != 1 || !strings.Contains(notices[0], "expired unanswered") {
+		t.Fatalf("%v", notices)
+	}
+}
+
+func TestARepeatedAckKeepsTheNote(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	sent := f.send("cc:a", SendInput{To: "b", Message: "read it"})
+	if _, err := f.store.Ack(f.ctx, "cc:b", sent.MessageID, "read", "first"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.Ack(f.ctx, "cc:b", sent.MessageID, "read", "second"); err != nil {
+		t.Fatal(err)
+	}
+	if note := f.delivery(sent.MessageID, "cc:b").Note; note != "first" {
+		t.Fatalf("note %q", note)
+	}
+}
