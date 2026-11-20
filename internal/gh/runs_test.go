@@ -30,7 +30,7 @@ func TestAURLTargetsTheRepositoryItNames(t *testing.T) {
 	bench := newHarness(t, git)
 	bench.hub.OnPullRequest(10, answer(pull(10, "x", shaA)))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("test")})
-	bench.expect(exitFine, "ci-status", "https://github.com/octo-org/web-app/pull/10")
+	bench.expect(exitFine, "status", "https://github.com/octo-org/web-app/pull/10")
 	if strings.Join(bench.connected, ",") != "octo-org/web-app" {
 		t.Fatalf("connected for %v", bench.connected)
 	}
@@ -47,7 +47,7 @@ func TestAURLItCannotReadIsRefusedNotGuessed(t *testing.T) {
 		"www.github.com/octo-org/web-app/issues/8",
 	} {
 		bench := newHarness(t, checkout(shaA)) // the fallback to the checkout would succeed here
-		_, stderr := bench.expect(exitRequest, "ci-status", url)
+		_, stderr := bench.expect(exitRequest, "status", url)
 		contains(t, stderr, "Refusing rather than guessing")
 		if len(bench.connected) != 0 || len(bench.hub.Calls()) != 0 {
 			t.Fatalf("%s: GitHub was asked", url)
@@ -61,7 +61,7 @@ func TestABranchOrNumberFallsBackToTheCheckout(t *testing.T) {
 		bench.hub.OnPullRequestsByHead("owner:"+ref, "open", answer([]githubapi.PullRequest{pull(7, ref, shaA)}))
 		onPull(bench.hub, pull(7, ref, shaA))
 		onChecks(bench.hub, shaA, []githubapi.Check{passed("test")})
-		bench.expect(exitFine, "ci-status", ref)
+		bench.expect(exitFine, "status", ref)
 		if bench.connected[0] != "owner/checkout" {
 			t.Fatalf("connected for %v", bench.connected)
 		}
@@ -69,13 +69,13 @@ func TestABranchOrNumberFallsBackToTheCheckout(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	bench.hub.OnPullRequest(42, answer(pull(42, "x", shaA)))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("test")})
-	bench.expect(exitFine, "ci-status", "42")
+	bench.expect(exitFine, "status", "42")
 
 	bench = newHarness(t, checkout(shaA)) // default: this branch
 	bench.hub.OnPullRequestsByHead("owner:feat", "open", answer([]githubapi.PullRequest{pull(7, "feat", shaA)}))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("test")})
-	bench.expect(exitFine, "ci-wait")
+	bench.expect(exitFine, "wait")
 }
 
 func TestAForksPullRequestOfTheSameBranchIsNotThisOne(t *testing.T) {
@@ -83,7 +83,7 @@ func TestAForksPullRequestOfTheSameBranchIsNotThisOne(t *testing.T) {
 	fork := pull(9, "feat", shaA)
 	fork.HeadRepository = "someone/checkout"
 	bench.hub.OnPullRequestsByHead("owner:feat", "open", answer([]githubapi.PullRequest{fork}))
-	_, stderr := bench.expect(exitNotFine, "ci-status")
+	_, stderr := bench.expect(exitNotFine, "status")
 	contains(t, stderr, "no open pull request from feat in owner/checkout")
 }
 
@@ -91,7 +91,7 @@ func TestACheckoutWithoutARemoteIsRefused(t *testing.T) {
 	git := checkout(shaA)
 	git.on("remote", ok(""))
 	bench := newHarness(t, git)
-	_, stderr := bench.expect(exitRequest, "ci-status", "7")
+	_, stderr := bench.expect(exitRequest, "status", "7")
 	contains(t, stderr, "no git remote")
 	if len(bench.connected) != 0 {
 		t.Fatal("GitHub was asked")
@@ -101,7 +101,7 @@ func TestACheckoutWithoutARemoteIsRefused(t *testing.T) {
 func TestARemoteOnAnotherHostIsRefused(t *testing.T) {
 	git := checkout(shaA)
 	git.on("config --get remote.origin.url", ok("https://gitlab.com/owner/checkout.git\n"))
-	_, stderr := newHarness(t, git).expect(exitRequest, "ci-status", "7")
+	_, stderr := newHarness(t, git).expect(exitRequest, "status", "7")
 	contains(t, stderr, "github.com only")
 }
 
@@ -110,7 +110,7 @@ func TestWithoutAnAccountGitHubIsNotAskedAndTheReasonIsSaid(t *testing.T) {
 	t.Setenv("JACKSTAY_GITHUB_ACCOUNT", "")
 	bench := newHarness(t, checkout(shaA))
 	var stdout, stderr strings.Builder
-	code := Main([]string{"ci-status", "7"}, Deps{Stdout: &stdout, Stderr: &stderr, Dir: bench.dir,
+	code := Main([]string{"status", "7"}, Deps{Stdout: &stdout, Stderr: &stderr, Dir: bench.dir,
 		Git: func(string) Git { return bench.git }, Connect: connectReal, Clock: bench.clock})
 	if code != exitRequest {
 		t.Fatalf("exit %d: %s", code, stderr.String())
@@ -123,7 +123,7 @@ func TestTheTokensNoteIsSaidOnStandardError(t *testing.T) {
 	bench.note = "GH_TOKEN is ignored outside GitHub Actions"
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("test")})
-	stdout, stderr := bench.expect(exitFine, "ci-status", "7")
+	stdout, stderr := bench.expect(exitFine, "status", "7")
 	contains(t, stderr, "GH_TOKEN is ignored outside GitHub Actions")
 	lacks(t, stdout, "GH_TOKEN")
 }
@@ -320,12 +320,12 @@ func TestRunWaitNeedsAWorkflow(t *testing.T) {
 	bench.expect(exitRequest, "run-wait", "a.yml", "--timeout", "-1")
 }
 
-// --- pr-find --------------------------------------------------------------------------------
+// --- jst land find --------------------------------------------------------------------------------
 
 func TestAnEmptyListIsExit1AndNeverNull(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	bench.hub.OnPullRequestsByHead("owner:bot/update", "open", answer([]githubapi.PullRequest{}))
-	stdout, stderr := bench.expect(exitNotFine, "pr-find", "--head", "bot/update")
+	stdout, stderr := bench.expect(exitNotFine, "land-find", "--head", "bot/update")
 	lacks(t, stdout+stderr, "null")
 	contains(t, stdout, "no open pull request in owner/checkout for head bot/update")
 }
@@ -335,7 +335,7 @@ func TestFoundAfterWaitingPrintsNumberHeadURL(t *testing.T) {
 	found := pull(9, "bot/update", shaA)
 	found.URL = "https://github.com/o/r/pull/9"
 	bench.hub.OnSearchPullRequestsBySHA("bump", answer([]githubapi.PullRequest{}), answer([]githubapi.PullRequest{found}))
-	stdout, _ := bench.expect(exitFine, "pr-find", "--search", "bump", "--repo", "https://github.com/o/r", "--wait", "60")
+	stdout, _ := bench.expect(exitFine, "land-find", "--search", "bump", "--repo", "https://github.com/o/r", "--wait", "60")
 	if strings.TrimSpace(stdout) != "9 bot/update https://github.com/o/r/pull/9" {
 		t.Fatalf("printed %q", stdout)
 	}
@@ -344,13 +344,13 @@ func TestFoundAfterWaitingPrintsNumberHeadURL(t *testing.T) {
 	}
 }
 
-func TestPRFindStates(t *testing.T) {
+func TestLandFindStates(t *testing.T) {
 	open, closed, landed := pull(5, "x", shaA), pull(6, "x", shaB), *merged(7, "x", shaC)
 	closed.State = "closed"
 	for state, want := range map[string]string{"open": "5", "closed": "7", "merged": "7", "all": "7"} {
 		bench := newHarness(t, newGit())
 		bench.hub.OnSearchPullRequestsBySHA("x", answer([]githubapi.PullRequest{open, closed, landed}))
-		stdout, _ := bench.expect(exitFine, "pr-find", "--search", "x", "--state", state, "--repo", "https://github.com/o/r")
+		stdout, _ := bench.expect(exitFine, "land-find", "--search", "x", "--state", state, "--repo", "https://github.com/o/r")
 		if !strings.HasPrefix(stdout, want+" ") {
 			t.Fatalf("%s: %q, want #%s", state, stdout, want)
 		}
@@ -358,14 +358,14 @@ func TestPRFindStates(t *testing.T) {
 	// By head, merged is asked as closed (REST has no merged state) and filtered by merged_at.
 	bench := newHarness(t, newGit())
 	bench.hub.OnPullRequestsByHead("o:x", "closed", answer([]githubapi.PullRequest{closed}))
-	bench.expect(exitNotFine, "pr-find", "--head", "x", "--state", "merged", "--repo", "https://github.com/o/r")
+	bench.expect(exitNotFine, "land-find", "--head", "x", "--state", "merged", "--repo", "https://github.com/o/r")
 }
 
-func TestPRFindBadRequests(t *testing.T) {
+func TestLandFindBadRequests(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
-	bench.expect(exitRequest, "pr-find")
-	bench.expect(exitRequest, "pr-find", "--head", "x", "--state", "draft")
-	bench.expect(exitRequest, "pr-find", "--head", "x", "extra")
+	bench.expect(exitRequest, "land-find")
+	bench.expect(exitRequest, "land-find", "--head", "x", "--state", "draft")
+	bench.expect(exitRequest, "land-find", "--head", "x", "extra")
 	if len(bench.connected) != 0 {
 		t.Fatal("GitHub was asked")
 	}
@@ -377,10 +377,17 @@ func TestTheCommandLine(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	bench.expect(exitRequest)
 	bench.expect(exitRequest, "nope")
-	bench.expect(exitRequest, "ci-wait", "--nope")
-	bench.expect(exitRequest, "ci-wait", "1", "2")
-	bench.expect(exitRequest, "ci-wait", "7", "--lines", "0")
+	bench.expect(exitRequest, "wait", "--nope")
+	bench.expect(exitRequest, "wait", "1", "2")
+	bench.expect(exitRequest, "wait", "7", "--lines", "0")
 	bench.expect(exitFine, "--help")
-	bench.expect(exitFine, "ci-wait", "--help")
-	bench.expect(exitFine, "pr-land", "-h")
+	bench.expect(exitFine, "wait", "--help")
+	bench.expect(exitFine, "run-wait", "-h")
+	bench.expect(exitFine, "land-status", "--help")
+	bench.expect(exitFine, "land-find", "-h")
+	// The commands jst gh had are not jst checks commands.
+	for _, removed := range []string{"ci-wait", "ci-status", "pr-land", "pr-status", "pr-find"} {
+		_, stderr := bench.expect(exitRequest, removed)
+		contains(t, stderr, "jst checks: no command")
+	}
 }

@@ -90,7 +90,7 @@ incomplete verdict leaves a failed attempt that `jst review last` shows.
 ```sh
 jst review origin/main..HEAD --task parser-fix --reviewer codex
 jst review origin/main..HEAD --task parser-fix --reviewer codex
-jst review check origin/main..HEAD --task parser-fix && jst gh pr-land --title 'Fix the parser'
+jst review check origin/main..HEAD --task parser-fix && jst land --title 'Fix the parser'
 ```
 
 Review, fix and commit, review again, then check. `jst review check` exits 0 only when a real
