@@ -57,7 +57,7 @@ func TestTheStatsCommand(t *testing.T) {
 	if status := statsCommand(nil, nil, &out, &errs); status != 0 {
 		t.Fatal(status)
 	}
-	if !strings.Contains(out.String(), "alpha: 5 runs (2 passed, 1 failed, 0 ran nothing, 1 ended 0 uncounted, 0 unjudged, 1 stopped), 0.08 h") ||
+	if !strings.Contains(out.String(), "alpha: 5 runs (2 passed, 0 passed only on retry, 1 failed, 0 ran nothing, 1 ended 0 uncounted, 0 unjudged, 1 stopped), 0.08 h") ||
 		!strings.Contains(out.String(), "2 runs forced over a receipt") {
 		t.Fatalf("said:\n%s", out.String())
 	}

@@ -1284,7 +1284,7 @@ or [] for none.
 
 exit: 0 passed (or exited 0 uncounted); 1 failed; 2 not started or refused, nothing ran;
 75 gave up waiting for the lock; 76 no test ran; 77 unjudged (output not read to its end, or
-leftovers that cannot be attributed); 124 timed out; 127 the command cannot start. A command that
+leftovers that cannot be attributed); 78 passed only on retry (not a clean pass); 124 timed out; 127 the command cannot start. A command that
 ran and failed passes its own status on, so 2 or 77 may be its own: the last jst test: line names
 the outcome.
 

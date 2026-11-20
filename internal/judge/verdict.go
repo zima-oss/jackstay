@@ -71,6 +71,9 @@ type Facts struct {
 	VetoLine     string
 	CountProblem string
 	Unjudged     []string
+	// Retried is how many counted cases passed only on a retry after failing (a Surefire
+	// flakyFailure or flakyError, a Jest assertion invoked more than once).
+	Retried int
 }
 
 // Policy preserves the direct command's historical stop precedence while scopes use the
@@ -189,12 +192,21 @@ func Evaluate(facts Facts, end End, policy Policy) Verdict {
 	switch {
 	case len(why) > 0:
 		return verdict.with(Unjudged, why)
+	case facts.Retried > 0:
+		return verdict.with(PassedOnRetry, []string{retriedWords(facts.Retried)})
 	case facts.Kind == Exit:
 		return verdict.with(ExitedZero, nil)
 	case verdict.Counted <= 0:
 		return verdict.with(NothingRun, nil)
 	}
 	return verdict.with(Passed, nil)
+}
+
+func retriedWords(count int) string {
+	if count == 1 {
+		return "1 test passed only on retry"
+	}
+	return strconv.Itoa(count) + " tests passed only on retry"
 }
 
 func (verdict Verdict) with(outcome Outcome, why []string) Verdict {
