@@ -132,8 +132,9 @@ newer file with "upgrade jackstay" rather than half-reading it:
 A project whose workflows download a pinned jackstay (`adopt.pin`) must keep to what that release
 reads. **Do not add `$schema` or another schema-3 key while the pin is older than 0.6.0**: the
 pinned jackstay would refuse the whole file. `jst adopt` keeps to this: it writes `$schema` and
-schema 3 only for jackstay 0.6.0 or later, and refuses to record a schema-3 key in a project
-pinned to an older release.
+schema 3 only for jackstay 0.6.0 or later, and refuses to record a schema-3 key while an older
+release still reads the file: the pin before the apply, the pin after it, or the release that a
+managed workflow on disk downloads. Move the pin first, land the workflows, then add the keys.
 
 From 0.6.0, `$schema` names the [JSON Schema](https://github.com/zima-oss/jackstay/tree/main/schemas)
 of one release, on its tag, for example

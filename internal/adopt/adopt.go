@@ -421,17 +421,13 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		}
 	}
 	if newer := config.Schema3Keys(planner.plain); len(newer) > 0 {
-		// A pinned project is read by the pinned jackstay too (its workflows download it), and while
-		// the pin moves, by the one pinned before (the settings land before the workflows, W-085);
-		// an unpinned one only by the jackstay at hand, which reads them.
-		before, _ := getString(original.Object("adopt"), "pin")
-		after, _ := getString(document.Object("adopt"), "pin")
-		for _, pin := range []string{before, after} {
-			if pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0 {
-				return &UsageError{fmt.Sprintf("`%s` need jackstay %s or later, and this project is pinned to %s, which would refuse %s: "+
-					"leave them out until the pin is %s or later (`jst adopt --apply --pin` with a newer jackstay, landed first)",
-					strings.Join(newer, "`, `"), config.Schema3Release, pin, config.Name, config.Schema3Release)}
-			}
+		if reader, err := planner.oldestReader(original); err != nil {
+			return err
+		} else if reader != "" {
+			return &UsageError{fmt.Sprintf("`%s` need jackstay %s or later, and %s would still read %s: "+
+				"leave them out until the pin is %s or later and the workflows that download it have landed "+
+				"(`jst adopt --apply --pin` with a newer jackstay, landed first)",
+				strings.Join(newer, "`, `"), config.Schema3Release, reader, config.Name, config.Schema3Release)}
 		}
 		if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
 			document.Set("jackstay_schema", json.Number(fmt.Sprint(config.Schema)))
@@ -439,6 +435,64 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 	}
 	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
 	return nil
+}
+
+// oldestReader names a jackstay before 0.6.0 that reads the project's file while this apply rolls
+// out, or "" when there is none. A pinned project is read by the jackstay its managed workflows
+// download: the one pinned before the apply until the workflows that move the pin have landed (the
+// settings land before the workflows, W-085), so the pin before, the pin after and the
+// JACKSTAY_VERSION of each managed workflow on disk all count. An unpinned project is read only by
+// the jackstay at hand, which reads schema 3.
+func (planner *planner) oldestReader(original *jsondoc.Object) (string, error) {
+	tooOld := func(pin string) bool {
+		return pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0
+	}
+	before, _ := getString(original.Object("adopt"), "pin")
+	after, _ := getString(planner.document.Object("adopt"), "pin")
+	for _, pin := range []string{before, after} {
+		if tooOld(pin) {
+			return "the pinned jackstay " + pin, nil
+		}
+	}
+	if after == "" {
+		return "", nil
+	}
+	existing, err := planner.existingWorkflows()
+	if err != nil {
+		return "", err
+	}
+	for _, name := range sortedFiles(existing) {
+		if marked, _, _ := templates.Header(existing[name]); !marked {
+			continue
+		}
+		for _, found := range workflowVersion.FindAllStringSubmatch(existing[name], -1) {
+			if tooOld(found[1]) {
+				return "the jackstay " + found[1] + " that " + workflowsDir + "/" + name + " downloads", nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// workflowVersion is the jackstay release a managed workflow downloads, as jackstay's own templates
+// name it.
+var workflowVersion = regexp.MustCompile(`(?m)^\s*JACKSTAY_VERSION:\s*["']?(v?[0-9][^"'\s]*)`)
+
+// workflowValues are the values a managed workflow is rendered with, for the pin given.
+func (planner *planner) workflowValues(chosen *profile.Profile, pin string) map[string]string {
+	values := map[string]string{
+		"jackstay_repository": templates.Repository,
+		"release_base":        release.BaseOf(planner.plain),
+	}
+	if pin != "" {
+		values["jackstay_version"] = pin
+	}
+	if chosen != nil {
+		for name, value := range chosen.Values {
+			values[name] = value
+		}
+	}
+	return values
 }
 
 func (planner *planner) usesVersion(chosen *profile.Profile) bool {
@@ -1026,18 +1080,8 @@ func wantedTemplates(chosen *profile.Profile, plain map[string]any) []templates.
 
 // workflows plans the workflows jackstay writes and the inventory of the marked ones (spec 3.4, 7).
 func (planner *planner) workflows(chosen *profile.Profile) error {
-	values := map[string]string{
-		"jackstay_repository": templates.Repository,
-		"release_base":        release.BaseOf(planner.plain),
-	}
-	if pin, _ := planner.plain.Section("adopt")["pin"].(string); pin != "" {
-		values["jackstay_version"] = pin
-	}
-	if chosen != nil {
-		for name, value := range chosen.Values {
-			values[name] = value
-		}
-	}
+	pin, _ := planner.plain.Section("adopt")["pin"].(string)
+	values := planner.workflowValues(chosen, pin)
 	existing, err := planner.existingWorkflows()
 	if err != nil {
 		return err

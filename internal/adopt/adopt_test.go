@@ -814,24 +814,34 @@ func TestSettingsOnlyPinsAProfileWorkflowBeforeApplyingIt(t *testing.T) {
 }
 
 func TestNewerKeysWaitUntilThePinBefore060HasMoved(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"adopt":{"pin":"v0.5.11"}}`})
-	workflow := map[string]string{"deploy": "name: deploy\nenv:\n  VERSION: '@@jackstay_version@@'\n"}
+	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 2, "project": "p", "adopt": {"pin": "v0.5.11"}, ` +
+		`"changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version}"}}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
 	options := optionsFor(root)
+	options.Version = "0.5.11"
+	apply(t, options)
+	brief := filepath.Join(root, "profiles", "profile.json")
 	options.Version, options.Pin = "0.6.0", true
-	options.Profile = exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, workflow)
-	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "pinned to v0.5.11") {
+	options.Profile = exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, nil)
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "the pinned jackstay v0.5.11") {
 		t.Fatalf("moving the pin and adding a schema-3 key at once: %v", err)
 	}
-	exampleProfile(t, root, `{}`, workflow)
+	// The settings land before the workflows (W-085): the pin moves alone.
+	options.Profile, options.SettingsOnly = "", true
 	apply(t, options)
 	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"pin": "v0.6.0"`) || !strings.Contains(text, `"jackstay_schema": 2`) {
 		t.Fatalf("the pin alone:\n%s", text)
 	}
-	exampleProfile(t, root, `{"brief": {"max_age_hours": 24}}`, workflow)
-	options.Pin = false
+	// While card-line.yml still downloads v0.5.11, a schema-3 key waits.
+	options.Pin, options.Profile = false, brief
+	if _, err := Make(options); err == nil || !strings.Contains(err.Error(), "v0.5.11 that .github/workflows/card-line.yml downloads") {
+		t.Fatalf("a schema-3 key before the workflows landed: %v", err)
+	}
+	options.Profile, options.SettingsOnly = "", false
+	apply(t, options)
+	options.Profile, options.SettingsOnly = brief, true
 	apply(t, options)
 	if text := read(t, root, "jackstay.json"); !strings.Contains(text, `"jackstay_schema": 3`) || !strings.Contains(text, `"max_age_hours": 24`) {
-		t.Fatalf("after the pin moved:\n%s", text)
+		t.Fatalf("after the workflows landed:\n%s", text)
 	}
 }
 
@@ -839,7 +849,7 @@ func TestNewerKeysAreRefusedForAProjectPinnedBefore060(t *testing.T) {
 	for pin, refused := range map[string]bool{"v0.5.11": true, "v0.6.0": false} {
 		root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":3,"adopt":{"pin":"` + pin + `"},"brief":{"max_age_hours":24}}`})
 		_, err := Make(optionsFor(root))
-		if refused != (err != nil && strings.Contains(err.Error(), "pinned to "+pin)) {
+		if refused != (err != nil && strings.Contains(err.Error(), "the pinned jackstay "+pin)) {
 			t.Errorf("pin %s: %v", pin, err)
 		}
 	}
