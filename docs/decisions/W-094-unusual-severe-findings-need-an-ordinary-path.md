@@ -16,14 +16,16 @@ accidents, not an adversary (W-017): a setup no ordinary work produces is rare, 
 - A finding rated `unusual` and `severe` blocks only when it names the ordinary-work path by which
   that setup arises by accident. Without that path it is rated `mild` for blocking: rare, deferred to
   the project's later-findings card.
-- The reviewer's prompt states both rules. The session checks every rating against them before it
-  calls a finding a blocker or asks for a round past the limit; the next step `jst review` prints for
-  a blocking round says so.
-- The finding's form does not change: the path is carried in its detail, and the predicate that
-  computes blocking stays W-048's. W-019 is unchanged.
+- A finding carries `ordinary_path`: the ordinary work by which an unusual setup arises by accident,
+  empty when none does. An `unusual` finding with it empty is rare, however severe: deferred, never
+  blocking. The reviewer's prompt says so.
+- The session checks every rating, the path included, before it calls a finding a blocker or asks
+  for a round past the limit; the next step `jst review` prints for a blocking round says so, and so
+  does the agents' guidance. W-019 is unchanged.
 
 ## Consequences
 
-Fewer rounds are spent on hand-built setups. A session that keeps a finding as a blocker can say
-which ordinary work leads to it. A reviewer that leaves out the path for a real accident costs a
-re-rating by the session, not a missed blocker, since the session reads the detail before deciding.
+Fewer rounds are spent on hand-built setups, and they stop holding a change at the round limit. A
+reviewer that leaves the path out for a real accident defers a finding that should block; the
+session, which reads every finding before landing, raises it again. Rounds made before this rule
+have no paths: their unusual and severe findings count as rare when read again.

@@ -108,3 +108,18 @@ func TestPlaceKey(t *testing.T) {
 		t.Fatal(PlaceKey("  Internal/Run.go:   Start "))
 	}
 }
+
+func TestAnUnusualSevereFindingWithoutAnOrdinaryPathDoesNotHoldARound(t *testing.T) {
+	s := testSettings()
+	handBuilt := finding("F1", "a.go: run", "blocker", "unusual", "severe")
+	accidental := finding("F2", "b.go: run", "blocker", "unusual", "severe")
+	accidental.OrdinaryPath = "a rebase in a linked worktree while the review runs"
+	outcome := Advance(s, nil, nil, map[string]Answer{"codex": {Verdict: "changes", Findings: []AnswerFinding{handBuilt}}}, s.RoundLimit, "c1")
+	if outcome.Blocks || outcome.Ledger[0].Status != StatusDeferred {
+		t.Fatalf("a hand-built setup held the round at its limit: %+v", outcome)
+	}
+	outcome = Advance(s, nil, nil, map[string]Answer{"codex": {Verdict: "changes", Findings: []AnswerFinding{accidental}}}, s.RoundLimit, "c1")
+	if !outcome.Blocks || outcome.Ledger[0].OrdinaryPath == "" {
+		t.Fatalf("a severe accident with its ordinary path did not block: %+v", outcome)
+	}
+}

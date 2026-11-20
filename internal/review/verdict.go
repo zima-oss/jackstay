@@ -13,14 +13,16 @@ import (
 
 // AnswerFinding is one finding as a reviewer writes it (section 3.5).
 type AnswerFinding struct {
-	ID          string   `json:"id"`
-	Place       string   `json:"place"`
-	Severity    string   `json:"severity"`
-	Likelihood  string   `json:"likelihood"`
-	Consequence string   `json:"consequence"`
-	Title       string   `json:"title"`
-	Detail      string   `json:"detail"`
-	Repeats     []string `json:"repeats"`
+	ID          string `json:"id"`
+	Place       string `json:"place"`
+	Severity    string `json:"severity"`
+	Likelihood  string `json:"likelihood"`
+	Consequence string `json:"consequence"`
+	Title       string `json:"title"`
+	Detail      string `json:"detail"`
+	// OrdinaryPath names how ordinary work reaches an unusual setup by accident, "" when it does not.
+	OrdinaryPath string   `json:"ordinary_path"`
+	Repeats      []string `json:"repeats"`
 }
 
 // PriorAnswer is a reviewer's word on one open finding of the ledger.
@@ -52,7 +54,7 @@ func Schema(severities []string) []byte {
 	finding := object(map[string]any{
 		"id": stringType, "place": stringType, "severity": enum(severities...),
 		"likelihood": enum("ordinary", "unusual"), "consequence": enum("severe", "mild"),
-		"title": stringType, "detail": stringType,
+		"title": stringType, "detail": stringType, "ordinary_path": stringType,
 		"repeats": map[string]any{"type": "array", "items": stringType},
 	})
 	prior := object(map[string]any{"id": stringType, "status": enum("fixed", "open")})
