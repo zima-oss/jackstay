@@ -34,9 +34,11 @@ The [landing design](../design/land.md) section 7 is the specification. `jacksta
 read as `deps`, so existing projects keep their order. The gate's step marks and bars, `--resume`,
 the `resumed` and `refused` outcomes and receipts reuse for scopes go; a cached pass reads `passed`,
 because it was counted for identical inputs, and a scope's `requires` still run before every cache
-lookup. Two questions are left open, and the design works under the recommended answer to each:
-whether a cached pass may cross between a person's machine and CI (recommended: no crossing), and
-how scopes become CI jobs (recommended: one graph job per system).
+lookup. A cached pass never crosses between machines: a local run reuses only local passes and CI
+only CI passes, kept in CI's own cache store; `jst test` makes no new network calls, and there are no
+signed receipts and no trust root. A person who runs a CI-covered scope locally by name runs it, at
+the cost of local minutes, a stated limit. How scopes become CI jobs is left open (recommended: one
+graph job per system).
 
 The cache keeps verdicts, never outputs, so a scope whose files other scopes use, such as a build,
 is not cached, nor is any scope that depends on it; neither is one that reads the network or a

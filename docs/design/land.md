@@ -442,9 +442,10 @@ uses another's files needs no key of its own for this.
 **The store.** `<jackstay home>/<project>/cache/`: one entry per hash in the receipt's format,
 beside its failure notes. An entry is a few hundred bytes. It is pruned like receipts, by age, and
 at 10,000 entries per project (a constant) the oldest go first. In CI the same folder is kept in
-CI's own cache store: the workflow adopt writes restores it before the run, falling back to the
-default branch's latest entry for the system, and saves it after, under a key holding the system,
-so a rerun of a workflow, a pull request, or a merge commit with the same inputs skips what passed.
+`actions/cache`, keyed by the scope hashes of the job's graph (`jst test plan` prints them): the
+workflow adopt writes restores it before the run, falling back to the default branch's latest entry
+for the system, and saves it after, so a rerun of a workflow, a pull request, or a merge commit with
+the same inputs skips what passed.
 
 **Not in the hash**, written down as limits: files ignored by a committed `.gitignore` (unless in
 `receipts.extra_files`); anything outside the checkout (another package by path, a simulator, the
@@ -454,19 +455,12 @@ time; flakiness. A scope that depends on one of these declares it (`inputs`, `re
 outside the repository (a vulnerability database, a package index) sets `"cache": false`. An entry is unsigned: any session of the account can write one, as it can
 a receipt ([W-017](../decisions/W-017-review-fixes-and-threat-model.md)).
 
-**Open: cache across machines.** Whether a cached pass may cross between a person's machine and CI
-is not decided. The options:
-
-- **A. No crossing** (recommended). Each machine and CI keeps its own store; a pass counts only
-  where it was counted.
-- **B. CI to a person's machine.** CI publishes each scope's hash and outcome on its check, and
-  `jst test changed` takes a pass CI reports for the same hash.
-- **C. A person's machine to CI.** CI takes a local pass for the same hash; this needs signed
-  receipts, since CI cannot trust an unsigned file.
-- **D. Both B and C.**
-
-Everything in this section works under A without change; B, C and D would add a reader of another
-store, not change the hash.
+**No crossing between machines.** A local run reuses only passes counted on this machine; a CI
+run reuses only passes counted in CI. `jst test` makes no network call to read or write the cache:
+in CI the workflow's `actions/cache` steps move the folder. There are no signed receipts and no
+trust root. So a person who runs a CI-covered scope on a Mac by name (`jst test x-go`) does run it,
+even when CI passed the same hash: that costs local minutes, not rented CI minutes, and is a stated
+limit, not a defect.
 
 ### 7.4 Local and CI
 
@@ -569,7 +563,8 @@ Everything else in this section holds under each option; only the job names doct
   its command. Scopes that CI runs on one system must test disjoint sets: one scope must not rerun
   another's tests, as an integration scope that also runs the unit tests would. That is the
   project's duty; jackstay does not check it.
-- Read a store other than this machine's or CI's own (section 7.3, "Open").
+- Take a pass across machines: a local run never reads CI's passes, nor CI a local one (section
+  7.3, "No crossing between machines").
 
 ### 7.6 jackstay's own scopes
 
@@ -650,7 +645,8 @@ of either stops the release.
   from the cache; `timed-out`, `unjudged`, `stopped` write nothing; `--no-reuse` and
   `JACKSTAY_NO_REUSE` skip the read and still write; `"cache": false`, and a scope depending on
   one directly or through another neither read nor written; age and count pruning; a workflow
-  restoring the default branch's entries.
+  restoring the default branch's entries; no network call by `jst test` for the cache, and a scope
+  run by name locally running although CI passed its hash.
 - **Where tests run**: covered through `ci` and through a dependent, only where the scope is
   eligible (section 7.2); every node in exactly one of **here**, **ci** and **elsewhere**, for
   `jst test changed` and `jst test uncovered`, with the four examples of section 7.4 as tests;
