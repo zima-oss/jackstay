@@ -172,3 +172,55 @@ func setModel(h *harness, name, model string) {
 	reviewer.Model = model
 	h.round.Settings.Reviewers[name] = reviewer
 }
+
+func TestAnAnswerSavedWithoutItsRunIsNotCreditedToAnotherModel(t *testing.T) {
+	approve := Answer{Verdict: "approve", Summary: "clear"}
+	h, fake := twoReviewers(t, map[string][]any{
+		"codex":       {approve, approve},
+		"claude-code": {codex.OutcomeTimeout, approve},
+	})
+	ctx := context.Background()
+	failed := h.round.Run(ctx, Options{})
+	if err := os.Remove(filepath.Join(failed.Folder, "codex", "run.json")); err != nil {
+		t.Fatal(err)
+	}
+	result := h.round.Run(ctx, Options{Model: "another-model"})
+	if result.Status != ExitClear || fake.calls["codex"] != 2 {
+		t.Fatalf("a saved answer was credited to another model: %+v, calls %v", result, fake.calls)
+	}
+}
+
+func TestAReusedRunIsMarkedInTheIndex(t *testing.T) {
+	approve := Answer{Verdict: "approve", Summary: "clear"}
+	h, _ := twoReviewers(t, map[string][]any{"codex": {approve}, "claude-code": {codex.OutcomeTimeout, approve}})
+	ctx := context.Background()
+	failed := h.round.Run(ctx, Options{})
+	if result := h.round.Run(ctx, Options{}); result.Record == nil {
+		t.Fatalf("%+v", result)
+	}
+	lines, _, err := h.round.Store.ReadIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused := 0
+	for _, line := range lines {
+		if line.Round != nil && line.Reviewer == "codex" {
+			if line.Reused != filepath.Base(failed.Folder) {
+				t.Fatalf("the round's codex line does not say it was reused: %+v", line)
+			}
+			reused++
+		}
+	}
+	if reused != 1 {
+		t.Fatalf("lines: %+v", lines)
+	}
+	if err := h.round.Store.Rebuild(); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, _, _ := h.round.Store.ReadIndex()
+	for _, line := range rebuilt {
+		if line.Round != nil && line.Reviewer == "codex" && line.Reused == "" {
+			t.Fatalf("the rebuilt index lost the mark: %+v", line)
+		}
+	}
+}

@@ -400,6 +400,8 @@ type IndexLine struct {
 	Rare      int     `json:"rare"`
 	Seconds   float64 `json:"seconds"`
 	Path      string  `json:"path"`
+	// Reused names the attempt whose answer this run reused: its seconds were paid there, not here.
+	Reused string `json:"reused,omitempty"`
 }
 
 // AppendIndex adds lines to the index under its lock.
@@ -632,7 +634,7 @@ func linesOf(task string, entry Entry) []IndexLine {
 			continue
 		}
 		lines = append(lines, IndexLine{At: run.Ended, Task: task, Attempt: entry.Attempt, Reviewer: run.Reviewer,
-			Commit: attempt.Commit, Base: attempt.Base, Outcome: run.Outcome, Seconds: run.Seconds, Path: entry.Path})
+			Commit: attempt.Commit, Base: attempt.Base, Outcome: run.Outcome, Seconds: run.Seconds, Path: entry.Path, Reused: run.Reused})
 	}
 	return lines
 }
@@ -656,7 +658,7 @@ func recordLines(record RoundRecord, path string) []IndexLine {
 	for _, run := range record.Runs {
 		lines = append(lines, IndexLine{At: run.Ended, Task: record.Task, Round: &round, Attempt: record.Attempt,
 			Reviewer: run.Reviewer, Commit: record.Commit, Base: record.Base, Outcome: run.Outcome,
-			Blocks: record.Outcome.Blocks, Realistic: realistic, Rare: rare, Seconds: run.Seconds, Path: path})
+			Blocks: record.Outcome.Blocks, Realistic: realistic, Rare: rare, Seconds: run.Seconds, Path: path, Reused: run.Reused})
 	}
 	return lines
 }

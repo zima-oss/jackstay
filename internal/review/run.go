@@ -351,7 +351,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	if err := writeFileWhole(filepath.Join(folder, "prompt.md"), prompt); err != nil {
 		return usage("the attempt's folder: %v", err)
 	}
-	binding := bindingOf(planned, settings, prompt, Schema(settings.Severities), brief)
+	binding := bindingOf(planned, settings, names, prompt, Schema(settings.Severities), brief)
 	if err := writeJSON(filepath.Join(folder, AttemptName), AttemptRecord{Task: planned.task, Attempt: planned.attempt,
 		Commit: planned.commit, Base: planned.base, Request: round.Request, Binding: binding}); err != nil {
 		return usage("the attempt's folder: %v", err)
