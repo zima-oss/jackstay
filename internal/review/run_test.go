@@ -539,12 +539,33 @@ func TestPromptReferencesBriefWithoutEmbeddingItsContents(t *testing.T) {
 
 func TestTheKeptArgvNamesMCPServersWithoutTheirArguments(t *testing.T) {
 	argv := redactedArgv([]string{"codex", "-c", `mcp_servers.docs={command="docs",args=["--token","made-up"]}`, "-c", "mcp_servers={}",
-		"--mcp-config", `{"mcpServers":{"docs":{"args":["--token","made-up"]}}}`})
+		"-c", `mcp_servers={docs={command="x",args=["made-up"]}}`, "-c", `mcp_servers.docs.args=["made-up"]`,
+		"--config=mcp_servers.docs.env={TOKEN=\"made-up\"}", "--mcp-config", `{"mcpServers":{"docs":{"args":["--token","made-up"]}}}`,
+		"-c", "features.apps=false"})
 	joined := strings.Join(argv, " ")
-	if strings.Contains(joined, "made-up") || !strings.Contains(joined, "mcp_servers.docs=<redacted>") || !strings.Contains(joined, "mcp_servers={}") {
-		t.Fatalf("argv: %v", argv)
+	for _, want := range []string{"mcp_servers.docs=<redacted>", "mcp_servers={}", "mcp_servers=<redacted>", "mcp_servers.docs.args=<redacted>",
+		"--config=mcp_servers.docs.env=<redacted>", "features.apps=false"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("argv lacks %s: %v", want, argv)
+		}
+	}
+	if strings.Contains(joined, "made-up") {
+		t.Fatalf("a credential reached the kept argv: %v", argv)
 	}
 	if empty := redactedArgv([]string{"--mcp-config", `{"mcpServers":{}}`}); empty[1] != `{"mcpServers":{}}` {
 		t.Fatalf("the empty configuration was hidden: %v", empty)
+	}
+}
+
+func TestAReusedRunIsKeptRedacted(t *testing.T) {
+	folder := t.TempDir()
+	saved := reused{from: "attempt-1", run: ReviewerRun{Reviewer: "codex", Argv: []string{"codex", "-c", `mcp_servers.x={command="made-up"}`}}}
+	run, err := saved.adopt(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(folder, "run.json"))
+	if strings.Contains(string(data), "made-up") || strings.Contains(strings.Join(run.Argv, " "), "made-up") {
+		t.Fatalf("a reused run kept its MCP arguments: %s", data)
 	}
 }

@@ -281,17 +281,16 @@ round's report merges their findings by `place`.
     also left out of the generated patches (`changes/*.patch`); the change index still names them.
     Claude Code: `Read`, `Glob` and `Grep` deny rules for each path and for `//**/.env` and
     `//**/.env.*` (anchored at the filesystem's root, not at its working folder), through
-    `--settings`, enforced at every read. Codex: each path `"none"` in the profile; its rules take
-    paths, not patterns, so the `.env` files are those found when the run starts under the source
-    view, the live checkout and the folder beside it (the neighbouring checkouts; not when that
-    folder is the account's home), 6 folders deep, past dependency and cache folders, at most 2,048
-    files and 50,000 entries visited, each listed once. A `.env` elsewhere, deeper, past those bounds,
-    or made during the run is not denied to Codex: the limit of this profile.
+    `--settings`. Codex: each path `"none"` in the profile, and the globs `"/**/.env"` and
+    `"/**/.env.*"` `"none"`, which Codex checks at every read on macOS and expands when the run
+    starts on Linux (`glob_scan_max_depth` 12). jackstay walks no folder for them.
   - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
     `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
     local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,
     `disableAllHooks`. `review.reviewers.<name>.mcp_servers` gives chosen servers back, and their
-    tools only; `run.json` keeps their names, not their arguments, which may hold a credential.
+    tools only. Their definitions may hold a credential, so `run.json` and `round.json` keep every
+    MCP setting of the argv — jackstay's, or a project's in its isolation flags, whole table or one
+    key — by key only (a reused run's record too).
   Checked against Codex 0.169.0 and Claude Code 2.1.328 on macOS (2026-11-20): both were denied
   `~/.ssh`, the untracked `.env` of the checkout and of a checkout beside it, and the other
   reviewer's login, listed `/usr/share`, and fetched

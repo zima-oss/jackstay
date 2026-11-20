@@ -37,5 +37,5 @@ in the background is listed and stopped with `jst procs`. A changed model, effor
 isolation pays every reviewer again. Reviewers may now reach the network and read outside the view,
 so instructions planted in a reviewed change could send out what a reviewer can read: the risk is
 accepted for efficiency, and narrowed by denying the credentials by path and by name (the other
-reviewer's login included) and leaving `.env` contents out of the patches. Codex's `.env` denial is a
-snapshot taken when the run starts; Claude Code's is a pattern checked at every read.
+reviewer's login included) and leaving `.env` contents out of the patches. Both reviewers deny `.env`
+files by a pattern; on Linux Codex expands it when the run starts, to a bounded depth.

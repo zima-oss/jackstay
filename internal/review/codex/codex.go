@@ -107,21 +107,16 @@ func Argv(request Request, answerPath string) []string {
 func Temporary(request Request) string { return filepath.Join(request.Folder, "tmp") }
 
 // Filesystem is the permission profile's filesystem table: read everything; never the account's
-// secrets or a `.env` file of the reviewed tree or the live checkout; write only Temporary.
+// secrets nor any `.env` file — glob rules Codex checks at every read (on Linux it expands them
+// when the run starts, globScanDepth folders deep); write only Temporary.
 func Filesystem(request Request, home string) string {
-	entries := []string{`":root"="read"`}
 	environ := request.Environ
 	if environ == nil {
 		environ = os.Environ()
 	}
-	denied := access.SecretPaths(home, access.Codex, environ)
-	roots := []string{request.Tree, request.RepositoryRoot}
-	if beside := filepath.Dir(request.RepositoryRoot); request.RepositoryRoot != "" && beside != home && beside != "/" {
-		roots = append(roots, beside) // the checkouts beside it, unless that is the whole account
-	}
-	denied = append(denied, access.SecretFiles(roots, 6, 2048, 50000)...)
+	entries := []string{`":root"="read"`}
 	seen := map[string]bool{}
-	for _, path := range denied {
+	for _, path := range access.SecretPaths(home, access.Codex, environ) {
 		if resolved, err := canonicalPath(path); err == nil {
 			path = resolved
 		}
@@ -131,11 +126,19 @@ func Filesystem(request Request, home string) string {
 		seen[path] = true
 		entries = append(entries, strconv.Quote(path)+`="none"`)
 	}
+	for _, glob := range access.SecretFileGlobs {
+		entries = append(entries, strconv.Quote(strings.TrimPrefix(glob, "/"))+`="none"`)
+	}
 	if temporary, err := canonicalPath(Temporary(request)); err == nil {
 		entries = append(entries, strconv.Quote(temporary)+`="write"`)
 	}
+	entries = append(entries, fmt.Sprintf("glob_scan_max_depth=%d", globScanDepth))
 	return "permissions.jackstay_review.filesystem={" + strings.Join(entries, ",") + "}"
 }
+
+// globScanDepth is how deep Codex looks for files matching a glob rule where it must find them
+// before the run (Linux); on macOS the rule is checked at every read.
+const globScanDepth = 12
 
 func sortedNames(servers map[string]access.MCPServer) []string {
 	names := make([]string, 0, len(servers))

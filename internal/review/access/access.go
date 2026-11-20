@@ -6,7 +6,6 @@
 package access
 
 import (
-	"io/fs"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -66,7 +65,8 @@ func SecretPaths(home, reviewer string, environ []string) []string {
 }
 
 // SecretFileGlobs are files a reviewer is never allowed to read wherever they are: `.env` files,
-// anchored at the filesystem's root (Claude Code's `//` form), not at the reviewer's working folder.
+// anchored at the filesystem's root (Claude Code's `//` form; Codex takes them with one `/`), not at
+// the reviewer's working folder.
 var SecretFileGlobs = []string{"//**/.env", "//**/.env.*"}
 
 // tokenLike are names of variables that carry a credential.
@@ -145,48 +145,4 @@ func Environment(environ []string, reviewer, temporary string) []string {
 type MCPServer struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args"`
-}
-
-// skippedFolders hold dependencies, caches or Git's own data: no project's `.env` lives there.
-var skippedFolders = []string{".git", "node_modules", "vendor", ".venv", "target", ".cache", "Library", ".build",
-	".npm", ".cargo", ".rustup", "go", ".gradle", ".m2", "Pods", "DerivedData"}
-
-// SecretFiles are the `.env` files under roots, found by walking each at most depth folders deep,
-// at most limit files and visiting at most visits entries in all, past folders that hold
-// dependencies or caches; each path once. A reviewer whose rules take only paths is denied each
-// one. It is a snapshot: a file elsewhere, deeper, past the bounds, or made later is not in it.
-func SecretFiles(roots []string, depth, limit, visits int) []string {
-	var found []string
-	seen := map[string]bool{}
-	visited := 0
-	for _, root := range roots {
-		if root == "" {
-			continue
-		}
-		_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-			visited++
-			if visited > visits || len(found) >= limit {
-				return filepath.SkipAll
-			}
-			if err != nil {
-				if entry != nil && entry.IsDir() && path != root {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			relative, _ := filepath.Rel(root, path)
-			if entry.IsDir() {
-				if slices.Contains(skippedFolders, entry.Name()) || relative != "." && strings.Count(relative, string(filepath.Separator)) >= depth {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if name := entry.Name(); (name == ".env" || strings.HasPrefix(name, ".env.")) && !seen[path] {
-				seen[path] = true
-				found = append(found, path)
-			}
-			return nil
-		})
-	}
-	return found
 }

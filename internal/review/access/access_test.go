@@ -1,8 +1,6 @@
 package access
 
 import (
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -61,25 +59,7 @@ func TestSecretsAreTheAccountsKeysAndTheEnvFiles(t *testing.T) {
 	if claude := SecretPaths("/home/r", Claude, nil); !slices.Contains(claude, "/home/r/.codex") || slices.Contains(claude, "/home/r/.claude") {
 		t.Errorf("Claude Code's secrets: %v", claude)
 	}
-	root := t.TempDir()
-	for _, file := range []string{".env", "service/.env.production", "deep/a/b/c/d/.env", ".git/.env", "node_modules/x/.env", "environment.go", ".envrc"} {
-		path := filepath.Join(root, file)
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	found := SecretFiles([]string{root, "", root}, 3, 100, 1000)
-	want := []string{filepath.Join(root, ".env"), filepath.Join(root, "service/.env.production")}
-	if !slices.Equal(found, want) {
-		t.Fatalf("found %v, want %v (once each, not past the depth, not in .git or node_modules, not .envrc)", found, want)
-	}
-	if limited := SecretFiles([]string{root}, 3, 1, 1000); len(limited) != 1 {
-		t.Fatalf("the limit: %v", limited)
-	}
-	if bounded := SecretFiles([]string{root}, 3, 100, 1); len(bounded) != 0 {
-		t.Fatalf("the walk went past its visits: %v", bounded)
+	if !slices.Equal(SecretFileGlobs, []string{"//**/.env", "//**/.env.*"}) {
+		t.Fatalf("the .env rules are not anchored at the root: %v", SecretFileGlobs)
 	}
 }

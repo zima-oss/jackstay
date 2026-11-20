@@ -481,7 +481,7 @@ func (round Round) sourceFailure(planned plan, folder, reason string) Result {
 	ended := round.Machine.Now().Format(time.RFC3339)
 	run := ReviewerRun{Reviewer: "source-view", Exit: -1, Started: ended, Ended: ended,
 		Outcome: runner.OutcomeFailed, Reason: reason}
-	_ = writeJSON(filepath.Join(folder, "source-view", "run.json"), run)
+	_ = writeRun(filepath.Join(folder, "source-view", "run.json"), run)
 	_ = writeFileWhole(filepath.Join(folder, "report.md"), []byte(FailureReport(planned.task, planned.attempt, []ReviewerRun{run})))
 	_ = round.Store.AppendIndex(failedLines(planned, []ReviewerRun{run}, folder))
 	return Result{Status: ExitReviewer, Folder: folder, Next: reason + "; read the report, then rerun"}
@@ -561,7 +561,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		if run.Ended == "" {
 			run.Ended = round.Machine.Now().Format(time.RFC3339)
 		}
-		_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
+		_ = writeRun(filepath.Join(reviewerFolder, "run.json"), run)
 		return run, Answer{}
 	}
 	if err := os.MkdirAll(reviewerFolder, 0o700); err != nil {
@@ -605,7 +605,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		Tree: tree, PinnedSource: true, RepositoryRoot: round.RepositoryRoot, Folder: reviewerFolder, Prompt: prompt, SchemaPath: schemaPath, Answered: startLock.Release,
 	})
 	startLock.Release()
-	run.Argv, run.Exit = redactedArgv(result.Argv), result.Exit
+	run.Argv, run.Exit = redactedArgv(result.Argv), result.Exit // round.json keeps the runs too
 	run.Started, run.Ended = result.Started.Format(time.RFC3339), result.Ended.Format(time.RFC3339)
 	run.Seconds = result.Ended.Sub(result.Started).Seconds()
 	if result.Outcome != runner.OutcomeDone {
@@ -622,7 +622,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		return finish(OutcomeIncomplete, strings.TrimSpace(answer.Summary))
 	}
 	run.Outcome = runner.OutcomeDone
-	_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
+	_ = writeRun(filepath.Join(reviewerFolder, "run.json"), run)
 	return run, answer
 }
 
@@ -736,17 +736,36 @@ const (
 	OutcomeNoSlot       = "no-slot"
 )
 
-// redactedArgv is argv as kept in run.json: the MCP servers given back to a reviewer may carry a
-// credential in their arguments, so their definitions are kept by name only.
+// redactedArgv is argv as kept in run.json: an MCP server's definition may carry a credential in
+// its command, arguments or environment, so every MCP setting — jackstay's, or a project's in its
+// isolation flags, whole table or one key — is kept by key only. `mcp_servers={}` is kept as is.
 func redactedArgv(argv []string) []string {
 	kept := slices.Clone(argv)
 	for index, word := range kept {
-		if name, _, found := strings.Cut(word, "={"); found && strings.HasPrefix(name, "mcp_servers.") {
-			kept[index] = name + "=<redacted>"
+		value, inline := strings.CutPrefix(word, "--config=")
+		if !inline {
+			if index == 0 || kept[index-1] != "-c" && kept[index-1] != "--config" {
+				if kept[max(index-1, 0)] == "--mcp-config" && index > 0 && word != `{"mcpServers":{}}` {
+					kept[index] = "<redacted>"
+				}
+				continue
+			}
+			value = word
 		}
-		if word == "--mcp-config" && index+1 < len(kept) && kept[index+1] != `{"mcpServers":{}}` {
-			kept[index+1] = "<redacted>"
+		key, setting, _ := strings.Cut(value, "=")
+		if strings.HasPrefix(strings.TrimSpace(key), "mcp_servers") && strings.TrimSpace(setting) != "{}" {
+			redacted := key + "=<redacted>"
+			if inline {
+				redacted = "--config=" + redacted
+			}
+			kept[index] = redacted
 		}
 	}
 	return kept
+}
+
+// writeRun writes a run's record, its argv redacted (redactedArgv): the one way run.json is written.
+func writeRun(path string, run ReviewerRun) error {
+	run.Argv = redactedArgv(run.Argv)
+	return writeJSON(path, run)
 }

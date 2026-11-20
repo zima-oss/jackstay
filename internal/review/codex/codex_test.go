@@ -171,10 +171,9 @@ func TestPinnedSourceUsesTheReviewerAccessProfile(t *testing.T) {
 		}
 	}
 	home := homedir.AccountHome()
-	tree, _ := canonicalPath(request.Tree)
 	temporary, _ := canonicalPath(Temporary(request))
 	for _, want := range []string{`":root"="read"`, strconv.Quote(filepath.Join(home, ".ssh")) + `="none"`,
-		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`, strconv.Quote(filepath.Join(tree, ".env.local")) + `="none"`,
+		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`, `"/**/.env"="none"`, `"/**/.env.*"="none"`,
 		strconv.Quote(temporary) + `="write"`} {
 		if !strings.Contains(filesystem, want) {
 			t.Errorf("the filesystem table lacks %s: %s", want, filesystem)
@@ -387,18 +386,11 @@ func TestLoginWords(t *testing.T) {
 	}
 }
 
-func TestAnEnvFileFoundTwiceIsOneEntryAndTheProjectsInheritWins(t *testing.T) {
+func TestTheProjectsInheritWinsAndEveryKeyIsOnce(t *testing.T) {
 	request := setup(t, "done")
 	request.PinnedSource = true
-	checkout := filepath.Join(filepath.Dir(request.Tree), "checkout")
-	if err := os.MkdirAll(checkout, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(checkout, ".env"), []byte("X=1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	request.RepositoryRoot = checkout // found under the checkout and again under the folder beside it
 	request.Isolation = []string{"-c", "shell_environment_policy.inherit=none"}
+	request.Environ = []string{"CLAUDE_CONFIG_DIR=" + filepath.Join(homedir.AccountHome(), ".claude")} // the same folder twice
 	argv := Argv(request, filepath.Join(request.Folder, "answer.json"))
 	filesystem := ""
 	for _, word := range argv {
@@ -406,9 +398,9 @@ func TestAnEnvFileFoundTwiceIsOneEntryAndTheProjectsInheritWins(t *testing.T) {
 			filesystem = word
 		}
 	}
-	resolved, _ := canonicalPath(filepath.Join(checkout, ".env"))
-	if count := strings.Count(filesystem, strconv.Quote(resolved)+"="); count != 1 {
-		t.Fatalf("the .env key appears %d times: %s", count, filesystem)
+	claude, _ := canonicalPath(filepath.Join(homedir.AccountHome(), ".claude"))
+	if count := strings.Count(filesystem, strconv.Quote(claude)+"="); count != 1 {
+		t.Fatalf("a key appears %d times: %s", count, filesystem)
 	}
 	defaults := slices.Index(argv, `shell_environment_policy.inherit="all"`)
 	project := slices.Index(argv, "shell_environment_policy.inherit=none")
