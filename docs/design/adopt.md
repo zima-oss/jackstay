@@ -416,9 +416,13 @@ The text, for a project with every section (`internal/adopt/block`, golden-teste
 - **The guard** refuses destructive commands and names what to run instead: run that, never a
   workaround. A line `jst guard let this command run, with a warning` means read it before going
   on. This project sets the guard's rules in `jackstay.json` (`guard`).
-- **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
-  `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
-  `jackstay.json` (`github.account`).
+- **Land a change**: `jst land --title T` pushes, opens the change request, waits for the required
+  checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,
+  `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
+  (`gh pr merge` is refused), never run `--confirm`.
+- **Checks**: `jst checks wait` / `jst checks status` (a change request's checks) and
+  `jst checks run-wait` (a workflow's run). jackstay acts as the account in `jackstay.json`
+  (`github.account`).
 - **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
   project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
   `jst review check BASE..REV --task NAME` checks the saved round.
@@ -446,7 +450,8 @@ Item IDs, what each needs, and what changes with the section:
 | `test` | always | with no `test.scopes`, only `jst test -- COMMAND`; `gate` sentence only with a `gate` scope |
 | `wait`, `bg`, `branches`, `discard`, `guard`, `doctor` | always | the guard's last sentence only with a `guard` section |
 | `lock` | `lock.enabled` true | |
-| `github` | `github.account` | |
+| `land` | `land` | the text follows `land.autonomy`: `merge-when-green` says the agent merges and where it stops; any other value says a person merges |
+| `checks` | `github.account` | |
 | `review` | `review` (a section, even `{}`: every key has a default, W-051) | |
 | `cards` | `cards` | the branch from `cards.branch`, else `origin/main` |
 | `ids` | `ids`; the `jst new`/`jst view` half with `records` | |

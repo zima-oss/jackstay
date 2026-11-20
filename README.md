@@ -31,7 +31,7 @@ archives; the tap is not published yet.
 | Recover from a destructive command | The [guard, discard and trash](docs/guide/guard.md) refuse unsafe shell commands and keep discarded edits recoverable. |
 | Run and prove tests | [`jst test`](docs/guide/tests.md) records output and counts evidence. Receipts identify the tree that passed. |
 | Keep a process under control | [`jst bg`, `jst procs` and `jst wait`](docs/guide/background.md) give jobs a deadline and wait for a result. |
-| Manage branches and GitHub checks | [`jst start`, `jst sync`, `jst tidy` and `jst gh`](docs/guide/branches-and-github.md) cover worktrees, CI and cleanup. |
+| Manage branches and GitHub checks | [`jst start`, `jst sync`, `jst tidy`, `jst checks` and `jst land`](docs/guide/branches-and-github.md) cover worktrees, CI, landing and cleanup. |
 | Review a change | [`jst review`](docs/guide/review.md) records a round and its verdict. Select Codex, Claude Code or both. |
 | Collect changes and release | [`jst changes` and `jst release`](docs/guide/releases.md) keep changelog entries and release steps recoverable. |
 | Reconstruct a session | [`jst timeline`, `jst log`, `jst stats` and `jst inventory`](docs/guide/observability.md) read local records. |

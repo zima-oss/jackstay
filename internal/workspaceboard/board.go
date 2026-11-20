@@ -17,7 +17,6 @@ import (
 	"github.com/zima-oss/jackstay/internal/cards"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
-	"github.com/zima-oss/jackstay/internal/mergequeue"
 	"github.com/zima-oss/jackstay/internal/project"
 	"github.com/zima-oss/jackstay/internal/receipts"
 	"github.com/zima-oss/jackstay/internal/series"
@@ -35,15 +34,14 @@ type Board struct {
 
 // Repository contains the observed sources for one requested checkout.
 type Repository struct {
-	Path    string      `json:"path"`
-	Project string      `json:"project,omitempty"`
-	Status  string      `json:"status"`
-	Error   string      `json:"error,omitempty"`
-	Cards   CardStatus  `json:"cards"`
-	Queue   QueueStatus `json:"queue"`
-	Gate    RunStatus   `json:"gate"`
-	Receipt RunStatus   `json:"receipt"`
-	Chat    ChatStatus  `json:"chat"`
+	Path    string     `json:"path"`
+	Project string     `json:"project,omitempty"`
+	Status  string     `json:"status"`
+	Error   string     `json:"error,omitempty"`
+	Cards   CardStatus `json:"cards"`
+	Gate    RunStatus  `json:"gate"`
+	Receipt RunStatus  `json:"receipt"`
+	Chat    ChatStatus `json:"chat"`
 }
 
 // Card contains only the identity and state of an active card.
@@ -57,17 +55,6 @@ type CardStatus struct {
 	Status string `json:"status"`
 	Active []Card `json:"active,omitempty"`
 	Error  string `json:"error,omitempty"`
-}
-
-// QueueStatus describes the local lane and its candidate or observed landing.
-type QueueStatus struct {
-	Status      string     `json:"status"`
-	HeadRef     string     `json:"head_ref,omitempty"`
-	Candidate   string     `json:"candidate,omitempty"`
-	Freshness   string     `json:"freshness"`
-	UpdatedAt   *time.Time `json:"updated_at,omitempty"`
-	TreeMatched *bool      `json:"tree_matched,omitempty"`
-	Error       string     `json:"error,omitempty"`
 }
 
 // RunStatus summarizes a recorded gate or receipt and its revision freshness.
@@ -94,7 +81,7 @@ func Read(ctx context.Context, paths []string) Board {
 	for _, supplied := range paths {
 		repository := readRepository(ctx, supplied)
 		board.Repositories = append(board.Repositories, repository)
-		if repository.Status != "ok" || repository.Cards.Status == "unknown" || repository.Queue.Status == "unknown" ||
+		if repository.Status != "ok" || repository.Cards.Status == "unknown" ||
 			repository.Gate.Status == "unknown" || repository.Receipt.Status == "unknown" || repository.Chat.Status == "unknown" {
 			board.Partial = true
 		}
@@ -104,7 +91,7 @@ func Read(ctx context.Context, paths []string) Board {
 
 func readRepository(parent context.Context, supplied string) Repository {
 	result := Repository{Path: supplied, Status: "unknown", Cards: CardStatus{Status: "unknown"},
-		Queue: QueueStatus{Status: "unknown", Freshness: "unknown"}, Gate: RunStatus{Status: "unknown", Freshness: "unknown"},
+		Gate:    RunStatus{Status: "unknown", Freshness: "unknown"},
 		Receipt: RunStatus{Status: "unknown", Freshness: "unknown"}, Chat: ChatStatus{Status: "unknown"}}
 	path, err := filepath.Abs(supplied)
 	if err != nil {
@@ -145,7 +132,6 @@ func readRepository(parent context.Context, supplied string) Repository {
 	result.Project = config.ProjectName(root, loaded, root)
 	result.Status = "ok"
 	result.Cards = readCards(root)
-	result.Queue = readQueue(ctx, root, result.Project)
 	result.Gate, result.Receipt = readRuns(root, result.Project, git, ctx)
 	result.Chat = readChat(root, common)
 	return result
@@ -207,36 +193,6 @@ func readCards(root string) CardStatus {
 		}
 	}
 	sort.Slice(result.Active, func(a, b int) bool { return result.Active[a].ID < result.Active[b].ID })
-	return result
-}
-
-func readQueue(ctx context.Context, root, name string) QueueStatus {
-	_, loaded, err := config.Load(root, []string{"queue"})
-	if err != nil {
-		return QueueStatus{Status: "unknown", Freshness: "unknown", Error: err.Error()}
-	}
-	section := loaded.Section("queue")
-	if section["enabled"] != true {
-		return QueueStatus{Status: "disabled", Freshness: "unknown"}
-	}
-	baseRef, _ := section["base_ref"].(string)
-	service := mergequeue.Service{Here: root, Project: name, BaseRef: baseRef}
-	state, err := service.Snapshot(ctx)
-	if errors.Is(err, os.ErrNotExist) {
-		return QueueStatus{Status: "empty", Freshness: "unknown"}
-	}
-	if err != nil {
-		return QueueStatus{Status: "unknown", Freshness: "unknown", Error: err.Error()}
-	}
-	result := QueueStatus{Status: "queued", HeadRef: state.HeadRef, Candidate: state.Candidate,
-		UpdatedAt: &state.Updated, Freshness: "current"}
-	if state.Stale {
-		result.Freshness = "stale"
-	}
-	if state.Outcome != nil {
-		result.Status = "landed"
-		result.TreeMatched = &state.Outcome.Matched
-	}
 	return result
 }
 

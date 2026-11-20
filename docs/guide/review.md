@@ -123,7 +123,7 @@ range when the policy or reviewer set changes, or when the previous review preda
 jst review origin/main..HEAD --task parser-fix --reviewer codex
 # … fix, commit …
 jst review origin/main..HEAD --task parser-fix --reviewer codex
-jst review check origin/main..HEAD --task parser-fix && jst gh pr-land --title 'Fix the parser'
+jst review check origin/main..HEAD --task parser-fix && jst land --title 'Fix the parser'
 ```
 
 A branch named like a subcommand is reviewed as `jst review -- list`.

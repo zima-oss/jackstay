@@ -1,8 +1,11 @@
 # App-managed merge queue pilot for issue #3
 
+jackstay 0.6.0 removed `jst queue` in favour of the host's merge queue, used through `jst land`
+([land.md](../design/land.md)); this page is the pilot's history.
+
 ## Implemented local slice
 
-The [local queue guide](../guide/merge-queue.md) covers `jst queue add`, `prepare`, `test`,
+The local queue covered `jst queue add`, `prepare`, `test`,
 `status`, `handoff` and `remove`. This slice holds one full local or remote-tracking branch ref,
 keeps a versioned, atomically replaced checkpoint under jackstay's project state, and uses a
 single-writer file lock. Git writes an unreachable candidate commit, without moving any ref;
@@ -31,7 +34,7 @@ Local scheduling, testing, dry-run and recovery are available on GitHub Free and
 
 ## Current implementation boundary
 
-`jst gh pr-land` binds its green verdict to the PR head, base and GitHub test-merge commit, then re-reads the PR before merging with an expected head SHA. It can observe a merge after an ambiguous response. Its [landing path](../../internal/gh/land.go) does not persist a candidate tree or queue checkpoint. The existing [delivery record](../../internal/delivery/delivery.go) provides a versioned, atomically replaced local checkpoint with phases and attempts. The queue should use that mechanism and hold Git object IDs and receipt references, never credentials or raw test output.
+`jst gh pr-land` binds its green verdict to the PR head, base and GitHub test-merge commit, then re-reads the PR before merging with an expected head SHA. It can observe a merge after an ambiguous response. Its landing path does not persist a candidate tree or queue checkpoint. The existing [delivery record](../../internal/delivery/delivery.go) provides a versioned, atomically replaced local checkpoint with phases and attempts. The queue should use that mechanism and hold Git object IDs and receipt references, never credentials or raw test output.
 
 GitHub's synchronous merge API accepts an expected PR-head SHA. Its asynchronous API supports `direct_merge`, returns a request UUID for polling, and may report a request as accepted before branch protection is evaluated. Neither API exposes an expected base SHA in the merge request. The result record lasts 24 hours, so a resumed lane must also inspect the PR and target ref. The asynchronous `merge_queue` action is unrelated to the local queue and is not used here. [GitHub PR merge APIs](https://docs.github.com/en/rest/pulls/pulls?apiVersion=2026-03-10#merge-a-pull-request-asynchronously)
 

@@ -60,7 +60,7 @@ func TestTimelineJoinsMixedDeliveryStagesWithoutPrivateFields(t *testing.T) {
 		telemetry.AttrOutcome: "clear", telemetry.AttrHead: head, telemetry.AttrReviewTask: private,
 	}))
 	add(span("jst gh", 1, 1, 0, from.Add(-time.Second), from, map[string]any{
-		telemetry.AttrCommand: "gh", telemetry.AttrGitHubOperation: "ci-status", telemetry.AttrCwd: repository.Root,
+		telemetry.AttrCommand: "checks", telemetry.AttrGitHubOperation: "status", telemetry.AttrCwd: repository.Root,
 		telemetry.AttrGitHubRepository: "Example/Remote", telemetry.AttrGitHubPull: 24, telemetry.AttrOutcome: "ok",
 		telemetry.AttrHead: head, telemetry.AttrArgs: private,
 	}))
@@ -123,7 +123,7 @@ func TestTimelineJoinsMixedDeliveryStagesWithoutPrivateFields(t *testing.T) {
 	for _, entry := range got.Rows {
 		stages = append(stages, entry.Stage)
 	}
-	want := []string{"github.ci-status", "test.run", "review.attempt", "review.agent", "background.started"}
+	want := []string{"checks.status", "test.run", "review.attempt", "review.agent", "background.started"}
 	if got.Schema != 1 || got.RepositoryID == "" || !slices.Equal(stages, want) || got.OmittedRows != 0 {
 		t.Fatalf("timeline %+v", got)
 	}

@@ -447,7 +447,7 @@ how often does it fail" is measured per project in one vocabulary.
 - A recorded run whose `start` has no `run` overlaps only while its pid is alive.
 - Per-section reading reaches every tool: `jst lock` reads `lock`, the guard and `jst tidy` read
   `guard`, `jst test --` and `jst receipts key` read `lock` and `receipts`, the guard's Card check,
-  `jst gh`'s card rules and `jst bg` read only their own sections; `jst check` judges all. A
+  `jst land`'s card rules and `jst bg` read only their own sections; `jst check` judges all. A
   section's type errors stay in that section (only `jackstay_schema` and `project` are the file's
   own); the project file's cross-section check ([implementation.md](implementation.md) section
   3.2) reads only the sections it compares.

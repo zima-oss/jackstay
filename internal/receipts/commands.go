@@ -27,16 +27,14 @@ const (
        jst receipts stats [--project NAME] [--json]   runs, reuses and seconds saved, from the log
        jst receipts list [--project NAME]
        jst receipts export KEY
-       jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE
-       jst receipts attest-ci --trust-root NAME --issuer ID --workflow ID --run ID --signing-key KEY RECEIPT
-       jst receipts verify-ci --trust-root NAME --public-key KEY --issuer ID --workflow ID --run ID --head SHA --key KEY --manifest SHA RECEIPT ATTESTATION`
+       jst receipts verify --sha256 DIGEST --head SHA --key KEY FILE`
 )
 
 func init() {
 	cli.Register(
 		cli.Command{Name: "test", Summary: "run a test command, judged, recorded and keyed by the tree (`jst test -- COMMAND`)", Usage: testHelp, Run: TestCommand},
 		cli.Command{Name: "test last", Summary: "the last run of this project: outcome, what went wrong, where its output is", Usage: lastHelp, Run: LastCommand},
-		cli.Command{Name: "receipts", Summary: "the receipts: key, stats, list, export, verify and CI provenance", Usage: receiptsHelp, Run: receiptsCommand},
+		cli.Command{Name: "receipts", Summary: "the receipts: key, stats, list, export and verify", Usage: receiptsHelp, Run: receiptsCommand},
 		cli.Command{Name: "receipts key", Summary: "the key of a command here and what went into it; nothing is run", Usage: keyHelp, Run: keyCommand},
 		cli.Command{Name: "receipts stats", Summary: "runs, reuses and seconds saved, from the run log", Usage: statsHelp, Run: statsCommand},
 		cli.Command{Name: "receipts list", Summary: "the stored receipts", Usage: listHelp, Run: listCommand},

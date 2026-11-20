@@ -79,7 +79,7 @@ head and test-merge identities are checked again at landing.
 **Sequence and proof.** Add a failing fake GitHub test to `internal/gh/checks_test.go` for a
 cancelled run followed by a newer pending, passing or failing run. Include unrelated workflows,
 another SHA, a missing run and a changing PR head. Implement bounded run lookup through the
-existing GitHub client and reuse it from `pr-land` and check waiting. Verify that each transition
+existing GitHub client and reuse it from `jst land` and check waiting. Verify that each transition
 reports the selected run and that no merge occurs on unknown identity. Run the `internal/gh`
 integration suite and full gate. Depends on the existing G1–G3 identity work.
 
@@ -154,7 +154,7 @@ operator reconciliation.
 
 **Sequence and proof.** The local single-head lane pins refs, prepares a candidate, runs the
 gate and exports counted evidence for manual handoff. Linked worktrees share the lane.
-[Queue commands](../guide/merge-queue.md) describe the available path. Next, establish policy
+The queue commands were removed in 0.6.0 in favour of the host's queue through `jst land`. Next, establish policy
 and review freshness and crash recovery against fake GitHub. An opt-in automatic landing mode
 requires a server-enforced precondition for the exact tested tree. Batches and bisection depend
 on that proof.
@@ -215,8 +215,9 @@ works. It must report the observed delivery boundary for each host.
 
 ## Verified integration work
 
-- [Protected signed CI evidence](../guide/tests.md#protected-workflow-pilot) was verified
-  from a separate environment. Changing the downloaded bytes or expected run attempt failed.
+- Protected signed CI evidence was verified from a separate environment. Changing the
+  downloaded bytes or expected run attempt failed. 0.6.0 removed `jst receipts attest-ci` and
+  `verify-ci`; provenance stays in release and install.
 - [Digest-pinned profiles](../guide/adopt.md) were upgraded and restored in two independent
   repositories. Both kept their local settings and refused a modified bundle.
 - [Manual queue recovery](merge-queue-pilot.md) was exercised with GitHub provider faults

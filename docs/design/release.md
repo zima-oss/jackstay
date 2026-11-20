@@ -80,7 +80,7 @@ new jackstay is installed locally and the workflows' pin moved before a project 
 | Key | Meaning | Default |
 |---|---|---|
 | `changes.internal_into` | where internal entries are collected; without it they go only into the release commit's message and the release pull request's description (section 5) | none |
-| `release.merge` | who merges the release pull request: `owner` (only the project's owner; the pull request is a draft, section 6) or `agents` (any session, `jst gh pr-land`, later the queue) — W-029 | `owner` |
+| `release.merge` | who merges the release pull request: `owner` (only the project's owner; the pull request is a draft, section 6) or `agents` (any session, `jst land`) — W-029 | `owner` |
 | `release.branch` | the release pull request's head branch | `jackstay/release` |
 | `release.base` | the branch releases are made from and land on | `cards.branch`, else `main` |
 | `release.tag` | the tag's name; holds `{version}` once | `v{version}` |
@@ -418,7 +418,7 @@ Git repository. It uses the checkout's Git configuration for transport and leave
 refs, objects, index and working files alone.
 
 The commands select one remote by the shared Git rule in
-[implementation.md, section 8](implementation.md#8-github-and-branches-jst-gh-the-github-section-jst-tidy-jst-start-jst-sync-jst-owner).
+[implementation.md, section 8](implementation.md#8-github-and-branches-jst-checks-the-github-section-jst-tidy-jst-start-jst-sync-jst-owner).
 A live workflow verifies its effective fetch and push URLs against `GITHUB_REPOSITORY` before writes.
 The settings on the fetched base must name that branch as their release base.
 
@@ -482,19 +482,17 @@ command opens a fresh pull request (section 8). So the release pull request need
 What stops a session from merging it in an `owner` project is, at W-017's level, against accidents
 only — sessions act through the owner's `gh` login, so GitHub cannot tell them apart: the draft;
 the AGENTS block `jst adopt` writes (releases are made by the release workflow's pull request); and
-the merge queue, which would never take it in an `owner` project (the queue is not built). A guard
-rule refusing, inside a session, `gh pr merge` and `gh pr ready` of a pull request whose head is
-`release.branch` in an `owner` project is designed, not built. A real barrier would be the queue's
-separate design.
+the guard, which from 0.6.0 refuses `gh pr merge` in a session (rule `gh-pr-merge`, naming
+`jst land`). A guard rule refusing `gh pr ready` of a pull request whose head is `release.branch`
+in an `owner` project is designed, not built.
 
 ## 7. The checks in `jst lint pr`
 
 The one `Card:` check (`jst lint pr`, [implementation.md](implementation.md) section 4.1), which the `card-line` workflow and
-`jst gh pr-land` call, and the merge queue's cut-off would call (the queue is not built), gains the
-rules below. They need inputs the `Card:` description rules did not, so the command's
+`jst land` call, gains the rules below. They need inputs the `Card:` description rules did not, so the command's
 inputs are made explicit and every caller passes them:
 
-| Input | `card-line` (`--event`) | `pr-land` (`--pr N`) | the queue's cut-off | by hand (`--body-file F`) |
+| Input | `card-line` (`--event`) | `jst land` (`--pr N`) | the queue's cut-off | by hand (`--body-file F`) |
 |---|---|---|---|---|
 | description | `pull_request.body` | GitHub's, read at that moment | GitHub's, read at the cut-off | the file |
 | head branch | `pull_request.head.ref` | GitHub's | GitHub's | the current branch |

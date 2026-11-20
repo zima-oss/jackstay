@@ -21,11 +21,10 @@ from a verified release.
   discarded edits go.
 - [Background processes and waiting](background.md) covers deadlines, process cleanup and
   waiting for files or output.
-- [Branches and GitHub](branches-and-github.md) covers linked worktrees, CI checks and cleanup.
+- [Branches and GitHub](branches-and-github.md) covers linked worktrees, CI checks, landing a
+  change with `jst land` and cleanup.
 
 ## Verify and deliver
-
-[Local merge queue](merge-queue.md) prepares and verifies one candidate for manual landing.
 
 - [Tests](tests.md) covers scopes, evidence, receipts and gates.
 - [Maven Surefire](maven-surefire.md) shows how to judge separate XML reports from test classes.
@@ -33,7 +32,7 @@ from a verified release.
 - [Numbers, records and cards](records.md) covers shared IDs and project records.
 - [Changelogs and releases](releases.md) covers collection, preparation and publication steps.
 - [What jackstay did](observability.md) covers the local timeline, inventory, journal and diagnostics.
-- [Workspace board](workspace-board.md) compares local task, queue, test and chat evidence across named repositories.
+- [Workspace board](workspace-board.md) compares local task, test and chat evidence across named repositories.
 - [Reviewer pool](../roadmap/reviewer-pool.md) defines the local queue and its explicit worker.
 
 ## Agent integrations

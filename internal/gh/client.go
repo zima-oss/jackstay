@@ -13,15 +13,27 @@ import (
 	"github.com/zima-oss/jackstay/internal/githubapi"
 )
 
-// client is internal/githubapi's client with the three requests jst gh needs that it does not
-// wrap, made through its go-github client with its retry rule (reads only).
+// client is internal/githubapi's client with the requests this package needs that it does not
+// wrap, made through its go-github client with its retry rule.
 type client struct {
 	*githubapi.Client
 }
 
-// RequiredChecksFor reads the effective branch check requirements without a merge request.
-func RequiredChecksFor(ctx context.Context, connected *githubapi.Client, branch string) ([]RequiredCheck, error) {
-	return (client{Client: connected}).RequiredChecks(ctx, branch)
+// RequiredCheck is a check a branch's rules require: its name, and the app that must report it
+// (0: any).
+type RequiredCheck struct {
+	Name  string
+	AppID int64
+}
+
+// BranchRules are what a branch's rules ask of a merge.
+type BranchRules struct {
+	Required []RequiredCheck
+	// UpToDate: the branch must contain the base's tip (a ruleset's strict policy, or classic
+	// protection's strict).
+	UpToDate bool
+	// Queue: a ruleset requires the merge queue.
+	Queue bool
 }
 
 // connectReal is GitHub as docs/design/implementation.md section 8.1 says: the process's environment, the account's token.
@@ -59,11 +71,12 @@ func (api client) MergeableState(ctx context.Context, number int) (string, error
 	return pull.GetMergeableState(), nil
 }
 
-// RequiredChecks are the checks a branch's rules require: the required_status_checks rules of the
-// rulesets that apply to it (GitHub lists the active ones, paged), and its classic protection's
-// required checks, each with the app that must report it when one is named.
-func (api client) RequiredChecks(ctx context.Context, branch string) ([]RequiredCheck, error) {
-	var required []RequiredCheck
+// BranchRules are a branch's rules: the required_status_checks rules of the rulesets that apply
+// to it (GitHub lists the active ones, paged) and its classic protection's required checks, each
+// with the app that must report it when one is named; whether either requires the branch up to
+// date; whether a ruleset requires the merge queue.
+func (api client) BranchRules(ctx context.Context, branch string) (BranchRules, error) {
+	var answer BranchRules
 	listing := &github.ListOptions{PerPage: 100}
 	for {
 		var response *github.Response
@@ -73,14 +86,16 @@ func (api client) RequiredChecks(ctx context.Context, branch string) ([]Required
 			return rules, err
 		})
 		if err != nil {
-			return nil, fmt.Errorf("the rules of %s: %w", branch, err)
+			return BranchRules{}, fmt.Errorf("the rules of %s: %w", branch, err)
 		}
 		if rules != nil {
 			for _, rule := range rules.RequiredStatusChecks {
+				answer.UpToDate = answer.UpToDate || rule.Parameters.StrictRequiredStatusChecksPolicy
 				for _, check := range rule.Parameters.RequiredStatusChecks {
-					required = append(required, RequiredCheck{Name: check.Context, AppID: check.GetIntegrationID()})
+					answer.Required = append(answer.Required, RequiredCheck{Name: check.Context, AppID: check.GetIntegrationID()})
 				}
 			}
+			answer.Queue = answer.Queue || len(rules.MergeQueue) > 0
 		}
 		if response == nil || response.NextPage == 0 {
 			break
@@ -92,26 +107,58 @@ func (api client) RequiredChecks(ctx context.Context, branch string) ([]Required
 		return found, err
 	})
 	if err != nil {
-		return nil, fmt.Errorf("the protection of %s: %w", branch, err)
+		return BranchRules{}, fmt.Errorf("the protection of %s: %w", branch, err)
 	}
 	if protection := found.GetProtection(); found.GetProtected() && protection != nil && protection.RequiredStatusChecks != nil {
+		answer.UpToDate = answer.UpToDate || protection.RequiredStatusChecks.Strict
 		if checks := protection.RequiredStatusChecks.Checks; checks != nil && len(*checks) > 0 {
 			for _, check := range *checks {
-				required = append(required, RequiredCheck{Name: check.Context, AppID: max(check.GetAppID(), 0)}) // -1: any app
+				answer.Required = append(answer.Required, RequiredCheck{Name: check.Context, AppID: max(check.GetAppID(), 0)}) // -1: any app
 			}
 		} else if contexts := protection.RequiredStatusChecks.Contexts; contexts != nil {
 			for _, name := range *contexts {
-				required = append(required, RequiredCheck{Name: name})
+				answer.Required = append(answer.Required, RequiredCheck{Name: name})
 			}
 		}
 	}
-	slices.SortFunc(required, func(left, right RequiredCheck) int {
+	slices.SortFunc(answer.Required, func(left, right RequiredCheck) int {
 		if left.Name != right.Name {
 			return strings.Compare(left.Name, right.Name)
 		}
 		return cmp.Compare(left.AppID, right.AppID)
 	})
-	return slices.Compact(required), nil
+	answer.Required = slices.Compact(answer.Required)
+	return answer, nil
+}
+
+// MergeMethods are the merge methods the repository allows, by its allow_squash_merge,
+// allow_merge_commit and allow_rebase_merge; GitHub leaves them out for an account that may not
+// administer the repository, and then read is false.
+func (api client) MergeMethods(ctx context.Context) ([]string, bool, error) {
+	repository, err := githubapi.Read(ctx, api.Retry(), func() (*github.Repository, error) {
+		repository, _, err := api.API().Repositories.Get(ctx, api.Owner(), api.Name())
+		return repository, err
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if repository.AllowSquashMerge == nil && repository.AllowMergeCommit == nil && repository.AllowRebaseMerge == nil {
+		return nil, false, nil
+	}
+	var methods []string
+	for _, each := range []struct {
+		method  string
+		allowed bool
+	}{
+		{"squash", repository.GetAllowSquashMerge()},
+		{"merge", repository.GetAllowMergeCommit()},
+		{"rebase", repository.GetAllowRebaseMerge()},
+	} {
+		if each.allowed {
+			methods = append(methods, each.method)
+		}
+	}
+	return methods, true, nil
 }
 
 // UpdateBranch asks GitHub to merge the base into the branch; GitHub answers 202 and does it in

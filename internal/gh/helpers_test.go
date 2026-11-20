@@ -53,7 +53,7 @@ func (clock *fakeClock) slept() time.Duration {
 	return total
 }
 
-// fakeGitHub is githubfake's fake with the three requests jst gh adds, and the state GitHub has
+// fakeGitHub is githubfake's fake with the requests this package adds, and the state GitHub has
 // after a merge or a branch update.
 type fakeGitHub struct {
 	*githubfake.Fake
@@ -66,9 +66,13 @@ type fakeGitHub struct {
 	afterMerge  *githubapi.PullRequest
 	// onMerge runs inside Merge (what another session or GitHub does at that moment).
 	onMerge func()
-	// required and requiredErr are RequiredChecks' answer (default: no rule requires a check).
-	required    []RequiredCheck
-	requiredErr error
+	// rules and rulesErr are BranchRules' answer (default: no rule requires a check).
+	rules    BranchRules
+	rulesErr error
+	// methods, methodsRead and methodsErr are MergeMethods' answer.
+	methods     []string
+	methodsRead bool
+	methodsErr  error
 }
 
 func newGitHub() *fakeGitHub {
@@ -98,10 +102,16 @@ func (hub *fakeGitHub) MergeableState(context.Context, int) (string, error) {
 	return state, nil
 }
 
-func (hub *fakeGitHub) RequiredChecks(context.Context, string) ([]RequiredCheck, error) {
+func (hub *fakeGitHub) BranchRules(context.Context, string) (BranchRules, error) {
 	hub.mutex.Lock()
 	defer hub.mutex.Unlock()
-	return hub.required, hub.requiredErr
+	return hub.rules, hub.rulesErr
+}
+
+func (hub *fakeGitHub) MergeMethods(context.Context) ([]string, bool, error) {
+	hub.mutex.Lock()
+	defer hub.mutex.Unlock()
+	return hub.methods, hub.methodsRead, hub.methodsErr
 }
 
 func (hub *fakeGitHub) UpdateBranch(_ context.Context, _ int, headSHA string) error {
@@ -133,8 +143,8 @@ func (hub *fakeGitHub) PullRequest(ctx context.Context, number int) (githubapi.P
 	return pull, err
 }
 
-func (hub *fakeGitHub) Merge(ctx context.Context, number int, headSHA, title, body string) (githubapi.MergeResult, error) {
-	result, err := hub.Fake.Merge(ctx, number, headSHA, title, body)
+func (hub *fakeGitHub) Merge(ctx context.Context, number int, method, headSHA, title, body string) (githubapi.MergeResult, error) {
+	result, err := hub.Fake.Merge(ctx, number, method, headSHA, title, body)
 	if hub.onMerge != nil {
 		hub.onMerge()
 	}
@@ -256,11 +266,18 @@ func newHarness(t *testing.T, git Git) *harness {
 	return &harness{t: t, hub: newGitHub(), git: git, clock: newClock(), dir: t.TempDir()}
 }
 
-// run is `jst gh ARGS`: its exit code, standard output and standard error.
+// run is `jst checks ARGS`, or `jst land status ARGS` after the word land-status and `jst land
+// find ARGS` after land-find: its exit code, standard output and standard error.
 func (bench *harness) run(args ...string) (int, string, string) {
 	bench.t.Helper()
 	var stdout, stderr bytes.Buffer
-	code := Main(args, Deps{Stdout: &stdout, Stderr: &stderr, Dir: bench.dir,
+	main := Main
+	if len(args) > 0 && args[0] == "land-status" {
+		main, args = statusMain, args[1:]
+	} else if len(args) > 0 && args[0] == "land-find" {
+		main, args = findMain, args[1:]
+	}
+	code := main(args, Deps{Stdout: &stdout, Stderr: &stderr, Dir: bench.dir,
 		Git: func(string) Git { return bench.git },
 		Connect: func(_ context.Context, _, repository string) (GitHub, githubapi.Token, error) {
 			bench.connected = append(bench.connected, repository)
@@ -277,7 +294,7 @@ func (bench *harness) expect(code int, args ...string) (string, string) {
 	bench.t.Helper()
 	got, stdout, stderr := bench.run(args...)
 	if got != code {
-		bench.t.Fatalf("jst gh %s: exit %d, want %d\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), got, code, stdout, stderr)
+		bench.t.Fatalf("jst checks %s: exit %d, want %d\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), got, code, stdout, stderr)
 	}
 	return stdout, stderr
 }

@@ -1,7 +1,8 @@
-// Package gh is `jst gh`: waiting on GitHub and landing a pull request, correctly, once
-// (docs/design/implementation.md sections 8.1 and 8.3; the Card line of docs/design/implementation.md section 4.1). GitHub is asked through internal/githubapi as the
-// project's own account; git pushes, fetches and deletes the remote branch, and nothing here
-// changes the checkout it runs in (W-019).
+// Package gh is GitHub for jackstay: the adapter behind `jst land` (hosting.Host, docs/design/land.md
+// section 2), the GitHub side of `jst land status` and `jst land find`, and `jst checks`, waiting on
+// a pull request's checks and a workflow's runs (docs/design/implementation.md section 8.1).
+// GitHub is asked through internal/githubapi as the project's own account; nothing here changes
+// the checkout it runs in (W-019).
 //
 // Exit codes are a contract, because these run inside loops and gates: 0 the thing asked about is
 // fine; 1 it is not, the reason printed; 2 the request was wrong; 3 still pending at the deadline;
@@ -29,7 +30,7 @@ import (
 )
 
 func init() {
-	cli.Register(cli.Command{Name: "gh", Summary: "wait on GitHub's checks and runs, find and land pull requests", Usage: help, Run: Run})
+	cli.Register(cli.Command{Name: "checks", Summary: "wait on a pull request's checks and a workflow's runs on GitHub", Usage: help, Run: Run})
 }
 
 // The exit codes of the contract.
@@ -43,16 +44,12 @@ const (
 )
 
 const usage = `usage:
-  jst gh ci-wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
-  jst gh ci-status [PR|URL]
-  jst gh run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
-  jst gh pr-find [--head BRANCH] [--search TEXT] [--repo URL] [--wait S] [--state open|closed|merged|all]
-  jst gh pr-status [--pr PR|URL]
-  jst gh pr-land [--pr PR|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT] [--no-push] [--no-create]
-                [--no-wait] [--no-merge] [--dry-run] [--timeout S] [--interval S] [--lines N]
+  jst checks wait [PR|URL] [--timeout S] [--interval S] [--lines N] [--any-head]
+  jst checks status [PR|URL]
+  jst checks run-wait WORKFLOW [--ref BRANCH|SHA] [--repo URL] [--timeout S] [--interval S] [--appear S]
 `
 
-// GitHub is what jst gh asks of GitHub: internal/githubapi's client (through client, below) or a
+// GitHub is what this package asks of GitHub: internal/githubapi's client (through client, below) or a
 // fake in tests.
 type GitHub interface {
 	PullRequestsByHead(ctx context.Context, head, state string) ([]githubapi.PullRequest, error)
@@ -64,7 +61,11 @@ type GitHub interface {
 	JobLog(ctx context.Context, jobID int64) (string, error)
 	DefaultBranch(ctx context.Context) (string, error)
 	CreatePullRequest(ctx context.Context, request githubapi.NewPullRequest) (githubapi.PullRequest, error)
-	Merge(ctx context.Context, number int, headSHA, title, body string) (githubapi.MergeResult, error)
+	// Merge merges by method ("squash", "merge" or "rebase") while the head is headSHA; a write,
+	// never retried.
+	Merge(ctx context.Context, number int, method, headSHA, title, body string) (githubapi.MergeResult, error)
+	// Enqueue puts a pull request (by its node id) in the merge queue at expectedHead; a write.
+	Enqueue(ctx context.Context, pullRequestID, expectedHead string) error
 	// WorkflowRun is one run by its id (one pushed out of the newest listed).
 	WorkflowRun(ctx context.Context, runID int64) (githubapi.WorkflowRun, error)
 	// MergeableState is REST's mergeable_state of a pull request: "behind", "clean", "blocked", …
@@ -72,9 +73,11 @@ type GitHub interface {
 	// UpdateBranch merges the base into the pull request's branch on GitHub, while its head is
 	// headSHA; a write, never retried.
 	UpdateBranch(ctx context.Context, number int, headSHA string) error
-	// RequiredChecks are the checks a branch's rules require before a merge: its rulesets' and its
-	// classic protection's; none is an empty list.
-	RequiredChecks(ctx context.Context, branch string) ([]RequiredCheck, error)
+	// BranchRules are a branch's rules as a merge meets them: its rulesets' and its classic
+	// protection's required checks, whether it must be up to date, whether it has a merge queue.
+	BranchRules(ctx context.Context, branch string) (BranchRules, error)
+	// MergeMethods are the merge methods the repository allows (read false: GitHub did not say).
+	MergeMethods(ctx context.Context) (methods []string, read bool, err error)
 }
 
 // Git asks git a question in the checkout (internal/gitcli.Git is one).
@@ -88,7 +91,7 @@ type Clock interface {
 	Sleep(ctx context.Context, wait time.Duration) error
 }
 
-// Deps are what a call of jst gh works with.
+// Deps are what a call of these commands works with.
 type Deps struct {
 	Stdout, Stderr io.Writer
 	// Dir is the working folder: its jackstay.json and its checkout.
@@ -100,19 +103,41 @@ type Deps struct {
 	Clock   Clock
 }
 
-// Run is `jst gh` with the words after it.
+// The commands, each with its name in messages and flag sets.
+const (
+	checksName = "jst checks"
+	statusName = "jst land status"
+	findName   = "jst land find"
+)
+
+// Run is `jst checks` with the words after it.
 func Run(args []string, _ io.Reader, stdout, stderr io.Writer) int {
+	return withRealDeps(checksName, args, stdout, stderr, Main)
+}
+
+// StatusMain is `jst land status` with the words after it: where this branch and its pull request
+// stand, and its checks once.
+func StatusMain(args []string, stdout, stderr io.Writer) int {
+	return withRealDeps(statusName, args, stdout, stderr, statusMain)
+}
+
+// FindMain is `jst land find` with the words after it: one pull request by head or search.
+func FindMain(args []string, stdout, stderr io.Writer) int {
+	return withRealDeps(findName, args, stdout, stderr, findMain)
+}
+
+func withRealDeps(name string, args []string, stdout, stderr io.Writer, main func([]string, Deps) int) int {
 	workDir, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(stderr, "jst gh: %v\n", err)
+		fmt.Fprintf(stderr, "%s: %v\n", name, err)
 		return exitRequest
 	}
-	return Main(args, Deps{Stdout: stdout, Stderr: stderr, Dir: workDir,
+	return main(args, Deps{Stdout: stdout, Stderr: stderr, Dir: workDir,
 		Git:     func(dir string) Git { return gitcli.Git{Dir: dir} },
 		Connect: connectReal, Clock: realClock{}})
 }
 
-// Main is `jst gh` with its dependencies given.
+// Main is `jst checks` with its dependencies given.
 func Main(args []string, deps Deps) int {
 	if len(args) == 0 {
 		fmt.Fprint(deps.Stderr, usage)
@@ -123,28 +148,35 @@ func Main(args []string, deps Deps) int {
 		return exitFine
 	}
 	commands := map[string]func(*session, []string) (int, error){
-		"ci-wait": runCIWait, "ci-status": runCIStatus, "run-wait": runRunWait,
-		"pr-find": runPRFind, "pr-status": runPRStatus, "pr-land": runPRLand,
+		"wait": runCIWait, "status": runCIStatus, "run-wait": runRunWait,
 	}
 	command, found := commands[args[0]]
 	if !found {
-		fmt.Fprintf(deps.Stderr, "jst gh: no command %q\n%s", args[0], usage)
+		fmt.Fprintf(deps.Stderr, "%s: no command %q\n%s", checksName, args[0], usage)
 		return exitRequest
 	}
-	telemetry.Annotate(attribute.String(telemetry.AttrGitHubOperation, args[0]))
-	// Only pr-land reads the cards section: a broken one stops no other command.
-	need := []string{"github"}
-	if args[0] == "pr-land" {
-		need = append(need, "cards")
-	}
-	work, err := newSession(deps, need)
+	return runOne(checksName, args[0], command, args[1:], deps)
+}
+
+func statusMain(args []string, deps Deps) int {
+	return runOne(statusName, "status", runLandStatus, args, deps)
+}
+
+func findMain(args []string, deps Deps) int {
+	return runOne(findName, "find", runLandFind, args, deps)
+}
+
+// runOne runs one command in a new session; operation names it in telemetry.
+func runOne(name, operation string, command func(*session, []string) (int, error), args []string, deps Deps) int {
+	telemetry.Annotate(attribute.String(telemetry.AttrGitHubOperation, operation))
+	work, err := newSession(deps, name)
 	if err != nil {
-		return report(deps.Stderr, err)
+		return report(deps.Stderr, name, err)
 	}
 	defer work.cancel()
-	code, err := command(work, args[1:])
+	code, err := command(work, args)
 	if err != nil {
-		return report(deps.Stderr, err)
+		return report(deps.Stderr, name, err)
 	}
 	return code
 }
@@ -180,16 +212,18 @@ func codeOf(err error) int {
 	return exitNotFine
 }
 
-func report(stderr io.Writer, err error) int {
+func report(stderr io.Writer, name string, err error) int {
 	if errors.Is(err, flag.ErrHelp) {
 		return exitFine
 	}
-	fmt.Fprintf(stderr, "jst gh: %v\n", err)
+	fmt.Fprintf(stderr, "%s: %v\n", name, err)
 	return codeOf(err)
 }
 
-// session is one call: the project, the checkout, GitHub once connected, and the heads seen green.
+// session is one call: the project, the checkout, and GitHub once connected.
 type session struct {
+	// name is the command's, in messages and flag sets ("jst checks").
+	name     string
 	deps     Deps
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -199,25 +233,21 @@ type session struct {
 	github   GitHub
 	// repository is the owner/name GitHub was connected for.
 	repository string
-	// judged binds each green verdict to the pull request and commits pr-land may merge.
-	judged map[int]checkEvidence
-	// rulesOf is the base whose rules pr-land read for each pull request: one retargeted since stops.
-	rulesOf map[int]string
 }
 
 // commandBound bounds a whole call, for the client's rate-limit waits; a wait's own deadline is
 // the flag's, on the session's clock.
 const commandBound = 6 * time.Hour
 
-func newSession(deps Deps, need []string) (*session, error) {
-	_, loaded, err := config.Load(deps.Dir, need)
+func newSession(deps Deps, name string) (*session, error) {
+	_, loaded, err := config.Load(deps.Dir, []string{"github"})
 	if err != nil {
 		return nil, failf(exitRequest, "%v", err)
 	}
 	settings, _ := loaded.GitHub()
 	ctx, cancel := context.WithTimeout(context.Background(), commandBound)
-	return &session{deps: deps, ctx: ctx, cancel: cancel, git: deps.Git(deps.Dir), config: loaded,
-		settings: settings, judged: map[int]checkEvidence{}, rulesOf: map[int]string{}}, nil
+	return &session{name: name, deps: deps, ctx: ctx, cancel: cancel, git: deps.Git(deps.Dir), config: loaded,
+		settings: settings}, nil
 }
 
 func (work *session) say(format string, values ...any) {
@@ -234,7 +264,7 @@ func (work *session) connect(repository string) error {
 		return failf(exitRequest, "GitHub cannot be asked: %v", err)
 	}
 	if token.Note != "" {
-		fmt.Fprintf(work.deps.Stderr, "jst gh: %s\n", token.Note)
+		fmt.Fprintf(work.deps.Stderr, "%s: %s\n", work.name, token.Note)
 	}
 	work.github, work.repository = client, repository
 	return nil

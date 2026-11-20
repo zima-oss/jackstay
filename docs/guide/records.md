@@ -140,7 +140,7 @@ cannot be used; 5 (`lint range`) `git log` gave a record of another shape.
 
 - On every pull request: the `card-line` workflow that `jst adopt` writes when the project has
   `cards` or `changes`. It downloads the pinned jackstay release and runs `jst lint pr --event`.
-- Before a merge: `jst gh pr-land` judges the description and the merged tree.
+- Before a merge: `jst land` judges the description and the merged tree.
 - Before a push to the cards branch: the guard's `cards-push` rule (with the Claude Code hook).
 
 ## What can go wrong

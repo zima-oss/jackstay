@@ -95,7 +95,7 @@ func TestNoChecksRegisteredIsWaitingNotAPass(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, nil)
-	stdout, stderr := bench.expect(exitPending, "ci-wait", "7", "--timeout", "1", "--interval", "0.1")
+	stdout, stderr := bench.expect(exitPending, "wait", "7", "--timeout", "1", "--interval", "0.1")
 	contains(t, stdout, "this is not a pass")
 	contains(t, stderr, "no check ever registered for aaaaaaaa within 1s")
 	if asked := bench.hub.count("Checks"); asked < 5 {
@@ -110,7 +110,7 @@ func TestTheHeadMovingWhileWaitingIsExit4(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA), pull(7, "feat", shaA), pull(7, "feat", shaB))
 	onChecks(bench.hub, shaA, []githubapi.Check{pending("test")})
-	_, stderr := bench.expect(exitMoved, "ci-wait", "7", "--timeout", "30", "--interval", "1")
+	_, stderr := bench.expect(exitMoved, "wait", "7", "--timeout", "30", "--interval", "1")
 	contains(t, stderr, "moved from aaaaaaaa to bbbbbbbb")
 }
 
@@ -119,7 +119,7 @@ func TestTheHeadIsComparedAfterTheRowsAreRead(t *testing.T) {
 	// Green rows for A, but the head is B by the time they are read: they say nothing about B.
 	onPull(bench.hub, pull(7, "feat", shaA), pull(7, "feat", shaB))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("test")})
-	bench.expect(exitMoved, "ci-wait", "7")
+	bench.expect(exitMoved, "wait", "7")
 	calls := bench.hub.Calls()
 	if calls[1].Op != "Checks" || calls[2].Op != "PullRequest" {
 		t.Fatalf("the rows must be read before the head is compared: %v", calls)
@@ -131,7 +131,7 @@ func TestAnyHeadFollowsAMovedHead(t *testing.T) {
 	onPull(bench.hub, pull(7, "feat", shaA), pull(7, "feat", shaB))
 	onChecks(bench.hub, shaA, []githubapi.Check{pending("test")})
 	onChecks(bench.hub, shaB, []githubapi.Check{passed("test")})
-	stdout, _ := bench.expect(exitFine, "ci-wait", "7", "--any-head", "--timeout", "30", "--interval", "1")
+	stdout, _ := bench.expect(exitFine, "wait", "7", "--any-head", "--timeout", "30", "--interval", "1")
 	contains(t, stdout, "following it")
 	contains(t, stdout, "GREEN: 1 checks")
 }
@@ -148,7 +148,7 @@ func TestCIWaitReportsARedCheckWhileAnotherIsPending(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{failed("lint", 0), pending("test")})
-	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "1", "--interval", "0.1")
+	stdout, _ := bench.expect(exitNotFine, "wait", "7", "--timeout", "1", "--interval", "0.1")
 	contains(t, stdout, "RED:")
 	if slept := bench.clock.slept(); slept != 0 {
 		t.Fatalf("waited %v after observing a failed check", slept)
@@ -176,7 +176,7 @@ func TestRedIsExit1WithTheFailedStepsLog(t *testing.T) {
 		}},
 	}))
 	bench.hub.OnJobLog(9, answer(setup+run+post))
-	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--lines", "5", "--timeout", "30", "--interval", "1")
+	stdout, _ := bench.expect(exitNotFine, "wait", "7", "--lines", "5", "--timeout", "30", "--interval", "1")
 	contains(t, stdout, "RED: 1 of 2 checks did not pass.")
 	contains(t, stdout, "[test / Run tests]")
 	contains(t, stdout, "    step line 40")
@@ -194,7 +194,7 @@ func TestALogThatCannotBeCutShowsItsLastLinesAndSaysSo(t *testing.T) {
 	bench.hub.OnJobs(5, answer([]githubapi.Job{{ID: 9, Name: "test", Conclusion: "failure",
 		Steps: []githubapi.Step{{Name: "Run tests", Conclusion: "failure"}}}}))
 	bench.hub.OnJobLog(9, answer("one\ntwo\nthree\nfour\n"))
-	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--lines", "2")
+	stdout, _ := bench.expect(exitNotFine, "wait", "7", "--lines", "2")
 	contains(t, stdout, `the step "Run tests" could not be cut from it: the job log's last 2 lines`)
 	contains(t, stdout, "    three\n    four")
 	lacks(t, stdout, "    two")
@@ -204,7 +204,7 @@ func TestAStatusWithoutARunSaysToOpenItsLink(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{{Name: "ci/external", Kind: githubapi.StatusContext, State: "ERROR", Link: "https://ci.example/1"}})
-	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7")
+	stdout, _ := bench.expect(exitNotFine, "wait", "7")
 	contains(t, stdout, "--- ci/external — https://ci.example/1")
 	contains(t, stdout, "no workflow run behind this check")
 	if bench.hub.count("Jobs") != 0 {
@@ -217,14 +217,14 @@ func TestCancelIsSettledAndFailing(t *testing.T) {
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("lint"), checkRun("test", "COMPLETED", "CANCELLED", 4)})
 	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{}))
-	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
+	stdout, _ := bench.expect(exitNotFine, "wait", "7", "--timeout", "30")
 	contains(t, stdout, "RED: 1 of 2")
 	contains(t, stdout, "cancelled: test (run 4 of ci): a cancellation is not a pass")
 	lacks(t, stdout, "pending")
 	if bench.hub.count("Jobs") != 0 {
 		t.Fatal("a cancelled check has no failed step to show")
 	}
-	bench.expect(exitNotFine, "ci-status", "7")
+	bench.expect(exitNotFine, "status", "7")
 }
 
 func TestPendingThenGreenIsExit0(t *testing.T) {
@@ -232,7 +232,7 @@ func TestPendingThenGreenIsExit0(t *testing.T) {
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{pending("test"), passed("lint")},
 		[]githubapi.Check{passed("test"), passed("lint"), checkRun("docs", "COMPLETED", "SKIPPED", 0)})
-	stdout, _ := bench.expect(exitFine, "ci-wait", "7", "--timeout", "30", "--interval", "20")
+	stdout, _ := bench.expect(exitFine, "wait", "7", "--timeout", "30", "--interval", "20")
 	contains(t, stdout, "PR #7 (feat) head aaaaaaaa in owner/checkout")
 	contains(t, stdout, "0s: 1 pending — test")
 	contains(t, stdout, "GREEN: 3 checks, 20s waiting.")
@@ -243,7 +243,7 @@ func TestAGitHubFailureIsNotReadAsNoChecksYet(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	bench.hub.OnChecks(shaA, githubfake.Fail[[]githubapi.Check](errBadCredentials))
-	_, stderr := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
+	_, stderr := bench.expect(exitNotFine, "wait", "7", "--timeout", "30")
 	contains(t, stderr, "Bad credentials")
 	if bench.hub.count("Checks") != 1 || bench.clock.slept() != 0 {
 		t.Fatal("a failure is said at once, not waited out")
@@ -254,7 +254,7 @@ func TestAFormatJackstayCannotReadIsExit5(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	bench.hub.OnChecks(shaA, githubfake.Fail[[]githubapi.Check](&json.SyntaxError{}))
-	bench.expect(exitFormat, "ci-status", "7")
+	bench.expect(exitFormat, "status", "7")
 }
 
 func TestCIStatusReportsOnce(t *testing.T) {
@@ -262,13 +262,13 @@ func TestCIStatusReportsOnce(t *testing.T) {
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{pending("test")}, []githubapi.Check{failed("test", 0)},
 		[]githubapi.Check{passed("test")}, nil)
-	bench.expect(exitPending, "ci-status", "7")
-	bench.expect(exitNotFine, "ci-status", "7")
-	bench.expect(exitFine, "ci-status", "7")
-	stdout, _ := bench.expect(exitPending, "ci-status", "7")
+	bench.expect(exitPending, "status", "7")
+	bench.expect(exitNotFine, "status", "7")
+	bench.expect(exitFine, "status", "7")
+	stdout, _ := bench.expect(exitPending, "status", "7")
 	contains(t, stdout, "no checks registered for this ref yet")
 	if bench.clock.slept() != 0 {
-		t.Fatal("ci-status never waits")
+		t.Fatal("status never waits")
 	}
 }
 
@@ -278,7 +278,7 @@ func TestCIStatusHeadMovingWhileTheChecksAreReadIsExit4(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA), pull(7, "feat", shaB))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("test")})
-	_, stderr := bench.expect(exitMoved, "ci-status", "7")
+	_, stderr := bench.expect(exitMoved, "status", "7")
 	contains(t, stderr, "moved from aaaaaaaa to bbbbbbbb")
 	calls := bench.hub.Calls()
 	if len(calls) != 3 || calls[1].Op != "Checks" || calls[2].Op != "PullRequest" {
@@ -312,7 +312,7 @@ func TestBuckets(t *testing.T) {
 			bench := newHarness(t, checkout(shaA))
 			onPull(bench.hub, pull(7, "feat", shaA))
 			onChecks(bench.hub, shaA, []githubapi.Check{each.check})
-			bench.expect(each.want, "ci-status", "7")
+			bench.expect(each.want, "status", "7")
 		})
 	}
 	if settled[githubapi.Pending] {
@@ -326,7 +326,7 @@ func TestARerunsNewestResultWins(t *testing.T) {
 	bench := newHarness(t, checkout(shaA))
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, []githubapi.Check{passed("test")})
-	bench.expect(exitFine, "ci-wait", "7")
+	bench.expect(exitFine, "wait", "7")
 }
 
 func TestSummaryOrderRedFirst(t *testing.T) {
@@ -373,9 +373,9 @@ func TestWaitDefaultsComeFromTheGitHubSectionAndFlagsWin(t *testing.T) {
 	}
 	onPull(bench.hub, pull(7, "feat", shaA))
 	onChecks(bench.hub, shaA, nil)
-	_, stderr := bench.expect(exitPending, "ci-wait", "7")
+	_, stderr := bench.expect(exitPending, "wait", "7")
 	contains(t, stderr, "within 3s")
-	_, stderr = bench.expect(exitPending, "ci-wait", "7", "--timeout", "1")
+	_, stderr = bench.expect(exitPending, "wait", "7", "--timeout", "1")
 	contains(t, stderr, "within 1s")
 }
 
@@ -387,7 +387,7 @@ func TestACancelledCheckUsesANewerRunOfTheSameWorkflowAndCommit(t *testing.T) {
 		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "success"},
 		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
 	}))
-	stdout, _ := bench.expect(exitFine, "ci-wait", "7", "--timeout", "30")
+	stdout, _ := bench.expect(exitFine, "wait", "7", "--timeout", "30")
 	contains(t, stdout, "run 5 supersedes cancelled run 4")
 }
 
@@ -401,7 +401,7 @@ func TestACancelledCheckWaitsForTheReplacementJob(t *testing.T) {
 		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "in_progress"},
 		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
 	}))
-	stdout, _ := bench.expect(exitFine, "ci-wait", "7", "--timeout", "20", "--interval", "5")
+	stdout, _ := bench.expect(exitFine, "wait", "7", "--timeout", "20", "--interval", "5")
 	contains(t, stdout, "0s: 1 pending — lint")
 	contains(t, stdout, "run 5 supersedes cancelled run 4")
 }
@@ -414,7 +414,7 @@ func TestAReplacementWorkflowWithoutTheRequiredJobStaysPending(t *testing.T) {
 		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "success"},
 		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
 	}))
-	stdout, stderr := bench.expect(exitPending, "ci-wait", "7", "--timeout", "5", "--interval", "5")
+	stdout, stderr := bench.expect(exitPending, "wait", "7", "--timeout", "5", "--interval", "5")
 	contains(t, stdout, "run 5 supersedes cancelled run 4")
 	contains(t, stderr, "still pending after 5s: lint")
 }
@@ -427,7 +427,7 @@ func TestACancelledCheckDoesNotHideAFailedReplacement(t *testing.T) {
 		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "failure"},
 		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
 	}))
-	stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
+	stdout, _ := bench.expect(exitNotFine, "wait", "7", "--timeout", "30")
 	contains(t, stdout, "run 5 supersedes cancelled run 4")
 	contains(t, stdout, "RED: 1 of 1 checks")
 }
@@ -445,7 +445,7 @@ func TestACancelledCheckRejectsAnUnrelatedReplacement(t *testing.T) {
 		bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
 			newer, {ID: 4, WorkflowID: 1, HeadSHA: shaA, HeadBranch: "feat", Event: "pull_request", Status: "completed", Conclusion: "cancelled"},
 		}))
-		stdout, _ := bench.expect(exitNotFine, "ci-wait", "7", "--timeout", "30")
+		stdout, _ := bench.expect(exitNotFine, "wait", "7", "--timeout", "30")
 		contains(t, stdout, "cancelled: lint (run 4 of ci)")
 	}
 }
@@ -468,21 +468,9 @@ func TestACancelledCheckReplacementRequiresTheSamePullRequest(t *testing.T) {
 				{ID: 5, WorkflowID: 1, HeadSHA: shaA, HeadBranch: "feat", Event: "pull_request", PullRequests: replacement.pulls},
 				{ID: 4, WorkflowID: 1, HeadSHA: shaA, HeadBranch: "feat", Event: "pull_request", PullRequests: []int{7, 8}},
 			}))
-			bench.expect(replacement.want, "ci-wait", "7", "--timeout", "30")
+			bench.expect(replacement.want, "wait", "7", "--timeout", "30")
 		})
 	}
-}
-
-func TestCancelledOptionalReplacementRemainsOptional(t *testing.T) {
-	rows := []githubapi.Check{checkRun("gate", "COMPLETED", "SUCCESS", 0), checkRun("lint", "COMPLETED", "CANCELLED", 4)}
-	bench, _ := landing(t, landSetup{checks: rows})
-	bench.hub.required = []RequiredCheck{{Name: "gate"}}
-	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
-		{ID: 5, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
-		{ID: 4, WorkflowID: 1, HeadSHA: shaA, Status: "completed", Conclusion: "cancelled"},
-	}))
-	stdout, _ := bench.expect(exitFine, "pr-land", "--timeout", "30")
-	contains(t, stdout, "not required: lint cancel (not waited for)")
 }
 
 func TestACancelledCheckRejectsAHeadThatMovesDuringRunLookup(t *testing.T) {
@@ -492,6 +480,6 @@ func TestACancelledCheckRejectsAHeadThatMovesDuringRunLookup(t *testing.T) {
 	bench.hub.OnWorkflowRuns(githubapi.RunFilter{HeadSHA: shaA}, answer([]githubapi.WorkflowRun{
 		{ID: 5, WorkflowID: 1, HeadSHA: shaA}, {ID: 4, WorkflowID: 1, HeadSHA: shaA},
 	}))
-	_, stderr := bench.expect(exitMoved, "ci-wait", "7", "--timeout", "30")
+	_, stderr := bench.expect(exitMoved, "wait", "7", "--timeout", "30")
 	contains(t, stderr, "head of #7 changed")
 }

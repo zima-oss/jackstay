@@ -157,6 +157,10 @@ func Dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	args = withCommandWords(args)
+	if replacement, gone := removedCommand(args); gone {
+		fmt.Fprintf(stderr, "jst: %s\n", replacement)
+		return 2
+	}
 	entry, words, found := Find(args)
 	if !found {
 		if len(args) == 2 && isHelpWord(args[1]) && writeGroup(stdout, args[0]) {
@@ -172,6 +176,32 @@ func Dispatch(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	return entry.Run(args[words:], stdin, stdout, stderr)
+}
+
+// removed are the commands 0.6.0 took out, with what replaces each (docs/design/land.md section
+// 6). A removed command is unknown: the error names its replacement and nothing runs.
+var removed = map[string]string{
+	"gh":                 "use `jst checks` (wait, status, run-wait) and `jst land` (status, find)",
+	"gh pr-land":         "use `jst land` (`--pr` is `--change`, `--dry-run` is `--plan`, `--no-merge` is `--prepare`)",
+	"gh pr-status":       "use `jst land status`",
+	"gh pr-find":         "use `jst land find`",
+	"gh ci-wait":         "use `jst checks wait`",
+	"gh ci-status":       "use `jst checks status`",
+	"gh run-wait":        "use `jst checks run-wait`",
+	"queue":              "use `jst land`, which uses the host's own merge queue where the base requires one",
+	"receipts attest-ci": "provenance is verified by `jst release` and the install only",
+	"receipts verify-ci": "provenance is verified by `jst release` and the install only",
+}
+
+// removedCommand is the message for a removed command's words, longest match first.
+func removedCommand(args []string) (string, bool) {
+	for words := min(2, len(args)); words > 0; words-- {
+		name := strings.Join(args[:words], " ")
+		if replacement, gone := removed[name]; gone {
+			return fmt.Sprintf("`jst %s` was removed in 0.6.0: %s", name, replacement), true
+		}
+	}
+	return "", false
 }
 
 func isHelpWord(word string) bool { return word == "--help" || word == "-h" }

@@ -20,41 +20,17 @@ func failing(bucket githubapi.Bucket) bool {
 	return bucket == githubapi.Fail || bucket == githubapi.Cancel
 }
 
-// waitOptions are ci-wait's flags.
+// waitOptions are wait's flags.
 type waitOptions struct {
 	timeout  time.Duration
 	interval time.Duration
 	lines    int
 	anyHead  bool
-	// required are the checks the base branch's rules require (pr-land reads them). Empty, every
-	// check is waited for and judged; else only these are waited for, and of the others only a
-	// failure stops (one pending, never started or cancelled is reported, not waited for).
-	required []RequiredCheck
-}
-
-// RequiredCheck is a check a branch's rules require: its name, and the app that must report it
-// (0: any).
-type RequiredCheck struct {
-	Name  string
-	AppID int64
-}
-
-// satisfiedBy says whether a row is this required check: its name, and its app when one is named
-// (a commit status names no app, so it is not one that requires an app).
-func (check RequiredCheck) satisfiedBy(row githubapi.Check) bool {
-	return row.Name == check.Name && (check.AppID == 0 || (row.Kind == githubapi.CheckRun && row.AppID == check.AppID))
-}
-
-func (check RequiredCheck) String() string {
-	if check.AppID == 0 {
-		return check.Name
-	}
-	return fmt.Sprintf("%s (app %d)", check.Name, check.AppID)
 }
 
 func (work *session) waitFlags(name string, args []string, most int) ([]string, waitOptions, error) {
 	timeoutDefault, intervalDefault, linesDefault := work.waitDefaults()
-	flags := commandFlags(name, work.deps.Stderr)
+	flags := commandFlags(work.name+" "+name, work.deps.Stderr)
 	timeout := flags.Float64("timeout", timeoutDefault, "seconds to wait for every check to settle")
 	interval := flags.Float64("interval", intervalDefault, "seconds between looks")
 	lines := flags.Int("lines", linesDefault, "log lines to show per failed check")
@@ -77,7 +53,7 @@ func (work *session) waitFlags(name string, args []string, most int) ([]string, 
 }
 
 func runCIWait(work *session, args []string) (int, error) {
-	positional, options, err := work.waitFlags("ci-wait", args, 1)
+	positional, options, err := work.waitFlags("wait", args, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -95,7 +71,7 @@ func runCIWait(work *session, args []string) (int, error) {
 }
 
 func runCIStatus(work *session, args []string) (int, error) {
-	positional, err := parseFlags(commandFlags("ci-status", work.deps.Stderr), args, 1)
+	positional, err := parseFlags(commandFlags(work.name+" status", work.deps.Stderr), args, 1)
 	if err != nil {
 		return 0, err
 	}
@@ -118,11 +94,9 @@ func firstOf(words []string) string {
 }
 
 // checkEvidence binds the result to the pull request and the commits whose checks were read.
-// With required checks, the test merge SHA also records whether GitHub had made a candidate.
 type checkEvidence struct {
 	repository string
 	pull       githubapi.PullRequest
-	watchMerge bool
 }
 
 func (seen checkEvidence) confirm(repository string, now githubapi.PullRequest) error {
@@ -140,8 +114,6 @@ func (seen checkEvidence) confirm(repository string, now githubapi.PullRequest) 
 	case before.BaseSHA != "" && before.BaseSHA != now.BaseSHA:
 		return failf(exitMoved, "the base commit of #%d changed after its checks were read (checked %s); run it again",
 			before.Number, short(before.BaseSHA, 8))
-	case seen.watchMerge && before.MergeCommitSHA != now.MergeCommitSHA:
-		return failf(exitMoved, "the test merge commit of #%d changed after its checks were read; run it again", before.Number)
 	}
 	return nil
 }
@@ -155,8 +127,8 @@ func (work *session) ciWait(number int, options waitOptions) (int, error) {
 	})
 }
 
-// withCIWaitBudget bounds the GitHub requests, including authentication and branch lookup when
-// called by ci-wait. pr-land gets its original context back for work outside the check wait.
+// withCIWaitBudget bounds the GitHub requests of a wait, including authentication and branch
+// lookup; the session's original context is restored after it.
 func (work *session) withCIWaitBudget(timeout time.Duration, wait func(started, deadline time.Time) (int, error)) (int, error) {
 	started := work.deps.Clock.Now()
 	budget := timeout
@@ -189,7 +161,7 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 		more, err := work.sleepUntil(deadline, options.interval)
 		return more && work.deps.Clock.Now().Before(deadline), err
 	}
-	announced, mergeSaid := false, false
+	announced := false
 	for {
 		work.notePull(number, head)
 		rows, err := work.github.Checks(work.ctx, head)
@@ -201,9 +173,6 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 		now, err := work.github.PullRequest(work.ctx, number)
 		if err != nil {
 			return 0, fmt.Errorf("pull request #%d: %w", number, err)
-		}
-		if err := work.sameBase(now); err != nil {
-			return 0, err
 		}
 		if now.HeadSHA != head {
 			if !options.anyHead {
@@ -217,28 +186,8 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 			}
 			continue
 		}
-		evidence := checkEvidence{repository: work.repository, pull: now, watchMerge: len(options.required) > 0}
-		onMerge := false
-		if evidence.watchMerge && now.MergeCommitSHA != "" {
-			if rows, onMerge, err = work.withMergeCommitRows(rows, options.required, now.MergeCommitSHA); err != nil {
-				return 0, err
-			}
-			confirmed, err := work.github.PullRequest(work.ctx, number)
-			if err != nil {
-				return 0, fmt.Errorf("pull request #%d: %w", number, err)
-			}
-			if err := evidence.confirm(work.repository, confirmed); err != nil {
-				return 0, err
-			}
-			evidence.pull = confirmed
-			if onMerge && !mergeSaid {
-				work.say("the test merge commit %s has results: the required checks are judged on it, as GitHub judges them",
-					short(now.MergeCommitSHA, 8))
-				mergeSaid = true
-			}
-		}
-		if len(rows) == 0 && len(options.required) == 0 {
-			// Queued but nothing registered (with required checks, weigh names the ones missing): the state four hand-rolled loops took for "finished".
+		if len(rows) == 0 {
+			// Queued but nothing registered: the state four hand-rolled loops took for "finished".
 			if !announced {
 				work.say("no checks registered for this commit yet — waiting for the run to appear (this is not a pass)")
 				announced = true
@@ -254,11 +203,7 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 			}
 			continue
 		}
-		candidateSHAs := []string{head}
-		if onMerge {
-			candidateSHAs = append(candidateSHAs, now.MergeCommitSHA)
-		}
-		rows, replacements, err := work.reconcileCancelled(rows, candidateSHAs, number)
+		rows, replacements, err := work.reconcileCancelled(rows, head, number)
 		if err != nil {
 			return 0, err
 		}
@@ -267,15 +212,14 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 			if err != nil {
 				return 0, fmt.Errorf("pull request #%d: %w", number, err)
 			}
-			if err := evidence.confirm(work.repository, confirmed); err != nil {
+			if err := (checkEvidence{repository: work.repository, pull: now}).confirm(work.repository, confirmed); err != nil {
 				return 0, err
 			}
-			evidence.pull = confirmed
 		}
 		for _, replacement := range replacements {
 			work.say("%s", replacement)
 		}
-		weighed := weigh(rows, options.required)
+		weighed := weigh(rows)
 		pending := weighed.pending
 		if len(pending) > 0 && len(weighed.failed) == 0 {
 			names := strings.Join(pending[:min(4, len(pending))], ", ")
@@ -294,12 +238,7 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 			continue
 		}
 		work.say("\n%s", summarise(rows))
-		if onMerge {
-			work.say("\n(%d check runs judged for head %s and test merge commit %s)",
-				checkRuns(rows), short(head, 8), short(now.MergeCommitSHA, 8))
-		} else {
-			work.say("\n(%d check runs attached to %s)", checkRuns(rows), short(head, 8))
-		}
+		work.say("\n(%d check runs attached to %s)", checkRuns(rows), short(head, 8))
 		for _, line := range weighed.notes() {
 			work.say("%s", line)
 		}
@@ -309,7 +248,6 @@ func (work *session) ciWaitUntil(number int, options waitOptions, started, deadl
 			return exitNotFine, nil
 		}
 		work.say("\nGREEN: %d checks, %s waiting.", weighed.judged, humanSeconds(work.deps.Clock.Now().Sub(started)))
-		work.judged[number] = evidence
 		return exitFine, nil
 	}
 }
@@ -336,7 +274,7 @@ func (work *session) ciStatus(number int) (int, error) {
 		return 0, failf(exitMoved, "the head of #%d moved from %s to %s while its checks were read. Checks for the old "+
 			"commit say nothing about the new one; run it again.", number, short(pull.HeadSHA, 8), short(now.HeadSHA, 8))
 	}
-	rows, replacements, err := work.reconcileCancelled(rows, []string{pull.HeadSHA}, number)
+	rows, replacements, err := work.reconcileCancelled(rows, pull.HeadSHA, number)
 	if err != nil {
 		return 0, err
 	}
@@ -357,7 +295,7 @@ func (work *session) ciStatus(number int) (int, error) {
 	for _, replacement := range replacements {
 		work.say("%s", replacement)
 	}
-	weighed := weigh(rows, nil)
+	weighed := weigh(rows)
 	for _, line := range weighed.notes() {
 		work.say("%s", line)
 	}
@@ -370,92 +308,63 @@ func (work *session) ciStatus(number int) (int, error) {
 	return exitFine, nil
 }
 
-// withMergeCommitRows applies GitHub's rule for the required checks, which is by commit: when the
-// pull request's test merge commit has any result, the required checks are judged on it; else on
-// the head. On the merge commit, the head's rows of required checks are dropped (one the merge
-// commit lacks is then waited for), and the merge commit's rows of required checks are judged in
-// their place. Its optional checks are also read so their failures are not missed. A merge
-// commit GitHub has not made yet, or that has no result, changes nothing.
-func (work *session) withMergeCommitRows(rows []githubapi.Check, required []RequiredCheck, mergeSHA string) ([]githubapi.Check, bool, error) {
-	merged, err := work.github.Checks(work.ctx, mergeSHA)
-	var notFound *githubapi.CommitNotFoundError
-	if errors.As(err, &notFound) {
-		return rows, false, nil
-	}
+// reconcileCancelled is supersede for the session's pull request: the rows, and a line for each
+// replacement.
+func (work *session) reconcileCancelled(rows []githubapi.Check, commit string, pullNumber int) ([]githubapi.Check, []string, error) {
+	result, err := supersede(work.ctx, work.github, rows, commit, pullNumber)
 	if err != nil {
-		return nil, false, fmt.Errorf("the checks of the test merge commit %s: %w", short(mergeSHA, 8), err)
+		return nil, nil, err
 	}
-	if len(merged) == 0 {
-		return rows, false, nil
-	}
-	isRequired := func(row githubapi.Check) bool {
-		return slices.ContainsFunc(required, func(check RequiredCheck) bool { return check.satisfiedBy(row) })
-	}
-	var out []githubapi.Check
-	for _, row := range rows {
-		if !isRequired(row) {
-			out = append(out, row)
-		}
-	}
-	out = append(out, merged...)
-	return out, true, nil
+	return result.rows, result.said, nil
 }
 
-// sameBase refuses a pull request whose base is no longer the one whose rules pr-land read: the
-// checks waited for are the old base's. Asked before every write and in every look.
-func (work *session) sameBase(pull githubapi.PullRequest) error {
-	rulesOf := work.rulesOf[pull.Number]
-	if rulesOf == "" || pull.Base == rulesOf {
-		return nil
-	}
-	return failf(exitMoved, "the base of #%d changed from %s to %s: the checks waited for are the ones %s requires. "+
-		"Run it again.", pull.Number, rulesOf, pull.Base, rulesOf)
+// superseded is supersede's answer: the rows, the line said for each replacement in order, and
+// each row's own line (aligned with rows; "" for a row nothing replaced).
+type superseded struct {
+	rows     []githubapi.Check
+	said     []string
+	rowNotes []string
 }
 
-// reconcileCancelled replaces a cancelled job only when the repository's run listing proves a
-// newer run of the same workflow and commit. Pull request runs must also name this PR in both
-// runs. A replacement without this job's result stays pending; the workflow's success alone
-// cannot satisfy a required check.
-func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string, pullNumber int) ([]githubapi.Check, []string, error) {
+// supersede replaces a cancelled job of a commit's rows only when the repository's run listing
+// proves a newer run of the same workflow and commit. Pull request runs must also name this pull
+// request in both runs. A replacement without this job's result stays pending; the workflow's
+// success alone cannot satisfy a required check.
+func supersede(ctx context.Context, client GitHub, rows []githubapi.Check, commit string, pullNumber int) (superseded, error) {
 	needsLookup := false
 	for _, row := range rows {
 		needsLookup = needsLookup || (row.Bucket() == githubapi.Cancel && row.RunID > 0)
 	}
-	if !needsLookup {
-		return rows, nil, nil
+	if !needsLookup || commit == "" {
+		return superseded{rows: rows, rowNotes: make([]string, len(rows))}, nil
 	}
-	runs := make(map[string][]githubapi.WorkflowRun, len(commits))
-	for _, sha := range commits {
-		if sha == "" {
-			continue
-		}
-		listed, err := work.github.WorkflowRuns(work.ctx, githubapi.RunFilter{HeadSHA: sha})
-		if err != nil {
-			return nil, nil, fmt.Errorf("workflow runs of %s: %w", short(sha, 8), err)
-		}
-		runs[sha] = listed
+	listed, err := client.WorkflowRuns(ctx, githubapi.RunFilter{HeadSHA: commit})
+	if err != nil {
+		return superseded{}, fmt.Errorf("workflow runs of %s: %w", short(commit, 8), err)
 	}
-	updated := make([]githubapi.Check, 0, len(rows))
-	var notes []string
+	result := superseded{rows: make([]githubapi.Check, 0, len(rows))}
+	// noteOfRow is the line of a replacement whose own job is among the rows already.
+	type jobKey struct {
+		run  int64
+		name string
+		app  int64
+	}
+	noteOfRow := map[jobKey]string{}
 	for _, row := range rows {
 		if row.Bucket() != githubapi.Cancel || row.RunID == 0 {
-			updated = append(updated, row)
+			result.rows, result.rowNotes = append(result.rows, row), append(result.rowNotes, "")
 			continue
 		}
-		var replacement githubapi.WorkflowRun
-		for sha, listed := range runs {
-			var original githubapi.WorkflowRun
-			for _, run := range listed {
-				if run.ID == row.RunID && run.HeadSHA == sha && run.WorkflowID > 0 {
-					original = run
-					break
-				}
+		var original, replacement githubapi.WorkflowRun
+		for _, run := range listed {
+			if run.ID == row.RunID && run.HeadSHA == commit && run.WorkflowID > 0 {
+				original = run
+				break
 			}
-			if original.ID == 0 {
-				continue
-			}
+		}
+		if original.ID != 0 {
 			for _, run := range listed {
-				if run.WorkflowID != original.WorkflowID || run.HeadSHA != sha ||
+				if run.WorkflowID != original.WorkflowID || run.HeadSHA != commit ||
 					(original.Event != "" && run.Event != original.Event) ||
 					(original.HeadBranch != "" && run.HeadBranch != original.HeadBranch) ||
 					!samePullRequestRun(original, run, pullNumber) ||
@@ -468,10 +377,11 @@ func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string
 			}
 		}
 		if replacement.ID == 0 {
-			updated = append(updated, row)
+			result.rows, result.rowNotes = append(result.rows, row), append(result.rowNotes, "")
 			continue
 		}
-		notes = append(notes, fmt.Sprintf("run %d supersedes cancelled run %d of %s for %s", replacement.ID, row.RunID, row.Workflow, row.Name))
+		note := fmt.Sprintf("run %d supersedes cancelled run %d of %s for %s", replacement.ID, row.RunID, row.Workflow, row.Name)
+		result.said = append(result.said, note)
 		found := false
 		for _, current := range rows {
 			if current.RunID == replacement.ID && current.Kind == githubapi.CheckRun && current.Name == row.Name && current.AppID == row.AppID {
@@ -480,6 +390,7 @@ func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string
 			}
 		}
 		if found {
+			noteOfRow[jobKey{run: replacement.ID, name: row.Name, app: row.AppID}] = note
 			continue
 		}
 		row.RunID = replacement.ID
@@ -494,9 +405,14 @@ func (work *session) reconcileCancelled(rows []githubapi.Check, commits []string
 				row.Status, row.Conclusion = "COMPLETED", "FAILURE"
 			}
 		}
-		updated = append(updated, row)
+		result.rows, result.rowNotes = append(result.rows, row), append(result.rowNotes, note)
 	}
-	return updated, notes, nil
+	for index, row := range result.rows {
+		if note, found := noteOfRow[jobKey{run: row.RunID, name: row.Name, app: row.AppID}]; found && row.Kind == githubapi.CheckRun {
+			result.rowNotes[index] = note
+		}
+	}
+	return result, nil
 }
 
 func samePullRequestRun(original, candidate githubapi.WorkflowRun, pullNumber int) bool {
@@ -516,55 +432,32 @@ func newerWorkflowRun(candidate, previous githubapi.WorkflowRun) bool {
 	return true
 }
 
-// weighed is a head's checks judged: the ones still to wait for, the ones that stop a merge, and
-// what is only reported.
+// weighed is a head's checks judged: the ones still to wait for and the ones that did not pass.
 type weighed struct {
-	pending []string          // names waited for: not settled, or required and not registered
-	failed  []githubapi.Check // failed or cancelled checks that count
+	pending []string          // names waited for: not settled
+	failed  []githubapi.Check // failed or cancelled checks
 	judged  int               // how many checks count
-	ignored []githubapi.Check // not required, and pending or cancelled: reported, not waited for
 }
 
-// weigh judges rows against the required checks (none: every check counts).
-func weigh(rows []githubapi.Check, required []RequiredCheck) weighed {
+// weigh judges rows: every check counts.
+func weigh(rows []githubapi.Check) weighed {
 	var out weighed
-	present := make([]bool, len(required))
 	for _, row := range rows {
-		counts := len(required) == 0
-		for index, check := range required {
-			if check.satisfiedBy(row) {
-				present[index], counts = true, true
-			}
-		}
 		bucket := row.Bucket()
 		switch {
-		case counts && !settled[bucket]:
+		case !settled[bucket]:
 			out.pending = append(out.pending, row.Name)
-			out.judged++
-		case counts && failing(bucket), !counts && bucket == githubapi.Fail:
+		case failing(bucket):
 			out.failed = append(out.failed, row)
-			out.judged++
-		case counts:
-			out.judged++
-		case bucket == githubapi.Pending || bucket == githubapi.Cancel:
-			out.ignored = append(out.ignored, row)
 		}
-	}
-	for index, check := range required {
-		if !present[index] {
-			out.pending = append(out.pending, check.String()+" (not registered yet)")
-		}
+		out.judged++
 	}
 	return out
 }
 
-// notes are the lines that say what was set aside: checks not required, and
-// cancelled checks that count (a cancellation, not a failure).
+// notes are the lines that say a cancelled check counts (a cancellation, not a failure).
 func (judged weighed) notes() []string {
 	var lines []string
-	for _, row := range judged.ignored {
-		lines = append(lines, fmt.Sprintf("not required: %s %s (not waited for)", row.Name, row.Bucket()))
-	}
 	for _, row := range judged.failed {
 		if row.Bucket() == githubapi.Cancel {
 			lines = append(lines, fmt.Sprintf("cancelled: %s (run %d of %s): a cancellation is not a pass", row.Name, row.RunID, row.Workflow))
@@ -611,6 +504,10 @@ func summarise(rows []githubapi.Check) string {
 // failureDetail is, for each failed check, its failed step's log: a red result that does not say
 // why is a red result someone has to go and ask about.
 func (work *session) failureDetail(rows []githubapi.Check, lines int) string {
+	return failureDetail(work.ctx, work.github, rows, lines)
+}
+
+func failureDetail(ctx context.Context, client GitHub, rows []githubapi.Check, lines int) string {
 	var out []string
 	for _, row := range rows {
 		if row.Bucket() != githubapi.Fail {
@@ -621,7 +518,7 @@ func (work *session) failureDetail(rows []githubapi.Check, lines int) string {
 			out = append(out, "    (no workflow run behind this check; open its link by hand)")
 			continue
 		}
-		jobs, err := work.github.Jobs(work.ctx, row.RunID)
+		jobs, err := client.Jobs(ctx, row.RunID)
 		if err != nil {
 			out = append(out, fmt.Sprintf("    (the jobs of run %d cannot be read: %v)", row.RunID, err))
 			continue
@@ -632,7 +529,7 @@ func (work *session) failureDetail(rows []githubapi.Check, lines int) string {
 			continue
 		}
 		for _, job := range failedJobs {
-			out = append(out, work.jobDetail(job, lines)...)
+			out = append(out, jobDetail(ctx, client, job, lines)...)
 		}
 	}
 	return strings.Join(out, "\n")
@@ -659,8 +556,8 @@ func failedJobsOf(jobs []githubapi.Job, name string) []githubapi.Job {
 
 // jobDetail is a failed job's failed step, cut from the job's log by the step's start and end; when
 // it cannot be cut, the log's last lines, saying so.
-func (work *session) jobDetail(job githubapi.Job, lines int) []string {
-	log, err := work.github.JobLog(work.ctx, job.ID)
+func jobDetail(ctx context.Context, client GitHub, job githubapi.Job, lines int) []string {
+	log, err := client.JobLog(ctx, job.ID)
 	if err != nil {
 		return []string{fmt.Sprintf("    (the log of job %q cannot be read: %v)", job.Name, err)}
 	}

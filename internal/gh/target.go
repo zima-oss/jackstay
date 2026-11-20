@@ -1,6 +1,7 @@
 package gh
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -35,6 +36,20 @@ type pullTarget struct {
 	repository string
 	number     int
 	ref        string
+}
+
+// ParsePullURL is the repository (owner/name) and number a GitHub pull request URL names
+// (github.com/OWNER/REPO/pull/N); anything else is an error.
+func ParsePullURL(text string) (repository string, number int, err error) {
+	parts := pullURL.FindStringSubmatch(strings.TrimSpace(text))
+	if parts == nil {
+		return "", 0, fmt.Errorf("%q is not a GitHub pull request URL (github.com/<owner>/<repo>/pull/<number>)", text)
+	}
+	number, err = strconv.Atoi(parts[2])
+	if err != nil || number <= 0 {
+		return "", 0, fmt.Errorf("%q names no pull request number", text)
+	}
+	return parts[1], number, nil
 }
 
 func parsePullTarget(text string) (pullTarget, bool, error) {
@@ -120,20 +135,28 @@ func (work *session) resolvePull(target pullTarget) (int, error) {
 // openPulls reads this repository's open pull requests from the branch, excluding same-named
 // branches of other repositories.
 func (work *session) openPulls(branch string) ([]githubapi.PullRequest, error) {
-	owner, _, _ := strings.Cut(work.repository, "/")
-	pulls, err := work.github.PullRequestsByHead(work.ctx, owner+":"+branch, "open")
+	return openPulls(work.ctx, work.github, work.repository, branch)
+}
+
+func openPulls(ctx context.Context, client GitHub, repository, branch string) ([]githubapi.PullRequest, error) {
+	owner, _, _ := strings.Cut(repository, "/")
+	pulls, err := client.PullRequestsByHead(ctx, owner+":"+branch, "open")
 	if err != nil {
 		return nil, err
 	}
 	return slices.DeleteFunc(slices.Clone(pulls), func(pull githubapi.PullRequest) bool {
-		return pull.Head != branch || (pull.HeadRepository != "" && !strings.EqualFold(pull.HeadRepository, work.repository))
+		return pull.Head != branch || (pull.HeadRepository != "" && !strings.EqualFold(pull.HeadRepository, repository))
 	}), nil
 }
 
 // openPullOf resolves one open pull request in this repository. A base is supplied only when
 // recovering a lost reply to creating a pull request for that base.
 func (work *session) openPullOf(branch, base string) (githubapi.PullRequest, bool, error) {
-	matching, err := work.openPulls(branch)
+	return openPullOf(work.ctx, work.github, work.repository, branch, base)
+}
+
+func openPullOf(ctx context.Context, client GitHub, repository, branch, base string) (githubapi.PullRequest, bool, error) {
+	matching, err := openPulls(ctx, client, repository, branch)
 	if err != nil {
 		return githubapi.PullRequest{}, false, err
 	}
@@ -152,7 +175,7 @@ func (work *session) openPullOf(branch, base string) (githubapi.PullRequest, boo
 			choices = append(choices, fmt.Sprintf("#%d into %s", pull.Number, pull.Base))
 		}
 		return githubapi.PullRequest{}, false, failf(exitRequest,
-			"multiple open pull requests from %s: %s; select a pull request by number or URL (use --pr with pr-land or pr-status)",
+			"multiple open pull requests from %s: %s; select a pull request by number or URL (use --change with jst land or jst land status)",
 			branch, strings.Join(choices, ", "))
 	}
 }
@@ -174,10 +197,10 @@ func (work *session) pullForBranch(branch, selected string) (githubapi.PullReque
 		}
 	}
 	if number <= 0 {
-		return githubapi.PullRequest{}, false, failf(exitRequest, "--pr takes a positive pull request number or its GitHub URL")
+		return githubapi.PullRequest{}, false, failf(exitRequest, "--change takes a positive pull request number or its GitHub URL")
 	}
 	if target.repository != "" && !strings.EqualFold(target.repository, work.repository) {
-		return githubapi.PullRequest{}, false, failf(exitRequest, "--pr names %s, but this checkout is in %s", target.repository, work.repository)
+		return githubapi.PullRequest{}, false, failf(exitRequest, "--change names %s, but this checkout is in %s", target.repository, work.repository)
 	}
 	pull, err := work.github.PullRequest(work.ctx, number)
 	if err != nil {
@@ -204,9 +227,9 @@ func (work *session) currentBranch() (string, error) {
 
 // --- flags -------------------------------------------------------------------------------------
 
-// commandFlags is a flag set that writes to standard error and returns its errors.
+// commandFlags is a flag set named name that writes to standard error and returns its errors.
 func commandFlags(name string, stderr io.Writer) *flag.FlagSet {
-	flags := flag.NewFlagSet("jst gh "+name, flag.ContinueOnError)
+	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	return flags
 }
@@ -256,14 +279,4 @@ func (work *session) waitDefaults() (timeout, interval float64, lines int) {
 		lines = work.settings.Wait.LogLines
 	}
 	return timeout, interval, lines
-}
-
-// listFlag is a repeatable flag.
-type listFlag []string
-
-func (list *listFlag) String() string { return strings.Join(*list, ",") }
-
-func (list *listFlag) Set(value string) error {
-	*list = append(*list, value)
-	return nil
 }

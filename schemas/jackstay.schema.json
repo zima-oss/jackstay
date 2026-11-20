@@ -400,6 +400,53 @@
       ],
       "type": "integer"
     },
+    "land": {
+      "additionalProperties": false,
+      "properties": {
+        "autonomy": {
+          "enum": [
+            "merge-when-green",
+            "prepare"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "checks": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "host": {
+          "enum": [
+            "github"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        },
+        "human_paths": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "method": {
+          "enum": [
+            "squash",
+            "merge",
+            "rebase"
+          ],
+          "pattern": "\\S",
+          "type": "string"
+        }
+      },
+      "required": [
+        "autonomy"
+      ],
+      "type": "object"
+    },
     "lock": {
       "additionalProperties": false,
       "properties": {
@@ -443,41 +490,6 @@
     "project": {
       "pattern": "\\S",
       "type": "string"
-    },
-    "queue": {
-      "additionalProperties": false,
-      "if": {
-        "properties": {
-          "enabled": {
-            "const": true
-          }
-        },
-        "required": [
-          "enabled"
-        ]
-      },
-      "properties": {
-        "base_ref": {
-          "pattern": "\\S",
-          "type": "string"
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "require_pull_request": {
-          "type": "boolean"
-        },
-        "review_task": {
-          "pattern": "\\S",
-          "type": "string"
-        }
-      },
-      "then": {
-        "required": [
-          "base_ref"
-        ]
-      },
-      "type": "object"
     },
     "receipts": {
       "additionalProperties": false,
