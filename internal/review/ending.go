@@ -205,7 +205,9 @@ func (end End) event(subscriber string) chatevent.Event {
 	if end.Folder != "" {
 		body += "\nreport: " + filepath.Join(end.Folder, "report.md")
 	}
-	body += fmt.Sprintf("\nread it with `jst review last --task %s`", request.Task)
+	if end.Folder != "" {
+		body += fmt.Sprintf("\nread it with `jst review last --task %s`", request.Task)
+	}
 	if len(body) > chatevent.MaxBodyBytes {
 		body = strings.ToValidUTF8(body[:chatevent.MaxBodyBytes], "")
 	}
@@ -223,7 +225,7 @@ func (store Store) deliver(ctx context.Context, end End, recipient string, publi
 		if recipient != "" && subscriber != recipient || slices.Contains(end.Delivered, subscriber) {
 			continue
 		}
-		if err := publisher.Publish(ctx, end.event(subscriber)); err != nil {
+		if err := publisher.Publish(ctx, store.verified(end).event(subscriber)); err != nil {
 			failures = append(failures, err)
 			continue
 		}
@@ -309,7 +311,7 @@ func (store Store) Owed(recipient string) ([]chatevent.Event, error) {
 	var owed []chatevent.Event
 	for _, end := range found {
 		if slices.Contains(end.Request.Subscribers, recipient) && !slices.Contains(end.Delivered, recipient) {
-			owed = append(owed, end.event(recipient))
+			owed = append(owed, store.verified(end).event(recipient))
 		}
 	}
 	return owed, nil

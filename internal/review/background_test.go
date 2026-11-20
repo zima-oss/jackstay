@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -149,7 +150,11 @@ func TestFinishingARunTellsItsSubscribersOnceAndKeepsWhatTheChatRefused(t *testi
 		t.Fatal("finishing another request removed this one")
 	}
 	record := RoundRecord{Round: 2}
-	if err := store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitBlocks, Folder: "/store/round-2",
+	roundFolder := filepath.Join(store.TaskPath("feature/x"), "round-2")
+	if err := writeJSON(filepath.Join(roundFolder, AttemptName), AttemptRecord{Task: "feature/x", Attempt: 2, Request: submitted.Request.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Finish(ctx, "feature/x", submitted.Request.ID, Result{Status: ExitBlocks, Folder: roundFolder,
 		Record: &record, Next: "fix"}, chatevent.Default()); !errors.Is(err, chatevent.ErrUnavailable) {
 		t.Fatalf("no chat here, yet: %v", err)
 	}
