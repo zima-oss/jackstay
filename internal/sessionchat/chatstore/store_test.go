@@ -974,3 +974,42 @@ func TestACommitThatCannotBeLookedUpIsNeverRolledBack(t *testing.T) {
 		t.Fatalf("the next recovery rolls it forward: %v", err)
 	}
 }
+
+func TestARollbackKeepsItsEntryUntilItsRemovalsAreDurable(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	id := "msg_" + strings.Repeat("5", 26)
+	err := f.store.update(f.ctx, func(transaction *transaction) error {
+		if err := transaction.publishJournal(journalEntry{Op: opSend, ID: id, Sender: "cc:a"}); err != nil {
+			return err
+		}
+		envelope := Envelope{V: 1, ID: id, Recipients: []string{hashKey("cc:b")}}
+		data, _ := encodeRecord(envelope, envelopeBound)
+		delivery := Delivery{V: 1, ID: id, Key: "cc:b", Route: "hooks", State: "pending"}
+		return transaction.writeBeforeCommit("half", data, envelope, []Delivery{delivery})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliveries := filepath.Dir(f.store.place.deliveries(id))
+	f.store.syncFolder = func(folder string) error {
+		if folder == deliveries {
+			return errors.New("the disk refused")
+		}
+		return durable.SyncFolder(folder)
+	}
+	if _, err := f.store.Sessions(f.ctx); err == nil {
+		t.Fatal("a rollback whose removals are not durable fails the operation")
+	}
+	if !exists(filepath.Join(f.store.place.journal(), id)) {
+		t.Fatal("the entry stays until the removals are durable")
+	}
+	f.store.syncFolder = durable.SyncFolder
+	if _, err := f.store.Sessions(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(f.store.place.journal(), id)) || exists(f.store.place.envelope(id)) {
+		t.Fatal("the next recovery finishes the rollback")
+	}
+}
