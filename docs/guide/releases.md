@@ -1,26 +1,18 @@
 # Changelogs and releases
 
-A shared `CHANGELOG.md` is where parallel branches conflict. jackstay keeps each changelog entry as
-a file of its own, written in the commit that makes the change, and collects them at release time.
-With a `release` section it goes further: typed entries compute the next version, a workflow keeps
-a release pull request open, and landing that pull request makes the release.
+Parallel branches stop conflicting in `CHANGELOG.md`: each changelog entry is a file of its own,
+written in the commit that makes the change, and jackstay collects them at release time. With a
+`release` section it goes further: typed entries compute the next version, a workflow keeps a
+release pull request open, and merging that pull request makes the release.
 
-## Changelog entries: `jst changes`
-
-```text
-jst changes new --slug SLUG [--type TYPE] [--audience AUDIENCE] [--title TEXT] [--migration TEXT] [--card ID]
-jst changes check [--json]
-jst changes view [--version V] [--date D] [--audience AUDIENCE]
-jst changes collect --version V [--date D] [--dry-run]
-```
+## Write a changelog entry: `jst changes`
 
 ```json
 "changes": {"dir": "changes", "into": "CHANGELOG.md", "heading": "## {version} — {date}"}
 ```
 
 - `new` writes `changes/<slug>.md` and prints its path. Edit the file to add a body.
-- `check` validates every entry: exit 0 all valid; 1 problems, each named; 2 `jackstay.json`
-  cannot be used.
+- `check` validates every entry and names each problem (exit 1).
 - `view` prints the next section as it would be written; nothing is written.
 - `collect` (only in a project **without** `release`) writes the section into the changelog and
   removes the entries, once per release, in the release commit.
@@ -28,17 +20,22 @@ jst changes collect --version V [--date D] [--dry-run]
 ```sh
 jst changes new --slug faster-start --title 'Starts faster'
 jst changes check
-git add changes/faster-start.md && git commit -m 'Start faster'   # the entry lands with its change
+git add changes/faster-start.md && git commit -m 'Start faster'
+```
+
+The entry lands in the same commit as its change. At release time:
+
+```sh
 jst changes view --version 1.4.0
 jst changes collect --version 1.4.0 --dry-run
 jst changes collect --version 1.4.0
 ```
 
-`collect` requires tracked entry files and a clean changelog and entries folder. If interrupted,
-rerun the same version in the same worktree. jackstay resumes from its saved plan and only removes
-the unchanged tracked entries listed there. The worktree’s Git directory keeps the latest attempt
-and its outcome. An existing version without a matching unfinished plan leaves the entries in
-place.
+`collect` needs tracked entry files and a clean changelog and entries folder. If it is
+interrupted, rerun the same version in the same worktree: it resumes from its saved plan and
+removes only the unchanged tracked entries listed there. The worktree's Git directory keeps the
+latest attempt and its outcome. An existing version without a matching unfinished plan leaves the
+entries in place. Every flag: `jst changes --help`.
 
 ### Typed entries
 
@@ -59,7 +56,7 @@ jst changes new --slug widget-builder --type breaking --audience consumer \
 
 The audience is `consumer` (goes into the changelog) or `internal`.
 
-## Releases: `jst release`
+## Release: `jst release`
 
 ```json
 "release": {
@@ -84,23 +81,18 @@ How a release happens:
 
 Before 1.0, a breaking change bumps the minor version. 1.0 comes only by override.
 
-```text
-jst release prepare [--json]                        # the next release as the workflow would make it
-jst release notes [VERSION] [--format FORMAT] [--audience AUDIENCE]   # markdown, text, testflight, sparkle-html
-jst release override --version V --reason TEXT      # a version by hand, as a file for a pull request
-jst release yank X.Y.Z --reason TEXT                # mark a release yanked, as an entry
-jst release pr [--dry-run]                          # the workflow's step
-jst release publish [--dry-run]                     # the workflow's step
-```
-
-```text
+```sh
 jst release prepare
 jst release notes 1.3.0 --format text
-jst release override --version 1.0.0 --reason 'the API is stable'
+jst release override --version 1.0.0 --reason 'the interface is stable'
 ```
 
-`pr` and `publish` write to GitHub only inside GitHub Actions with `GH_TOKEN` set; anywhere else they
-are dry runs. A dry run can fetch the remote base into a temporary Git repository and leaves your
+`prepare` shows the next release as the workflow would make it; `notes` prints a release's notes
+(`markdown`, `text`, `testflight` or `sparkle-html`); `override` writes a version chosen by hand, as
+a file for a pull request; `jst release yank` marks a release yanked, as an entry. Every flag: `jst release --help`.
+
+`jst release pr` and `jst release publish` are the workflow's own steps. They write to GitHub only
+inside GitHub Actions with `GH_TOKEN` set; anywhere else they are dry runs. A dry run can fetch the remote base into a temporary Git repository and leaves your
 checkout's refs and objects unchanged. The commands use the project's Git remote
 (`github.remote` when set), and the fetched branch must agree with its release base.
 A tag is never moved.
@@ -119,15 +111,11 @@ The workflow downloads the jackstay release pinned in `adopt.pin`.
 
 ## `jst lint pr`
 
-```text
-jst lint pr (--event FILE | --pr N | --body-file F) [--rev REV] [--base B] [--head H] [--head-branch NAME]
-```
-
 One check of a pull request: its `Card:` lines ([records](records.md)), its changelog entry, and the
 tree's rules. In a project with `changes`, every pull request adds or edits an entry, or says why
 not on a line of its description:
 
-```
+```text
 Changes: none (refactoring with no visible effect)
 ```
 
@@ -135,13 +123,14 @@ A pull request that changes `jackstay.json` changes nothing else. In a project w
 version files and the changelog change only in release commits.
 
 ```sh
-jst lint pr --body-file pr-body.md --base origin/main --head HEAD    # by hand, before opening
-jst lint pr --pr 42                                                  # read from GitHub (needs github.account)
-jst lint pr --event "$GITHUB_EVENT_PATH"                             # in the card-line workflow
+jst lint pr --body-file pr-body.md --base origin/main --head HEAD
+jst lint pr --pr 42
+jst lint pr --event "$GITHUB_EVENT_PATH"
 ```
 
-Exit: 0 no problem; 1 problems, each named; 2 the request or `jackstay.json` cannot be used;
-5 an event file that is not what GitHub documents.
+The first checks by hand, before you open the pull request; the second reads it from GitHub (it
+needs `github.account`); the third is what the `card-line` workflow runs. It exits 1 with each
+problem named. Every flag and exit status: `jst lint pr --help`.
 
 ## What can go wrong
 

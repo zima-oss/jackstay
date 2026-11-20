@@ -1,6 +1,6 @@
 # GitHub App setup pilot for release workflows
 
-Status on 2026-11-19. Discovery and acceptance specification for [issue #2](https://github.com/zima-oss/jackstay/issues/2). The organization pilot has verified manifest registration, a scoped installation and a token read probe in a dedicated private test repository.
+Discovery and acceptance specification for [issue #2](https://github.com/zima-oss/jackstay/issues/2).
 
 ## Scope and existing contract
 
@@ -20,32 +20,11 @@ The first permission set to test is repository `contents: write`, `pull_requests
 
 ## Disposable pilot acceptance matrix
 
-### Personal-account prerequisite run
-
-A dedicated private test repository under a personal account had an admin grant and Actions enabled. The probe used an empty synthetic repository.
-
-| Probe | Observed result |
-|---|---|
-| `gh variable set` in the dedicated repository | A synthetic `JACKSTAY_PILOT_CLIENT_ID` variable was written and read back through the repository Actions variable API. Its value is only a placeholder. |
-| `gh secret set` from standard input in the dedicated repository | A synthetic `JACKSTAY_PILOT_FAKE_PRIVATE_KEY` secret was accepted. The repository Actions secret API returned its name and creation timestamp. GitHub did not return the value, so this proves storage metadata only. |
-| Repository installation endpoint with the current user token | `GET /repos/{owner}/{repo}/installation` returned HTTP 401 with `A JSON web token could not be decoded`. This endpoint requires App authentication for this query; the response does not establish whether an App is installed. |
-| User installations endpoint with the current user token | `GET /user/installations` returned HTTP 403 and requested a token authorized to a GitHub App. The present CLI credential cannot perform the planned installation check through that endpoint. |
-
-The synthetic variable and secret from the earlier prerequisite probe use distinct names. That probe covered storage metadata and the CLI token's installation-query limitations.
-
-A separate organization pilot created one empty private repository through its OpenTofu stack.
-The owner confirmed registration in GitHub's manifest flow and installed the private App on
-the selected pilot repository. The loopback callback verified its state and exchanged the code
-over verified TLS. It passed the returned private key in memory to the pilot repository's
-Actions secret, and stored the client ID in its Actions variable. A narrowed installation
-token listed exactly one repository, read that target and was revoked after the probe.
-
-A workflow in that same test repository minted a fresh scoped App token from the saved Actions
-settings, checked its one-repository grant, pushed a synthetic Git branch and created a pull
-request. A second workflow triggered from that App-authored pull request and passed. A preceding
-REST contents write directly after ref creation returned HTTP 404. The successful Git push
-exercised the same write surface as release delivery. The pilot used repository-scoped Actions
-settings and no production workflows.
+Pilot runs so far passed the organization manifest registration, the loopback callback with its
+state check, storing the client ID and key in Actions settings, a token narrowed to one repository,
+and a workflow triggered from an App-authored pull request. A REST contents write right after ref
+creation returned HTTP 404; a Git push over the same write surface succeeded. The cases below are
+still open.
 
 Use a disposable organization repository, a second unrelated repository under that organization, and a disposable personal-account repository. Each fixture has its own App and branch or tag ruleset where needed. Keep account identifiers, private repository paths and raw object IDs in operator-controlled notes outside Git. Publish sanitized outcomes and status codes. Keep credentials and temporary registration codes out of notes and logs. Delete pilot credentials and Apps after the evidence is reviewed.
 
