@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:18e3953cb6df — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:5223ad553426 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed on this machine. Reach for it before a hand-written shell loop:
@@ -56,8 +56,8 @@ the same rules hold.
 - **The guard** refuses destructive commands and names what to run instead: run that, never a
   workaround. A line `jst guard let this command run, with a warning` means read it before going
   on.
-- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.
-  Pick `codex` or `claude-code`, or use the project's `review.use`.
+- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
+  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
   `jst review check BASE..REV --task NAME` checks the saved round.
 - **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
   Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.

@@ -46,7 +46,7 @@ JSON
     expect_outcome 1 'outcome=failed' x-fail
     expect_outcome 76 'outcome=nothing-run' x-empty
     expect_outcome 77 'the Jest report is a discovery result' x-discovery
-    expect_outcome 77 'retried assertions without intermediate attempt evidence' x-retry
+    expect_outcome 78 'outcome=passed-on-retry' x-retry
     expect_outcome 0 'counted=1 skipped=0' x-shard-one
     expect_outcome 0 'counted=1 skipped=2' x-shard-two
     expect_outcome 0 'outcome=passed' x-pick 'selection.test.js::group brackets [1]'

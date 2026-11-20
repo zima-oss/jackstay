@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report.xsd" version="3.0.2" name="dev.jackstay.fixtures.FlakyTest" time="0.001" tests="1" errors="0" skipped="0" failures="0">
+  <properties>
+    <property name="java.specification.version" value="21"/>
+  </properties>
+  <testcase name="passes" classname="dev.jackstay.fixtures.FlakyTest" time="0.009"/>
+  <testcase name="passesOnRerun" classname="dev.jackstay.fixtures.FlakyTest" time="0.001">
+    <flakyFailure message="first attempt" type="org.opentest4j.AssertionFailedError">
+      <stackTrace><![CDATA[org.opentest4j.AssertionFailedError: first attempt
+	at org.junit.jupiter.api.AssertionUtils.fail(AssertionUtils.java:38)
+	at org.junit.jupiter.api.Assertions.fail(Assertions.java:138)
+	at dev.jackstay.fixtures.FlakyTest.passesOnRerun(FlakyTest.java:13)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+]]></stackTrace>
+    </flakyFailure>
+  </testcase>
+</testsuite>

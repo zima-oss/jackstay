@@ -88,3 +88,31 @@ func TestDirectStructuredReportsRecordAndKeyTheEvidence(t *testing.T) {
 		t.Fatalf("changed config reused stale evidence: status %d, calls %d, %s", status, world.fake.calls, world.stderr.String())
 	}
 }
+
+func TestDirectStructuredRunPassedOnRetryIsNoPass(t *testing.T) {
+	const settings = `{"jackstay_schema":1,"project":"demo","receipts":{"inputs":["src"],"toolchain":[],"env":[],"commands":[
+		{"argv":["surefire-wrapper"],"judge":"junit","report":"report.xml","reuse":true}]}}`
+	world := newWorld(t, settings)
+	world.fake = &fakeRun{}
+	world.fake.during = func() {
+		for _, pair := range world.fake.spec.Env {
+			if path, found := strings.CutPrefix(pair, testreport.PathVariable+"="); found {
+				report := `<testsuite tests="0"><testcase name="case" classname="c"><flakyError/></testcase></testsuite>`
+				if err := os.WriteFile(path, []byte(report), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+	}
+	if status := world.test("--", "surefire-wrapper"); status != StatusPassedOnRetry {
+		t.Fatalf("status %d: %s", status, world.stderr.String())
+	}
+	record := world.lastRecord(EventRun)
+	if record.Text("outcome") != OutcomePassedOnRetry || record["stored"] == true || !strings.Contains(world.stderr.String(), "1 test passed only on retry") {
+		t.Fatalf("record %v: %s", record, world.stderr.String())
+	}
+	world.fake = &fakeRun{during: world.fake.during}
+	if status := world.test("--", "surefire-wrapper"); status != StatusPassedOnRetry || world.fake.calls != 1 {
+		t.Fatalf("a retried pass was reused: status %d, calls %d", status, world.fake.calls)
+	}
+}

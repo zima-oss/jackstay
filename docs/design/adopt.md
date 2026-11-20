@@ -419,8 +419,8 @@ The text, for a project with every section (`internal/adopt/block`, golden-teste
 - **GitHub**: `jst gh ci-wait` / `ci-status` (a pull request's checks), `run-wait`, `pr-status`,
   `pr-land` (push, open, wait, squash-merge the head that was checked). jackstay acts as the account in
   `jackstay.json` (`github.account`).
-- **Review a change**: `jst review BASE..REV --task NAME --reviewer NAME` runs a cold review.
-  Pick `codex` or `claude-code`, or use the project's `review.use`.
+- **Review a change**: `jst review BASE..REV --task NAME` runs a cold review by Codex, or by the
+  project's `review.use`; `--reviewer claude-code` (or `codex,claude-code`) picks another.
   `jst review check BASE..REV --task NAME` checks the saved round.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/main..HEAD` before pushing; `jst cards ID` shows what landed per card.

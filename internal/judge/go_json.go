@@ -135,9 +135,10 @@ func (reader *goJSONReader) packageEvent(pkg *goJSONPackage, event goJSONEvent) 
 	switch event.Action {
 	case "output":
 		// go test replays test events from its cache. The package summary records
-		// that fact even though the replayed events look like a fresh execution.
+		// that fact even though the replayed events look like a fresh execution: it writes
+		// "(cached)" in place of the elapsed time and keeps the rest of the line (coverage).
 		fields := strings.Fields(event.Output)
-		if len(fields) >= 3 && fields[0] == "ok" && fields[1] == event.Package && fields[len(fields)-1] == "(cached)" {
+		if len(fields) >= 3 && fields[0] == "ok" && fields[1] == event.Package && fields[2] == "(cached)" {
 			reader.cached = true
 		}
 	case "pass", "fail", "skip":
@@ -153,6 +154,8 @@ func (reader *goJSONReader) packageEvent(pkg *goJSONPackage, event goJSONEvent) 
 		}
 	case "bench":
 		// Benchmarks are measurements and do not establish an executed test.
+	case "attr", "artifacts":
+		// Metadata (t.Attr, Go 1.25+; the artifact folder, Go 1.26+): neither a result nor a problem.
 	default:
 		reader.problem = "a Go package reported an unknown action"
 	}
@@ -240,8 +243,9 @@ func (reader *goJSONReader) caseEvent(pkg *goJSONPackage, event goJSONEvent) {
 				reader.durationsTruncated = true
 			}
 		}
-	case "output":
-		// Output is retained by the normal run log, not as structured evidence.
+	case "output", "attr", "artifacts":
+		// Output is retained by the normal run log, and a test's attributes (t.Attr, Go 1.25+) and
+		// artifact folder (Go 1.26+) are metadata: none of them is structured evidence.
 	case "bench":
 		reader.problem = "a Go test reported a benchmark action"
 	default:

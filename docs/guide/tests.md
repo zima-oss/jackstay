@@ -23,6 +23,7 @@ status alone: a test command may itself end with 2 or 77.
 | `gave-up` | the machine-wide lock was not had within `--wait` | 75 |
 | `nothing-run` | ended 0, but the output showed no test | 76 |
 | `unjudged` | ended 0, but the output could not be read to its end, or it left processes or files that cannot be attributed | 77 |
+| `passed-on-retry` | every test passed, but the report shows at least one that passed only after its runner retried it (a Surefire `flakyFailure`, a Jest assertion run more than once): **not a pass**, no receipt, and a gate step with it fails the gate | 78 |
 | `timed-out` | a scope's timeout ended the whole process tree | 124 |
 | `stopped` | `jst test` was asked to stop; it ends by that signal | — |
 
@@ -49,7 +50,7 @@ jst test last                # the last run again: outcome, what went wrong, whe
 jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock] [--resume] [--keep-going] [--commit REV]
 jst test list [--project NAME]       # the scopes, what each runs, when the project runs it
 jst test plan SCOPE [ARGS...]        # the words a scope would run, step by step; runs nothing
-jst test auto [--base REF]           # choose and run a scope from committed paths
+jst test auto [--base REF]           # choose and run a scope from changed paths
 jst test changed [BASE..REV]         # same choice; a range runs on a clean copy of REV
 jst test plan auto [--base REF]      # show the choice and command without running it
 jst test plan changed BASE..REV      # show the choice and command for REV
@@ -134,9 +135,9 @@ counted pass, `jst test last --scope SCOPE --json` includes up to 512 measuremen
 A reused run has no fresh measurements. These values measure the producer's reported time,
 which can include setup and teardown. [pytest time reporting](https://docs.pytest.org/en/stable/how-to/output.html#creating-junitxml-format-files)
 
-### Choose a scope from committed paths
+### Choose a scope from changed paths
 
-Declare `test.selection` to let `jst test changed` choose a scope from the commits since a base.
+Declare `test.selection` to let `jst test changed` choose a scope from the paths changed since a base.
 The `order` lists declared scopes from least to most strict and ends with `gate`. Rules map
 repository-relative path globs to scopes. `*` matches within one path segment; `**` matches
 zero or more complete segments. Every path touched by a commit counts, including a deleted path
@@ -170,10 +171,11 @@ jst test plan changed origin/main..HEAD # plans from that clean copy without run
 ```
 
 Without `--base`, jackstay uses Git's `origin/HEAD` default ref. If that ref is unavailable, name
-the base explicitly. Selection uses the committed range through `HEAD`; uncommitted edits do not
-change the choice. `--commit REV` runs the selection and chosen scope on a clean copy of that
-commit. Use `jst test gate` for installation, tags and release publishing, regardless of the
-scope selected for ordinary development feedback.
+the base explicitly. A run in the working tree counts the committed range through `HEAD` and
+the uncommitted and untracked paths it runs with (those `git status` lists; ignored files do not
+count). `--commit REV` and `BASE..REV` run the selection and chosen scope on a clean copy of that
+commit, so only its committed range counts. Use `jst test gate` for installation, tags and
+release publishing, regardless of the scope selected for ordinary development feedback.
 Projects without `test.selection` retain their declared `changed` scope and its existing runner.
 
 ```json
@@ -294,7 +296,8 @@ single report cannot prove coverage of the complete shard plan.
 
 Disable retries for evidence that must prove a first-attempt pass. Jest JSON exposes repeated
 invocations, so jackstay reports a successful Jest run with a repeated assertion as
-`unjudged`. Vitest JUnit and VSTest TRX from MSTest can collapse a failed first attempt followed
+`passed-on-retry` (exit 78), which is not a pass. A skipped or todo assertion with repeated
+invocations makes the report `unjudged`. Vitest JUnit and VSTest TRX from MSTest can collapse a failed first attempt followed
 by a pass into one final result. These reports cannot establish a first-attempt pass with
 retries enabled. TRX from Microsoft.Testing.Platform is outside these checks.
 [Jest CLI](https://jestjs.io/docs/cli) · [VSTest logger](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-test-vstest)

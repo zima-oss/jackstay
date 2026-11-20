@@ -61,8 +61,19 @@ func TestGoJSONRefusesCacheAndIncompleteOrContradictoryEvidence(t *testing.T) {
 			goEvent("pass", "one", "TestCase", ""), goEvent("output", "one", "", "ok  \tone\t(cached)\n"),
 			goEvent("pass", "one", "", "")}, Unjudged, "cache"},
 		{"cached replay with coverage summary", []string{goEvent("start", "one", "", ""), goEvent("run", "one", "TestCase", ""),
-			goEvent("pass", "one", "TestCase", ""), goEvent("output", "one", "", "ok  \tone\t0.013s\tcoverage: 81.0% of statements\t(cached)\n"),
+			goEvent("pass", "one", "TestCase", ""), goEvent("output", "one", "", "ok  \tone\t(cached)\tcoverage: 81.0% of statements\n"),
 			goEvent("pass", "one", "", "")}, Unjudged, "cache"},
+		{"cached replay with Go's own coverage line", []string{
+			`{"Action":"start","Package":"example.invalid/fixture"}`,
+			`{"Action":"run","Package":"example.invalid/fixture","Test":"TestCase"}`,
+			`{"Action":"pass","Package":"example.invalid/fixture","Test":"TestCase","Elapsed":0}`,
+			`{"Action":"output","Package":"example.invalid/fixture","Output":"PASS\n","OutputType":"frame"}`,
+			`{"Action":"output","Package":"example.invalid/fixture","Output":"coverage: 100.0% of statements\n"}`,
+			`{"Action":"output","Package":"example.invalid/fixture","Output":"ok  \texample.invalid/fixture\t(cached)\tcoverage: 100.0% of statements\n"}`,
+			`{"Action":"pass","Package":"example.invalid/fixture","Elapsed":0}`}, Unjudged, "cache"},
+		{"fresh run with coverage", []string{goEvent("start", "one", "", ""), goEvent("run", "one", "TestCase", ""),
+			goEvent("pass", "one", "TestCase", ""), goEvent("output", "one", "", "ok  \tone\t0.013s\tcoverage: 81.0% of statements\n"),
+			goEvent("pass", "one", "", "")}, Passed, ""},
 		{"unfinished package", []string{goEvent("start", "one", "", ""), goEvent("run", "one", "TestCase", ""),
 			goEvent("pass", "one", "TestCase", "")}, Unjudged, "incomplete"},
 		{"unfinished test", []string{goEvent("start", "one", "", ""), goEvent("run", "one", "TestCase", ""),
@@ -117,5 +128,31 @@ func TestGoJSONBoundsStreamAndNames(t *testing.T) {
 	facts := readGoEvents(goEvent("start", strings.Repeat("a", maxGoJSONName+1), "", ""))
 	if !strings.Contains(strings.Join(facts.Unjudged, " "), "identity") {
 		t.Fatal("oversized name was accepted")
+	}
+}
+
+// The attr and artifacts lines are Go 1.27's own output (go test -json -artifacts, with t.Attr and
+// t.ArtifactDir), with the timestamps and the artifact folder made neutral.
+func TestGoJSONTreatsAttributesAndArtifactsAsMetadata(t *testing.T) {
+	facts := readGoEvents(
+		`{"Action":"start","Package":"example.invalid/fixture"}`,
+		`{"Action":"run","Package":"example.invalid/fixture","Test":"TestAttr"}`,
+		`{"Action":"attr","Package":"example.invalid/fixture","Test":"TestAttr","Key":"issue","Value":"fixture"}`,
+		`{"Action":"run","Package":"example.invalid/fixture","Test":"TestAttr/child"}`,
+		`{"Action":"attr","Package":"example.invalid/fixture","Test":"TestAttr/child","Key":"kind","Value":"leaf"}`,
+		`{"Action":"pass","Package":"example.invalid/fixture","Test":"TestAttr/child","Elapsed":0}`,
+		`{"Action":"pass","Package":"example.invalid/fixture","Test":"TestAttr","Elapsed":0}`,
+		`{"Action":"run","Package":"example.invalid/fixture","Test":"TestArtifact"}`,
+		`{"Action":"artifacts","Package":"example.invalid/fixture","Test":"TestArtifact","Path":"/tmp/out/_artifacts/TestArtifact/1"}`,
+		`{"Action":"output","Package":"example.invalid/fixture","Test":"TestArtifact","Output":"=== ARTIFACTS TestArtifact /tmp/out/_artifacts/TestArtifact/1\n","OutputType":"frame"}`,
+		`{"Action":"pass","Package":"example.invalid/fixture","Test":"TestArtifact","Elapsed":0}`,
+		`{"Action":"attr","Package":"example.invalid/fixture","Key":"package","Value":"level"}`,
+		`{"Action":"pass","Package":"example.invalid/fixture","Elapsed":0.001}`,
+	)
+	if facts.Counts.Counted != 2 || facts.Failure != "" || len(facts.Unjudged) != 0 {
+		t.Fatalf("metadata events: %+v", facts)
+	}
+	if got := Evaluate(facts, End{}, ScopePolicy).Outcome; got != Passed {
+		t.Fatalf("outcome %s", got)
 	}
 }
