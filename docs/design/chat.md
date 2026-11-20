@@ -1154,9 +1154,10 @@ Not promised:
 
 - **Exactly once for notices and idle firings.** A stop, or a mark that cannot be written, shows a
   notice again.
-- **The last stretch to the client.** A process stopped after a step and before its result reaches
-  the client leaves what the step marked (a read receipt, a notice shown) marked. The outbox,
-  `chat.thread` and `chat.whoami` still hold it, so a sender can always ask.
+- **The last stretch to the client for read receipts.** A process stopped after a read and before
+  its result reaches the client leaves the messages it read marked `read` (notices are marked only
+  after the handoff, section 8.5). The messages stay readable with `chat.thread`, and the sender's
+  outbox shows the receipt.
 - **A stop followed by a machine crash.** Only the folders the rules above name are fsynced. A
   machine crash right after a stopped removal can bring back files it had unlinked after the commit
   record: those found by their envelope are removed again by the next sweep; the others stay,
@@ -1324,14 +1325,17 @@ shown to the session it is owed to, without being stored as a message, in the `n
 notices wait, and how many; it shows none of them.
 
 A notice is shown **at least once**
-([W-096](../decisions/W-096-clear-limits-over-more-machinery.md)): `chat.inbox` builds its page,
-then marks the notices it includes `shown` in the same locked step. A mark that cannot be written
-leaves the notice owed, and it comes again on a later read; a mark is neither retried nor fsynced
-there, so a machine crash can also bring one back. A notice can thus be shown twice, and is never
-dropped by a fault of the store (section 7.5). Nothing is lost for good: the outbox holds every
-delivery receipt and its reason, and `chat.whoami` lists the session's idle notices of the last
-24 h, so a sender can always ask. A notice is one line: what happened, to which message, and the
-reason, for example `msg_… to web@fix-login [3fa9c1]: expired unread`.
+([W-096](../decisions/W-096-clear-limits-over-more-machinery.md)): `chat.inbox` returns the notices
+of its page and marks none of them; its caller marks them `shown` (`MarkShown`) only after the
+result is handed over: the MCP server once its response is written, `jst chat inbox` once it has
+printed. A stop before that mark, or a mark that cannot be written, leaves the notices owed, and
+they come again on a later read; a mark is neither retried nor fsynced, so a machine crash can also
+bring one back. A notice can thus be shown twice, and is never lost to a stop or a fault of the
+store (section 7.5). This is the acknowledgement of a queue: a consumer acknowledges what it has
+taken, after taking it. Nothing is lost for good: the outbox holds every delivery receipt and its
+reason, and `chat.whoami` lists the session's idle notices of the last 24 h, so a sender can always
+ask. A notice is one line: what happened, to which message, and the reason, for example
+`msg_… to web@fix-login [3fa9c1]: expired unread`.
 
 ### 8.6 Claude Code channels, opt-in
 

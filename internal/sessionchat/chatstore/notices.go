@@ -1,6 +1,7 @@
 package chatstore
 
 import (
+	"context"
 	"errors"
 	"strings"
 
@@ -110,11 +111,30 @@ func sessionNoticeWords(notice SessionNotice) string {
 	return strings.TrimSpace(notice.Kind + " " + notice.About)
 }
 
-// markShown marks the notices of a page shown, after the page is built (section 8.5). Notices are
-// delivered at least once (W-096): every notice on the page is returned, and one whose mark cannot be
-// written stays owed and comes again on a later read. A mark is never retried or synced in the step;
-// a machine crash that undoes it only shows the notice again. The session's own notices are marked
-// on the record as it is at that moment, so nothing written earlier in the step (an arming) is undone.
+// NoticeRef is a notice an inbox result returned, for MarkShown.
+type NoticeRef = OwedNotice
+
+// MarkShown marks shown the notices an inbox result returned (section 8.5). The caller calls it only
+// after the result is handed over (written to the client, printed), so notices are delivered at least
+// once (W-096): a stop before the mark, or a mark that cannot be written, leaves them owed, to come
+// again on a later read. A notice already shown or gone is skipped.
+func (store *Store) MarkShown(ctx context.Context, key string, refs []NoticeRef) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	return store.update(ctx, func(transaction *transaction) error {
+		session, err := transaction.sessionOf(key)
+		if err != nil {
+			return err
+		}
+		transaction.markShown(hashKey(session.Key), refs)
+		return nil
+	})
+}
+
+// markShown marks notices shown. A mark is never retried or synced: a machine crash that undoes it
+// only shows the notice again. The session's own notices are marked on the record as it is at that
+// moment, so nothing written since the read (an arming) is undone.
 func (transaction *transaction) markShown(sessionHash string, notices []OwedNotice) {
 	mark := func(path string, record any, bound int) {
 		if err := writeRecord(path, record, bound); err != nil && !errors.Is(err, durable.ErrNotSynced) {

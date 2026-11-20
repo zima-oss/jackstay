@@ -18,6 +18,10 @@ func (f *fixture) inbox(key string, input InboxInput) InboxResult {
 	if size := len(marshalCompact(result)); size > ResultBound {
 		f.t.Fatalf("the result takes %d bytes, past %d", size, ResultBound)
 	}
+	// As a caller does once the result is handed over.
+	if err := f.store.MarkShown(f.ctx, key, result.NoticeRefs); err != nil {
+		f.t.Fatalf("mark the notices of %s shown: %v", key, err)
+	}
 	return result
 }
 
@@ -907,8 +911,32 @@ func TestABodyThatFailsToLoadMarksNothingRead(t *testing.T) {
 	}
 }
 
-// Notices come at least once (W-096): one whose mark cannot be written is shown, stays owed, and is
-// shown again on the next read, then no more.
+// Notices come at least once (W-096): a result whose notices are never marked, as when the process
+// stops before its handoff, shows them again; once marked, they are not shown again.
+func TestANoticeComesAgainUntilItIsMarkedShown(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	f.send("cc:a", SendInput{To: "b", Message: "short-lived", ExpiresInSeconds: 60})
+	f.clock.advance(time.Minute)
+	if err := f.store.Sweep(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	first, err := f.store.Inbox(f.ctx, "cc:a", unread())
+	if err != nil || len(first.Notices) != 1 || len(first.NoticeRefs) != 1 {
+		t.Fatalf("the notice is returned with its reference: %+v, %v", first, err)
+	}
+	// The process stops before the handoff: nothing is marked.
+	second := f.inbox("cc:a", unread())
+	if len(second.Notices) != 1 {
+		t.Fatalf("an unmarked notice is shown again: %+v", second)
+	}
+	if third := f.inbox("cc:a", unread()); len(third.Notices) != 0 {
+		t.Fatalf("a marked notice is not shown again: %+v", third)
+	}
+}
+
+// A mark that cannot be written leaves the notice owed, to come again.
 func TestANoticeThatCannotBeMarkedComesAgain(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
@@ -918,22 +946,23 @@ func TestANoticeThatCannotBeMarkedComesAgain(t *testing.T) {
 	if err := f.store.Sweep(f.ctx); err != nil {
 		t.Fatal(err)
 	}
+	result, err := f.store.Inbox(f.ctx, "cc:a", unread())
+	if err != nil || len(result.Notices) != 1 {
+		t.Fatalf("the notice is shown: %+v, %v", result, err)
+	}
 	folder := f.store.place.deliveries(sent.MessageID)
 	if err := os.Chmod(folder, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	result, err := f.store.Inbox(f.ctx, "cc:a", unread())
-	if chmodErr := os.Chmod(folder, 0o700); chmodErr != nil {
-		t.Fatal(chmodErr)
-	}
-	if err != nil {
+	markErr := f.store.MarkShown(f.ctx, "cc:a", result.NoticeRefs)
+	if err := os.Chmod(folder, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if markErr != nil {
+		t.Fatal(markErr)
 	}
 	if f.delivery(sent.MessageID, "cc:b").Notice != "owed" {
 		t.Skip("this account writes a read-only folder (root)")
-	}
-	if len(result.Notices) != 1 {
-		t.Fatalf("the notice is shown although its mark failed: %+v", result)
 	}
 	if again := f.inbox("cc:a", unread()); len(again.Notices) != 1 {
 		t.Fatalf("a notice whose mark failed is shown again: %+v", again)

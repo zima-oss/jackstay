@@ -348,10 +348,10 @@ DeadlinePasses ==
 
 Sweep == SweepStale \/ SweepExpiresRequest \/ SweepExpiresDelivery
 
-(* The sender's inbox returns an owed notice (section 8.5). A notice is marked shown only after *)
-(* its page is returned, so a stop between the two returns it again: at least once (W-096).     *)
-(* MarkBeforeShow replays the rule before: marked first, then returned, so a stop between them  *)
-(* loses the notice.                                                                             *)
+(* The sender's inbox returns an owed notice (section 8.5). Its caller marks it shown only after *)
+(* the result is handed over, so a stop between the two returns it again: at least once         *)
+(* (W-096). MarkBeforeShow replays the rule before: marked first, then handed over, so a stop   *)
+(* between them loses the notice.                                                                *)
 
 OneMore(n) == IF n < 2 THEN n + 1 ELSE 2
 
