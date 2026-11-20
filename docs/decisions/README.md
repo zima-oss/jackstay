@@ -55,4 +55,5 @@ is added in a pull request.
 | [W-083](W-083-no-macos-job-in-ci.md) | CI runs the gate on Linux only; the macOS-only code is checked by `just gate` on a Mac before an install and a release |
 | [W-085](W-085-adopt-lands-settings-and-files-apart.md) | `jst adopt --settings-only`: a change of `jackstay.json` and other files lands in two pull requests, settings first (rule D0) |
 | [W-087](W-087-review-pinned-source.md) | Reviewers navigate pinned Git snapshots and read patches on demand |
-| [W-090](W-090-landing.md) | Landing in 0.6.0: one declarative `jst land` behind hosting adapters; two autonomy modes; approval checked by jackstay; `jst gh` and the queue removed |
+| [W-090](W-090-landing.md) | Landing in 0.6.0: one `jst land` behind hosting adapters; two autonomy modes chosen at adopt and setup; `jst gh` and the queue removed |
+| [W-092](W-092-thin-land-and-where-tests-run.md) | `jst land` stays thin: push, open, required checks, merge; where tests run is each project's declared split between local and CI |

@@ -1,39 +1,31 @@
-# `jst land`: one declarative landing, behind a hosting adapter
+# `jst land`: a thin landing behind a small hosting adapter; where tests run
 
-Status: specification for 0.6.0, not built. It follows
-[W-090](../decisions/W-090-landing.md) (one forge-neutral `jst land` with a declarative policy and
-hosting adapters, GitHub first; two autonomy modes chosen explicitly at adopt and setup; approval
-checked by jackstay itself, with publishing to the host as an optional switch; CI provenance
-through GitHub attestations; the open questions of this design settled by W-091), and keeps
+Status: specification for 0.6.0, not built. It follows [W-090](../decisions/W-090-landing.md)
+(one forge-neutral `jst land`, hosting adapters, two autonomy modes chosen explicitly) and
+[W-092](../decisions/W-092-thin-land-and-where-tests-run.md) (the landing stays thin; where tests
+run is the project's declared split between local and CI). It keeps
 [W-047](../decisions/W-047-release-redesign-fixed-settings-no-one-off-imports.md) (`jackstay.json`
-changes alone and is a maintainer's to merge), [W-019](../decisions/W-019-repeated-findings-mean-redesign.md)
-(this checkout is never switched, pulled or rebased by a landing) and
-[W-013](../decisions/W-013-quality-testing-declarative.md) (declarative, nothing named after a
-project). It replaces `jst gh pr-land`, the unreleased `jst queue` and the unreleased
-`jst receipts attest-ci`/`verify-ci`, and the pilot specification
-[merge-queue-pilot](../roadmap/merge-queue-pilot.md) for everything but batching.
+changes alone and is a person's to merge) and [W-019](../decisions/W-019-repeated-findings-mean-redesign.md)
+(a landing never switches, pulls or rebases this checkout).
 
-## What it removes
+## What it is, and what it is not
 
-| today (d542f11) | what goes wrong | here |
-|---|---|---|
-| `jst gh pr-land` merges, but reads no local evidence (gate, review) | a green host and an unreviewed, ungated change land together | one engine: policy, then evidence, then the local gate, then the merge (section 4) |
-| `jst queue` checks local evidence, but never merges, and its PR mode needs an approval by someone other than the author (`internal/mergequeue/policy.go`) | two half-flows; a solo maintainer cannot use the queue | the queue's evidence becomes `jst land`'s preflight; jackstay checks approval itself (section 4.3) |
-| `pr-land`'s `updateBehind` merges the base on GitHub and moves the head; a queue lane on that head is stale, which the queue reports only when asked | two records of one change that disagree | every attempt is one record; any moved input starts a new attempt (section 5) |
-| every call is written against GitHub's API (`internal/githubapi`, `internal/gh`, `internal/mergequeue`, `internal/release`) | GitLab and Bitbucket mean a rewrite | a hosting adapter with declared capabilities (section 3) |
-| a failed check that no rule requires stops `pr-land` | an optional job blocks a merge the rules allow | only required checks block; the others are reported (section 6) |
-| a run cancelled by its concurrency group ([#13](https://github.com/zima-oss/jackstay/issues/13)): `reconcileCancelled` infers a newer run from its metadata, but a replacement that finished red marks the check failed without its own job's result | a check judged by another job's result | a neutral `superseded` state, judged by the newer run's own job only (section 6.2) |
-| five shapes of landing evidence (section 5.1) | nothing to show afterwards what landed and why | one versioned landing record (section 5) |
-| `receipts attest-ci`/`verify-ci` with jackstay's own Ed25519 key, no producer and no consumer | a key to keep and nothing that uses it | the host's provenance (GitHub artifact attestations) through the adapter (section 3.5) |
+`jst land` pushes the branch, opens the change request, waits for the checks the host's branch
+rules require, and merges with the head that was checked. CI is the gate: what CI runs is what
+blocks a merge. Tests that CI cannot run are run locally, as the project declares (section 7).
 
-What stays the same: the push, the pull request's opening with its card line, the merge with an
-expected head, the lease on deleting the remote branch, and that this checkout is left as it is.
+Not in it: a local gate on a computed merge tree, landing-evidence records and a reconcile after the
+merge, carrying a review across base merges, publishing jackstay's statuses to the host, provenance
+as a landing condition (provenance stays in release and install), and jackstay's own merge queue.
+The host's native merge queue is used where the base requires one.
+
+`jst gh pr-land`, the other `jst gh` commands and the unreleased `jst queue` are removed in 0.6.0,
+with no aliases (section 6).
 
 ## 1. The `land` section of `jackstay.json`
 
-The section needs `jackstay_schema: 3`, so a jackstay older than 0.6.0 says a newer one is needed
-instead of misreading it. Every key has a default, and `jst adopt` writes the section in full
-(section 8), so what a project does is read in its file, not remembered from a default.
+It needs `jackstay_schema: 3`. `jst adopt` writes it in full, so a project's behaviour is read in
+its file.
 
 ```json
 "land": {
@@ -41,689 +33,205 @@ instead of misreading it. Every key has a default, and `jst adopt` writes the se
   "autonomy": "merge-when-green",
   "method": "squash",
   "checks": "rules",
-  "gate": true,
-  "review": true,
-  "base": "merge-tree",
-  "human_paths": [".github/workflows/**", ".claude/settings.json"],
-  "via": "direct",
-  "publish_statuses": false
+  "human_paths": [".github/workflows/**", ".claude/settings.json"]
 }
 ```
 
 | key | values | default | meaning |
 |---|---|---|---|
-| `host` | `github` (0.6.0); `gitlab`, `bitbucket` later | from the push remote's host | the adapter (section 3). Its connection settings stay in the adapter's own section: `github` (`account`, `remote`, `repository`, `wait`), later `gitlab`, `bitbucket` |
-| `autonomy` | `merge-when-green`, `prepare` | none: adopt asks (section 8) | `merge-when-green`: the agent merges when everything is green, apart from changes a person must merge. `prepare`: the agent does everything but the merge, and a person merges |
-| `method` | `squash`, `merge`, `rebase` | `squash` | the merge method asked of the host; refused at doctor when the host does not allow it |
-| `checks` | `rules`, or a list of names | `rules` | which host checks block: those the base's branch rules require, or the listed ones (section 6) |
-| `gate` | `true`, `false` | `true` | run the project's gate locally on the exact tree the merge will make (section 4.4) |
-| `review` | `true`, `false` | `true` | a clean `jst review` round of the change is required (section 4.3) |
-| `base` | `merge-tree`, `up-to-date` | `merge-tree` | base freshness (section 4.5) |
-| `human_paths` | glob list | adopt's recommendation | paths that only a person may land, besides `jackstay.json`, which is always one (W-047) |
-| `via` | `direct`, `auto-merge`, `queue` | `direct` | how the merge is asked of the host (section 4.8) |
-| `publish_statuses` | `true`, `false` | `false` | publish jackstay's evidence to the host as commit statuses (section 7) |
+| `host` | `github` (0.6.0) | the push remote's host | the adapter; its connection stays in `github` (`account`, `remote`, `repository`, `wait`) |
+| `autonomy` | `merge-when-green`, `prepare` | none: adopt asks | the agent merges when the required checks pass, except for human paths; or it stops before every merge |
+| `method` | `squash`, `merge`, `rebase` | `squash` | the merge method asked of the host |
+| `checks` | `rules`, or a list of names | `rules` | the checks that block: the base's branch rules, or the listed names |
+| `human_paths` | glob list | the two above | paths only a person lands; `jackstay.json` is always one |
 
-Flags can lower autonomy for one run, never raise it: `jst land --prepare` stops before the merge in
-a `merge-when-green` project; nothing turns a `prepare` project into one that merges.
+`--prepare` lowers autonomy for one run. Nothing lets the agent merge in a `prepare` project; a
+person may (section 3.3). A project without a `land` section has no policy: `jst land` refuses and
+names `jst adopt`.
 
-The `queue` section (never released) is not in schema 3 and is refused as an unknown key. No other
-existing key changes meaning. `github.wait` keeps giving the defaults of the check wait.
-
-A project with no `land` section has no landing policy. `jst land` then refuses and names
-`jst adopt` to choose one. `jst gh pr-land` is removed in 0.6.0 with no alias (section 9), so no
-jackstay command merges in such a project; a person merges on the host.
-
-### 1.1 Upgrading a 0.5.x project
-
-A jackstay older than 0.6.0 refuses a schema 3 file, and under
-[W-085](../decisions/W-085-adopt-lands-settings-and-files-apart.md) the settings land before the
-workflows, so CI runs the old pin on the first settings change. 0.6.0 therefore reads schema 2
-(without a `land` section) as well, and `jst adopt` plans the upgrade in three pull requests, in
-this order:
-
-1. Settings, schema 2: `adopt.pin` moved to 0.6.0. CI still runs the old pin, which reads it.
-2. Files: the workflows download 0.6.0.
-3. Settings, schema 3: `jackstay_schema: 3`, the `land` section, `$schema`. CI now runs 0.6.0.
-
-Then the AGENTS block is rewritten with the `land` items. Until step 3 has landed there is no
-`land` section, so the three pull requests are merged by a person on the host. Adopt does not plan step 3 while the pin
-the workflows download is older than 0.6.0. Each step is a settings or files change, so a person
-merges the settings ones (section 4.2).
-
-## 2. Words
-
-- **Change**: a host's unit of review and merge: a GitHub pull request, a GitLab merge request, a
-  Bitbucket pull request. jackstay's code and text say "change"; output names the host's own word.
-- **Head**: the change's source commit. **Base**: the branch it merges into, and that branch's tip.
-- **Candidate**: the tree the merge will make. With `base: up-to-date` it is the head's tree (the
-  head already contains the base tip); otherwise it is the tree Git's merge of the base tip and the
-  head makes (`git merge-tree --write-tree`), and jackstay writes an unreachable commit of it to
-  gate it, moving no ref.
-- **Attempt**: one pass of the engine over one set of inputs (base tip, head, policy, rules). Any
-  input that moves ends the attempt.
-- **A person**: someone who types the change's number at an interactive terminal prompt
-  (`jst land --confirm`, section 4.7), or who merges on the host's own page. An agent has no
-  terminal on its standard input, and the guard refuses the host CLIs' merge commands (section 9);
-  a host approval cannot tell an agent from its owner when both act as the same account.
-
-## 3. The hosting adapter
-
-The engine (`internal/land`) knows no host. An adapter (`internal/host/github` in 0.6.0) maps the
-engine's calls to one host's API. `internal/githubapi` stays as the GitHub adapter's client;
-`internal/gh` and `internal/mergequeue` fold into the engine and the adapter.
-
-### 3.1 The interface
-
-The core every adapter implements, and small optional interfaces for the rest. A capability is the
-optional interface being implemented, confirmed by a probe at run time where the host's plan or the
-account's rights decide it (GitHub's rulesets are refused on a private repository on the Free plan).
+## 2. The hosting adapter
 
 ```go
-// Host is what every adapter implements.
 type Host interface {
-    Name() string                                     // "github"
-    Probe(ctx context.Context) (Capabilities, error)  // what this account can do on this repository now
-    Change(ctx context.Context, ref ChangeRef) (Change, error)
-    FindChanges(ctx context.Context, query ChangeQuery) ([]Change, error)
-    OpenChange(ctx context.Context, request NewChange) (Change, error)
-    Checks(ctx context.Context, change Change) ([]Check, error) // on the head and on the host's test merge
+    Change(ctx context.Context, ref ChangeRef) (Change, error) // by number, URL or head branch
+    Open(ctx context.Context, request NewChange) (Change, error)
+    Checks(ctx context.Context, change Change) ([]Check, error)
     Rules(ctx context.Context, branch string) (Rules, error)
-    BranchTip(ctx context.Context, branch string) (string, error)    // the live ref, never the change's copy
-    Commit(ctx context.Context, sha string) (Commit, error)           // tree and ordered parents
-    Merge(ctx context.Context, change Change, request MergeRequest) (MergeResult, error)
-    Request(ctx context.Context, change Change) (RequestState, error) // auto-merge or queue entry, if any
+    UpdateBranch(ctx context.Context, change Change, expectedHead string) error // merges the base in
+    Merge(ctx context.Context, change Change, method Method, expectedHead string) (Merged, error)
+    Enqueue(ctx context.Context, change Change, expectedHead string) error     // native queue
 }
-
-// Optional capabilities.
-type ExpectedHeadMerger interface{ /* Merge honours MergeRequest.ExpectedHead atomically */ }
-type BranchUpdater interface {
-    UpdateBranch(ctx context.Context, change Change, expectedHead string) error // merges the base in; never rebases
-}
-type Approvals interface{ Approvals(ctx context.Context, change Change) ([]Approval, error) }
-type AutoMerger interface {
-    EnableAutoMerge(ctx context.Context, change Change, method Method, expectedHead string) error
-}
-type Queuer interface{ Enqueue(ctx context.Context, change Change, expectedHead string) error }
-type StatusPublisher interface{ PublishStatus(ctx context.Context, commit string, status Status) error }
-type ProvenanceVerifier interface {
-    VerifyProvenance(ctx context.Context, digest string, expected Signer) (Provenance, error)
-}
-type Releaser interface{ /* the calls internal/release makes today: releases, and the release
-    pull request's reads, description edits, draft conversion and closing */ }
-type RunWaiter interface{ /* CI runs by workflow and ref, their jobs and logs */ }
 ```
 
-`Change` carries the number, the URL, the state (open, merged, closed, draft), the head and base
-branches and commits, the head repository, the author, the host's test merge commit when there is
-one, and whether the host says it merges cleanly. The base commit a change carries can be stale
-(the merge-queue pilot saw GitHub keep the old one after the base moved): the engine reads the base
-through `BranchTip`, and uses the host's test merge only when `Commit` shows its parents are the
-live base tip and the head, in that order, and its tree is the candidate's. `RequestState` says
-whether an auto-merge request or a queue entry exists for the change, and at which head.
+`Rules` gives the required checks (name, and the app that must report one where the host says),
+whether the base must be up to date, whether a merge queue is required, and the methods allowed,
+each with whether it could be read. An operation a host lacks returns `ErrUnsupported`, and
+`jst land` says which one and stops; it never falls back silently. The code in `internal/gh` and
+`internal/githubapi` that does this today becomes the GitHub adapter.
 
-`Rules` carries the required checks (name and, where the host has one, the app that must report
-it), whether the base must be up to date, how many approvals the host requires, whether a merge
-queue is required, and the merge methods allowed, each with whether it could be read. `Check` is in section 6.1.
+| operation | GitHub | GitLab | Bitbucket Cloud |
+|---|---|---|---|
+| change, open | pull request | merge request | pull request |
+| checks | check runs and commit statuses on the head and the test merge | pipelines and commit statuses | build statuses |
+| rules | rulesets and branch protection | protected branches, "pipelines must succeed" | branch restrictions, merge checks |
+| update branch | `update-branch` with `expected_head_sha` | none that merges: unsupported | none: unsupported |
+| merge, expected head | merge with `sha` | accept with `sha` | merge; no expected head: unsupported in `merge-when-green` |
+| native queue | merge queue (`enqueuePullRequest`) | merge trains | none |
 
-### 3.2 Capabilities and degradation
+GitHub ships in 0.6.0; the GitLab and Bitbucket columns show the interface fits, not their design.
 
-`Capabilities` is a map from a capability to `supported`, `unsupported` or `unknown` (the probe
-could not tell, for instance a 403 on the rules). The engine reads it once per attempt and degrades
-by a fixed table; it never guesses. `jst doctor` prints the same map (section 8.3).
-
-| capability | when it is missing |
-|---|---|
-| rules readable | `checks: "rules"` counts every check, as `pr-land` does today. The plan says so in its own line, the record keeps `rules.read: false`, and doctor recommends listing the checks: an unknown policy is never taken as an empty one |
-| expected-head merge | the engine reads the change again just before the merge and compares heads; the record marks the merge `guard: read-compare`, a narrower race than none. Allowed in both modes, and doctor names it |
-| branch update | with `base: up-to-date`, the engine merges the base into the head locally in a clean copy and pushes it (never a rebase, never a force-push) |
-| auto-merge | `via: auto-merge` is refused at doctor and at `jst land`; nothing falls back silently |
-| merge queue | `via: queue` is refused the same way. When the rules require a queue that the adapter cannot use, `jst land` stops ready for a person |
-| status publishing | `publish_statuses: true` is refused at doctor |
-| provenance | `jst receipts verify --provenance` is refused |
-| releases, runs | the release commands and `jst checks run-wait` are refused with the host's name |
-
-### 3.3 GitHub (0.6.0)
-
-| engine call | GitHub |
-|---|---|
-| change, find, open | REST pulls; GraphQL search by head commit (as `pr-find` today) |
-| checks | GraphQL status check rollup on the head and on the test merge commit (as today); Actions workflow runs for supersession |
-| rules | rulesets that apply to the branch, then classic branch protection (as `RequiredChecksFor` today); merge methods from the repository |
-| merge | `PUT /pulls/{number}/merge` with `sha` (expected head) and `merge_method` |
-| branch update | `PUT /pulls/{number}/update-branch` with `expected_head_sha` |
-| approvals | pull request reviews |
-| auto-merge | GraphQL `enablePullRequestAutoMerge` with `expectedHeadOid`; built only if the pilot proves a stale candidate is refused (section 4.8) |
-| merge queue | GraphQL `enqueuePullRequest` with `expectedHeadOid` |
-| statuses | `POST /statuses/{sha}` |
-| provenance | `gh attestation verify` on the receipt file, with the expected repository and signer workflow (section 3.5) |
-| live base, commits | `GET /git/ref/heads/{branch}`, `GET /git/commits/{sha}` (as the queue's provider today) |
-| request state | GraphQL `autoMergeRequest` and `mergeQueueEntry` of the pull request |
-| releases, runs | as `internal/release` and `jst gh run-wait` today; the release pull request's management stays in `internal/release`, moved behind `Releaser` |
-
-### 3.4 GitLab and Bitbucket: the fit
-
-Not built in 0.6.0. The table names which API concept each call maps to, to show the interface
-holds; the adapters are specified when they are built.
-
-| engine call | GitLab | Bitbucket Cloud |
-|---|---|---|
-| change | merge request | pull request |
-| checks | the merge request's pipelines and the commit's statuses; a pipeline the host cancelled as redundant maps to `superseded` | the commit's build statuses; `STOPPED` maps to `cancelled` |
-| rules | protected branches, "pipelines must succeed", approval rules, merge methods (project settings) | branch restrictions: `require_passing_builds_to_merge`, `require_approvals_to_merge`; merge strategies |
-| merge, expected head | accept merge request with `sha` (expected head) and `squash` | merge pull request with `merge_strategy`; no expected head: `guard: read-compare` |
-| branch update | none that merges (the host rebases): the engine's local merge and push | none: the engine's local merge and push |
-| approvals | merge request approvals | participants who approved |
-| auto-merge | auto-merge ("merge when pipeline succeeds") with `sha` | `unknown` until probed; refused when absent |
-| merge queue | merge trains | none: `unsupported` |
-| statuses | commit status API | build status API (counts towards "minimum successful builds") |
-| provenance | build provenance from GitLab CI, `unknown` until a pilot proves a verification path | none: `unsupported` |
-| releases | releases API | none: `unsupported` |
-
-### 3.5 Provenance (replaces `attest-ci`/`verify-ci`)
-
-`jst receipts attest-ci` and `jst receipts verify-ci` (never released) are removed with
-`internal/receipts/ci_evidence.go` and their help and AGENTS-block item. In their place:
-
-- The gate workflow `jst adopt` writes exports one receipt, the counted receipt of the `gate`
-  scope (`jst receipts export gate`), and attests it with GitHub's
-  `actions/attest-build-provenance`, the receipt's bytes being the subject. The signer workflow and
-  repository are template values filled from the project, never jackstay's own repository.
-- A new key names the trusted signer: `receipts.provenance` =
-  `{"workflow": ".github/workflows/gate.yml", "refs": ["refs/heads/main"]}`, written by adopt with
-  the workflow it writes. The repository is the adapter's configured one. Neither ever comes from
-  the attestation.
-- `jst receipts verify FILE --digest D --revision R --key K --provenance` makes every check
-  `jst receipts verify` makes today (the expected digest, revision and key, from a trusted source),
-  and then asks the adapter whether that digest was attested by the trusted workflow, in that
-  repository, on one of the trusted refs. Provenance adds to the receipt's checks; it never stands
-  in for them.
-- The GitHub adapter answers by running `gh attestation verify FILE --repo OWNER/NAME
-  --signer-workflow OWNER/NAME/WORKFLOW` with `--source-ref` for each trusted ref (W-091), as the
-  account in `github.account`, the way jackstay already runs `gh auth token`. No Sigstore library
-  enters jackstay. Without `gh` on the PATH the check is refused, naming `gh`; doctor reports it
-  where `receipts.provenance` is set.
-- The landing record keeps the receipt's digest; provenance is not a `land` key in 0.6.0 (section 10).
-
-## 4. The engine: `jst land`
+## 3. `jst land`
 
 ```
-jst land [--change N|URL] [--task NAME] [--title T] [--body-file F] [--card ID]... [--reason TEXT]
+jst land [--change N|URL] [--title T] [--body-file F] [--card ID]... [--reason TEXT]
          [--prepare | --confirm] [--plan] [--timeout S] [--interval S] [--lines N]
-jst land status [--change N|URL] [--json]
-jst land reconcile [--change N|URL]
-jst land find (--head BRANCH | --search TEXT) [--state STATE] [--wait S]
+jst land status [--change N|URL]
+jst land find (--head BRANCH | --search TEXT) [--repo URL] [--state STATE] [--wait S]
 ```
 
-`--task` names the review task (default: the change's head branch, as `jst review` defaults to the
-branch). `--lines` is the log lines shown per failed check, as `ci-wait`'s.
+The plan is printed first; `--plan` stops there. The steps are `pr-land`'s, kept with its safety
+checks.
 
-`jst land` prints its plan first (as `pr-land` does) and `--plan` stops there. Then it runs the
-steps in order; each step that fails ends the run with its reason and the record saved. A second run
-picks up the open attempt if its inputs have not moved, else starts a new one. One lock per change
-(`internal/flock`, with a timeout) keeps two runs from interleaving.
+### 3.1 Steps
 
-### 4.1 The change
+1. **Push and open.** The work tree is clean and not on the base; this checkout's branch has
+   nothing the head lacks. New commits are pushed (every push destination verified); a change is
+   opened when none is, with `--title` and the card line. A draft is not merged.
+2. **Policy.** The paths the change touches, against `jackstay.json` and `human_paths`, read from
+   the base and from the change, so a change that adds or edits the `land` section is judged by
+   both. Any match makes the change a person's (section 3.3).
+3. **Checks.** Wait for the required checks, judged by section 4.
+4. **Freshness.** When the base's rules require the branch to be up to date and it is behind,
+   update it on the host and go back to step 3.
+5. **Recheck.** Read the change and its checks again; a moved head, base or test merge, or a
+   required check no longer passing, stops with `moved` (as `checkLandingEvidence` does today).
+6. **Merge.** Ask the host to merge with the head from step 5, or enqueue it when the rules require
+   a queue. A lost answer is settled by reading the change, never by a second request.
+7. **Clean up.** Delete the remote branch only under today's lease and checks (merged at that head,
+   no other open change on it, push destinations verified). `jst tidy` removes the local branch.
 
-The change is the open one from this branch, or `--change`. `jst land` pushes the branch when it
-has commits the remote lacks (verifying every push destination, as today), and opens a change when
-none is open, with `--title` and the card line rules of today. The work tree must be clean, the
-branch must not be the base, and this checkout's branch must not have commits the head lacks (as
-`nothingLeftBehind` today). A draft is never merged: it stops as refused, naming the draft, so the
-release flow's owner-only draft pull request is left to that flow.
+### 3.2 Exit status and the last line
 
-### 4.2 Policy
-
-Read before any evidence, offline where it can be:
-
-1. The `land` section is valid, and the base's `jackstay.json` is the one judged (W-047).
-2. The paths the change touches, from the merge base to the head, against `jackstay.json` and
-   `human_paths`. A change to `jackstay.json` that touches anything else is refused (W-047), as
-   `jst lint` refuses it.
-3. The host's rules: required checks, required approvals, a required queue, allowed methods. A
-   method the host does not allow, or a required queue the adapter cannot use, is said here.
-4. The card line, as today.
-
-The result is one of: the agent may merge; a person must merge (`autonomy: prepare`, a human path
-touched, or host approvals still missing); refused.
-
-### 4.3 Evidence
-
-- **Review** (`review: true`): `jst review check MERGE-BASE..HEAD --task TASK` is clean, under the
-  base's review settings. A head may differ from the head of that clean round only by merges of the
-  base, and the round still counts when every such merge commit:
-  - has two parents, the first being the reviewed head or an earlier carried merge, the second a
-    commit reachable from the live base tip;
-  - has the tree that `git merge-tree --write-tree` of those two parents gives, with no conflict.
-  A merge with resolved conflicts or any other edit fails the second test and needs a new round.
-  The record keeps the task, the round, the reviewed range and the carried merges.
-- **Host checks**: waited for as `jst gh ci-wait` waits today, judged as section 6 says. Checks whose
-  names are jackstay's own statuses (section 7) are not waited for here.
-- **Host approvals**: read only when the host's rules require them, to say what is missing. jackstay
-  never requires an approval by someone other than the author: a solo maintainer can land.
-
-### 4.4 The local gate on the merge tree
-
-With `gate: true`, the candidate (section 2) is gated on a clean copy of its tree, and its counted
-receipt is kept by key and digest. The gate's settings (the `test` section and its scopes) are read
-from the base tip's `jackstay.json`, never the candidate's, so a change cannot choose the gate that
-judges it (W-047: the base's file judges). The form is `jst test gate --commit CANDIDATE
---settings-from BASE`, a new flag of the gate, and the receipt records both commits. The gate runs after the host checks pass, so a
-red CI does not cost a local gate. A candidate already gated in this attempt is not gated again.
-
-### 4.5 Base freshness
-
-- `merge-tree` (default): the candidate is the merge of the base tip at the final read and the head.
-  A base that moves after that read is not prevented: the host merges onto the new tip, and
-  reconcile (section 4.9) compares the landed tree with the candidate and records a mismatch.
-- `up-to-date`: the head must contain the base tip. A head behind is updated (the adapter's branch
-  update, else the local merge and push), and the attempt starts again with the new head: checks,
-  the review carried over by section 4.3, the gate. The candidate is then the head's own tree, so a
-  status on the head is a status on the candidate. With the host's own "up to date" rule, the
-  jackstay statuses required (section 7) and no bypass for the acting account, the host should
-  refuse a merge whose candidate is not the one gated: the merge-queue pilot's atomic condition.
-  That is a claim for the GitHub pilot (section 11) to prove for each merge method before 0.6.0
-  relies on it; until it is proven, it is detected after the merge like `merge-tree`.
-
-### 4.6 The final recheck
-
-After the gate, and again immediately before any merge request (and before the prompt of section
-4.7), the engine reads the change, the live base tip (`BranchTip`), the rules and, with a host test
-merge, its commit, and compares them with the attempt's inputs: head, base branch and tip, state,
-draft, rules, test merge parents and tree. Any difference ends the attempt as `moved`, and the next
-run starts a new one. Gate and review evidence are never carried to inputs they were not made on,
-apart from the review's carried merges of section 4.3.
-
-### 4.7 The decision
-
-- **The agent may merge**: step 4.8.
-- **A person must merge** (`autonomy: prepare`, `jackstay.json` or a human path touched, or
-  `--prepare`): `jst land` publishes the statuses if switched on, saves the record as `ready`,
-  prints what is ready and why a person is needed, and ends with `jst land: ready for a person`.
-  The person merges on the host, and the next `jst land` or `jst land reconcile` records it. Or
-  the person runs `jst land --confirm` at a terminal: it asks them to type the change's number,
-  runs the final recheck (section 4.6) and step 4.8. `--confirm` is refused when standard input
-  is not a terminal, and together with `--prepare`; `--prepare` always stops before the merge.
-- **The host's approvals are missing** (its rules require some): the same `ready` stop, naming the
-  approvals. `--confirm` is refused until the host shows them; typing a number gives no approval.
-- **Refused**: the reason, and the record saved as `refused`.
-
-### 4.8 The merge
-
-The request is saved in the record as `intended` (method, expected head, `via`) before it is sent,
-then as `sent` with the host's answer. By `via`:
-
-- `direct`: merge with the expected head. When the host's rules require a queue, `direct` is
-  refused by the host; `jst land` says so and names `via: queue`.
-- `auto-merge`: built in 0.6.0 only if the GitHub pilot (section 11) proves that the host refuses a
-  stale candidate under the conditions below (W-091); otherwise 0.6.0 ships without it and the
-  schema refuses the value. When built: enable the host's auto-merge with the expected head.
-  Allowed only with `base: up-to-date`, the host's own "up to date" rule, `publish_statuses: true`, the jackstay
-  statuses required by the base's rules, and no bypass for the acting account where the host shows
-  bypasses (doctor checks all of them, `jst land` again). Otherwise a base that moves after the
-  request could land a tree no one gated.
-- `queue`: enqueue with the expected head. The host's queue builds and tests its own candidate; the
-  record says the landed tree was the host queue's.
-
-**Recovery.** A run that finds a request `intended` or `sent` and not yet reconciled reads before
-it writes anything:
-
-- the change is merged: reconcile (section 4.9);
-- `RequestState` shows an auto-merge request or a queue entry: the request is outstanding. The
-  run reports it and sends nothing, whatever moved since; a new attempt keeps the outstanding
-  request in its record (`outstanding`) until the host settles it. jackstay never cancels it on
-  its own;
-- `direct`, the change open and unmerged, and no request state: a direct merge is synchronous, so
-  it did not take effect. The request is saved as `not-taken`, and the run continues with a new
-  attempt;
-- the host cannot say (an error, or a request state the adapter cannot read): `unsettled`. Nothing
-  is sent until a person looks; `jst land status` says what was asked and when.
-
-### 4.9 Reconcile
-
-Once the change is merged (now, or later by a person, auto-merge or the queue): the landed commit is
-fetched, its tree compared with the candidate's, and the outcome saved: `landed-matched`,
-`landed-mismatch` (said loudly; nothing is reverted, the base's own CI covers the landed commit) or
-`landed-unchecked` (no candidate was gated).
-
-The remote branch is then deleted only when every check `pr-land` makes today holds: the host
-confirmed this attempt's own merge request and its merge commit is the one the change shows; the
-change's head repository is the configured one and its head branch is still at the merged head (a
-lease); no other open change uses the branch; every push destination is verified. It is kept, and
-the reason printed, after `landed-mismatch`, after a merge this run did not request (a person,
-auto-merge, the queue) and whenever one of those checks cannot be confirmed. `jst tidy` removes
-the local branch later, as today.
-
-### 4.10 Exit status and the last line
-
-Every run of `jst land` ends with the line `jst land: STATE`, so an agent reads one line, as with
-`jst test`.
+`jst land` ends with `jst land: STATE` on stderr, so `status` output stays clean.
 
 | state | exit | when |
 |---|---|---|
-| `landed` | 0 | merged; the landed tree is the candidate's, or no gate was asked (`landed-unchecked` in the record) |
-| `ready for a person` | 0 | section 4.7 |
+| `landed` | 0 | merged, or accepted by the host's queue and merged within the wait |
+| `ready for a person` | 0 | `prepare`, `--prepare`, a human path |
 | `planned` | 0 | `--plan` |
-| `landed, tree differs` | 1 | `landed-mismatch` |
-| `refused` | 1 | the policy refuses; a required check failed or was cancelled; the review is not clean; the gate failed; a draft |
-| `unsettled` | 1 | the host cannot say what became of a request (section 4.8) |
-| `invalid` | 2 | usage; `jackstay.json` or the `land` section unusable; no account |
-| `pending` | 3 | checks, auto-merge or the queue still pending at the deadline; an outstanding request |
-| `moved` | 4 | the head, base or rules moved (section 4.6) |
-| `unexpected` | 5 | a host answered in a form jackstay does not expect |
+| `refused` | 1 | a required check failed or was cancelled; a draft; a conflict; an unsupported operation |
+| `invalid` | 2 | usage, configuration, no account |
+| `pending` | 3 | checks or the queue still pending at the deadline |
+| `moved` | 4 | head, base or test merge moved |
+| `unexpected` | 5 | a host answer jackstay does not expect |
 
-`jst land status` exits 0 when it printed the latest attempt, 1 when there is none, 2 on usage.
-`jst land reconcile` exits 0 for `landed-matched` or `landed-unchecked`, 1 for `landed-mismatch`,
-3 when the change is not merged yet, 2 on usage. `jst land find` keeps `pr-find`'s statuses.
+### 3.3 Who may merge
 
-## 5. The landing record
+The agent merges only in `merge-when-green`, and only a change that touches no human path. For any
+other change `jst land` stops ready for a person, who either merges on the host's page or runs
+`jst land --confirm` at a terminal and types the change's number. `--confirm` is refused without a
+terminal and with `--prepare`.
 
-### 5.1 What it replaces
+Three things keep that true for an agent:
+- **`jst lint pr`, rule D0**, keeps a change to `jackstay.json` alone in its pull request, judged by
+  the base's file (W-047).
+- **`jst land`** reads human paths from the base and the change (step 2). A change that introduces
+  the first `land` section is therefore a person's, though the base has no policy yet.
+- **The guard** refuses `gh pr merge` and `glab mr merge`, naming `jst land`. The rule is on in
+  every project the 0.6.0 guard runs in, whether or not a `land` section exists, so the first policy
+  cannot be merged that way either. It is configurable like every guard rule
+  ([W-055](../decisions/W-055-every-guard-rule-configurable-now.md)).
 
-1. `pr-land`'s in-memory `checkEvidence` (`internal/gh/checks.go`): head, base and test merge
-   commit, lost when the command ends.
-2. `pr-land`'s trace attributes (`notePull`): the only lasting trace of a landing today.
-3. The queue's `State` and `Outcome` (`internal/mergequeue/queue.go`).
-4. The queue's receipt references and gate claim (`Evidence`, `GateClaim`, `GateRunID`).
-5. The CI attestation claim (`ciClaim` in `internal/receipts/ci_evidence.go`).
+The guard is against accidents ([W-017](../decisions/W-017-review-fixes-and-threat-model.md)): an
+agent calling the host's API directly is outside it.
 
-### 5.2 The shape
+## 4. Required checks
 
-One JSON file per change and attempt, `attempt-N.json` under
-`<jackstay home>/<project>/land/<host>/<change>/`, with its own schema. It is not a
-`internal/delivery` record: that envelope's plan is fixed when written, while this record grows
-phase by phase. It shares the shared atomic write and strict reading, and a per-change lock
-(`internal/flock`, with a timeout). It holds object IDs, names and digests; never a token, a URL
-with credentials or a command's output.
+- **Required** (by the rules, or listed in `checks`): each must pass or be skipped on the commit
+  the host judges (the test merge where the host has one, else the head, as today). Pending and not
+  yet registered are waited for; a failure or a cancellation stops.
+- **Not required**: never waited for, never blocking; a failure is reported. This changes 0.5.11,
+  where any failing check stopped `pr-land`.
+- **Superseded** ([#13](https://github.com/zima-oss/jackstay/issues/13)): a cancelled run with a
+  newer run of the same workflow, commit, event and change is judged by the newer run's own job of
+  the same name. While that job has no result it is pending; a newer run that finished without it
+  leaves the check cancelled. A run's overall conclusion never decides a check.
+- **Rules unread** (a plan or permission refuses them): every check counts, said in the plan;
+  `doctor` recommends listing `checks`. Rules read and requiring none: no check blocks.
+
+## 5. Adopt, setup and doctor
+
+`jst adopt` asks one question, recommended answer first: "The agent merges when the required
+checks pass; `jackstay.json` and the listed paths need a person (recommended)" or "The agent
+prepares; a person merges." Without a terminal, `--apply` needs `--autonomy` or an existing
+`land.autonomy`. `jst setup` asks the same once per machine and keeps it as the answer adopt offers
+first; the project's file decides.
+
+The upgrade from 0.5.x is three pull requests, planned by adopt and merged by a person: the pin
+(schema 2), the workflows that download 0.6.0, then schema 3 with the `land` section. 0.6.0 reads
+schema 2 without a `land` section.
+
+`jst doctor` reports: the `land` section valid; the account connects; the rules readable, with the
+checks they require (none: a note); `method` allowed; a required queue; `gh pr merge` refused by
+the guard; and, from section 7, the CI-covered scopes the rules do not require.
+
+## 6. What is removed
+
+| 0.5.x | 0.6.0 |
+|---|---|
+| `jst gh pr-land` | `jst land` (`--pr` is `--change`, `--dry-run` is `--plan`, `--no-merge` is `--prepare`) |
+| `jst gh pr-status`, `pr-find` | `jst land status`, `jst land find` |
+| `jst gh ci-wait`, `ci-status`, `run-wait` | `jst checks wait`, `jst checks status`, `jst checks run-wait` (same flags) |
+| `jst queue …`, the `queue` key (never released) | removed; the host's queue through `jst land` |
+| `jst receipts attest-ci`, `verify-ci` (never released) | removed; provenance stays in release and install |
+
+A removed command is unknown: the error names its replacement and runs nothing. The upgrade page
+lists them and the change of section 4.
+
+The AGENTS block: the `github`, `queue` and `ci-evidence` items go; a `land` item comes, its text
+following `land.autonomy` ("`jst land` … stops at `jst land: ready for a person` for `jackstay.json`
+and `land.human_paths`: say so and stop; never merge on the host, never run `--confirm`"); the
+`checks` item names `jst checks wait`/`status`/`run-wait`.
+
+## 7. Where tests run
+
+CI is the gate, but not every test runs in CI: jackstay itself has no macOS runner, so its macOS
+code is tested only on a Mac. The project declares the split; jackstay does not fix it.
+
+A test scope gains one key: `ci`, the operating systems on which CI runs it (absent: not in CI).
 
 ```json
-{
-  "schema": 1,
-  "host": "github",
-  "repository": "owner/name",
-  "change": 42,
-  "attempt": 3,
-  "policy": {"sha256": "…", "autonomy": "merge-when-green", "method": "squash", "via": "direct",
-             "base": "merge-tree", "checks": "rules", "gate": true, "review": true},
-  "base": {"branch": "main", "commit": "…"},
-  "head": {"branch": "fix-parser", "commit": "…"},
-  "rules": {"read": true, "required": ["test", "lint"], "up_to_date": false, "approvals": 0},
-  "candidate": {"commit": "…", "tree": "…", "made": "merge-tree", "test_merge": "…"},
-  "review": {"task": "fix-parser", "round": 2, "range": "…..…", "carried_merges": [],
-             "verdict": "clean"},
-  "checks": [{"name": "test", "required": true, "state": "pass", "commit": "…"},
-             {"name": "docs", "required": false, "state": "fail", "commit": "…"}],
-  "gate": {"settings_commit": "…", "receipt_key": "gate", "receipt_sha256": "…"},
-  "person": {"needed": true, "why": ["human path: .github/workflows/ci.yml"], "confirmed": "host"},
-  "statuses": [{"context": "jackstay/gate", "commit": "…", "state": "success"}],
-  "request": {"via": "direct", "expected_head": "…", "guard": "expected-head",
-              "state": "sent", "intended": "…", "sent": "…", "host_id": ""},
-  "outstanding": null,
-  "phase": "reconciled",
-  "reason": "",
-  "outcome": {"state": "landed-matched", "commit": "…", "tree": "…", "observed": "…"}
+"scopes": {
+  "x-go":  {"run": ["just", "go"], "ci": ["linux"]},
+  "x-ios": {"run": ["just", "ios"]}
 }
 ```
 
-`phase` runs `prepared` → `evidenced` → `gated` → `ready` or `requested` → `merged` →
-`reconciled`, or ends at `refused` (with `reason`: the policy, a check, the review, the gate, a
-draft), `moved` or `unsettled`. `request.state` is `intended`, `sent`, `not-taken` or `settled`
-(section 4.8); `outstanding` carries an earlier attempt's auto-merge request or queue entry until
-the host settles it. The phases and outcomes map to the last line by section 4.10. `jst land status`
-prints the latest attempt; `--json` prints the record as it is. A change's records are kept for
-`telemetry.keep_days`.
+- **Before a pull request**: `jst test changed` selects scopes from the changed paths as today, and
+  requires those with no `ci` to pass locally. The selected scopes CI covers are left to CI.
+- **In CI**: the covered scopes run as jobs named after them, and the base's rules require them.
+  `jst doctor` reports a covered scope the rules do not require.
+- **Before an install or a tag**: `jst test uncovered` runs every scope whose `ci` does not include
+  this machine's operating system, on the exact commit. `jst release` and `bin/jst install` refuse
+  without its passing receipt for that commit. For jackstay, on a Mac, that is the whole gate:
+  CI covers Linux only ([W-083](../decisions/W-083-no-macos-job-in-ci.md)).
+- **The AGENTS block** states the split, generated from the scopes: "CI runs x-go, x-integration,
+  x-check, x-docs on Linux and is the gate. Before a pull request: `jst test changed`. Before an
+  install or a tag: `jst test uncovered`."
 
-## 6. Required checks
+## 8. Tests
 
-### 6.1 States
-
-The adapter maps the host's states to: `pass`, `fail`, `pending`, `skipped`, `cancelled`,
-`superseded`, `missing` (required, not registered). Each check also says whether it is required,
-which commit it was read on (head or the host's test merge), and its run where the host has runs.
-
-### 6.2 Judging
-
-- **Required** (by the rules, or listed in `checks`): each must be `pass` or `skipped` on the commit
-  the host judges: the test merge where the host has one and section 3.1's validation holds it to
-  the live base and the head, else the head (as `withMergeCommitRows` falls back today). `pending`
-  and `missing` are waited for; `fail` stops; `cancelled` stops, named as a cancellation, not a
-  failure.
-- **Not required**: never waited for and never blocking. A `fail` or `cancelled` one is printed and
-  kept in the record. This changes 0.5.11, where a failing check no rule requires stops `pr-land`.
-- **Superseded** ([#13](https://github.com/zima-oss/jackstay/issues/13)): the host does not say a
-  run was cancelled by a concurrency group, so supersession is inferred, by the rule
-  `reconcileCancelled` holds today, moved behind the adapter: a newer run of the same workflow,
-  commit, event, head branch and change. The cancelled check is then `superseded` and judged by the
-  newer run's own job of the same name and app only. While that job has no result it is `pending`;
-  when the newer run has finished without that job, the check stays `cancelled` (named: superseded
-  by a run that did not run it). A run's overall conclusion never decides a check: today's rule
-  that a red replacement run marks the check failed goes. A cancelled run with no newer run stays
-  `cancelled`.
-- **Rules unread**: every check counts, said in the plan and the record (section 3.2).
-- **Rules read, requiring none**: no host check blocks; failures are reported. The project's own
-  gate and review still apply, and doctor notes that the base requires no check.
-
-## 7. Publishing statuses (optional, off by default)
-
-With `publish_statuses: true`, `jst land` publishes on the head commit, for the steps the policy
-turns on:
-
-| context | published when | success when | failure when |
-|---|---|---|---|
-| `jackstay/review` | `review: true` | the review evidence holds (section 4.3) | a round has findings, or none is current |
-| `jackstay/gate` | `gate: true` | the candidate's gate passed | the gate failed |
-
-The order avoids waiting on itself: the host checks are waited for first, leaving out jackstay's
-own contexts (section 4.3); then the review and the gate run locally; then the statuses are
-published; then, when the base's rules require them, the engine reads them back on the head
-before any merge request. A person's handoff publishes the same two statuses, so a person's merge
-on the host is not blocked by them; whether a person must merge is never a status. A policy with
-`review` or `gate` off publishes nothing for it, and doctor reports an error when the rules require
-a context the policy never publishes.
-
-`jackstay/gate` on the head means the candidate only with `base: up-to-date` (the head's tree is the
-candidate). With `merge-tree` it says the merge tree at the final read passed, and a base that
-moves after it is caught by reconcile, not by the status. Descriptions are short and carry no
-paths or output; no target URL is set, since the evidence is local. Published statuses are a signal
-any account with write access could also set: jackstay's own record stays the evidence, and doctor
-says this when the base's rules require them. A failure to publish is printed and does not stop a
-`direct` merge whose rules do not require the statuses; otherwise it stops, because the host would
-wait on a status that never comes.
-
-## 8. Adopt, setup and doctor
-
-### 8.1 `jst adopt`
-
-The plan writes `jackstay_schema: 3` and a full `land` section. Adopt's prompt asks two things, each
-with its recommended answer first, and writes the answers to the file:
-
-1. **Who merges?** "The agent merges when everything is green; `jackstay.json` and the listed paths
-   need a person (recommended)" or "The agent prepares; a person merges."
-2. **Publish jackstay's evidence to the host as commit statuses?** "No (recommended)" or "Yes".
-
-Every other key is written with its default, the human paths with
-`[".github/workflows/**", ".claude/settings.json"]`, and the plan prints the section so the choice
-is seen. Without a terminal, `--apply` needs `--autonomy merge-when-green|prepare` (and optionally
-`--publish-statuses`), or an existing `land.autonomy`; it never picks one silently. An existing
-`land` section is kept as it is; a changed answer is a settings change (W-085). Whoever runs adopt,
-the choice reaches the base only through a change to `jackstay.json`, which a person merges
-(section 4.2): an agent can propose a mode, never put one in force.
-Adopt also writes `receipts.provenance` with the gate workflow it writes (section 3.5), and plans
-the upgrade order of section 1.1.
-
-### 8.2 `jst setup`
-
-Setup is per machine. It asks the same two questions once and keeps the answers in
-`<jackstay home>/setup.json` as the defaults adopt offers first; the project's `jackstay.json` stays
-the only thing that decides. Setup prints, for each project it finds adopted on the machine, the
-autonomy that project chose.
-
-### 8.3 `jst doctor`
-
-| check | finding |
-|---|---|
-| `land` valid, schema 3 | error: what is wrong |
-| `land.autonomy` set | error: run `jst adopt` |
-| the adapter connects as the configured account | error, as for `github.account` today |
-| capabilities probed | the map of section 3.2, `unknown` named with why |
-| rules readable for the default branch | warning when unread: list `checks` |
-| the rules require at least one check (with `checks: "rules"`) | note: no host check blocks |
-| `method` allowed by the host | error |
-| `via: auto-merge`: `base: up-to-date`, the host's "up to date" rule, statuses published and required, no bypass for the account | error otherwise |
-| the rules require a `jackstay/*` context the policy never publishes | error: the host would wait forever |
-| `via: queue`: the base requires a queue | error otherwise |
-| `publish_statuses`: the account can write statuses | error otherwise |
-| `human_paths` each match a tracked file | warning: a glob that matches nothing |
-| `merge-when-green` without an expected-head merge | warning: `guard: read-compare` |
-| `base: up-to-date` without the host's own rule | note: the race is detected, not prevented |
-
-## 9. What becomes of `jst gh`, `jst queue` and the CI receipts
-
-`jst gh` shipped in 0.5.10 and 0.5.11. `jst queue` and `receipts attest-ci`/`verify-ci` never
-shipped.
-
-| today | 0.6.0 |
-|---|---|
-| `jst gh pr-land` | removed: `jst land` |
-| `jst gh pr-status` | removed: `jst land status` |
-| `jst gh pr-find` | removed: `jst land find` (same flags) |
-| `jst gh ci-wait`, `ci-status` | removed: `jst checks wait`, `jst checks status` (`--timeout`, `--interval`, `--lines`, `--any-head` as before) |
-| `jst gh run-wait` | removed: `jst checks run-wait` (same flags) |
-| `jst queue add`, `prepare`, `test` | removed: `jst land` prepares and gates the candidate |
-| `jst queue status`, `handoff` | removed: `jst land status`, and `jst land` in `prepare` |
-| `jst queue reconcile` | removed: `jst land reconcile` |
-| `jst queue remove` | removed: a new attempt replaces the old; a closed change ends it |
-| `queue` in `jackstay.json` | refused (never released) |
-| `receipts attest-ci`, `verify-ci` | removed: `jst receipts verify --provenance` (section 3.5) |
-
-There are no aliases (W-091). `jst gh` and `jst queue` are unknown commands in 0.6.0; `jst help`
-and the error of an unknown command name the replacement, and run nothing. `jst land` keeps
-`pr-land`'s flags where they mean the same (`--title`, `--body-file`, `--card`, `--reason`,
-`--timeout`, `--interval`, `--lines`); `--pr` is `--change`, `--dry-run` is `--plan`, `--no-merge`
-is `--prepare`, and `--no-push`, `--no-create` and `--no-wait` have no counterpart, since the
-engine's evidence needs those steps. The upgrade page lists the removed commands, the order of
-section 1.1 and the change of section 6.2 for failing checks that no rule requires.
-
-`jst land --help`:
-
-```
-usage: jst land [--change N|URL] [--task NAME] [--title T] [--body-file F] [--card ID]...
-                [--reason TEXT] [--prepare | --confirm] [--plan]
-                [--timeout S] [--interval S] [--lines N]
-       jst land status [--change N|URL] [--json]
-       jst land reconcile [--change N|URL]
-       jst land find (--head BRANCH | --search TEXT) [--state STATE] [--wait S]
-
-Land a change by the project's land policy: push and open it, wait for the checks its base
-requires, check the review, gate the exact tree the merge makes, then merge with the head that
-was checked, or stop ready for a person (land.autonomy, jackstay.json, land.human_paths). The
-plan is printed first. This checkout is never switched, pulled or rebased.
-
-  --change N|URL  the change (default: the open one from this branch)
-  --task NAME     the review task (default: the head branch)
-  --prepare       stop before the merge this once (never the other way)
-  --confirm       a person at a terminal confirms the merge the policy keeps for a person
-  --plan          print the plan and stop
-
-exit: 0 landed, ready for a person, or planned; 1 refused, failed, unsettled, or landed with a
-different tree; 2 bad request; 3 pending; 4 moved; 5 unexpected host answer.
-The last line is `jst land: STATE`.
-```
-
-The AGENTS block (`internal/adopt/block`): the `github`, `queue` and `ci-evidence` items go. Three
-come:
-
-- land, wanted with a `land` section; its text depends on `land.autonomy`:
-  - `merge-when-green`: "**Land a change**: `jst land` (push, open, checks, review, gate on the
-    merge tree, merge). It ends at `jst land: ready for a person` for `jackstay.json` and the paths
-    in `land.human_paths`: say so and stop. `jst land status` says what is missing. Never merge on
-    the host by hand, and never run `--confirm`: it is a person's."
-  - `prepare`: "**Land a change**: `jst land` prepares (push, open, checks, review, gate) and ends
-    at `jst land: ready for a person`; a person merges. `jst land status` says what is missing.
-    Never merge on the host by hand, and never run `--confirm`: it is a person's."
-- checks, wanted with a `land` section or `github.account`: "**A change's checks**:
-  `jst checks wait` / `jst checks status`, and `jst checks run-wait WORKFLOW` for a CI run; only the
-  checks the base requires block."
-- the receipts item gains, wanted with `receipts.provenance`: "Add `--provenance` to check that the
-  project's CI attested the receipt."
-
-The guard gains a rule (W-091), at `refuse` by default where a `land` section exists and
-configurable like every guard rule
-([W-055](../decisions/W-055-every-guard-rule-configurable-now.md)), that refuses the host CLIs'
-merge commands (`gh pr merge`, `glab mr merge`) and names `jst land`. A person merges on the host's
-own page, or with `jst land --confirm`.
-
-## 10. Deferred
-
-- The GitLab and Bitbucket adapters (section 3.4 is their fit, not their design).
-- Batching and bisection of several changes (the merge-queue pilot's later slices).
-- A local-only lane with no host (the queue's local mode): `jst land` needs a host in 0.6.0.
-- Gating the host queue's own candidate locally (`via: queue` relies on the host's tests).
-- Provenance as a landing condition (`land` key); 0.6.0 records the receipt's digest only.
-- An identity for published statuses other than the configured account (a GitHub App).
-- Signed or recorded human decisions beyond the terminal prompt.
-
-## 11. Tests
-
-- **Fake adapter** (`internal/host/fake`): a scripted host whose every answer, capability and
-  failure a test sets. The engine's tests run on it only.
-  - Each capability missing, with the degradation of section 3.2.
-  - Checks: required pass, fail, cancelled, superseded with the newer job pending, passed and
-    absent from a finished run, missing, skipped; not required failing (reported, not blocking);
-    rules unread; rules requiring none; a host test merge whose parents or tree do not match (the
-    head is judged).
-  - Policy: `jackstay.json` alone, `jackstay.json` with another file, a human path, `prepare`,
-    `--prepare` in `merge-when-green`; `--confirm` refused without a terminal, with `--prepare`
-    and with host approvals missing; a draft.
-  - The gate reads its settings from the base while the candidate changes the `test` section.
-  - Review carried across a clean base merge; not across a merge with conflicts resolved, nor one
-    whose tree carries an extra edit.
-  - Recovery from each request state: `intended` with nothing sent, `sent` and merged, `sent` and
-    open, an outstanding auto-merge request across a moved head, and `unsettled`.
-  - Branch deletion kept after `landed-mismatch`, after a merge by a person, with a sibling open
-    change, and with an unverified push destination.
-  - `jst gh` and `jst queue` are unknown commands whose error names the replacement.
-  - The guard refuses `gh pr merge` and `glab mr merge` with a `land` section, and lets them run
-    without one.
-  - Provenance: `gh attestation verify` called with the trusted repository, workflow and refs;
-    refused without `gh` on the PATH.
-- **Races** (fake adapter, deterministic, no timing): the head moves between the gate and the merge
-  (the host refuses the expected head; `moved`); the base moves after the final read (`merge-tree`:
-  `landed-mismatch`; `up-to-date` with the host rule: refused); a rule changes during the attempt;
-  the merge answer is lost and the change is merged (reconciled, one request); the merge is
-  accepted and held (pending); two `jst land` on one change (the lock); two changes into one base
-  (the second's base moves, a new attempt); a crash after the intent is saved (resume reads before
-  any request); a status publish that fails with `direct` and with `auto-merge`; the base moves
-  during a long gate (the final recheck ends the attempt as `moved`).
-- **Record**: strict reading, each phase transition, refusal of an unknown schema, no secret in any
-  field (a made-up token in the inputs is absent from the file).
-- **GitHub adapter**: recorded API answers for every call of section 3.3, including a 403 on
-  rulesets and a test merge GitHub has not made yet.
-- **GitHub pilot** (`-tags integration`, run by hand, not in CI): a disposable repository with
-  synthetic content. Cases: a private repository on the Free plan (rules unread); a public one with
-  required checks; `base: up-to-date` with the "up to date" rule and the jackstay statuses
-  required, a base advance placed between the final read and the merge (the host must refuse); each
-  merge method's landed tree against the candidate; auto-merge; a native merge queue; the
-  concurrency-group cancellation of #13. The pilot's notes keep account and repository names
-  outside Git.
-- **Adopt and the block**: golden files for both autonomy modes, and for no `land` section; the
-  upgrade order of section 1.1 from a 0.5.11 project, with CI's pin read at each step.
-
-## 12. Decided (W-091)
-
-The owner settled the open questions of this design on 2026-11-20; the body above follows them.
-
-1. **Base freshness** defaults to `merge-tree`.
-2. **Human-only paths** that adopt offers: `jackstay.json` (always one), `.github/workflows/**` and
-   `.claude/settings.json`.
-3. **A person** is a change number typed at the terminal (`jst land --confirm`), or a merge on the
-   host.
-4. **Setup** keeps machine defaults that adopt offers first.
-5. **`jst gh pr-land`, its neighbours and the queue commands** are removed in 0.6.0, with no
-   aliases.
-6. **A review carries** across a clean merge of the base (section 4.3).
-7. **Provenance** is verified by calling `gh attestation verify`.
-8. **The guard** refuses `gh pr merge` and `glab mr merge` where a `land` section exists.
-9. **The `pr-land` alias** question falls away with the alias.
-10. **`via: auto-merge`** ships in 0.6.0 only if the GitHub pilot proves that a stale candidate is
-    refused.
-11. **The upgrade** in three pull requests (section 1.1) is accepted.
+- **Fake adapter**: scripted answers for each operation, `ErrUnsupported`, and failures.
+- **Checks**: required pass, fail, cancelled, superseded (newer job pending, passed, absent),
+  missing; not required failing; rules unread; rules requiring none.
+- **Policy**: `jackstay.json` alone, a human path, a change adding the first `land` section, the
+  base with and without `land`; `prepare`, `--prepare`, `--confirm` without a terminal.
+- **Races**, deterministic: head moved before the merge, base moved during the wait, a check rerun
+  red before the recheck, a lost merge answer with the change merged, a queue that holds it.
+- **Guard**: `gh pr merge` and `glab mr merge` refused with and without a `land` section.
+- **Where tests run**: `jst test changed` requiring only uncovered scopes; `jst test uncovered` on
+  Linux and macOS; release and install refusing without its receipt.
+- **GitHub pilot**, by hand in a disposable repository with synthetic content: required checks,
+  a private repository whose rules cannot be read, update-branch, the native merge queue, and the
+  concurrency cancellation of #13.
+- **Adopt**: golden files for both modes; the three-step upgrade from 0.5.11.
