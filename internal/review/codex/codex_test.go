@@ -174,7 +174,7 @@ func TestPinnedSourceUsesTheReviewerAccessProfile(t *testing.T) {
 	tree, _ := canonicalPath(request.Tree)
 	temporary, _ := canonicalPath(Temporary(request))
 	for _, want := range []string{`":root"="read"`, strconv.Quote(filepath.Join(home, ".ssh")) + `="none"`,
-		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(tree, ".env.local")) + `="none"`,
+		strconv.Quote(filepath.Join(home, ".config", "gh")) + `="none"`, strconv.Quote(filepath.Join(home, ".claude.json")) + `="none"`, strconv.Quote(filepath.Join(tree, ".env.local")) + `="none"`,
 		strconv.Quote(temporary) + `="write"`} {
 		if !strings.Contains(filesystem, want) {
 			t.Errorf("the filesystem table lacks %s: %s", want, filesystem)

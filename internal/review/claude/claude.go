@@ -67,6 +67,13 @@ func environment(environ []string, temporary string) []string {
 	return access.Environment(environ, access.Claude, temporary)
 }
 
+func environOf(request runner.Request) []string {
+	if request.Environ != nil {
+		return request.Environ
+	}
+	return os.Environ()
+}
+
 // Temporary is the reviewer's own folder for temporary files.
 func Temporary(request runner.Request) string { return filepath.Join(request.Folder, "tmp") }
 
@@ -123,9 +130,9 @@ var tools = []string{"Read", "Glob", "Grep", "WebFetch", "WebSearch"}
 
 // Settings is the reviewer's access profile as Claude Code settings: reading the account's
 // secrets and `.env` files is denied, whatever the working folders.
-func Settings(home string) string {
+func Settings(home string, environ []string) string {
 	var deny []string
-	for _, path := range access.SecretPaths(home) {
+	for _, path := range access.SecretPaths(home, access.Claude, environ) {
 		for _, tool := range []string{"Read", "Glob", "Grep"} {
 			deny = append(deny, tool+"(/"+path+"/**)", tool+"(/"+path+")")
 		}
@@ -148,7 +155,7 @@ func argv(request runner.Request, executable string, schema []byte) []string {
 	words := []string{executable, "--print", "--restricted", "--safe-mode", "--no-session-persistence",
 		"--output-format", "json", "--json-schema", string(schema),
 		"--permission-mode", "dontAsk", "--tools", strings.Join(tools, ","), "--allowedTools", strings.Join(allowed, ","),
-		"--add-dir", "/", "--settings", Settings(homedir.AccountHome()),
+		"--add-dir", "/", "--settings", Settings(homedir.AccountHome(), environOf(request)),
 		"--strict-mcp-config", "--mcp-config", string(mcp)}
 	if len(request.MCPServers) == 0 {
 		words = append(words, "--disallowedTools", "mcp__*")

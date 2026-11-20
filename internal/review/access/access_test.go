@@ -51,14 +51,18 @@ func TestEnvironmentKeepsWhatAReviewerNeedsAndDropsTheRest(t *testing.T) {
 }
 
 func TestSecretsAreTheAccountsKeysAndTheEnvFiles(t *testing.T) {
-	paths := SecretPaths("/home/r")
-	for _, want := range []string{"/home/r/.ssh", "/home/r/.aws", "/home/r/.config/gh"} {
+	paths := SecretPaths("/home/r", Codex, []string{"CLAUDE_CONFIG_DIR=/claude/config"})
+	for _, want := range []string{"/home/r/.ssh", "/home/r/.aws", "/home/r/.config/gh", "/home/r/.vault-token",
+		"/home/r/.claude", "/home/r/.claude.json", "/claude/config"} {
 		if !slices.Contains(paths, want) {
-			t.Errorf("%s is not a secret: %v", want, paths)
+			t.Errorf("%s is not a secret to Codex: %v", want, paths)
 		}
 	}
+	if claude := SecretPaths("/home/r", Claude, nil); !slices.Contains(claude, "/home/r/.codex") || slices.Contains(claude, "/home/r/.claude") {
+		t.Errorf("Claude Code's secrets: %v", claude)
+	}
 	root := t.TempDir()
-	for _, file := range []string{".env", "service/.env.production", "deep/a/b/c/d/.env", ".git/.env", "environment.go", ".envrc"} {
+	for _, file := range []string{".env", "service/.env.production", "deep/a/b/c/d/.env", ".git/.env", "node_modules/x/.env", "environment.go", ".envrc"} {
 		path := filepath.Join(root, file)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)

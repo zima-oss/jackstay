@@ -24,20 +24,43 @@ const (
 var secretFolders = []string{
 	".ssh", ".aws", ".azure", ".gnupg", ".kube", ".docker/config.json", ".netrc", ".npmrc", ".pypirc",
 	".config/gh", ".config/gcloud", ".config/hub", ".git-credentials", ".password-store",
+	".vault-token", ".terraform.d/credentials.tfrc.json", ".cargo/credentials.toml", ".config/op",
 }
 
-// SecretPaths are the absolute paths a reviewer is never allowed to read under home: the account's
-// secrets and the system's keychain or keyring.
-func SecretPaths(home string) []string {
+// SecretPaths are the absolute paths reviewer is never allowed to read: the account's secrets, the
+// system's keychain or keyring, and the other reviewer's own login and state (its OAuth and refresh
+// tokens are not this reviewer's), found from environ (CODEX_HOME, CLAUDE_CONFIG_DIR) and home.
+func SecretPaths(home, reviewer string, environ []string) []string {
 	folders := slices.Clone(secretFolders)
 	if runtime.GOOS == "darwin" {
 		folders = append(folders, "Library/Keychains")
 	} else {
 		folders = append(folders, ".local/share/keyrings")
 	}
-	paths := make([]string, 0, len(folders))
+	paths := make([]string, 0, len(folders)+3)
 	for _, folder := range folders {
 		paths = append(paths, filepath.Join(home, folder))
+	}
+	value := func(name string) string {
+		for _, pair := range environ {
+			if found, ok := strings.CutPrefix(pair, name+"="); ok {
+				return found
+			}
+		}
+		return ""
+	}
+	switch reviewer {
+	case Codex:
+		paths = append(paths, filepath.Join(home, ".claude"), filepath.Join(home, ".claude.json"))
+		if folder := value("CLAUDE_CONFIG_DIR"); folder != "" {
+			paths = append(paths, folder)
+		}
+	case Claude:
+		codexHome := value("CODEX_HOME")
+		if codexHome == "" {
+			codexHome = filepath.Join(home, ".codex")
+		}
+		paths = append(paths, codexHome)
 	}
 	return paths
 }
@@ -123,8 +146,13 @@ type MCPServer struct {
 	Args    []string `json:"args"`
 }
 
+// skippedFolders hold dependencies, caches or Git's own data: no project's `.env` lives there.
+var skippedFolders = []string{".git", "node_modules", "vendor", ".venv", "target", ".cache", "Library", ".build"}
+
 // SecretFiles are the `.env` files under roots, found by walking each at most depth folders deep and
-// at most limit files in all: a reviewer whose rules take only paths is denied each one.
+// at most limit files in all, past folders that hold dependencies or caches: a reviewer whose rules
+// take only paths is denied each one. It is a snapshot: a file elsewhere, deeper, or made later is
+// not in it.
 func SecretFiles(roots []string, depth, limit int) []string {
 	var found []string
 	for _, root := range roots {
@@ -140,7 +168,7 @@ func SecretFiles(roots []string, depth, limit int) []string {
 			}
 			relative, _ := filepath.Rel(root, path)
 			if entry.IsDir() {
-				if entry.Name() == ".git" || relative != "." && strings.Count(relative, string(filepath.Separator)) >= depth {
+				if slices.Contains(skippedFolders, entry.Name()) || relative != "." && strings.Count(relative, string(filepath.Separator)) >= depth {
 					return filepath.SkipDir
 				}
 				return nil

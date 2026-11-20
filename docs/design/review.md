@@ -251,7 +251,7 @@ round's report merges their findings by `place`.
 
 ### 3.4 The run
 
-- **The reviewer's access profile** (W-090), the same for Codex and Claude Code (`internal/review/access`).
+- **The reviewer's access profile** ([W-090](../decisions/W-090-review-of-0-6-0.md)), the same for Codex and Claude Code (`internal/review/access`).
   The reviewer's task is to read and report, so it is given everything it may need to read, and
   denied only what it clearly does not need:
   - **reads everywhere**, read-only. Codex: a permission profile `":root"="read"`. Claude Code:
@@ -272,11 +272,18 @@ round's report merges their findings by `place`.
     names kept).
   - **secrets are not read**: `~/.ssh`, `~/.aws`, `~/.azure`, `~/.gnupg`, `~/.kube`,
     `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.config/gh`, `~/.config/gcloud`,
-    `~/.config/hub`, `~/.git-credentials`, `~/.password-store`, and the keychain
-    (`~/Library/Keychains`) or keyring (`~/.local/share/keyrings`); and `.env` / `.env.*` files.
-    Codex: each path `"none"` in the profile, the `.env` files found under the source view and the
-    live checkout (8 folders deep, 512 files at most) listed one by one. Claude Code: `Read`, `Glob`
-    and `Grep` deny rules for each path and `Read(**/.env)`, `Read(**/.env.*)`, through `--settings`.
+    `~/.config/hub`, `~/.config/op`, `~/.git-credentials`, `~/.password-store`, `~/.vault-token`,
+    `~/.terraform.d/credentials.tfrc.json`, `~/.cargo/credentials.toml`, the keychain
+    (`~/Library/Keychains`) or keyring (`~/.local/share/keyrings`); **the other reviewer's login and
+    state** (Claude Code is denied `$CODEX_HOME`, else `~/.codex`; Codex is denied `~/.claude`,
+    `~/.claude.json` and `$CLAUDE_CONFIG_DIR`); and `.env` / `.env.*` files. Their contents are
+    also left out of the generated patches (`changes/*.patch`); the change index still names them.
+    Claude Code: `Read`, `Glob` and `Grep` deny rules for each path and `Read(**/.env)`,
+    `Read(**/.env.*)`, through `--settings`, enforced at every read. Codex: each path `"none"` in
+    the profile; its rules take paths, not patterns, so the `.env` files are those found when the run
+    starts under the source view, the live checkout and the folder beside it (the neighbouring
+    checkouts), 6 folders deep, past dependency and cache folders, 2,048 at most. A `.env` elsewhere,
+    deeper, or made during the run is not denied to Codex: the limit of this profile.
   - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
     `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
     local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,

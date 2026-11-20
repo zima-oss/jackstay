@@ -107,8 +107,16 @@ func Temporary(request Request) string { return filepath.Join(request.Folder, "t
 // secrets or a `.env` file of the reviewed tree or the live checkout; write only Temporary.
 func Filesystem(request Request, home string) string {
 	entries := []string{`":root"="read"`}
-	denied := access.SecretPaths(home)
-	denied = append(denied, access.SecretFiles([]string{request.Tree, request.RepositoryRoot}, 8, 512)...)
+	environ := request.Environ
+	if environ == nil {
+		environ = os.Environ()
+	}
+	denied := access.SecretPaths(home, access.Codex, environ)
+	roots := []string{request.Tree, request.RepositoryRoot}
+	if request.RepositoryRoot != "" {
+		roots = append(roots, filepath.Dir(request.RepositoryRoot)) // the checkouts beside it
+	}
+	denied = append(denied, access.SecretFiles(roots, 6, 2048)...)
 	for _, path := range denied {
 		if resolved, err := canonicalPath(path); err == nil {
 			path = resolved
