@@ -23,14 +23,16 @@
       "file": "order.go",
       "symbol": "ParseLine",
       "words": [
-        "<=",
         "index out of range",
         "out of range",
         "off-by-one",
         "off by one",
         "panic",
+        "<=",
         "bounds",
-        "len(fields)"
+        "len(fields)",
+        "one past the end",
+        "past the end"
       ],
       "what": "the note loop reads fields[len(fields)]: every line with two or more fields panics"
     },
@@ -40,17 +42,15 @@
       "file": "order.go",
       "symbol": "ParseLine",
       "words": [
-        "Atoi",
-        "ignored",
-        "ignores the error",
-        "discard",
-        "silently",
-        "quantity 0",
-        "quantity of 0",
-        "as 0",
+        "atoi",
+        "quantit",
         "non-numeric",
-        "invalid quantit",
-        "not a number"
+        "not a number",
+        "as zero",
+        "as 0",
+        "quantity 0",
+        "parse error",
+        "conversion"
       ],
       "what": "a quantity that is not a number is read as 0 with no error"
     },
@@ -61,10 +61,12 @@
       "symbol": "LoadOrder",
       "words": [
         "close",
-        "Close",
         "leak",
+        "descriptor",
         "file handle",
-        "descriptor"
+        "left open",
+        "never closed",
+        "not closed"
       ],
       "what": "the opened file is never closed"
     },
@@ -76,15 +78,25 @@
       "words": [
         "capacity",
         "bypass",
-        "without Reserve",
-        "skips Reserve",
+        "skips reserve",
+        "without reserve",
         "negative",
         "overbook",
         "over-reserve",
         "oversell",
         "without the lock",
         "without locking",
-        "mutex"
+        "unsynchronized",
+        "data race",
+        "mutex",
+        "race",
+        "lose updates",
+        "lost update",
+        "corrupt",
+        "more stock than",
+        "nonpositive",
+        "non-positive",
+        "reservation totals"
       ],
       "what": "lines are added to Reserved without Reserve: no capacity check, no lock, negative quantities accepted"
     },
@@ -95,9 +107,14 @@
       "symbol": "Get",
       "words": [
         "race",
+        "unsynchronized",
+        "without the mutex",
+        "without locking",
+        "without a lock",
+        "without the lock",
+        "concurrent",
         "mutex",
-        "lock",
-        "concurrent"
+        "holding the lock"
       ],
       "what": "Get reads the map without the mutex Put holds: a data race"
     },
@@ -107,13 +124,21 @@
       "file": "cache.go",
       "symbol": "Get",
       "words": [
-        "expire",
-        "expired",
         "inverted",
         "reversed",
-        "stale",
-        "After",
-        "never returns"
+        "backwards",
+        "wrong direction",
+        "returns expired",
+        "fresh entries",
+        "treated as expired",
+        "served after",
+        "after expiry",
+        "never a hit",
+        "always a miss",
+        "reject fresh",
+        "accept expired",
+        "only after they expire",
+        "expired values"
       ],
       "what": "the expiry test is inverted: fresh entries are misses and expired ones hits"
     },
@@ -130,7 +155,14 @@
         "over-release",
         "exceed",
         "double release",
-        "above Capacity"
+        "above capacity",
+        "validat",
+        "corrupt",
+        "unchecked",
+        "invalid release",
+        "oversell",
+        "overselling",
+        "unavailable stock"
       ],
       "what": "Release accepts any count: Reserved can go below zero and Free above Capacity"
     },
@@ -145,9 +177,10 @@
         "final page",
         "short page",
         "truncat",
+        "drops",
         "dropped",
         "clamp",
-        "len(items)"
+        "remaining items"
       ],
       "what": "the last, partial page is returned as nil instead of its items"
     },
@@ -163,7 +196,9 @@
         "swallow",
         "reports success",
         "lost error",
-        "discards the error"
+        "discards the error",
+        "success after",
+        "nil after"
       ],
       "what": "after every attempt failed it returns nil, not the last error"
     },
@@ -179,7 +214,7 @@
         "quote",
         "quoting",
         "escape",
-        "sanitize",
+        "sanitiz",
         "untrusted",
         "metacharacter"
       ],
@@ -198,7 +233,10 @@
         "longer",
         "token too long",
         "Buffer",
-        "scanner"
+        "scanner",
+        "long notes",
+        "long lines",
+        "long note"
       ],
       "what": "bufio.Scanner stops at lines over 64 KiB"
     },
@@ -227,7 +265,10 @@
         "large page",
         "huge",
         "beyond",
-        "start >"
+        "start >",
+        "large",
+        "pagination inputs",
+        "pagination arguments"
       ],
       "what": "number*size can overflow, or start past the end panics"
     },
@@ -242,7 +283,9 @@
         "exit status 1",
         "exit code 1",
         "nothing matches",
-        "zero matches"
+        "zero matches",
+        "empty result",
+        "empty match"
       ],
       "what": "grep exits 1 when nothing matches, reported as a failure"
     },
@@ -255,7 +298,9 @@
         "race",
         "lock",
         "mutex",
-        "concurrent"
+        "concurrent",
+        "lose an update",
+        "while releasing"
       ],
       "what": "ReserveLines (from the orders range) races with Release"
     },
@@ -275,7 +320,9 @@
         "roll back",
         "atomic",
         "left in place",
-        "leaves"
+        "leaves",
+        "leave stock reserved",
+        "failed order"
       ],
       "what": "a failed order leaves its earlier lines reserved"
     },
@@ -344,6 +391,33 @@
         "shares the"
       ],
       "what": "the returned page aliases the caller's slice"
+    },
+    {
+      "id": "E12",
+      "range": "cache",
+      "file": "cache.go",
+      "symbol": "Put",
+      "words": [
+        "never evicted",
+        "never removed",
+        "accumulate",
+        "grows without bound",
+        "without bound",
+        "without a bound"
+      ],
+      "what": "expired entries are never evicted: the cache grows without bound"
+    },
+    {
+      "id": "E13",
+      "range": "cache",
+      "file": "cache.go",
+      "symbol": "Put",
+      "words": [
+        "zero-value",
+        "nil map",
+        "nil clock"
+      ],
+      "what": "a zero-value Cache panics on Put (nil map, nil clock)"
     }
   ]
 }

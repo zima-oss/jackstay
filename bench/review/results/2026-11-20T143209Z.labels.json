@@ -1,0 +1,5 @@
+{
+  "claude-direct/orders/1: stock.go: ReserveLines / order.go: ParseLine — Negative quantities are accepted and lower Reserved": "A4",
+  "claude-direct/orders/3: stock.go: ReserveLines / order.go: ParseLine — Negative quantities are accepted and reduce Reserved": "A4",
+  "claude-direct/orders/4: order.go: ParseLine / stock.go: ReserveLines — Negative quantities are accepted and lower Reserved": "A4"
+}

@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/review"
+	"github.com/zima-oss/jackstay/internal/supervise"
 )
 
 // Defects is testdata/defects.json: the fixture's ranges and the defects seeded in each.
@@ -51,24 +53,28 @@ type Defect struct {
 
 // Run is one reviewer's review of one range by one arm.
 type Run struct {
-	Arm        string    `json:"arm"`
-	Reviewer   string    `json:"reviewer"`
-	Range      string    `json:"range"`
-	Iteration  int       `json:"iteration"`
-	Started    time.Time `json:"started"`
-	Wall       float64   `json:"wall_seconds"`
-	Prepare    float64   `json:"prepare_seconds"` // source view (wrapped only)
-	Wait       float64   `json:"wait_seconds"`    // slot and start lock (wrapped only)
-	Model      float64   `json:"model_seconds"`   // the reviewer's own run: model and tools
-	Models     []string  `json:"models"`
-	CostUSD    float64   `json:"cost_usd"`
-	Tokens     int64     `json:"tokens"`
-	Outcome    string    `json:"outcome"`
-	Findings   []Finding `json:"findings"`
-	Found      []string  `json:"found"`      // seeded defects found
-	Extras     int       `json:"extras"`     // findings of a confirmed issue that was not seeded
-	Unmatched  int       `json:"unmatched"`  // findings that name no seeded defect
-	Duplicates int       `json:"duplicates"` // findings of a defect already found in this run
+	Arm       string    `json:"arm"`
+	Reviewer  string    `json:"reviewer"`
+	Range     string    `json:"range"`
+	Iteration int       `json:"iteration"`
+	Started   time.Time `json:"started"`
+	Wall      float64   `json:"wall_seconds"`
+	Prepare   float64   `json:"prepare_seconds"` // source view (wrapped only)
+	Wait      float64   `json:"wait_seconds"`    // slot and start lock (wrapped only)
+	Model     float64   `json:"model_seconds"`   // the reviewer's own run: model and tools
+	Models    []string  `json:"models"`
+	CostUSD   float64   `json:"cost_usd"`
+	Tokens    int64     `json:"tokens"`
+	Outcome   string    `json:"outcome"`
+	Findings  []Finding `json:"findings"`
+	Found     []string  `json:"found"`     // seeded defects found
+	Extras    int       `json:"extras"`    // findings of a confirmed issue that was not seeded
+	Unmatched int       `json:"unmatched"` // findings that name no seeded defect
+	False     int       `json:"false"`     // findings a person judged not to be a real issue
+	// The settings asked for: the model and effort of this run's reviewer.
+	RequestedModel  string `json:"requested_model"`
+	RequestedEffort string `json:"requested_effort"`
+	Duplicates      int    `json:"duplicates"` // findings of a defect already found in this run
 }
 
 // Finding is the part of a reviewer's finding that is scored.
@@ -80,6 +86,7 @@ type Finding struct {
 }
 
 type bench struct {
+	labels                         map[string]string // a person's judgement of findings, by labelKey
 	root, fixture, jst, work, home string
 	codexModel, claudeModel        string
 	codexEffort, claudeEffort      string
@@ -212,6 +219,12 @@ func (measurement *bench) rescore(path string, arms []string) error {
 	if err != nil {
 		return err
 	}
+	labelsPath := strings.TrimSuffix(path, ".jsonl") + ".labels.json"
+	if data, err := os.ReadFile(labelsPath); err == nil { // #nosec G304 -- beside the operator's results
+		if err := json.Unmarshal(data, &measurement.labels); err != nil {
+			return fmt.Errorf("%s: %w", labelsPath, err)
+		}
+	}
 	var all []Run
 	runs := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(saved)), "\n") {
@@ -224,13 +237,23 @@ func (measurement *bench) rescore(path string, arms []string) error {
 		}
 		runs = max(runs, run.Iteration)
 		all = append(all, run)
-		if run.Arm == "codex-jst" && len(run.Models) > 0 {
-			measurement.codexModel = run.Models[0]
+		// The settings asked for: kept with each run; flags stand in for runs saved without them.
+		if run.RequestedModel != "" || run.RequestedEffort != "" {
+			if run.Reviewer == "codex" {
+				measurement.codexModel, measurement.codexEffort = run.RequestedModel, run.RequestedEffort
+			} else {
+				measurement.claudeModel, measurement.claudeEffort = run.RequestedModel, run.RequestedEffort
+			}
 		}
 	}
 	stamp := strings.TrimSuffix(filepath.Base(path), ".jsonl")
 	report := measurement.report(all, arms, runs, stamp)
 	return os.WriteFile(strings.TrimSuffix(path, ".jsonl")+".md", []byte(report), 0o600)
+}
+
+// labelKey names one finding of one run for the labels file.
+func labelKey(run Run, finding Finding) string {
+	return fmt.Sprintf("%s/%s/%d: %s — %s", run.Arm, run.Range, run.Iteration, finding.Place, finding.Title)
 }
 
 // configuredCodexModel is the model of the user's Codex configuration ($CODEX_HOME, else ~/.codex),
@@ -358,7 +381,11 @@ func reviewerOf(arm string) string {
 // one runs one arm on one range, and scores it.
 func (measurement *bench) one(arm string, position, iteration int) Run {
 	part := measurement.defects.Ranges[position]
-	run := Run{Arm: arm, Reviewer: reviewerOf(arm), Range: part.Name, Iteration: iteration, Started: time.Now()}
+	run := Run{Arm: arm, Reviewer: reviewerOf(arm), Range: part.Name, Iteration: iteration, Started: time.Now(),
+		RequestedModel: measurement.codexModel, RequestedEffort: measurement.codexEffort}
+	if run.Reviewer == "claude-code" {
+		run.RequestedModel, run.RequestedEffort = measurement.claudeModel, measurement.claudeEffort
+	}
 	base, head := measurement.commits[position], measurement.commits[position+1]
 	var answer review.Answer
 	var err error
@@ -408,13 +435,9 @@ func (measurement *bench) wrapped(run *Run, base, head, task string) (review.Ans
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, measurement.jst, args...) // #nosec G204 -- the binary being measured
-	graceful(command)
-	command.Dir = filepath.Join(measurement.work, "fixture")
-	command.Env = append(os.Environ(), "JACKSTAY_HOME="+measurement.home)
-	var stdout, stderr bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, &stderr
-	runErr := command.Run()
+	captured, runErr := supervise.Capture(ctx, append([]string{measurement.jst}, args...), filepath.Join(measurement.work, "fixture"),
+		append(os.Environ(), "JACKSTAY_HOME="+measurement.home), nil)
+	stdout, stderr := bytes.NewBuffer(captured.Stdout), bytes.NewBuffer(captured.Stderr)
 	var result struct {
 		Status int                 `json:"status"`
 		Folder string              `json:"folder"`
@@ -460,14 +483,6 @@ func (measurement *bench) wrapped(run *Run, base, head, task string) (review.Ans
 	}
 	var answer review.Answer
 	return answer, json.Unmarshal(data, &answer)
-}
-
-// graceful makes a run's deadline ask the program to stop (an interrupt, which jst review passes
-// to its reviewers' process groups) and wait for it, before killing it: a paid review is never left
-// running while the next arm starts.
-func graceful(command *exec.Cmd) {
-	command.Cancel = func() error { return command.Process.Signal(os.Interrupt) }
-	command.WaitDelay = time.Minute
 }
 
 // codexTokens are the tokens of a Codex run's turn.completed events.
@@ -528,18 +543,14 @@ func (measurement *bench) directCodex(run *Run, checkout, base, head string) (re
 	args = append(args, "-")
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, "codex", args...) // #nosec G204 -- the reviewer measured
-	graceful(command)
-	command.Dir = checkout
-	command.Stdin = strings.NewReader(directPrompt(base, head))
-	events, err := os.Create(filepath.Join(folder, "events.jsonl")) // #nosec G304 -- the bench's own folder
-	if err != nil {
+	started := time.Now()
+	captured, runErr := supervise.Capture(ctx, append([]string{"codex"}, args...), checkout, os.Environ(), []byte(directPrompt(base, head)))
+	if runErr == nil && captured.Status != 0 {
+		runErr = fmt.Errorf("exit status %d", captured.Status)
+	}
+	if err := os.WriteFile(filepath.Join(folder, "events.jsonl"), captured.Stdout, 0o600); err != nil {
 		return review.Answer{}, err
 	}
-	command.Stdout, command.Stderr = events, io.Discard
-	started := time.Now()
-	runErr := command.Run()
-	_ = events.Close()
 	run.Model = time.Since(started).Seconds()
 	run.Models = []string{measurement.codexModel}
 	run.Tokens = codexTokens(filepath.Join(folder, "events.jsonl"))
@@ -563,6 +574,10 @@ func complete(data []byte) (review.Answer, error) {
 	if answer.Verdict != "approve" && answer.Verdict != "changes" {
 		return review.Answer{}, fmt.Errorf("the verdict is %q, not a completed review", answer.Verdict)
 	}
+	settings := review.Defaults()
+	if problem := review.CheckAnswer(answer, settings, nil); problem != "" {
+		return review.Answer{}, fmt.Errorf("the answer does not check as the wrapped arm's would: %s", problem)
+	}
 	return answer, nil
 }
 
@@ -578,14 +593,12 @@ func (measurement *bench) directClaude(run *Run, checkout, base, head string) (r
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), measurement.timeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, "claude", args...) // #nosec G204 -- the reviewer measured
-	graceful(command)
-	command.Dir = checkout
-	command.Stdin = strings.NewReader(directPrompt(base, head))
-	var stdout bytes.Buffer
-	command.Stdout, command.Stderr = &stdout, io.Discard
 	started := time.Now()
-	runErr := command.Run()
+	captured, runErr := supervise.Capture(ctx, append([]string{"claude"}, args...), checkout, os.Environ(), []byte(directPrompt(base, head)))
+	if runErr == nil && captured.Status != 0 {
+		runErr = fmt.Errorf("exit status %d", captured.Status)
+	}
+	stdout := bytes.NewBuffer(captured.Stdout)
 	run.Model = time.Since(started).Seconds()
 	var envelope struct {
 		Subtype    string          `json:"subtype"`
@@ -615,29 +628,26 @@ func (measurement *bench) directClaude(run *Run, checkout, base, head string) (r
 	return complete(envelope.Structured)
 }
 
-// match is the defect of list in run's range that finding names, with its score: the finding must
-// name the defect's file or symbol and use one of its words; the defect with the highest score wins,
-// a word in the place or title counting three, one in the detail one.
+// match is the defect of list in run's range that finding names, with its score. Only the
+// finding's place and title count, the detail being context that names neighbours in passing: the
+// place must name the defect's file, or its function as a whole word, and each of the defect's
+// words — specific to its mechanism — found in the place or title scores one. A finding no word
+// matches is left to a person (the labels file).
 func match(list []Defect, rangeName string, finding Finding) (string, int) {
-	text := strings.ToLower(finding.Place + " " + finding.Title + " " + finding.Detail)
-	where := strings.ToLower(finding.Place + " " + finding.Title)
+	place := strings.ToLower(finding.Place)
+	where := place + " " + strings.ToLower(finding.Title)
 	best, bestScore := "", 0
 	for _, defect := range list {
 		if defect.Range != rangeName {
 			continue
 		}
-		if !strings.Contains(where, strings.ToLower(defect.File)) && !strings.Contains(where, strings.ToLower(defect.Symbol)) &&
-			!strings.Contains(text, strings.ToLower(defect.Symbol)) {
+		named := regexp.MustCompile(`\b` + regexp.QuoteMeta(strings.ToLower(defect.Symbol)) + `\b`)
+		if !strings.Contains(place, strings.ToLower(defect.File)) && !named.MatchString(place) {
 			continue
 		}
-		// A word in the place or title says what the finding is about; one in the detail may be
-		// context (a neighbouring defect named in passing), so it weighs less.
 		score := 0
 		for _, word := range defect.Words {
-			switch word = strings.ToLower(word); {
-			case strings.Contains(where, word):
-				score += 3
-			case strings.Contains(text, word):
+			if strings.Contains(where, strings.ToLower(word)) {
 				score++
 			}
 		}
@@ -649,14 +659,24 @@ func match(list []Defect, rangeName string, finding Finding) (string, int) {
 }
 
 // score matches each finding to the seeded defect or confirmed extra it names best (an extra wins
-// a tie: a finding of a known unseeded issue never earns a seeded defect), else counts it unmatched.
+// a tie: a finding of a known unseeded issue never earns a seeded defect), else counts it
+// unmatched. A person's label for the finding (labels) overrides the match: a defect or extra id,
+// or "false" for a finding that is not a real issue.
 func (measurement *bench) score(run *Run) {
 	found := map[string]bool{}
-	run.Found, run.Extras, run.Unmatched, run.Duplicates = nil, 0, 0, 0
+	run.Found, run.Extras, run.Unmatched, run.Duplicates, run.False = nil, 0, 0, 0, 0
 	for index, finding := range run.Findings {
 		best, bestScore := match(measurement.defects.Defects, run.Range, finding)
 		if extra, extraScore := match(measurement.defects.Extras, run.Range, finding); extraScore >= bestScore && extraScore > 0 {
 			best = extra
+		}
+		if label, labelled := measurement.labels[labelKey(*run, finding)]; labelled {
+			best = label
+		}
+		if best == "false" {
+			run.Findings[index].Match = best
+			run.False++
+			continue
 		}
 		run.Findings[index].Match = best
 		switch {
@@ -744,7 +764,7 @@ func (measurement *bench) report(all []Run, arms []string, runs int, stamp strin
 			}
 			recall.add(float64(len(run.Found)) / float64(seeded))
 			if len(run.Findings) > 0 {
-				precision.add(float64(len(run.Findings)-run.Unmatched) / float64(len(run.Findings)))
+				precision.add(float64(len(run.Findings)-run.Unmatched-run.False) / float64(len(run.Findings)))
 			}
 			extras.add(float64(run.Extras))
 			wall.add(run.Wall)
