@@ -77,11 +77,11 @@ func WriteAtomic(path string, data []byte, mode os.FileMode, limit int) error {
 }
 
 // MakeFolder makes folder and its missing parents with mode, like os.MkdirAll, then fsyncs every
-// folder above it, so folder survives a crash with what is written in it. Whether this call made a
-// folder does not matter: another process, or an earlier call whose sync failed, may have made it,
-// and its being there does not say its entry is on disk. A folder that will not sync fails the call
-// when this process may write in it (it may hold a new entry); the walk ends quietly at the first
-// folder this process may not write in, where nothing of its own can be pending.
+// folder above it up to the root, so folder survives a crash with what is written in it. Whether a
+// folder was made by this call does not matter: another process, or an earlier call whose sync
+// failed, may have made it, and its being there does not say its entry is on disk. A folder that
+// will not sync fails the call, unless this process may neither open nor write in it: then nothing
+// of its own can be pending there, and the walk goes on above it.
 func MakeFolder(folder string, mode os.FileMode) error {
 	absolute, err := filepath.Abs(folder)
 	if err != nil {
@@ -91,12 +91,14 @@ func MakeFolder(folder string, mode os.FileMode) error {
 		return err
 	}
 	for current, parent := absolute, filepath.Dir(absolute); parent != current; current, parent = parent, filepath.Dir(parent) {
-		if unix.Access(parent, unix.W_OK) != nil {
-			return nil
+		err := syncFolder(parent)
+		if err == nil {
+			continue
 		}
-		if err := syncFolder(parent); err != nil {
-			return err
+		if errors.Is(err, os.ErrPermission) && unix.Access(parent, unix.W_OK) != nil {
+			continue
 		}
+		return err
 	}
 	return nil
 }

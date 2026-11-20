@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -186,5 +187,31 @@ func TestMakeFolderFailsWhileAParentWillNotSyncAndARetrySyncsIt(t *testing.T) {
 	}
 	if len(synced) < 2 || synced[0] != failing || synced[1] != root {
 		t.Fatalf("the retry synced %v; want %s and %s first", synced, failing, root)
+	}
+}
+
+func TestMakeFolderSyncsPastAFolderItMayNotWriteIn(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes everywhere")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, "locked")
+	folder := filepath.Join(locked, "work", "store")
+	if err := os.MkdirAll(folder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	syncFolder = func(path string) error {
+		if path == root {
+			return &os.PathError{Op: "sync", Path: path, Err: errors.New("injected")}
+		}
+		return SyncFolder(path)
+	}
+	t.Cleanup(func() { syncFolder = SyncFolder })
+	if err := MakeFolder(folder, 0o700); err == nil || !strings.Contains(err.Error(), "injected") {
+		t.Fatalf("the walk stopped below %s: %v", root, err)
 	}
 }
