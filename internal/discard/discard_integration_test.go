@@ -103,3 +103,36 @@ func TestDiscardRestoresAStagedFileInARemovedDirectory(t *testing.T) {
 		t.Fatalf("the staged version was lost: %+v", kept)
 	}
 }
+
+func TestDiscardPreservesAMissingFileRecreatedBeforeInstall(t *testing.T) {
+	w := newWorld(t, map[string]string{"a.txt": "head\n"})
+	if err := os.Remove(filepath.Join(w.repo.Root, "a.txt")); err != nil {
+		t.Fatal(err)
+	}
+	installReplacement = func(source, target string, expected trash.Replaced) error {
+		if err := os.WriteFile(target, []byte("recreated by an editor\n"), 0o600); err != nil {
+			return err
+		}
+		return trash.InstallDiscardReplacement(source, target, expected)
+	}
+	t.Cleanup(func() { installReplacement = trash.InstallDiscardReplacement })
+	if code := w.discard(w.repo.Root, "a.txt"); code != 1 || w.read("a.txt") != "recreated by an editor\n" {
+		t.Fatalf("discard overwrote the recreated file: exit %d, file %q, %s", code, w.read("a.txt"), w.errors.String())
+	}
+	if !strings.Contains(w.errors.String(), "the index was restored") {
+		t.Fatalf("partial outcome is not clear: %s", w.errors.String())
+	}
+}
+
+func TestDiscardRestoresAMissingFileWithNothingToKeep(t *testing.T) {
+	w := newWorld(t, map[string]string{"a.txt": "head\n"})
+	if err := os.Remove(filepath.Join(w.repo.Root, "a.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.discard(w.repo.Root, "a.txt"); code != 0 {
+		t.Fatalf("discard exit %d: %s", code, w.errors.String())
+	}
+	if w.read("a.txt") != "head\n" || w.status() != "" || len(trash.Entries(w.trash)) != 0 {
+		t.Fatalf("the missing file was not written back alone: %q %s %+v", w.read("a.txt"), w.status(), trash.Entries(w.trash))
+	}
+}
