@@ -1023,3 +1023,80 @@ func TestAWatchedDeliveryThatCannotBeReadLeavesItsSubscriptionWaiting(t *testing
 		t.Fatalf("no outcome from a read that failed: %+v", f.record("cc:a").Notices)
 	}
 }
+
+func TestShowingASessionNoticeKeepsAnArmingFromTheSameRead(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateIdle)
+	f.session("cc:c", "c", alpha, StateIdle)
+	// b is owed a session notice (c is idle), and a's subscription waits on b reading a's message.
+	f.send("cc:b", SendInput{To: "c", NotifyWhenIdle: true})
+	f.clock.advance(time.Second)
+	f.send("cc:a", SendInput{To: "b", Message: "tell me when idle", NotifyWhenIdle: true})
+	result := f.inbox("cc:b", unread())
+	if len(result.Messages) != 1 || len(result.Notices) != 1 {
+		t.Fatalf("%+v", result)
+	}
+	if watchers := f.record("cc:b").IdleWatchers; len(watchers) != 1 || !watchers[0].Armed {
+		t.Fatalf("the arming survives the notice's write: %+v", watchers)
+	}
+}
+
+func TestAnEndReplayedAfterTheDeadlineDecidesAsTheEndWould(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:b", "b", alpha, StateBusy)
+	f.send("cc:a", SendInput{To: "b", Message: "never read", NotifyWhenIdle: true})
+	f.clock.advance(12*time.Hour - time.Minute)
+	if err := f.store.update(f.ctx, func(transaction *transaction) error {
+		session, err := transaction.readSession(hashKey("cc:b"))
+		if err != nil {
+			return err
+		}
+		session.State, session.Since = StateGone, stamp(transaction.now)
+		entry := journalEntry{Op: opObserve, ID: "observe-end", Observed: &observation{Session: hashKey("cc:b"),
+			State: StateGone, Since: session.Since, Generation: session.IdleGeneration}}
+		if err := transaction.publishJournal(entry); err != nil {
+			return err
+		}
+		return transaction.writeSession(session)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(2 * time.Minute)
+	if _, err := f.store.Sessions(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]int{}
+	for _, notice := range f.record("cc:a").Notices {
+		kinds[notice.Kind]++
+	}
+	if kinds[NoticeNotDelivered] != 1 || kinds[NoticeSubscriptionExpired] != 0 {
+		t.Fatalf("%v", kinds)
+	}
+}
+
+func TestAnUnreadableMailboxRecordHoldsItsMessages(t *testing.T) {
+	f := newFixture(t)
+	f.session("cc:a", "a", alpha, StateIdle)
+	if _, err := f.store.Register(f.ctx, Registration{Key: "cx:round", KeySource: SourceEngine, Engine: EngineCodex,
+		Name: "review:task/r1/codex", Channel: alpha, Mailbox: true, State: StateIdle}); err != nil {
+		t.Fatal(err)
+	}
+	sent := f.send("cc:a", SendInput{To: "review:task/r1/codex", Message: "for the next round", ExpiresInSeconds: 60})
+	f.clock.advance(8 * 24 * time.Hour)
+	mailbox := f.store.place.session(hashKey("cx:round"))
+	if err := os.Chmod(mailbox, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	sweepErr := f.store.Sweep(f.ctx)
+	if err := os.Chmod(mailbox, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if sweepErr != nil {
+		t.Logf("the sweep stopped: %v", sweepErr)
+	}
+	if !exists(f.store.place.commit(sent.MessageID)) {
+		t.Fatal("a mailbox it could not read lost its message")
+	}
+}

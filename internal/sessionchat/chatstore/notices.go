@@ -3,6 +3,7 @@ package chatstore
 import (
 	"errors"
 	"github.com/zima-oss/jackstay/internal/durable"
+	"path/filepath"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/sessionchat/deliverystate"
@@ -111,16 +112,26 @@ func sessionNoticeWords(notice SessionNotice) string {
 }
 
 // markShown marks the given notices shown, in the step that returns them, and returns those it
-// marked: a notice whose record could not be read or written again is left owed and not returned.
-// current is the session's record as read before anything was marked.
-func (transaction *transaction) markShown(current Session, notices []OwedNotice) ([]OwedNotice, error) {
+// marked. A notice is returned only once its shown state is durable: a record that could not be
+// written, or whose folder will not sync, stays owed and is not returned. The session's own notices
+// are marked on the record as it is at that moment, so nothing written earlier in the step (an
+// arming) is undone; if that record cannot be read or written, they wait for the next read.
+func (transaction *transaction) markShown(sessionHash string, notices []OwedNotice) []OwedNotice {
 	var shown []OwedNotice
-	sessionChanged := false
+	durableWrite := func(path string, record any, bound int) bool {
+		err := writeRecord(path, record, bound)
+		if errors.Is(err, durable.ErrNotSynced) {
+			err = transaction.store.syncFolder(filepath.Dir(path))
+		}
+		return err == nil
+	}
+	var sessionNotices []OwedNotice
 	for _, notice := range notices {
 		switch notice.source {
 		case onDelivery:
 			var delivery Delivery
-			if err := readRecord(transaction.place.delivery(notice.messageID, notice.hash), deliveryBound, &delivery); err != nil {
+			path := transaction.place.delivery(notice.messageID, notice.hash)
+			if err := readRecord(path, deliveryBound, &delivery); err != nil {
 				continue
 			}
 			next, err := deliverystate.ShowNotice(deliverystate.Notice(delivery.Notice))
@@ -128,15 +139,13 @@ func (transaction *transaction) markShown(current Session, notices []OwedNotice)
 				continue
 			}
 			delivery.Notice = string(next)
-			// Only the notice changes, so the delivery's marker is untouched; a record renamed into
-			// place whose folder did not sync is shown already for every later reader.
-			if err := writeRecord(transaction.place.delivery(notice.messageID, notice.hash), delivery, deliveryBound); err != nil &&
-				!errors.Is(err, durable.ErrNotSynced) {
-				continue
+			if durableWrite(path, delivery, deliveryBound) {
+				shown = append(shown, notice)
 			}
 		case onRequest:
 			var commit Commit
-			if err := readRecord(transaction.place.commit(notice.messageID), commitBound, &commit); err != nil {
+			path := transaction.place.commit(notice.messageID)
+			if err := readRecord(path, commitBound, &commit); err != nil {
 				continue
 			}
 			next, err := deliverystate.ShowNotice(deliverystate.Notice(commit.Notice))
@@ -144,36 +153,34 @@ func (transaction *transaction) markShown(current Session, notices []OwedNotice)
 				continue
 			}
 			commit.Notice = string(next)
-			if err := writeRecord(transaction.place.commit(notice.messageID), commit, commitBound); err != nil &&
-				!errors.Is(err, durable.ErrNotSynced) {
-				continue
+			if durableWrite(path, commit, commitBound) {
+				shown = append(shown, notice)
 			}
 		case onSession:
-			found := false
-			for index := range current.Notices {
-				if current.Notices[index].ID == notice.noticeID && current.Notices[index].State == string(deliverystate.NoticeOwed) {
-					current.Notices[index].State, found, sessionChanged = string(deliverystate.NoticeShown), true, true
-				}
-			}
-			if !found {
-				continue
-			}
-		}
-		shown = append(shown, notice)
-	}
-	if sessionChanged {
-		if err := transaction.writeSession(current); err != nil && !errors.Is(err, durable.ErrNotSynced) {
-			// The session's own notices stay owed; the others were marked and are returned.
-			kept := shown[:0]
-			for _, notice := range shown {
-				if notice.source != onSession {
-					kept = append(kept, notice)
-				}
-			}
-			return kept, nil
+			sessionNotices = append(sessionNotices, notice)
 		}
 	}
-	return shown, nil
+	if len(sessionNotices) == 0 {
+		return shown
+	}
+	current, err := transaction.readSession(sessionHash)
+	if err != nil {
+		return shown
+	}
+	var marked []OwedNotice
+	for _, notice := range sessionNotices {
+		for index := range current.Notices {
+			if current.Notices[index].ID == notice.noticeID && current.Notices[index].State == string(deliverystate.NoticeOwed) {
+				current.Notices[index].State = string(deliverystate.NoticeShown)
+				marked = append(marked, notice)
+			}
+		}
+	}
+	current.V = 1
+	if len(marked) > 0 && durableWrite(transaction.place.session(sessionHash), current, sessionBound) {
+		shown = append(shown, marked...)
+	}
+	return shown
 }
 
 // noticeLines is the lines of a list of notices.

@@ -169,7 +169,11 @@ func (transaction *transaction) heldByMailbox(envelope Envelope) bool {
 	keys := append([]string{hashKey(envelope.From)}, envelope.Recipients...)
 	for _, hash := range keys {
 		session, err := transaction.readSession(hash)
-		if err == nil && session.Mailbox && session.State != StateGone {
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+		case err != nil:
+			return true // a record it cannot read may be an open mailbox's: keep the message
+		case session.Mailbox && session.State != StateGone:
 			return true
 		}
 	}

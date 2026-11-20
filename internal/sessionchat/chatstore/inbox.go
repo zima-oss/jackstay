@@ -163,11 +163,6 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 		}
 		var readable []pageItem
 		finish := func() error {
-			// Everything that can fail without changing anything comes first.
-			current, err := transaction.readSession(hash)
-			if err != nil {
-				return err
-			}
 			for _, entry := range readable {
 				updated, stepErr := transaction.stepLoaded(entry.item.found, hash, entry.item.delivery,
 					deliverystate.Event{Kind: deliverystate.ReadWhole})
@@ -175,10 +170,7 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 					result.Messages[entry.row].State = updated.State
 				}
 			}
-			shown, err := transaction.markShown(current, notices)
-			if err != nil {
-				return err
-			}
+			shown := transaction.markShown(hash, notices)
 			result.Notices = noticeLines(shown)
 			result.NoticesMore += len(notices) - len(shown)
 			return nil

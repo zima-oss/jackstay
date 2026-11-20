@@ -125,7 +125,17 @@ func (transaction *transaction) applyObservation(observed observation) (Session,
 		}
 	}
 	if observed.State == StateGone {
-		if err := transaction.dropWaiting(session); err != nil {
+		// What waited is dropped as of the end itself, also when recovery finishes it later, so a
+		// replay decides each subscription as the end would have.
+		if ended, ok := parseStamp(observed.Since); ok && ended.Before(transaction.now) {
+			clock := transaction.now
+			transaction.now = ended
+			err := transaction.dropWaiting(session)
+			transaction.now = clock
+			if err != nil {
+				return session, err
+			}
+		} else if err := transaction.dropWaiting(session); err != nil {
 			return session, err
 		}
 	}
