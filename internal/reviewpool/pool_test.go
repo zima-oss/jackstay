@@ -57,7 +57,7 @@ func TestTerminalEventForLateMCPSubscriberOnly(t *testing.T) {
 
 func fixture(t *testing.T) (Pool, Request, string) {
 	t.Helper()
-	repo := testrepo.New(t, map[string]string{"jackstay.json": `{"jackstay_schema":2,"project":"pool-test"}`, "a.txt": "a\n"})
+	repo := testrepo.New(t, map[string]string{"jackstay.json": `{"jackstay_schema":3,"project":"pool-test"}`, "a.txt": "a\n"})
 	base := repo.Git("rev-parse", "HEAD")
 	repo.Commit("second", map[string]string{"a.txt": "b\n"})
 	return Pool{Root: filepath.Join(repo.Home, "pool")}, Request{Repository: repo.Root, Base: "HEAD^", Head: "HEAD", Task: "pool-task", Reviewers: []string{"codex", "claude-code"}}, base

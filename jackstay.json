@@ -1,6 +1,6 @@
 {
   "$schema": "./schemas/jackstay.schema.json",
-  "jackstay_schema": 2,
+  "jackstay_schema": 3,
   "project": "jackstay",
   "receipts": {
     "inputs": [

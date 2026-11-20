@@ -183,18 +183,17 @@ reconciled when its original store remains available. One foreground worker runs
 job at a time across the machine. If the worker loses its state update after the review
 saved a completed round, the next worker can recover its exact verdict from that round.
 
-Set admission, limits, retry delays, and history retention under `review.pool` in
-`jackstay.json`. `jst check` validates the values, and the published [editor schema](adopt.md)
-offers completion for them.
+Set admission with `review.pool.accepting` in `jackstay.json` (default `true`; it needs
+`"jackstay_schema": 3`). With `false`, the repository accepts no new job identities; existing
+jobs can still be queried, retried, and processed. The pool's limits are fixed:
 
-| Setting | Default | Meaning |
-| --- | ---: | --- |
-| `max_pending` | 32 | Jobs pending or running for this repository. The machine-wide cap is 256. |
-| `max_attempts` | 5 | Launches allowed for one pinned job, including recovery after interruption. |
-| `retry_initial_seconds` | 30 | Initial delay when explicitly retrying a retryable failure. |
-| `retry_cap_seconds` | 900 | Upper bound for exponential retry delay. |
-| `accepting` | `true` | Whether this repository accepts new job identities. Existing jobs can still be queried, retried, and processed. |
-| `history_days` | 30 | Days to retain a terminal job after its last update, from 1 to 3650. The value is saved when the job is added. |
+| Limit | Value |
+| --- | ---: |
+| Jobs pending or running for one repository (the machine-wide cap is 256) | 32 |
+| Launches for one pinned job, including recovery after interruption | 5 |
+| Initial delay when explicitly retrying a retryable failure | 30 s |
+| Upper bound of the exponential retry delay | 900 s |
+| Days a terminal job is kept after its last update (saved when the job is added) | 30 |
 
 JSON status exposes when delayed work becomes eligible. Configuration errors and other
 operator failures need attention before retry. See the [reviewer pool specification](../roadmap/reviewer-pool.md)

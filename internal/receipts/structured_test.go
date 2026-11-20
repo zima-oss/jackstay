@@ -10,7 +10,7 @@ import (
 )
 
 func TestDirectStructuredReportsRecordAndKeyTheEvidence(t *testing.T) {
-	const settings = `{"jackstay_schema":1,"project":"demo","receipts":{"inputs":["src"],"toolchain":[],"env":[],"commands":[
+	const settings = `{"jackstay_schema":3,"project":"demo","receipts":{"inputs":["src"],"toolchain":[],"env":[],"commands":[
 		{"argv":["go","test","-json"],"judge":"go-json","reuse":true},
 		{"argv":["pytest-wrapper"],"judge":"junit","report":"report.xml","empty_exit":5,"reuse":true}]}}`
 	world := newWorld(t, settings)

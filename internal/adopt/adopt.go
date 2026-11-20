@@ -32,6 +32,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/install"
 	"github.com/zima-oss/jackstay/internal/layout"
 	"github.com/zima-oss/jackstay/internal/release"
 )
@@ -192,7 +193,9 @@ func Make(options Options) (*Plan, error) {
 		return nil, err
 	}
 	planner.plan.profile = chosen
-	planner.prospective(original, chosen)
+	if err := planner.prospective(original, chosen); err != nil {
+		return nil, err
+	}
 	planner.configChange(original, existed)
 	if chosen != nil {
 		planner.profileRules(chosen)
@@ -267,8 +270,12 @@ func (planner *planner) readConfig() (*jsondoc.Object, bool, error) {
 	}
 	if !exists {
 		fresh := jsondoc.NewObject()
-		fresh.Set("$schema", config.EditorSchemaURL())
-		fresh.Set("jackstay_schema", json.Number(fmt.Sprint(config.Schema)))
+		if install.Compare(planner.options.Version, config.Schema3Release) >= 0 {
+			fresh.Set("$schema", config.EditorSchemaURL(planner.options.Version))
+			fresh.Set("jackstay_schema", json.Number(fmt.Sprint(config.Schema)))
+		} else {
+			fresh.Set("jackstay_schema", json.Number("2"))
+		}
 		fresh.Set("project", filepath.Base(planner.root))
 		planner.plan.Project = filepath.Base(planner.root)
 		return fresh, false, nil
@@ -382,8 +389,10 @@ func mainFolder(root string) string {
 }
 
 // prospective is the jackstay.json the apply would write (spec section 4): defaults merged, the
-// profile and pin recorded, the schema moved; plain is the same for the checks and the block.
-func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Profile) {
+// profile and pin recorded, the schema moved; plain is the same for the checks and the block. Keys
+// that need "jackstay_schema": 3 are refused when the project is pinned to a jackstay before 0.6.0,
+// which would refuse the file; with them, the schema becomes 3.
+func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Profile) error {
 	document := jsondoc.Clone(original).(*jsondoc.Object)
 	if chosen != nil {
 		mergeDefaults(document, chosen.Defaults)
@@ -411,7 +420,21 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 			}
 		}
 	}
+	if newer := config.Schema3Keys(planner.plain); len(newer) > 0 {
+		// A pinned project is read by the pinned jackstay too (its workflows download it); an
+		// unpinned one only by the jackstay at hand, which reads them.
+		pin, _ := getString(document.Object("adopt"), "pin")
+		if pin != "" && install.Compare(strings.TrimPrefix(pin, "v"), config.Schema3Release) < 0 {
+			return &UsageError{fmt.Sprintf("`%s` need jackstay %s or later, and this project is pinned to %s, which would refuse %s: "+
+				"leave them out, or move the pin (`jst adopt --apply --pin` with a newer jackstay)",
+				strings.Join(newer, "`, `"), config.Schema3Release, pin, config.Name)}
+		}
+		if schema, _ := document.Get("jackstay_schema"); fmt.Sprint(schema) != fmt.Sprint(config.Schema) {
+			document.Set("jackstay_schema", json.Number(fmt.Sprint(config.Schema)))
+		}
+	}
 	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
+	return nil
 }
 
 func (planner *planner) usesVersion(chosen *profile.Profile) bool {

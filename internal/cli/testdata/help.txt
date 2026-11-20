@@ -120,7 +120,7 @@ jst brief save: save a task brief for this worktree
 
 usage: jst brief save --expect REV [--max-age DURATION] < brief.json
 
-Save explicit JSON with task_id, task, next (1–12 strings), optional decisions (up to 12 strings). REV is the current revision from `brief show`, initially 0. Max age defaults to 168h and must be 1h–720h. No transcript is read.
+Save explicit JSON with task_id, task, next (1–12 strings), optional decisions (up to 12 strings). REV is the current revision from `brief show`, initially 0. Max age defaults to `brief.max_age_hours` in jackstay.json, else 168h, and must be 1h–720h. No transcript is read.
 
 exit: 0 saved; 2 invalid input, conflict or unavailable state.
 
@@ -1476,12 +1476,13 @@ is run); each command's --help names its own.
 ==> jst workspace board --help
 jst workspace board: read local status across named repositories
 
-usage: jst workspace board [--json] REPO [REPO...]
+usage: jst workspace board [--json] [REPO...]
 
 Read a summary of each explicitly supplied Git checkout. Linked worktrees share queue and chat
 state; gate and receipt summaries are for the named checkout. No remote service is contacted.
 No message bodies, receipt contents, or card bodies are printed.
-At most 32 repositories may be supplied in one call.
+At most 32 repositories may be supplied in one call. With none named, the repositories are the
+current project's status.repos in jackstay.json (relative to its folder).
 
 exit: 0 every requested source read; 1 at least one source is unknown or partial; 2 invalid use.
 

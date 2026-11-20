@@ -72,7 +72,11 @@ project's: `jst adopt` reads it to find conflicts and never changes it.
 
 ### 3.1 `jackstay.json`
 
-- **Created** with `{"jackstay_schema": 2, "project": "<the folder's name>"}` when the project has none.
+- **Created** with `{"jackstay_schema": 2, "project": "<the folder's name>"}` when the project has none;
+  a jackstay of 0.6.0 or later writes `{"$schema": "<its schema on its tag>", "jackstay_schema": 3, …}`.
+- **`jackstay_schema` moved to 3** when the file would carry a key that needs 3 (`config.Schema3Keys`).
+  In a project pinned (`adopt.pin`) to a jackstay before 0.6.0 such a key is refused instead: the
+  pinned jackstay would refuse the file.
 - **`jackstay_schema` moved from 1 to 2** when the file would carry a section that needs 2 (`config`'s
   `Stage1Sections`, which gains `adopt`). Schema 1 to 2 is a number only (2 reads every schema-1
   file the same way).

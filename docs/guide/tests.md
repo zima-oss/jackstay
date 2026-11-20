@@ -470,9 +470,8 @@ The design: [testing.md](../design/testing.md), and for receipts, the lock and `
 
 ### Default timeout for prerequisite commands
 
-Set `test.requires_timeout_seconds` to choose a project default for `requires` commands.
-The default is 60 seconds. A `timeout` on an individual prerequisite takes precedence.
-The setting applies to checks attached to command scopes, steps and composite gates.
+A `requires` command has 60 seconds unless it gives its own `timeout`.
+This applies to checks attached to command scopes, steps and composite gates.
 
 ### Verify a report produced by CI
 

@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/zima-oss/jackstay/internal/version"
 )
 
 func TestCheckedInJSONSchemaMatchesRuntimeTable(t *testing.T) {
@@ -43,67 +47,46 @@ func TestJSONSchemaDescribesRuntimeStructure(t *testing.T) {
 	if properties["test"].(map[string]any)["properties"].(map[string]any)["scopes"].(map[string]any)["additionalProperties"] == nil {
 		t.Fatal("dynamic test scope names must be accepted")
 	}
-	chat := properties["chat"].(map[string]any)["properties"].(map[string]any)
 	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
 	if accepting := pool["accepting"].(map[string]any); accepting["type"] != "boolean" || accepting["default"] != true {
 		t.Fatalf("review pool admission schema: %+v", accepting)
 	}
-	if history := pool["history_days"].(map[string]any); history["minimum"] != float64(1) ||
-		history["maximum"] != float64(3650) || history["default"] != float64(30) {
-		t.Fatalf("review pool retention schema: %+v", history)
+	brief := properties["brief"].(map[string]any)["properties"].(map[string]any)["max_age_hours"].(map[string]any)
+	if brief["minimum"] != float64(BriefMaxAgeHoursMinimum) || brief["maximum"] != float64(BriefMaxAgeHoursMaximum) ||
+		brief["default"] != float64(BriefMaxAgeHours) {
+		t.Fatalf("brief expiry schema: %+v", brief)
 	}
-	for key, wanted := range chatSection.keys {
-		if wanted.maximum == 0 {
-			continue
-		}
-		field := chat[key].(map[string]any)
-		if field["minimum"] != float64(wanted.minimum) || field["maximum"] != float64(wanted.maximum) || field["default"] != float64(wanted.defaultInt) {
-			t.Errorf("chat.%s schema bounds/default differ from runtime", key)
-		}
+	if !strings.Contains(schema["$id"].(string), "/v"+version.Version+"/schemas/") {
+		t.Fatalf("$id is not on the version's tag: %v", schema["$id"])
 	}
 }
 
 func TestChatAndQueueProjectPolicy(t *testing.T) {
 	parsed, err := Parse([]byte(`{
 		"$schema": "./schemas/jackstay.schema.json",
-		"jackstay_schema": 2,
-		"chat": {"enabled": true, "max_pending": 24},
+		"jackstay_schema": 3,
+		"chat": {"enabled": true, "codex_bridge": {"enabled": true}},
 		"queue": {"enabled": true}
 	}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	policy := ChatSettings(parsed.Section("chat"))
-	if !policy.Enabled || policy.MaxPending != 24 || policy.MaxMessageBytes != 4096 || policy.RetentionHours != 72 {
-		t.Fatalf("unexpected chat limits: %+v", policy)
+	if !policy.Enabled || !policy.CodexBridgeEnabled || policy.MaxPending != ChatMaxPending ||
+		policy.MaxMessageBytes != ChatMaxMessageBytes || policy.CodexPollIntervalMS != ChatCodexPollIntervalMS {
+		t.Fatalf("unexpected chat policy: %+v", policy)
 	}
 	if problems := SectionProblems(parsed).Of("queue"); len(problems) != 1 {
 		t.Fatalf("expected a missing base on enabled queue, got %v", problems)
 	}
-	parsed.Section("chat")["max_pending"] = json.Number("513")
-	if problems := SectionProblems(parsed).Of("chat"); len(problems) != 1 {
-		t.Fatalf("expected an inbox size limit, got %v", problems)
-	}
-}
-
-func TestChatQuotaAndCodexDefaults(t *testing.T) {
-	parsed, err := Parse([]byte(`{"jackstay_schema":2,"chat":{"enabled":true,"max_pending":8,"codex_bridge":{"enabled":true}}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	section := parsed.Section("chat")
-	policy := ChatSettings(section)
-	if policy.MaxPendingPerSession != 8 || !policy.CodexBridgeEnabled || policy.CodexPollIntervalMS != 1000 || policy.CodexAckTimeoutSeconds != 30 {
-		t.Fatalf("unexpected effective policy: %+v", policy)
-	}
-	section["max_pending_per_session"] = json.Number("9")
-	if problems := SectionProblems(parsed).Of("chat"); len(problems) != 1 {
-		t.Fatalf("expected a per-session quota error: %v", problems)
+	parsed.Section("chat")["max_pending"] = json.Number("24")
+	if problems := SectionProblems(parsed).Of("chat"); len(problems) != 1 || !strings.Contains(problems[0], "unknown key") {
+		t.Fatalf("a chat limit is a constant, not a key: %v", problems)
 	}
 }
 
 func TestClaudeCodeChatRequiresEnabledChat(t *testing.T) {
-	parsed, err := Parse([]byte(`{"jackstay_schema":2,"chat":{"enabled":true,"claude_code":{"enabled":true}}}`))
+	parsed, err := Parse([]byte(`{"jackstay_schema":3,"chat":{"enabled":true,"claude_code":{"enabled":true}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +107,7 @@ func TestClaudeCodeChatRequiresEnabledChat(t *testing.T) {
 }
 
 func TestPinnedAdoptionProfileNeedsDigestAndPath(t *testing.T) {
-	parsed, err := Parse([]byte(`{"jackstay_schema":2,"adopt":{"profile_sha256":"bad"}}`))
+	parsed, err := Parse([]byte(`{"jackstay_schema":3,"adopt":{"profile_sha256":"bad"}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,5 +119,49 @@ func TestPinnedAdoptionProfileNeedsDigestAndPath(t *testing.T) {
 	adopt["profile_sha256"] = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	if problems := SectionProblems(parsed).Of("adopt"); len(problems) != 0 {
 		t.Fatalf("valid profile digest rejected: %v", problems)
+	}
+}
+
+func TestNewerKeysNeedSchema3AndAnOlderSchemaSaysSo(t *testing.T) {
+	for _, document := range []string{
+		`{"jackstay_schema":2,"$schema":"x"}`,
+		`{"jackstay_schema":2,"chat":{"enabled":false}}`,
+		`{"jackstay_schema":2,"brief":{"max_age_hours":24}}`,
+		`{"jackstay_schema":2,"status":{"repos":["."]}}`,
+		`{"jackstay_schema":2,"review":{"pool":{"accepting":true}}}`,
+		`{"jackstay_schema":2,"test":{"selection":{"order":[]}}}`,
+		`{"jackstay_schema":2,"test":{"scopes":{"unit":{"run":["x"],"report":"r.xml"}}}}`,
+		`{"jackstay_schema":2,"receipts":{"commands":[{"argv":["x"],"judge":"go-json"}]}}`,
+		`{"jackstay_schema":1,"queue":{"enabled":false}}`,
+	} {
+		parsed, err := Parse([]byte(document))
+		if err != nil {
+			t.Fatal(err)
+		}
+		problems := SectionProblems(parsed).Of("")
+		if len(problems) == 0 || !strings.Contains(strings.Join(problems, "; "), "need `\"jackstay_schema\": 3`") {
+			t.Errorf("%s: %v", document, problems)
+		}
+		parsed["jackstay_schema"] = json.Number("3")
+		if problems := SectionProblems(parsed).Of(""); len(problems) != 0 {
+			t.Errorf("%s with schema 3: %v", document, problems)
+		}
+	}
+	parsed, err := Parse([]byte(`{"jackstay_schema":4}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if problems := SectionProblems(parsed).Of(""); len(problems) != 1 || !strings.Contains(problems[0], "upgrade jackstay") {
+		t.Fatalf("a newer schema: %v", problems)
+	}
+}
+
+func TestBriefExpiryAndOverviewRepositories(t *testing.T) {
+	if BriefMaxAge(nil) != BriefMaxAgeHours*time.Hour || BriefMaxAge(map[string]any{"max_age_hours": json.Number("24")}) != 24*time.Hour {
+		t.Fatal("brief expiry")
+	}
+	repositories := StatusRepositories(map[string]any{"repos": []any{"../service", "/abs/app", ""}}, "/work/project")
+	if strings.Join(repositories, ",") != "/work/service,/abs/app" {
+		t.Fatalf("repositories %v", repositories)
 	}
 }
