@@ -161,8 +161,9 @@ after it is typed, then merges (or queues). `--confirm` is refused without a ter
 Three things keep that true for an agent:
 - **`jst lint pr`, rule D0**, keeps a change to `jackstay.json` alone in its pull request, judged by
   the base's file (W-047). Adopt writes the workflow that runs `jst lint pr` for every project with
-  a `land` section, also one without `cards` or `changes`, and doctor checks the base's rules
-  require it.
+  a `land` section, also one without `cards` or `changes`. Doctor reports that workflow missing,
+  or base rules that require no `card-line` check; that D0 is enforced, a person confirms in the
+  host's branch rules (section 5).
 - **`jst land`** reads human paths from the base and the change (step 2), and autonomy from the
   base only. A change that introduces the first `land` section touches `jackstay.json`, so it is a
   person's, and it cannot authorise its own merge: the base it lands on has no policy yet.
@@ -213,12 +214,11 @@ with the exception `upgrade:workflows` that none still downloads an older jackst
 through a script or an action; until then the plan, the apply and doctor name the blocker.
 
 `jst doctor` reports: the `land` section valid; the account connects; the rules readable, with the
-checks they require (none: a note); rule D0's check `card-line` required, judged only for the
-`card-line.yml` adopt manages as the fetched default branch has it, with that revision's
-`jackstay.json` (missing: a problem; the project's own, edited or a profile's: a note to check by
-hand, since jackstay reads no workflow to learn what it runs; the branch or rules unread: a note;
-confirmed: a note that a fork's pull request skips the job, and a skipped required check passes, so
-a person looks at D0 there); `method` allowed; a required queue; `gh pr merge` refused by the guard; and, from section 7, the CI-covered scopes the rules do
+checks they require (none: a note); a missing lint workflow (`.github/workflows/card-line.yml` in
+the checkout; adopt writes it) and readable rules that require no check named `card-line`, both
+problems; whether D0 is enforced is the person's to confirm, in one standing note, since jackstay
+does not verify that a required check runs `jst lint pr` on the base and fails with it (and pull
+requests from forks skip the adopted job); `method` allowed; a required queue; `gh pr merge` refused by the guard; and, from section 7, the CI-covered scopes the rules do
 not require.
 
 ## 6. What is removed

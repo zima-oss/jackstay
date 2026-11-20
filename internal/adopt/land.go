@@ -14,12 +14,10 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/adopt/jsondoc"
 	"github.com/zima-oss/jackstay/internal/adopt/profile"
-	"github.com/zima-oss/jackstay/internal/adopt/templates"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/install"
-	"github.com/zima-oss/jackstay/internal/release"
 )
 
 // The two answers to adopt's one question (docs/design/land.md section 5), recommended first.
@@ -287,56 +285,4 @@ func SaveMachineAutonomy(value string) error {
 		data, err := json.MarshalIndent(members, "", "  ")
 		return append(data, '\n'), err
 	})
-}
-
-// The states of the workflow that runs `jst lint pr` (rule D0), as LintWorkflowState reads them.
-const (
-	// LintWorkflowManaged is adopt's card-line.yml, as this jackstay writes it for the project.
-	LintWorkflowManaged = "managed"
-	// LintWorkflowMissing is no card-line.yml.
-	LintWorkflowMissing = "missing"
-	// LintWorkflowOwn is a card-line.yml that is the project's own, edited, or a profile's.
-	LintWorkflowOwn = "own"
-)
-
-// LintCheck is the check adopt's card-line workflow reports: its one job, `card-line`.
-const LintCheck = "card-line"
-
-// LintWorkflowState says whether the project at root has the workflow that runs `jst lint pr` as
-// adopt writes it: card-line.yml with an intact header whose text is jackstay's own template
-// rendered for the project's file. jackstay does not read another workflow to learn what it runs.
-func LintWorkflowState(root string, project config.Config) string {
-	path := workflowsDir + "/card-line.yml"
-	input, err := readInput(root, path)
-	if err != nil {
-		return LintWorkflowOwn
-	}
-	return LintWorkflowStateOf(input.text, input.exists, project)
-}
-
-// LintWorkflowStateOf is LintWorkflowState of card-line.yml's text (exists false: no such file)
-// and the jackstay.json of the same revision.
-func LintWorkflowStateOf(text string, exists bool, project config.Config) string {
-	if !exists {
-		return LintWorkflowMissing
-	}
-	marked, name, intact := templates.Header(text)
-	if !marked || !intact || name != "card-line" {
-		return LintWorkflowOwn
-	}
-	pin, _ := project.Section("adopt")["pin"].(string)
-	values := map[string]string{"jackstay_repository": templates.Repository, "release_base": release.BaseOf(project)}
-	if pin != "" {
-		values["jackstay_version"] = pin
-	}
-	for _, template := range templates.Embedded() {
-		if template.Name != "card-line" {
-			continue
-		}
-		body, err := templates.Render(template.Text, values)
-		if err == nil && templates.Marked(template.Name, body) == text {
-			return LintWorkflowManaged
-		}
-	}
-	return LintWorkflowOwn
 }

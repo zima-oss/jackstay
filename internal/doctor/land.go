@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zima-oss/jackstay/internal/adopt"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gh"
 	"github.com/zima-oss/jackstay/internal/gitcli"
@@ -22,12 +22,15 @@ import (
 type LandProject struct {
 	// Config is the project's jackstay.json, which has a `land` section.
 	Config config.Config
-	// LintWorkflow is the state of card-line.yml, which runs `jst lint pr`, on the fetched default
-	// branch (adopt.LintWorkflowState); LintUnread says why that branch could not be read ("": read).
-	LintWorkflow, LintUnread string
+	// LintMissing says the checkout has no .github/workflows/card-line.yml, adopt's workflow that
+	// runs `jst lint pr`.
+	LintMissing bool
 	// Connect is the project's host and its repository (owner/name), as `jst land` connects.
 	Connect func(ctx context.Context) (hosting.Host, string, error)
 }
+
+// lintCheck is the check of adopt's card-line workflow, whose job runs `jst lint pr`.
+const lintCheck = "card-line"
 
 // landTimeout bounds the land checks' questions to the host.
 const landTimeout = 30 * time.Second
@@ -63,50 +66,9 @@ func realLandProject() (LandProject, bool) {
 		host, _, err := gh.Connect(ctx, settings.Account, repository.String())
 		return host, repository.String(), err
 	}}
-	ctx, cancel := context.WithTimeout(context.Background(), landTimeout)
-	defer cancel()
-	project.LintWorkflow, project.LintUnread = lintWorkflowAtDefault(ctx, gitcli.Git{Dir: root}, parsed.Section("github"))
+	_, err = os.Stat(filepath.Join(root, ".github", "workflows", "card-line.yml"))
+	project.LintMissing = errors.Is(err, os.ErrNotExist)
 	return project, true
-}
-
-// lintWorkflowAtDefault is the state of card-line.yml on the remote's default branch as last
-// fetched (nothing is fetched), judged with that revision's jackstay.json; unread says why it could
-// not be read.
-func lintWorkflowAtDefault(ctx context.Context, git gitcli.Git, github map[string]any) (state, unread string) {
-	name, err := remote.Name(ctx, git, remote.ConfiguredRemote(github))
-	if err != nil {
-		return "", err.Error()
-	}
-	branch, err := remote.FetchedDefault(ctx, git, name)
-	if err != nil {
-		return "", err.Error()
-	}
-	prefix, err := git.Run(ctx, "rev-parse", "--show-prefix")
-	if err != nil {
-		return "", err.Error()
-	}
-	folder := strings.TrimSpace(string(prefix))
-	settings, err := git.Run(ctx, "show", branch.Ref+":"+folder+config.Name)
-	if err != nil {
-		return "", fmt.Sprintf("%s has no readable %s", branch.Ref, config.Name)
-	}
-	parsed, err := config.Parse(settings)
-	if err != nil {
-		return "", fmt.Sprintf("%s's %s: %v", branch.Ref, config.Name, err)
-	}
-	path := folder + ".github/workflows/card-line.yml"
-	listed, err := git.Run(ctx, "ls-tree", "--name-only", branch.Ref, "--", path)
-	if err != nil {
-		return "", err.Error()
-	}
-	if strings.TrimSpace(string(listed)) == "" {
-		return adopt.LintWorkflowStateOf("", false, parsed), ""
-	}
-	text, err := git.Run(ctx, "show", branch.Ref+":"+path)
-	if err != nil {
-		return "", fmt.Sprintf("%s:%s cannot be read", branch.Ref, path)
-	}
-	return adopt.LintWorkflowStateOf(string(text), true, parsed), ""
 }
 
 // checkLand reports a project's landing policy (docs/design/land.md section 5): the section valid,
@@ -131,6 +93,20 @@ func checkLand(report *Report, inputs Inputs) {
 	land, _ := project.Config.Land()
 	facts["autonomy"], facts["method"] = land.Autonomy, land.Method
 	checkLandGuard(report, project.Config)
+	// D0 is never reported as enforced: only what is definitely wrong, else a standing note.
+	lintWrong := project.LintMissing
+	if lintWrong {
+		report.problem("land-lint-missing", "there is no .github/workflows/card-line.yml, which runs `jst lint pr`: rule D0 is not enforced, "+
+			"and a change of jackstay.json can land with other files",
+			"`jst adopt --apply` writes it; then require its `"+lintCheck+"` check in the branch's rules")
+	}
+	defer func() {
+		if !lintWrong {
+			report.note("land-lint-confirm", "D0 (jackstay.json changed alone, `jst lint pr`) is enforced only if a required check runs "+
+				"`jst lint pr` on the base and fails with it. jackstay does not verify that: confirm it once in the host's branch rules. "+
+				"Pull requests from forks skip the adopted job.")
+		}
+	}()
 	ctx, cancel := context.WithTimeout(context.Background(), landTimeout)
 	defer cancel()
 	host, repository, err := project.Connect(ctx)
@@ -153,11 +129,12 @@ func checkLand(report *Report, inputs Inputs) {
 			"run `jst doctor` again; if it stays, `jst land --plan` shows what the host answers")
 		return
 	}
-	checkLandRules(report, facts, project, land, base, rules)
+	lintWrong = checkLandRules(report, facts, land, base, rules) || lintWrong
 }
 
-// checkLandRules judges the base's rules against the land section (section 4).
-func checkLandRules(report *Report, facts map[string]any, project LandProject, land config.Land, base string, rules hosting.Rules) {
+// checkLandRules judges the base's rules against the land section (section 4); lintWrong says the
+// readable rules require no check named `card-line`, adopt's check that runs `jst lint pr`.
+func checkLandRules(report *Report, facts map[string]any, land config.Land, base string, rules hosting.Rules) (lintWrong bool) {
 	switch {
 	case !rules.ChecksRead && len(land.Checks) == 0:
 		report.problem("land-rules-unread", fmt.Sprintf("the rules of %s cannot be read (%s) and land.checks lists none: "+
@@ -180,7 +157,12 @@ func checkLandRules(report *Report, facts map[string]any, project LandProject, l
 		}
 		facts["required_checks"] = names
 	}
-	checkLintRequired(report, base, rules, project.LintWorkflow, project.LintUnread)
+	if rules.ChecksRead && !slices.ContainsFunc(rules.Required, func(required hosting.RequiredCheck) bool { return required.Name == lintCheck }) {
+		lintWrong = true
+		report.problem("land-lint-not-required", fmt.Sprintf("the rules of %s require no check named `%s`, the adopted job that runs "+
+			"`jst lint pr`: a change of jackstay.json can land with other files, past rule D0", base, lintCheck),
+			"require the `"+lintCheck+"` check in the branch's rules on the host")
+	}
 	switch {
 	case !rules.MethodsRead:
 		report.note("land-method", "the merge methods the repository allows cannot be read: whether `%s` is allowed is known at the merge", land.Method)
@@ -195,6 +177,7 @@ func checkLandRules(report *Report, facts map[string]any, project LandProject, l
 	if rules.QueueRead && rules.Queue {
 		report.note("land-queue", "the rules of %s require the merge queue: the agent hands every change to a person, who queues it", base)
 	}
+	return lintWrong
 }
 
 // checkLandGuard reports a guard that lets `gh pr merge` run (section 3.3).
@@ -205,33 +188,5 @@ func checkLandGuard(report *Report, project config.Config) {
 			"remove the `gh-pr-merge` entry from guard.rules in jackstay.json, in a pull request a person merges")
 	case config.LevelWarn:
 		report.note("land-guard", "guard.rules.gh-pr-merge only warns: `gh pr merge` runs past the landing policy")
-	}
-}
-
-// checkLintRequired reports whether the base's rules require the check of adopt's card-line
-// workflow, which runs `jst lint pr` and keeps a change of jackstay.json alone in its pull request
-// (rule D0, section 3.3), as the fetched default branch has it. Only the workflow adopt manages is judged: jackstay reads no other
-// workflow to learn what it runs, so the project's own is left to a person (a note).
-func checkLintRequired(report *Report, base string, rules hosting.Rules, state, unread string) {
-	switch {
-	case unread != "":
-		report.note("land-lint-unverified", "D0 unverified: the default branch could not be inspected (%s): `git fetch` first", unread)
-	case state == adopt.LintWorkflowMissing:
-		report.problem("land-lint-missing", "there is no .github/workflows/card-line.yml, which runs `jst lint pr`: rule D0 is not enforced, "+
-			"and a change of jackstay.json can land with other files",
-			"`jst adopt --apply` writes it; then require its `"+adopt.LintCheck+"` check in the branch's rules")
-	case state != adopt.LintWorkflowManaged:
-		report.note("land-lint-unverified", "D0 unverified: the lint workflow is the project's own; check by hand that a required job "+
-			"runs `jst lint pr` and fails with it")
-	case !rules.ChecksRead:
-		report.note("land-lint-unverified", "whether the rules of %s require `%s`, the check that runs `jst lint pr`, cannot be read",
-			base, adopt.LintCheck)
-	case !slices.ContainsFunc(rules.Required, func(required hosting.RequiredCheck) bool { return required.Name == adopt.LintCheck }):
-		report.problem("land-lint-not-required", fmt.Sprintf("the rules of %s do not require `%s`, the check of card-line.yml, which runs "+
-			"`jst lint pr`: a change of jackstay.json can land with other files, past rule D0", base, adopt.LintCheck),
-			"require the `"+adopt.LintCheck+"` check in the branch's rules on the host")
-	default:
-		report.note("land-lint-forks", "the `%s` check runs only on pull requests from this repository's branches: a fork's "+
-			"pull request skips it, and a skipped required check passes, so a person looks at D0 on a fork's pull request", adopt.LintCheck)
 	}
 }

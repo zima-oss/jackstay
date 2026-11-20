@@ -457,34 +457,6 @@ func TestThePinStepRefusesAProfileDigest(t *testing.T) {
 	}
 }
 
-// Doctor confirms rule D0 only for card-line.yml as adopt writes it for the project.
-func TestTheLintWorkflowStateIsAdoptsOwnFileOnly(t *testing.T) {
-	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p"}`, ".claude/settings.json": projectsSettings, "CLAUDE.md": "@AGENTS.md\n"})
-	state := func() string {
-		return LintWorkflowState(root, mustParse(t, read(t, root, "jackstay.json")))
-	}
-	if got := state(); got != LintWorkflowMissing {
-		t.Fatalf("before adoption: %s", got)
-	}
-	applyTwice(t, landOptions(root, config.AutonomyPrepare))
-	if got := state(); got != LintWorkflowManaged {
-		t.Fatalf("as adopt wrote it: %s", got)
-	}
-	path := filepath.Join(root, ".github/workflows/card-line.yml")
-	if err := os.WriteFile(path, []byte(read(t, root, ".github/workflows/card-line.yml")+"      - run: echo more\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := state(); got != LintWorkflowOwn {
-		t.Fatalf("edited: %s", got)
-	}
-	if err := os.WriteFile(path, []byte("name: card-line\non: pull_request\njobs:\n  card-line:\n    steps:\n      - run: jst lint pr\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := state(); got != LintWorkflowOwn {
-		t.Fatalf("the project's own: %s", got)
-	}
-}
-
 // Any workflow the project keeps needs the confirmation, also one that never names jackstay: it may
 // run a script or an action that downloads it.
 func TestAKeptWorkflowThatNeverNamesJackstayNeedsTheConfirmation(t *testing.T) {
