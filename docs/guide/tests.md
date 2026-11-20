@@ -11,13 +11,17 @@ status alone: a test command may itself end with 2 or 77.
 
 | Outcome | Meaning |
 |---|---|
-| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A gate: every step `passed`, `exited-0` or `resumed`, and at least one ran now; a gate of exit-judged steps alone can pass with no test counted, so read each step's outcome on the same line |
+| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A gate: every step `passed`, `exited-0`, `resumed` or `skipped`, and at least one ran now; a gate of exit-judged steps alone can pass with no test counted, so read each step's outcome on the same line |
 | `exited-0` | ended 0, but nothing counted its tests: **not a pass** |
 | `reused` | nothing ran: a receipt for this tree exists and reuse is on |
 | `resumed` | a gate under `--resume` where every step was skipped: nothing ran, not a pass |
 | `failed` | ended non-zero, or a veto line was seen |
 | `not-started` | `jackstay.json` or the lock could not be used, or a `requires` check failed; nothing ran |
 | `refused` | `--resume` met a step that failed before on this same tree |
+| `skipped` | the scope asked for cannot run on this system (its `systems`); in a gate, a step so is ignored |
+| `not-run` | in a gate, a step whose dep did not pass, or one after a failure ended the run |
+| `needs-other-system` | `jst test changed`: a test of the change runs on no CI system and not on this machine |
+| `left-to-ci` | `jst test changed` or `jst test uncovered` had nothing to run here: CI covers it |
 | `gave-up` | the machine-wide lock was not had within `--wait` |
 | `nothing-run` | ended 0, but the output showed no test |
 | `unjudged` | ended 0, but the output could not be read to its end, or the run left processes or files that cannot be attributed |
@@ -84,13 +88,17 @@ Six scope names have one meaning in every project; any other name starts with `x
 | `quick` | a broad look, less the slowest classes |
 | `full` | the whole suite a headless run can do |
 | `display` | what needs a real screen or device |
-| `gate` | every step a change must pass to merge, in order |
+| `gate` | every scope a change must pass to merge: a scope with no `run` and `deps` |
 
 The keys of a scope or a step:
 
 - `run`: the words to run. Placeholders: `{tests}`, the names given to `focused` as one regular
   expression, made for `swift test --filter`; `{base}`, the scope's `base` or `--base REF`;
-  `{slow}`, the slow classes `quick` skips. Or `steps`: the steps a gate runs, in order.
+  `{slow}`, the slow classes `quick` skips.
+- `deps`: the scopes or steps that must pass first, in order. A scope with no `run` (a gate) has
+  only `deps`, with `when`, `ci` and `systems`. `steps` is read as `deps`.
+- `ci` and `systems`: where CI runs the scope and where it runs at all, by Go's names (`linux`,
+  `darwin`); see [where tests run](#where-tests-run). The graph keys need `"jackstay_schema": 3`.
 - `judge`: how the run is counted. `steps`: an `evidence` pattern with one number group counts the
   tests. `exit`: the status only, so `exited-0` at best. `swift-test`: built in for `swift test`.
   `go-json`, `junit`, `jest-json`, `trx`, `xcresult-json`: [structured reports](#structured-test-reports).
@@ -99,7 +107,7 @@ The keys of a scope or a step:
 - `requires`: checks run first; each has 60 seconds unless it gives its own `timeout`.
 - `env`, `lock`, `when`.
 
-A scope that lists `steps` needs `receipts.toolchain` written out, even as an empty list.
+A scope that lists `steps` or `deps` needs `receipts.toolchain` written out, even as an empty list.
 
 ### The gate
 
@@ -110,16 +118,25 @@ jst test gate --resume
 jst test gate --commit HEAD
 ```
 
-The first runs every step in order and stops at the first that is not `passed` or `exited-0`.
-`--keep-going` runs the rest and reports each. `--resume` skips the steps that passed before on this
-same clean tree. `--commit HEAD` runs on a clean copy of HEAD that jackstay makes and removes.
+A run is a graph: each scope or step once, after its `deps`, one at a time, in the order the
+declarations give (depth first, deps in their declared order). A step two lists share runs once. The
+first that does not pass ends the run, and what comes after it is `not-run`; `--keep-going` runs
+every step whose deps passed and reports each. A step whose `systems` leave this machine out is
+`skipped`, which stops nothing. `--resume` skips the steps that passed before on this same clean
+tree. `--commit HEAD` runs on a clean copy of HEAD that jackstay makes and removes.
 
 ```text
-jst test: outcome=passed (gate gate, 0.9 s: lint=exited-0, full=passed)
+jst test: outcome=passed (gate, 0.9 s: lint=exited-0, full=passed)
+jst test: outcome=failed (gate failed at full, exit 1, 0.9 s: lint=exited-0, full=failed, gate=not-run)
 ```
 
 - The line names each step's own outcome: `lint=exited-0` ran and ended 0 without counting tests;
   `full=passed` counted them.
+- A run that fails names the first failure in this order: `failed`, `passed-on-retry`,
+  `timed-out`, `stopped`, `stopped-waiting`, `unjudged`, `nothing-run`, `gave-up`, `not-started`.
+- `jst check` refuses a cycle of deps, an unknown dep, `steps` with `deps`, a dep that needs test
+  names, and, in schema 3, `requires` on a scope with no `run`: the check goes to the dep that
+  needs it. A schema-2 list's own `requires` run once, before anything, when the list is in the run.
 - `--resume` skips a step only on a clean checkout whose key (HEAD, the step's definition, the
   listed environment and toolchain, the refs it depends on) matches a step that passed. A step that
   failed on this tree is not run again: the gate ends `refused` until the tree changes.
@@ -167,7 +184,56 @@ copy of REV.
 - Without `--base`, the base is `origin/HEAD`; if that ref is missing, name the base.
 - Projects without `test.selection` keep their declared `changed` scope.
 
-Use `jst test gate`, not the selected scope, for installs, tags and publishing a release.
+Use `jst test gate`, not the selected scope, for installs, tags and publishing a release, unless
+the project says where its tests run (below).
+
+### Where tests run
+
+A scope's `ci` names the systems whose CI job runs it; `systems` the systems it runs on at all.
+
+```json
+"scopes": {
+  "x-build": {"run": ["just", "build"], "judge": "exit"},
+  "x-go":    {"run": ["just", "go"], "deps": ["x-build"], "ci": ["linux"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
+  "x-ios":   {"run": ["just", "ios"], "deps": ["x-build"], "systems": ["darwin"]},
+  "gate":    {"deps": ["x-docs", "x-go", "x-ios"]}
+}
+```
+
+A scope CI runs on a system is **covered** there, and so is every dep it reaches that can run
+there. A scope with `run` can run on a system when its `systems` allow it and all its deps can; a
+scope with no `run`, when its `systems` allow it and one of its deps can. `jst check` refuses `ci`
+naming a system where the scope cannot run.
+
+```sh
+jst test changed --base origin/main   # before a pull request
+jst test uncovered                    # before an install or a tag
+jst test ci                           # the CI job, one per system: `jst test ci (linux)`
+```
+
+`jst test changed` (with `test.selection`) and `jst test uncovered` put every step they reach in
+one group: **here** (it runs on this machine and is not covered), **ci** (covered), **elsewhere**
+(neither). The here steps run, with their deps from any group:
+
+```text
+jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; ci: x-docs, x-go; elsewhere: none)
+```
+
+- `jst test changed` ends `needs-other-system` (80) when a test of the change runs on no CI system
+  and not here (`darwin: x-ios` on Linux), and `left-to-ci` (0) when nothing runs here.
+- `jst test uncovered` runs on a clean copy of the commit (`--commit REV`, default HEAD) every
+  scope that needs no test names and that CI does not cover on this system; it lists elsewhere and
+  is never held by it. Its `passed` or `left-to-ci` is what `jst install` from a checkout needs
+  when the commit's `jackstay.json` gives some scope a `ci`.
+- `jst test ci` runs every scope covered on this system, each once, in graph order. Name the CI
+  job `jst test ci (SYSTEM)` and require it in the base's rules; `jst doctor` reports a system
+  whose job they do not require.
+- jackstay schedules each scope once but cannot see inside a command: scopes CI runs on one system
+  must test disjoint sets, or a test runs twice.
+- Not built yet: the cache by input hash (`inputs`, `cache`), which will skip a scope whose inputs
+  already passed ([land.md](../design/land.md) section 7.3), and the CI workflow `jst adopt`
+  writes for these jobs. Until then `--resume` and its marks work as above.
 
 ## Structured test reports
 

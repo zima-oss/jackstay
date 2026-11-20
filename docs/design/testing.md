@@ -4,8 +4,8 @@ Decisions: [W-012](../decisions/W-012-test-scopes-vocabulary.md) (one vocabulary
 project defines its selection) and [W-013](../decisions/W-013-quality-testing-declarative.md) (no
 time-sensitive tests; everything declarative and general). Status: built, except that 0.6.0 runs
 scopes as a graph with a cache by input hash ([land.md](land.md) section 7, after
-[W-096](../decisions/W-096-task-graph-and-input-cache.md)), which section 5 summarises and which
-is not built yet. How to use scopes is the
+[W-096](../decisions/W-096-task-graph-and-input-cache.md)), which section 5 summarises: the graph
+is built, the cache is not yet, so a gate's `--resume`, marks and bars still work. How to use scopes is the
 [tests guide](../guide/tests.md); the raw form `jst test -- COMMAND`, its outcomes, receipts and run
 record are [implementation.md](implementation.md) section 9. The
 [compatibility baseline](testing-compatibility.md) pins the outcomes; the
