@@ -32,17 +32,16 @@ merges before the next: the pin, then the workflows that download 0.6.0, then sc
 jst adopt --plan
 ```
 
-1. The plan names the step that is due, and any blocker that waits on you. The first is
-   `jst adopt --apply --pin --settings-only`.
-2. Apply what it names, land the pull request, and run the plan again on the merged base. Stop when
-   it finds nothing to change.
-3. A change to `jackstay.json` lands in a pull request of its own (rule D0 of `jst lint pr`). When
-   an apply writes `jackstay.json` and other files together, it says so: commit `jackstay.json`
-   alone first, or apply again with `--settings-only`.
+1. The plan names the step that is due, and any blocker that waits on you.
+2. A step that changes `jackstay.json` (the pin, schema 3, an answer to one of adopt's questions)
+   lands in a pull request of its own (rule D0 of `jst lint pr`): apply it with `--settings-only`,
+   so nothing else is written, and land it.
+3. On the merged base, `jst adopt --apply` writes the other files (the workflows, the AGENTS
+   block); land them. Run the plan again, and stop when it finds nothing to change.
 
 Adopt asks, at a terminal, who merges and who reviews, and, once the file is schema 3, whether the
-agent chat is on; each answer is written to `jackstay.json`. Without a terminal, the plan names the
-flag for each: `--autonomy`, `--reviewer`, `--chat`. If the project keeps a workflow adopt does not
+agent chat is on; each answer is written to `jackstay.json`, so give it to a `--settings-only`
+apply. Without a terminal, the plan names the flag for each: `--autonomy`, `--reviewer`, `--chat`. If the project keeps a workflow adopt does not
 manage, the plan waits until a person confirms, with the exception `upgrade:workflows`, that none
 of them still downloads an older jackstay.
 
@@ -52,6 +51,11 @@ of them still downloads an older jackstay.
 ## What was removed
 
 A removed command runs nothing; its error names the replacement.
+
+**Which checks stop a merge changed.** `jst gh pr-land` stopped on any failed check; `jst land`
+waits only for the checks the base's rules require and those `land.checks` lists; any
+other check is reported and never stops the merge. Make a check that must block required on the
+host, or list it in `land.checks`, before you land with `jst land`.
 
 | 0.5.x | 0.6.0 |
 |---|---|
