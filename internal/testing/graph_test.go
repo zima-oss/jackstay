@@ -235,6 +235,17 @@ func TestChangedSplitsBetweenHereCIAndElsewhere(t *testing.T) {
 	docs.repo.Commit("change", map[string]string{"docs/a.md": "a\n"})
 	docs.expectStatus(docs.jst("changed", "--base", "main"), 0)
 	docs.expectLast("outcome=left-to-ci (changed, ", "here: none; ci: x-docs; elsewhere: none")
+	// The plan shows the same split: no command of x-docs, which the run leaves to CI.
+	docs.expectStatus(docs.jst("plan", "changed", "--base", "main"), 0)
+	if plan := docs.stdout.String(); strings.Contains(plan, "x-docs: sh") || !strings.Contains(plan, "here: none\nleft to CI: x-docs\nelsewhere: none\n") {
+		t.Fatalf("the plan:\n%s", plan)
+	}
+	// On a Mac the plan lists x-ios with its dep x-build, and leaves the rest to CI.
+	mac.expectStatus(mac.jst("plan", "changed", "--base", "main"), 0)
+	if plan := mac.stdout.String(); !strings.Contains(plan, "x-build: sh") || !strings.Contains(plan, "x-ios: sh") ||
+		strings.Contains(plan, "x-go: sh") || !strings.Contains(plan, "here: x-ios\nleft to CI: x-docs, x-go\n") {
+		t.Fatalf("the plan on a Mac:\n%s", plan)
+	}
 	// needs-other-system comes only after here passed: a failure here is the outcome.
 	section := with(whereSection(), "scopes", "gate", map[string]any{"deps": argv("x-docs", "x-go", "x-ios", "x-lint")})
 	section = with(section, "scopes", "x-lint", counting("x-lint", nil))

@@ -394,7 +394,8 @@ of a composite: `jst test: outcome=passed (gate, 41 s: x-docs=exited-0, x-build=
 x-go=passed, x-ios=passed)`. A failure names its node: `outcome=failed (gate failed at x-go)`.
 
 `jst test plan SCOPE` prints the order and whether each node would be skipped or run; it runs
-nothing.
+nothing. `jst test plan changed` plans what `jst test changed` runs (section 7.4): the **here**
+nodes with their deps, then the groups, as `here:`, `left to CI:` and `elsewhere:` lines.
 
 ### 7.3 The cache: not in 0.6.0, later
 

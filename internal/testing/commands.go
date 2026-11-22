@@ -131,6 +131,13 @@ func (base *tester) plan(args []string) int {
 			}
 		}
 	}
+	// A project that says where its scopes run plans what the run does: the nodes here with
+	// their deps, and what it leaves to CI or to other systems (docs/design/land.md section 7.4).
+	var split *partition
+	if err == nil && selectChanged && declaresWhere(proj.section) {
+		made := proj.partitionOf("changed", []string{name})
+		split = &made
+	}
 	order := []string{name}
 	if err == nil {
 		scopes := objectOf(proj.section["scopes"])
@@ -138,6 +145,9 @@ func (base *tester) plan(args []string) int {
 		switch {
 		case entry == nil:
 			err = refused("`" + name + "` is not a scope of " + proj.name + "; its scopes: " + joinComma(sortedKeys(scopes)))
+		case split != nil:
+			order = newGraph(proj.section, proj.operatingSystem).walk(split.here)
+			rest = nil
 		case len(depsOf(entry)) > 0:
 			order = newGraph(proj.section, proj.operatingSystem).walk(order)
 			rest = nil
@@ -197,6 +207,17 @@ func (base *tester) plan(args []string) int {
 		for _, class := range found.classes {
 			fmt.Fprintf(out, "    skipped: %s  (median %.1f s, slowest case %.1f s)\n", class.name, class.total, class.slowest)
 		}
+	}
+	if split != nil {
+		var leftToCI []string
+		for _, name := range split.ci {
+			if !slices.Contains(order, name) {
+				leftToCI = append(leftToCI, name)
+			}
+		}
+		fmt.Fprintf(out, "here: %s\n", orNone(joinComma(split.here)))
+		fmt.Fprintf(out, "left to CI: %s\n", orNone(joinComma(leftToCI)))
+		fmt.Fprintf(out, "elsewhere: %s\n", orNone(split.elsewhereText()))
 	}
 	return 0
 }
