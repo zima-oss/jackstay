@@ -165,6 +165,21 @@ func coveredOn(section map[string]any, system string) map[string]bool {
 	return covered
 }
 
+// CoveredSystems are the nodes with `run` that CI covers (docs/design/land.md section 7.4), each
+// with the systems it is covered on: those a scope's own `ci` names and the deps its walk reaches
+// that are eligible there.
+func CoveredSystems(section map[string]any) map[string][]string {
+	covered := map[string][]string{}
+	for _, system := range operatingSystems {
+		for name := range coveredOn(section, system) {
+			if _, entry := find(section, name); !isComposite(entry) {
+				covered[name] = append(covered[name], system)
+			}
+		}
+	}
+	return covered
+}
+
 // declaresWhere says whether a node of the section says where it runs (`ci` or `systems`).
 func declaresWhere(section map[string]any) bool {
 	for _, kind := range []string{"scopes", "steps"} {

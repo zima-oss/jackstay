@@ -5,11 +5,13 @@
 package block
 
 import (
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/adopt/templates"
+	scopes "github.com/zima-oss/jackstay/internal/testing"
 )
 
 // Inputs are what the block is printed from.
@@ -141,7 +143,7 @@ func testText(config map[string]any) string {
 		"  (`jst test list` names them and when each is due). Only `passed` is a pass: read the last\n" +
 		"  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its\n" +
 		"  output file)."
-	if _, gate := scopes["gate"]; gate && len(coveredScopes(config)) == 0 {
+	if _, gate := scopes["gate"]; gate && !splitsChanges(config) {
 		text += "\n  Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit)."
 	}
 	if section(section(config, "test"), "selection") != nil {
@@ -153,37 +155,26 @@ func testText(config map[string]any) string {
 // systemNames are the systems a scope's `ci` names, as people call them.
 var systemNames = map[string]string{"linux": "Linux", "darwin": "macOS"}
 
-// textsOf is a list of strings of the config, as encoding/json or a Go literal gives it.
-func textsOf(value any) []string {
-	switch typed := value.(type) {
-	case []string:
-		return typed
-	case []any:
-		var out []string
-		for _, element := range typed {
-			if text, ok := element.(string); ok {
-				out = append(out, text)
-			}
-		}
-		return out
+// coveredScopes are the nodes with `run` that CI covers, through their own `ci` or as a dep of a
+// scope that has one, each with the systems it is covered on (docs/design/land.md section 7.4).
+func coveredScopes(config map[string]any) map[string][]string {
+	// The graph reads the section as encoding/json gives it; a Go literal is brought to that form.
+	var test map[string]any
+	if data, err := json.Marshal(section(config, "test")); err != nil || json.Unmarshal(data, &test) != nil {
+		return nil
 	}
-	return nil
+	return scopes.CoveredSystems(test)
 }
 
-// coveredScopes are the scopes whose `ci` names a system, each with those systems.
-func coveredScopes(config map[string]any) map[string][]string {
-	covered := map[string][]string{}
-	for name, raw := range section(section(config, "test"), "scopes") {
-		scope, _ := raw.(map[string]any)
-		if systems := textsOf(scope["ci"]); len(systems) > 0 {
-			covered[name] = systems
-		}
-	}
-	return covered
+// splitsChanges says whether `jst test changed` can split a change between here and CI: some
+// scope is covered and the project selects scopes by path (`test.selection`).
+func splitsChanges(config map[string]any) bool {
+	return len(coveredScopes(config)) > 0 && section(section(config, "test"), "selection") != nil
 }
 
 // splitText states where tests run (docs/design/land.md section 7.4): what CI runs, on which
-// systems, and what an agent runs before a pull request and before an install or a tag.
+// systems, and what an agent runs before a pull request (when the project selects by path) and
+// before an install or a tag.
 func splitText(config map[string]any) string {
 	covered := coveredScopes(config)
 	var order []string
@@ -207,8 +198,13 @@ func splitText(config map[string]any) string {
 	for _, where := range order {
 		parts = append(parts, strings.Join(groups[where], ", ")+" on "+where)
 	}
-	return wrap("- **Where tests run**: CI runs " + strings.Join(parts, "; ") + " and is the gate. " +
-		"Before a pull request: `jst test changed`. Before an install or a tag: `jst test uncovered`.")
+	text := "- **Where tests run**: CI runs " + strings.Join(parts, "; ") + " and is the gate. "
+	// Without `test.selection`, `jst test changed` cannot split a change: the test item's gate line
+	// says what to run before a pull request.
+	if splitsChanges(config) {
+		text += "Before a pull request: `jst test changed`. "
+	}
+	return wrap(text + "Before an install or a tag: `jst test uncovered`.")
 }
 
 // wrap breaks an item's text at spaces outside code spans into lines of at most 100 characters,

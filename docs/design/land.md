@@ -547,9 +547,11 @@ Where each command is used:
   CI covers Linux only ([W-083](../decisions/W-083-no-macos-job-in-ci.md)). Before a tag, a full
   gate on a Mac, including `jst test uncovered`, runs on the version-bump commit.
 - **In CI**: one job per system, below.
-- **The AGENTS block** states the split, generated from the scopes: "CI runs x-go, x-check, x-sec,
-  x-docs on Linux and is the gate. Before a pull request: `jst test changed`. Before an install or
-  a tag: `jst test uncovered`."
+- **The AGENTS block** states the split, generated from the scopes: "CI runs x-check, x-docs,
+  x-go, x-sec on Linux and is the gate. Before a pull request: `jst test changed`. Before an
+  install or a tag: `jst test uncovered`." It names every node with `run` that CI covers, through
+  its own `ci` or as a dep. It names `jst test changed` only for a project with `test.selection`,
+  which that command needs; without it, the block keeps its gate line before a pull request.
 
 **One CI job per system.** Each system on which some scope is covered gets one CI job,
 `jst test ci (SYSTEM)`, which runs `jst test ci`: the graph of every scope covered on that system,
