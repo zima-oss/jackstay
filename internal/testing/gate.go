@@ -491,9 +491,16 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		}
 	}
 	outcomes := map[string]string{}
+	// ran holds the nodes that ran in this run, a composite when one of its deps did: a node after
+	// one of them is not resumed, since its mark speaks of what that dep left before.
+	ran := map[string]bool{}
 	ended := false
 	for _, name := range order {
 		kind, entry := find(proj.section, name)
+		ranDep := ""
+		if index := slices.IndexFunc(depsOf(entry), func(dep string) bool { return ran[dep] }); index >= 0 {
+			ranDep = depsOf(entry)[index]
+		}
 		var line step
 		switch {
 		case ended:
@@ -504,14 +511,18 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 			line = step{"step": name, "outcome": outcomeNotRun, "seconds": 0}
 		case isComposite(entry):
 			line = step{"step": name, "outcome": receipts.OutcomePassed, "seconds": 0, "composite": true}
+			ran[name] = ranDep != ""
 		default:
 			var signalled *int
-			if line, signalled = proj.gateStep(name, kind, entry, gateID); signalled != nil {
+			if line, signalled = proj.gateStep(name, kind, entry, gateID, ranDep); signalled != nil {
 				return *signalled
 			}
 		}
 		outcome := textOf(line["outcome"])
 		outcomes[name] = outcome
+		if !isComposite(entry) && (outcome == receipts.OutcomePassed || outcome == receipts.OutcomeExited0) {
+			ran[name] = true
+		}
 		state.steps = append(state.steps, line)
 		if !passing(outcome) && outcome != outcomeNotRun && !proj.options.keepGoing {
 			ended = true
@@ -586,8 +597,9 @@ func nonNil(names []string) []string {
 }
 
 // gateStep runs or resumes one node with `run`: its `requires`, its mark or bar under --resume,
-// then the command. signalled is set when jackstay was asked to stop: the status it ends with.
-func (proj *project) gateStep(name, kind string, entry map[string]any, gateID string) (step, *int) {
+// then the command. ranDep names a dep that ran in this run, so the node's mark is not used.
+// signalled is set when jackstay was asked to stop: the status it ends with.
+func (proj *project) gateStep(name, kind string, entry map[string]any, gateID, ranDep string) (step, *int) {
 	resume := proj.options.resume
 	chosen := resolve(proj.section, name, kind, entry)
 	adapterVersion := judge.AdapterVersion(judge.Kind(chosen.judge))
@@ -642,6 +654,10 @@ func (proj *project) gateStep(name, kind string, entry map[string]any, gateID st
 			proj.say("step %s: nothing has changed since this step failed (%s); change the tree or run the gate without --resume",
 				name, found.when())
 			return step{"step": name, "outcome": outcomeRefused, "seconds": 0, "status": statusRefused}, nil
+		}
+		if ranDep != "" {
+			proj.say("step %s: runs (its dep %s ran in this run)", name, ranDep)
+			break
 		}
 		if found, _ := proj.readMark(key, name, head, adapterVersion); found != nil {
 			proj.say("step %s: resumed (it %s at %s on this same tree; run %s)", name, found.Outcome, found.At, found.RunID)

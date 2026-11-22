@@ -204,6 +204,24 @@ func TestResumeFalseAlwaysRuns(t *testing.T) {
 	w.expectCounters("cheap middle", 2, 1)
 }
 
+// A node's mark says it passed after what its deps left then: after a dep that ran again in this
+// run, directly or through a composite, the node runs too. A node beside it still resumes.
+func TestANodeAfterADepThatRanIsNotResumed(t *testing.T) {
+	section := map[string]any{"judge": "exit", "scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-test", "x-other")},
+		"x-build": map[string]any{"run": counted("x-build", "true"), "resume": false},
+		"x-lib":   map[string]any{"deps": argv("x-build")},
+		"x-test":  map[string]any{"run": counted("x-test", "true"), "deps": argv("x-lib")},
+		"x-other": map[string]any{"run": counted("x-other", "true")},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectStatus(w.jst("gate", "--resume"), 0)
+	w.expectSaid("step x-test: runs (its dep x-lib ran in this run)")
+	w.expectCounters("x-build x-test x-other", 2, 2, 1)
+	w.expectLast("outcome=passed", "x-test=exited-0", "x-other=resumed")
+}
+
 func TestCompositeStepsExpandIntoLeaves(t *testing.T) {
 	w := newGateWorld(t)
 	w.expectStatus(w.jst("x-nested"), 0)
