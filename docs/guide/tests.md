@@ -26,6 +26,7 @@ status alone: a test command may itself end with 2 or 77.
 | `passed-on-retry` | every test passed, but at least one only after its runner retried it: **not a pass**, no receipt, and it fails a gate |
 | `timed-out` | a scope's timeout ended the whole process tree |
 | `stopped` | `jst test` was asked to stop; it ends by that signal |
+| `stopped-waiting` | `jst test` was asked to stop while it waited for the machine-wide lock; nothing ran |
 
 The exit status of each outcome: `jst test --help`.
 
@@ -133,8 +134,7 @@ jst test: outcome=failed (gate failed at full, exit 1, 0.9 s: lint=exited-0, ful
 - `jst check` refuses a cycle of deps, an unknown dep, `steps` with `deps`, a dep that needs test
   names, and, in schema 3, `requires` on a scope with no `run`: the check goes to the dep that
   needs it. A schema-2 list's own `requires` run once, before anything, when the list is in the run.
-- `--resume` and the `resume` key were removed in 0.6.0: `--resume` is refused (2), and
-  `jst check` refuses the key. Reuse of passes comes with the cache of jackstay 1.
+- `--resume` and the `resume` key are gone in 0.6.0 ([Upgrading](upgrading.md)).
 - `--commit REV` runs on a clone that shares the repository's objects, so your uncommitted work
   cannot make it pass or fail. It has no ignored files (`node_modules`, build folders): a step that
   needs them builds them.
@@ -227,9 +227,8 @@ jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; c
   whose job they do not require.
 - jackstay schedules each scope once but cannot see inside a command: scopes CI runs on one system
   must test disjoint sets, or a test runs twice.
-- Not in 0.6.0: the cache by input hash, planned for a later version ([land.md](../design/land.md)
-  section 7.3), which is also when a gate will reuse earlier passes. Not built yet: the CI workflow
-  `jst adopt` writes for these jobs.
+- There is no cache in 0.6.0: a scope with deps runs every step each time. `jst adopt` does not
+  write the CI workflow for these jobs: add the job yourself.
 
 ## Structured test reports
 

@@ -1,6 +1,6 @@
 ---
 title: jackstay
-description: Stops coding agents' destructive commands, counts the tests a change passed, and keeps parallel sessions apart.
+description: Stops coding agents' destructive commands, counts the tests a change passed, lands it when its checks pass, and keeps parallel sessions apart.
 layout: hextra-home
 jackstay_source: site/content/_index.md
 ---

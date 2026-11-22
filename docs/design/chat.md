@@ -1,10 +1,9 @@
 # Agent chat (0.6.0)
 
-Status: specified, not built; its open questions were decided in W-091 (section 16). It records
-[W-090](../decisions/W-090-agent-chat.md) and replaces the
-contract in [the roadmap note](../roadmap/session-chat.md) and the 0.5.x
-[guide page](../guide/session-chat.md), which describe the code in `internal/sessionchat` today. It
-follows [W-008](../decisions/W-008-state-in-dot-jackstay.md) (state in `~/.jackstay`, `.all` for
+Status: built in 0.6.0, except what section 14 defers to jackstay 1 (the Codex bridge's push
+among it); its open questions were decided in W-091 (section 16). It records
+[W-090](../decisions/W-090-agent-chat.md) and replaces the 0.5.x chat, whose store 0.6.0 removes
+(section 1). How to use it is the [session chat guide](../guide/session-chat.md). It follows [W-008](../decisions/W-008-state-in-dot-jackstay.md) (state in `~/.jackstay`, `.all` for
 what is shared), [W-013](../decisions/W-013-quality-testing-declarative.md) (no timing in tests,
 everything general) and [W-017](../decisions/W-017-review-fixes-and-threat-model.md) (protection
 against accidents, not against the local account).
@@ -40,7 +39,7 @@ events from jackstay itself.
 
 ## 1. What changes from 0.5.x
 
-| 0.5.x (`internal/sessionchat` at d542f11) | 0.6.0 |
+| 0.5.x | 0.6.0 |
 |---|---|
 | One store per Git repository; separate clones never meet | One store per local account; a repository is a channel; `#common` for sessions outside a repository |
 | A random ID per server start unless a token is set; each kept 72 h against `max_sessions` 32 | The engine's session ID (Claude Code's `session_id`, Codex's thread ID); a token only overrides it |

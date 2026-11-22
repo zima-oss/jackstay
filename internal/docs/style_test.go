@@ -268,6 +268,34 @@ func splitCommands(line string) []string {
 	return append(parts, line[start:])
 }
 
+// removedCommands are the commands jst removed and still answers with their replacement
+// (internal/cli's removed list): a page may name one where it says what replaces it. Filled by
+// TestCommandExamplesRun from internal/cli/cli.go.
+var removedCommands []string
+
+// removedEntry is one key of internal/cli's removed list.
+var removedEntry = regexp.MustCompile(`(?m)^\t"([a-z][a-z -]*)":\s+"`)
+
+// readRemovedCommands reads the keys of the `removed` map in internal/cli/cli.go.
+func readRemovedCommands(t *testing.T, root string) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "internal", "cli", "cli.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "var removed = map[string]string{")
+	if start < 0 {
+		t.Fatal("internal/cli/cli.go has no removed list")
+	}
+	block, _, _ := strings.Cut(text[start:], "\n}")
+	var names []string
+	for _, match := range removedEntry.FindAllStringSubmatch(block, -1) {
+		names = append(names, match[1])
+	}
+	return names
+}
+
 // globalFlags are the flags jst takes in place of a command.
 var globalFlags = []string{"--help", "--version"}
 
@@ -290,6 +318,11 @@ func checkCommand(command string, helps map[string]commandHelp, names []string) 
 	if name == "" {
 		if strings.HasPrefix(words[1], "<") || words[1] == strings.ToUpper(words[1]) {
 			return "" // jst COMMAND --help: a placeholder for any command
+		}
+		for count := min(2, len(words)-1); count > 0; count-- {
+			if slices.Contains(removedCommands, strings.Join(words[1:1+count], " ")) {
+				return "" // a removed command, named where its replacement is given
+			}
 		}
 		return "no command " + strings.Join(words[:2], " ")
 	}
@@ -348,6 +381,10 @@ func joinContinuations(lines []string, kinds []lineKind) ([]string, []lineKind) 
 func TestCommandExamplesRun(t *testing.T) {
 	root := repoRoot(t)
 	helps := commandHelps(t, root)
+	removedCommands = readRemovedCommands(t, root)
+	if !slices.Contains(removedCommands, "gh pr-land") {
+		t.Fatalf("the removed list read from internal/cli/cli.go lacks gh pr-land: %v", removedCommands)
+	}
 	names := make([]string, 0, len(helps))
 	for name := range helps {
 		names = append(names, name)
@@ -409,6 +446,8 @@ func TestCheckCommand(t *testing.T) {
 			"       jst review pool inspect [--json]\n       jst review pool prune [--apply] [--json]\n\nmore\n"),
 	}
 	names := []string{"test last", "review pool", "test"}
+	removedCommands = []string{"gh pr-land"}
+	defer func() { removedCommands = nil }()
 	for command, want := range map[string]string{
 		"jst test gate --commit HEAD":        "",
 		"jst test last --json":               "",

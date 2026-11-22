@@ -2,7 +2,7 @@
   <section class="jackstay-hero" aria-labelledby="jackstay-title">
     <div class="jackstay-hero-copy">
       <h1 id="jackstay-title">Safe, provable work for coding agents</h1>
-      <p class="jackstay-intro">jackstay stops an agent's destructive shell commands, counts the tests a change passed, and keeps parallel sessions from stepping on each other. One Go binary, <code>jst</code>, on macOS and Linux.</p>
+      <p class="jackstay-intro">jackstay stops an agent's destructive shell commands, counts the tests a change passed, lands it when its checks pass, and keeps parallel sessions from stepping on each other. One Go binary, <code>jst</code>, on macOS and Linux.</p>
       <div class="jackstay-actions">
         <a class="jackstay-primary" href="{{ "guide/start/getting-started/" | relURL }}">Start in five minutes</a>
         <a class="jackstay-secondary" href="{{ "guide/" | relURL }}">Read the guide</a>
@@ -38,12 +38,12 @@
         <div class="jackstay-route-links"><a href="{{ "guide/start/getting-started/" | relURL }}">Getting started</a><a href="{{ "guide/start/adopt/" | relURL }}">Adopting a project</a></div>
       </div>
       <div class="jackstay-route">
-        <div><h3>Daily work</h3><p>Tests with evidence, the guard and the trash, a worktree per task, reviews.</p></div>
+        <div><h3>Daily work</h3><p>Tests with evidence, the guard and the trash, a worktree per task, reviews, landing with <code>jst land</code>.</p></div>
         <div class="jackstay-route-links"><a href="{{ "guide/daily-work/tests/" | relURL }}">Tests</a><a href="{{ "guide/daily-work/guard/" | relURL }}">The guard</a><a href="{{ "guide/daily-work/branches-and-github/" | relURL }}">Branches</a><a href="{{ "guide/daily-work/review/" | relURL }}">Reviews</a></div>
       </div>
       <div class="jackstay-route">
-        <div><h3>Several agents</h3><p>Sessions in parallel: chat, compaction briefs, Claude Code and Codex.</p></div>
-        <div class="jackstay-route-links"><a href="{{ "guide/agents/" | relURL }}">Working with several agents</a></div>
+        <div><h3>Several agents</h3><p>Sessions in parallel: chat that rings Claude Code, <code>jst status</code>, compaction briefs, Claude Code and Codex.</p></div>
+        <div class="jackstay-route-links"><a href="{{ "guide/agents/session-chat/" | relURL }}">Session chat</a><a href="{{ "guide/agents/status/" | relURL }}">jst status</a></div>
       </div>
       <div class="jackstay-route">
         <div><h3>Configuration and reference</h3><p>Every command, flag, exit code and <code>jackstay.json</code> key, generated from the code.</p></div>
