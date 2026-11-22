@@ -145,7 +145,7 @@ moving the pin takes two pull requests:
 
 Between the two, `jst adopt --plan` lists the files still to write.
 
-The upgrade from 0.5.x to 0.6.0 takes three pull requests, each merged by a person; the plan holds
+The upgrade from 0.5.x to 0.6.0 takes three stages, landed in pull requests a person merges; the plan holds
 only the one that is due, and a blocker names what waits on you:
 [Upgrading from 0.5.x](upgrading.md#2-each-project-one-pull-request-at-a-time). The exception
 `upgrade:workflows` takes your own words, such as

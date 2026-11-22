@@ -2,8 +2,8 @@
 
 jackstay 0.6.0 reads a 0.5.x project's `jackstay.json` as it is, except a `resume` key under
 `test.scopes` or `test.steps`, which `jst check` names for you to delete. Upgrade the machine
-first, then each project in three pull requests, so a project's CI, still pinned to 0.5.x, never
-meets a key it cannot read.
+first, then each project in three stages, so a project's CI, still pinned to 0.5.x, never meets a
+key it cannot read.
 
 ## 1. The machine
 
@@ -26,7 +26,7 @@ the sandbox ([Claude Code](claude-code.md)). `jst doctor` names anything left to
 A file with `"jackstay_schema": 3` is refused by 0.5.10 and 0.5.11, and the project's CI downloads
 the jackstay its `adopt.pin` names. So adopt moves a project in steps, each a pull request a person
 merges before the next: the pin, then the workflows that download 0.6.0, then schema 3 with the
-`land` section. You do not sequence them; the plan does:
+`land` section. You do not sequence them, or count the pull requests; the plan does:
 
 ```sh
 jst adopt --plan
@@ -54,7 +54,7 @@ of them still downloads an older jackstay.
 
 A removed command runs nothing; its error names the replacement.
 
-**Which checks stop a merge changed.** `jst gh pr-land` stopped on any failed check; `jst land`
+**Which checks stop a merge changed.** 0.5.x's `pr-land` stopped on any failed check; `jst land`
 waits only for the checks the base's rules require and those `land.checks` lists; any
 other check is reported and never stops the merge. Make a check that must block required on the
 host, or list it in `land.checks`, before you land with `jst land`.

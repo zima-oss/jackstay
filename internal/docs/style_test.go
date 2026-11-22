@@ -268,10 +268,10 @@ func splitCommands(line string) []string {
 	return append(parts, line[start:])
 }
 
-// removedName is the removed command a command written in a sentence names exactly, or "": a
-// page may name one where it says what replaces it. Its words up to the first flag must be the
-// removed name whole, so `jst gh pr-land` names one and `jst gh pr-lnad` does not. A code block never
-// gets this pass.
+// removedName is the removed command a command names exactly, or "": a migration table may name
+// one in a row that gives its replacement (TestCommandExamplesRun). Its words up to the first flag must be the
+// removed name whole, so `jst gh pr-land` names one and `jst gh pr-lnad` does not. A sentence or a code
+// block never gets this pass.
 func removedName(command string, removed map[string][]string) string {
 	var words []string
 	for _, word := range strings.Fields(command)[1:] {
@@ -293,7 +293,8 @@ func removedName(command string, removed map[string][]string) string {
 // that is no action (`jst checks wait 42`). `jst land status` is no replacement for `jst land`.
 func namesReplacement(commands []string, name string, removed map[string][]string, helps map[string]commandHelp, names []string) bool {
 	for _, command := range commands {
-		if removedName(command, removed) != "" || checkCommand(command, helps, names) != "" {
+		if removedName(command, removed) != "" || checkCommand(command, helps, names) != "" ||
+			slices.Contains(strings.Fields(command), "--help") {
 			continue
 		}
 		var words []string
@@ -475,8 +476,8 @@ func TestCommandExamplesRun(t *testing.T) {
 				}
 			}
 			for _, command := range commands {
-				if name := removedName(command, removed); kinds[n] == prose && name != "" &&
-					namesReplacement(commands, name, removed, helps, names) {
+				if name := removedName(command, removed); kinds[n] == prose && strings.HasPrefix(strings.TrimSpace(line), "|") &&
+					name != "" && namesReplacement(commands, name, removed, helps, names) {
 					continue
 				}
 				if problem := checkCommand(command, helps, names); problem != "" {
@@ -546,6 +547,9 @@ func TestARemovedCommandNeedsItsOwnReplacementOnTheLine(t *testing.T) {
 	}
 	if namesReplacement([]string{"jst gh pr-land --pr 3"}, "gh pr-land", removed, helps, names) {
 		t.Error("an instruction to run a removed command passes")
+	}
+	if namesReplacement([]string{"jst gh pr-land", "jst land --help"}, "gh pr-land", removed, helps, names) {
+		t.Error("a help call counts as the replacement")
 	}
 	if namesReplacement([]string{"jst gh pr-land", "jst status"}, "gh pr-land", removed, helps, names) {
 		t.Error("an unrelated command counts as the replacement")

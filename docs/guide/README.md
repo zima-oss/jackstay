@@ -51,7 +51,7 @@ from the code.
 
 ## Upgrading
 
-[Upgrading from 0.5.x](upgrading.md): the machine first, then each project in three steps.
+[Upgrading from 0.5.x](upgrading.md): the machine first, then each project in three stages.
 
 ## Contributing
 
