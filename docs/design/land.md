@@ -670,9 +670,12 @@ The cache of section 7.3 was to replace the marks, bars, `--resume`, `resumed`, 
   **here** running with deps from any group; `needs-other-system` (80) only from `jst test changed`
   and only after **here** passed; `left-to-ci` from `jst test changed` only when **here** and
   **elsewhere** are empty, and from `jst test uncovered` whenever **here** is empty, **elsewhere**
-  listed and never holding it;
+  listed and never holding it; a selected composite that cannot run here leading, through the walk
+  on another system, to a test only that system runs and no CI covers: `needs-other-system`;
+  `jst test auto` running its selected scope without the split;
   `jst test uncovered` leaving out selector scopes, on a clean copy; `jst check` refusing a dep
-  that needs test arguments; `jst test ci` running every scope covered on this system once, in
+  that needs test arguments, and a scope with `run` and deps given the test arguments, in the run
+  and the plan, while its deps get none; `jst test ci` running every scope covered on this system once, in
   graph order; S-eligibility: an unrestricted composite over a `darwin`-only composite is eligible on Linux
   through its other deps and `ci: ["linux"]` on it is accepted, while `ci: ["linux"]` on the
   `darwin`-only composite is refused naming the `darwin`-only scope with `run` beneath it, and a
