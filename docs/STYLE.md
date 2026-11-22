@@ -52,7 +52,8 @@ it.
    (`jst trash PATH`). **Checked**: every `jst` command in the guide, `README.md`,
    `CONTRIBUTING.md`, `AGENTS.md` and the AGENTS block's golden files names a command `jst help`
    lists and only flags its `--help` shows (`internal/cli/testdata/help.txt`), or, in a sentence
-   only, a command `internal/cli` lists as removed, named whole where its replacement is given; an
+   only, a command `internal/cli` lists as removed, named whole on a line that also names its
+   replacement; an
    `sh` block holds no placeholder.
 
 7. **Agent-facing text says only what changes behaviour.** An agent reads every word, every

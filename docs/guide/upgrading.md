@@ -11,52 +11,40 @@ Update as in [Install](install.md#update); `jst version` then prints `jackstay 0
 
 ```sh
 jst setup --plan
+jst setup
 jst doctor
 ```
 
-`jst setup` asks, once per machine, who merges a change and who reviews; adopt offers those answers
+`jst setup --plan` shows what setup would change, and `jst setup` applies it at a terminal. It asks,
+once per machine, who merges a change and who reviews; adopt offers those answers
 first. It also narrows what Claude Code's sandbox may write: the folders `jst` writes from inside
 it, and no longer receipts, gate marks or review rounds, so run `jst test` and `jst review` outside
 the sandbox ([Claude Code](claude-code.md)). `jst doctor` names anything left to fix.
 
-## 2. Each project, in three pull requests
+## 2. Each project, one pull request at a time
 
 A file with `"jackstay_schema": 3` is refused by 0.5.10 and 0.5.11, and the project's CI downloads
-the jackstay its `adopt.pin` names. `jst adopt --plan` plans the steps and names the one that is
-due; a person merges each before the next. A change to `jackstay.json` always lands in a pull
-request of its own (rule D0 of `jst lint pr`), which is why some steps are `--settings-only`.
-
-1. **The pin**, in `jackstay.json` alone:
-
-   ```sh
-   jst adopt --apply --pin --settings-only
-   ```
-
-2. **The files.** On the merged base, the AGENTS block, the hook and the workflows that download
-   0.6.0:
-
-   ```sh
-   jst adopt --apply
-   ```
-
-   If the project keeps a workflow adopt does not manage, the plan waits until a person confirms,
-   with the exception `upgrade:workflows`, that none of them still downloads an older jackstay.
-
-3. **Schema 3**: `"jackstay_schema": 3` and the `land` section, in `jackstay.json` alone. At a
-   terminal adopt asks who merges and who reviews; without one, give the answers:
-
-   ```sh
-   jst adopt --apply --settings-only --autonomy merge-when-green --reviewer codex
-   ```
-
-Once schema 3 has landed, the agent chat's switch is one more `jackstay.json`-only change (off is
-the default; leave it out to keep it off), and a last `jst adopt --apply` writes the AGENTS block's
-landing item:
+the jackstay its `adopt.pin` names. So adopt moves a project in steps, each a pull request a person
+merges before the next: the pin, then the workflows that download 0.6.0, then schema 3 with the
+`land` section. You do not sequence them; the plan does:
 
 ```sh
-jst adopt --apply --settings-only --chat on   # its own pull request, merged first
-jst adopt --apply                             # then, on the merged base, the AGENTS block
+jst adopt --plan
 ```
+
+1. The plan names the step that is due, and any blocker that waits on you. The first is
+   `jst adopt --apply --pin --settings-only`.
+2. Apply what it names, land the pull request, and run the plan again on the merged base. Stop when
+   it finds nothing to change.
+3. A change to `jackstay.json` lands in a pull request of its own (rule D0 of `jst lint pr`). When
+   an apply writes `jackstay.json` and other files together, it says so: commit `jackstay.json`
+   alone first, or apply again with `--settings-only`.
+
+Adopt asks, at a terminal, who merges and who reviews, and, once the file is schema 3, whether the
+agent chat is on; each answer is written to `jackstay.json`. Without a terminal, the plan names the
+flag for each: `--autonomy`, `--reviewer`, `--chat`. If the project keeps a workflow adopt does not
+manage, the plan waits until a person confirms, with the exception `upgrade:workflows`, that none
+of them still downloads an older jackstay.
 
 [Adopting a project](adopt.md) explains the plan and its conflicts; every new key is in the
 [configuration reference](../reference/configuration.md).

@@ -306,6 +306,17 @@ func readRemovedCommands(t *testing.T, root string) []string {
 	return names
 }
 
+// namesReplacement says whether a line's commands include one that jst has, besides the removed
+// ones: the replacement a migration line gives (`jst gh ci-wait` | `jst checks wait`).
+func namesReplacement(commands, removed []string, helps map[string]commandHelp, names []string) bool {
+	for _, command := range commands {
+		if !isRemovedReference(command, removed) && checkCommand(command, helps, names) == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // globalFlags are the flags jst takes in place of a command.
 var globalFlags = []string{"--help", "--version"}
 
@@ -435,7 +446,7 @@ func TestCommandExamplesRun(t *testing.T) {
 				}
 			}
 			for _, command := range commands {
-				if kinds[n] == prose && isRemovedReference(command, removed) {
+				if kinds[n] == prose && isRemovedReference(command, removed) && namesReplacement(commands, removed, helps, names) {
 					continue
 				}
 				if problem := checkCommand(command, helps, names); problem != "" {
@@ -491,6 +502,17 @@ func TestOnlyAWholeRemovedNameIsAReference(t *testing.T) {
 		if got := isRemovedReference(command, removed); got != want {
 			t.Errorf("isRemovedReference(%q) = %v, want %v", command, got, want)
 		}
+	}
+}
+
+func TestARemovedCommandNeedsItsReplacementOnTheLine(t *testing.T) {
+	helps := map[string]commandHelp{"land": parseHelp("land", "usage: jst land [--change N]\n")}
+	names, removed := []string{"land"}, []string{"gh pr-land"}
+	if !namesReplacement([]string{"jst gh pr-land", "jst land --change 3"}, removed, helps, names) {
+		t.Error("a migration line naming jst land is refused")
+	}
+	if namesReplacement([]string{"jst gh pr-land --pr 3"}, removed, helps, names) {
+		t.Error("an instruction to run a removed command passes")
 	}
 }
 

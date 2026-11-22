@@ -147,10 +147,10 @@ Between the two, `jst adopt --plan` lists the files still to write.
 
 The upgrade from 0.5.x to 0.6.0 takes three pull requests, each merged by a person; the plan holds
 only the one that is due, and a blocker names what waits on you:
-[Upgrading from 0.5.x](upgrading.md#2-each-project-in-three-pull-requests). The exception
+[Upgrading from 0.5.x](upgrading.md#2-each-project-one-pull-request-at-a-time). The exception
 `upgrade:workflows` takes your own words, such as
-`"release.yml downloads v0.6.0; build.yml downloads none"`. A profile's digest
-(`--profile-sha256`) is refused before the project is schema 3.
+`"release.yml downloads v0.6.0; build.yml downloads none"`. Record a profile's digest
+(`--profile-sha256`) in the schema-3 step or after it: before, it is refused.
 
 The generated `card-line.yml` and `release.yml` download the pinned Linux archive and check
 `checksums.txt`. For releases with build attestations, set the repository variable
