@@ -132,7 +132,8 @@ every other character is `%XX` of its UTF-8 bytes; an empty name is `unknown`.
     .all/reviews/                           `jst review`'s shared state (review.md)
     .all/chat/                              the agent chat's store and its pusher (chat.md section 7)
     .all/context-brief/                     `jst brief`'s briefs (context-brief.md)
-    .all/delivery/                          versioned checkpoints of `collect` and adoption (section 1)
+    .all/delivery/                          versioned checkpoints of adoption (section 1); `jst changes collect`
+                                            keeps its own in the repository's Git folder (`jackstay-changes.json`)
     .all/setup.json                         the answers `jst setup` keeps for adopt to offer first (adopt.md)
     .all/telemetry/                         the journal of calls with no project (observability.md)
     .trash/                                 `jst trash` (guard.md section 10)

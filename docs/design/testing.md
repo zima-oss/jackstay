@@ -69,8 +69,8 @@ The optional `test` section, abridged (use: the [tests guide](../guide/tests.md#
 }
 ```
 
-Keys of a scope (all optional, but a scope has `run`, or `deps` or `steps` and is then a composite
-with no command):
+Keys of a scope (all optional, but a scope has `run`, or else `deps` or `steps` and is then a
+composite with no command of its own; a scope with `run` may also have `deps`, which pass first):
 
 - `run`: the words. Placeholders, whole words or inside one: `{tests}` (`focused`'s ARGS, escaped,
   one alternation: `Target.Class/test` exactly; `Target.Class` → `^Target\.Class(/|$)`; `Class` →

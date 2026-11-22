@@ -268,10 +268,20 @@ func splitCommands(line string) []string {
 	return append(parts, line[start:])
 }
 
-// removedCommands are the commands jst removed and still answers with their replacement
-// (internal/cli's removed list): a page may name one where it says what replaces it. Filled by
-// TestCommandExamplesRun from internal/cli/cli.go.
-var removedCommands []string
+// isRemovedReference says whether a command written in a sentence names, exactly, a command jst
+// removed and still answers with its replacement (internal/cli's removed list): a page may name one
+// where it says what replaces it. Its words up to the first flag must be the removed name whole, so
+// `jst gh pr-land` passes and `jst gh pr-lnad` does not. A code block never gets this pass.
+func isRemovedReference(command string, removed []string) bool {
+	var words []string
+	for _, word := range strings.Fields(command)[1:] {
+		if strings.HasPrefix(word, "-") {
+			break
+		}
+		words = append(words, word)
+	}
+	return slices.Contains(removed, strings.Join(words, " "))
+}
 
 // removedEntry is one key of internal/cli's removed list.
 var removedEntry = regexp.MustCompile(`(?m)^\t"([a-z][a-z -]*)":\s+"`)
@@ -318,11 +328,6 @@ func checkCommand(command string, helps map[string]commandHelp, names []string) 
 	if name == "" {
 		if strings.HasPrefix(words[1], "<") || words[1] == strings.ToUpper(words[1]) {
 			return "" // jst COMMAND --help: a placeholder for any command
-		}
-		for count := min(2, len(words)-1); count > 0; count-- {
-			if slices.Contains(removedCommands, strings.Join(words[1:1+count], " ")) {
-				return "" // a removed command, named where its replacement is given
-			}
 		}
 		return "no command " + strings.Join(words[:2], " ")
 	}
@@ -381,9 +386,9 @@ func joinContinuations(lines []string, kinds []lineKind) ([]string, []lineKind) 
 func TestCommandExamplesRun(t *testing.T) {
 	root := repoRoot(t)
 	helps := commandHelps(t, root)
-	removedCommands = readRemovedCommands(t, root)
-	if !slices.Contains(removedCommands, "gh pr-land") {
-		t.Fatalf("the removed list read from internal/cli/cli.go lacks gh pr-land: %v", removedCommands)
+	removed := readRemovedCommands(t, root)
+	if !slices.Contains(removed, "gh pr-land") {
+		t.Fatalf("the removed list read from internal/cli/cli.go lacks gh pr-land: %v", removed)
 	}
 	names := make([]string, 0, len(helps))
 	for name := range helps {
@@ -430,6 +435,9 @@ func TestCommandExamplesRun(t *testing.T) {
 				}
 			}
 			for _, command := range commands {
+				if kinds[n] == prose && isRemovedReference(command, removed) {
+					continue
+				}
 				if problem := checkCommand(command, helps, names); problem != "" {
 					t.Errorf("%s:%d: %s: %s (docs/STYLE.md rule 6)", file, n+1, command, problem)
 				}
@@ -446,8 +454,6 @@ func TestCheckCommand(t *testing.T) {
 			"       jst review pool inspect [--json]\n       jst review pool prune [--apply] [--json]\n\nmore\n"),
 	}
 	names := []string{"test last", "review pool", "test"}
-	removedCommands = []string{"gh pr-land"}
-	defer func() { removedCommands = nil }()
 	for command, want := range map[string]string{
 		"jst test gate --commit HEAD":        "",
 		"jst test last --json":               "",
@@ -467,6 +473,23 @@ func TestCheckCommand(t *testing.T) {
 	} {
 		if got := checkCommand(command, helps, names); got != want {
 			t.Errorf("checkCommand(%q) = %q, want %q", command, got, want)
+		}
+	}
+}
+
+func TestOnlyAWholeRemovedNameIsAReference(t *testing.T) {
+	removed := []string{"gh", "gh pr-land", "queue"}
+	for command, want := range map[string]bool{
+		"jst gh pr-land":        true,
+		"jst gh pr-land --pr 3": true,
+		"jst gh":                true,
+		"jst queue":             true,
+		"jst gh pr-lnad":        false,
+		"jst gh foo --x":        false,
+		"jst land":              false,
+	} {
+		if got := isRemovedReference(command, removed); got != want {
+			t.Errorf("isRemovedReference(%q) = %v, want %v", command, got, want)
 		}
 	}
 }

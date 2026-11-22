@@ -22,10 +22,11 @@ the sandbox ([Claude Code](claude-code.md)). `jst doctor` names anything left to
 ## 2. Each project, in three pull requests
 
 A file with `"jackstay_schema": 3` is refused by 0.5.10 and 0.5.11, and the project's CI downloads
-the jackstay its `adopt.pin` names. `jst adopt --plan` plans the three steps and names the one that
-is due; a person merges each before the next.
+the jackstay its `adopt.pin` names. `jst adopt --plan` plans the steps and names the one that is
+due; a person merges each before the next. A change to `jackstay.json` always lands in a pull
+request of its own (rule D0 of `jst lint pr`), which is why some steps are `--settings-only`.
 
-1. **The pin.** It changes `jackstay.json` alone:
+1. **The pin**, in `jackstay.json` alone:
 
    ```sh
    jst adopt --apply --pin --settings-only
@@ -41,13 +42,21 @@ is due; a person merges each before the next.
    If the project keeps a workflow adopt does not manage, the plan waits until a person confirms,
    with the exception `upgrade:workflows`, that none of them still downloads an older jackstay.
 
-3. **Schema 3.** `"jackstay_schema": 3`, the `land` section and the other new keys. At a terminal,
-   adopt asks who merges (`--autonomy`), who reviews (`--reviewer`) and whether the agent chat is
-   on (`--chat`); without one, give the flags:
+3. **Schema 3**: `"jackstay_schema": 3` and the `land` section, in `jackstay.json` alone. At a
+   terminal adopt asks who merges and who reviews; without one, give the answers:
 
    ```sh
-   jst adopt --apply --autonomy merge-when-green --reviewer codex --chat off
+   jst adopt --apply --settings-only --autonomy merge-when-green --reviewer codex
    ```
+
+Once schema 3 has landed, the agent chat's switch is one more `jackstay.json`-only change (off is
+the default; leave it out to keep it off), and a last `jst adopt --apply` writes the AGENTS block's
+landing item:
+
+```sh
+jst adopt --apply --settings-only --chat on   # its own pull request, merged first
+jst adopt --apply                             # then, on the merged base, the AGENTS block
+```
 
 [Adopting a project](adopt.md) explains the plan and its conflicts; every new key is in the
 [configuration reference](../reference/configuration.md).
