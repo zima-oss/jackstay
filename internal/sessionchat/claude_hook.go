@@ -135,14 +135,24 @@ func dispatch(ctx context.Context, hook hookInput) (hookAnswer, error) {
 		answer.text, answer.block, answer.told = rung.Text, rung.Block, rung.Told
 		return err
 	}
+	// The binding is written at the start and refreshed at each prompt and stop, so a running session's
+	// binding is never the one written longest ago, which a full table evicts (section 6.4).
+	bind := func() error {
+		process, found := findClaude()
+		if !found {
+			return nil
+		}
+		return chat.store.Bind(ctx, chatstore.Binding{ProcessID: process.PID, ProcessStart: processStart(process),
+			Key: key, Cwd: chat.worktree, Socket: socket, ClaudeVersion: version})
+	}
 	switch hook.Event {
 	case "SessionStart":
-		if process, found := findClaude(); found {
-			err = chat.store.Bind(ctx, chatstore.Binding{ProcessID: process.PID, ProcessStart: processStart(process),
-				Key: key, Cwd: chat.worktree, Socket: socket, ClaudeVersion: version})
-		}
+		err = bind()
 		startPusher(ctx, chat.store)
 	case "UserPromptSubmit":
+		if err = bind(); err != nil {
+			break
+		}
 		pullOwedReviews(ctx, chat.store, key, folder) // a result its review could not publish (section 10)
 		if _, err = chat.store.Observe(ctx, key, chatstore.ObserveBusy, personsPrompt(hook.Prompt)); err == nil {
 			err = ring(chatstore.HookPrompt, false)
@@ -152,6 +162,9 @@ func dispatch(ctx context.Context, hook hookInput) (hookAnswer, error) {
 			err = ring(chatstore.HookToolBatch, false)
 		}
 	case "Stop":
+		if err = bind(); err != nil {
+			break
+		}
 		if err = ring(chatstore.HookStop, hook.StopHookActive); err == nil && !answer.block {
 			startPusher(ctx, chat.store)
 		}

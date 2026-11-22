@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/flock"
@@ -221,7 +222,37 @@ func TestAPusherLeavingWithWorkDueHandsItOn(t *testing.T) {
 	previousIdle := pushIdle
 	pushIdle = 0 // the pusher's quiet time is over before it starts: it leaves at once
 	t.Cleanup(func() { pushIdle = previousIdle })
-	if code := runPush(nil, nil, nil, io.Discard); code != 0 || launched != 1 {
-		t.Fatalf("the leaving pusher hands the due doorbell on: %d %d", code, launched)
+	// The successor must find the lock free when it is launched, or it would leave at once.
+	lockFree := false
+	launchPusher = func(...string) error {
+		launched++
+		if successor, err := flock.TryFile(filepath.Join(folder, "pusher.lock")); err == nil {
+			lockFree = true
+			successor.Release()
+		}
+		return nil
+	}
+	if code := runPush(nil, nil, nil, io.Discard); code != 0 || launched != 1 || !lockFree {
+		t.Fatalf("the leaving pusher hands the due doorbell on, after releasing its lock: %d %d %v", code, launched, lockFree)
+	}
+}
+
+// A prompt refreshes the session's binding, so a full table never evicts a running session's one
+// (review round 4).
+func TestAPromptRefreshesTheBinding(t *testing.T) {
+	root, moment := chatRepository(t)
+	self, found, err := procs.Row(os.Getpid())
+	if err != nil || !found {
+		t.Skip("this machine's process table cannot be read here")
+	}
+	findClaude = func() (procs.Process, bool) { return self, true }
+	hook(t, map[string]any{"session_id": "running", "hook_event_name": "SessionStart", "cwd": root})
+	store, _ := openStore()
+	first, _ := store.Bindings(context.Background())
+	moment.now = moment.now.Add(time.Hour)
+	hook(t, map[string]any{"session_id": "running", "hook_event_name": "UserPromptSubmit", "cwd": root, "prompt": "go on"})
+	later, _ := store.Bindings(context.Background())
+	if len(first) != 1 || len(later) != 1 || later[0].Written <= first[0].Written {
+		t.Fatalf("refreshed: %+v then %+v", first, later)
 	}
 }

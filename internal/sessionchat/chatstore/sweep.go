@@ -283,14 +283,11 @@ func absent(path string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
-// removeSession removes a session's record and its inbox markers: the one the session cap evicts
-// (section 6.4). Deliveries to it stay until they expire.
-func (transaction *transaction) removeSession(session Session) error {
-	hash := hashKey(session.Key)
-	if err := os.RemoveAll(transaction.place.inbox(hash)); err != nil {
-		return err
-	}
-	if err := os.Remove(transaction.place.session(hash)); err != nil && !errors.Is(err, os.ErrNotExist) {
+// evictSession removes the record of the session the session cap evicts (section 6.4), and only
+// that: its inbox markers and deliveries stay, under its key, so the same conversation finds its
+// unread messages again when it registers anew; what nobody reads expires by its own deadline.
+func (transaction *transaction) evictSession(session Session) error {
+	if err := os.Remove(transaction.place.session(hashKey(session.Key))); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

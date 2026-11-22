@@ -1101,3 +1101,45 @@ func TestNothingRunsWhileTheJournalFolderCannotBeMadeDurable(t *testing.T) {
 	f.store.syncFolder = durable.SyncFolder
 	f.send("cc:a", SendInput{To: "b", Message: "must wait"})
 }
+
+// An evicted session keeps its unread messages under its key: the same conversation, registering
+// again, reads them (review round 4).
+func TestAnEvictedSessionFindsItsUnreadMessagesAgain(t *testing.T) {
+	f := newFixture(t)
+	f.store.liveLimit = 2
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:old", "old", alpha, StateIdle)
+	sent := f.send("cc:a", SendInput{To: "old", Message: "still for you"})
+	f.clock.advance(time.Minute)
+	if _, err := f.store.Observe(f.ctx, "cc:a", ObserveBusy, false); err != nil {
+		t.Fatal(err)
+	}
+	f.session("cc:new", "new", alpha, StateIdle) // evicts cc:old, seen least recently
+	if _, err := f.store.Observe(f.ctx, "cc:old", ObserveBusy, false); err == nil {
+		t.Fatal("cc:old was evicted")
+	}
+	f.clock.advance(time.Minute)
+	f.session("cc:old", "old", alpha, StateIdle)
+	page := f.inbox("cc:old", unread())
+	if len(page.Messages) != 1 || page.Messages[0].ID != sent.MessageID {
+		t.Fatalf("its unread message is there again: %+v", page)
+	}
+}
+
+// A session holding idle subscriptions or owed notices is evicted only after every session holding
+// nothing (review round 4).
+func TestEvictionSparesASessionThatHoldsSomethingOwed(t *testing.T) {
+	f := newFixture(t)
+	f.store.liveLimit = 3
+	f.session("cc:watched", "watched", alpha, StateBusy)
+	f.clock.advance(time.Minute)
+	f.session("cc:watcher", "watcher", alpha, StateIdle)
+	f.send("cc:watcher", SendInput{To: "watched", NotifyWhenIdle: true}) // a subscription on cc:watched
+	f.clock.advance(time.Minute)
+	f.session("cc:plain", "plain", alpha, StateIdle)
+	f.clock.advance(time.Minute)
+	f.session("cc:new", "new", alpha, StateIdle)
+	if _, err := f.store.Observe(f.ctx, "cc:watched", ObserveBusy, false); err != nil {
+		t.Fatalf("the session holding a subscription stays: %v", err)
+	}
+}

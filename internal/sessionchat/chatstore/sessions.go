@@ -138,18 +138,19 @@ func (transaction *transaction) newSession(registration Registration, hash, mome
 		return Session{}, err
 	}
 	// There is no liveness: the table of sessions is bounded instead, and a new session past the
-	// bound evicts the one seen least recently (section 6.4).
+	// bound evicts the one seen least recently (section 6.4), one holding nothing owed first: a record
+	// with idle subscriptions on it or idle notices owed to it is evicted only when every one has some.
 	for len(sessions) >= transaction.store.liveLimit {
 		oldest := -1
 		for index, other := range sessions {
-			if !other.Mailbox && (oldest < 0 || other.LastSeen < sessions[oldest].LastSeen) {
+			if !other.Mailbox && (oldest < 0 || evictsBefore(other, sessions[oldest])) {
 				oldest = index
 			}
 		}
 		if oldest < 0 {
 			return Session{}, refuse(ReasonCapacity, "the account has %d chat sessions, all of them review mailboxes", transaction.store.liveLimit)
 		}
-		if err := transaction.removeSession(sessions[oldest]); err != nil {
+		if err := transaction.evictSession(sessions[oldest]); err != nil {
 			return Session{}, err
 		}
 		transaction.store.log("session-evicted", sessions[oldest].Ref)
@@ -500,4 +501,27 @@ func CheckRelated(related []string, channels []Channel) []string {
 		}
 	}
 	return problems
+}
+
+// evictsBefore reports whether one session is evicted before another: one holding nothing owed
+// first, then the one seen least recently.
+func evictsBefore(one, other Session) bool {
+	if holdsOwed(one) != holdsOwed(other) {
+		return !holdsOwed(one)
+	}
+	return one.LastSeen < other.LastSeen
+}
+
+// holdsOwed reports whether a session's record holds what eviction would lose: idle subscriptions on
+// it, or idle notices owed to it.
+func holdsOwed(session Session) bool {
+	if len(session.IdleWatchers) > 0 {
+		return true
+	}
+	for _, notice := range session.Notices {
+		if notice.State == string(deliverystate.NoticeOwed) {
+			return true
+		}
+	}
+	return false
 }
