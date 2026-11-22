@@ -58,7 +58,7 @@ var passNames = [2]string{"pass-1", "pass-2"}
 
 // The distinct states TLC finds for the two modules (docs/design/chat-model/README.md).
 const (
-	deliveryStates = 27056
+	deliveryStates = 26496
 	sendStates     = 335
 )
 
@@ -183,13 +183,8 @@ func successors(w world, rules variant) []step {
 		}
 	}
 
-	// The native doorbell (section 8.3): a ring the engine takes or ignores changes nothing; one it
-	// refuses (the connection closed) refuses the delivery. A hook's ring changes nothing at all.
-	if w.alive && w.delivery.Route == Native {
-		if refused, ok := w.apply(Event{Kind: RingRefused, Overdue: w.overdue}, rules); ok {
-			add("the engine refuses the doorbell", refused)
-		}
-	}
+	// The doorbell (section 8.3) changes no delivery, whatever came back: a closed connection is not
+	// a refusal (W-095, as amended), so it has no step here.
 
 	// The recipient's own calls; a review mailbox makes none.
 	if w.alive && w.delivery.Route != Mailbox {

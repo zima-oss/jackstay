@@ -235,7 +235,7 @@ pushes the text, once.
 | `delivered` | steered by the bridge: the app-server accepted it, or, with the reason `unconfirmed`, a steer was made but its answer never came |
 | `read` | the recipient received the whole body from `chat.inbox` in one response, or acknowledged it as read; or a review mailbox froze with it unread (section 9.1) |
 | `acted` | the recipient said it handled it (`chat.ack` with `acted`), or answered it with `chat.respond` |
-| `refused` | the recipient's engine refused the native doorbell (it closed the connection, section 8.3) |
+| `refused` | the recipient's engine reported refusing the doorbell; a closed connection is not one (section 8.3), so no route sets it today |
 | `dropped` | it can no longer reach the recipient: the recipient ended, or its review mailbox closed |
 | `expired` | its `expires_at` passed while it was `pending` |
 
@@ -249,7 +249,7 @@ else (the table is the package `internal/sessionchat/deliverystate`, checked by 
 | `pending` | `sending` | the bridge, before it steers (section 9.2) |
 | `sending` | `delivered` | the app-server's acceptance of a steer; or, with the reason `unconfirmed`, a steer whose answer never came, or a `sending` record older than 60 s (its pass died) |
 | `sending` | `pending` | a confirmed failure: nothing reached the app-server (section 9.2); for a request already closed (its mailbox froze), `expired` instead, so a closed question is never steered |
-| `pending` | `refused` | the recipient's engine closing the connection on the native doorbell (section 8.3) |
+| `pending` | `refused` | the recipient's engine reporting a refusal itself; a closed connection on the native doorbell is not one and leaves the delivery `pending` (section 8.3) |
 | `pending`, `sending` | `dropped` | `SessionEnd`, a dead process, or a closed mailbox (`recipient_ended`); from `sending` the bridge's later outcome is then dropped (compare-and-set) |
 | `pending` | `expired` | the deadline, found by the sweep or by any step of section 4.10; the closing of its request (section 4.4) |
 | `pending`, `delivered` | `read` | `chat.inbox` emitting the whole body in one response, while the body is visible (section 4.10); `chat.ack` with `read` |
@@ -270,10 +270,10 @@ response, the sweep's `unconfirmed`), the late outcome is dropped and logged. Ex
   the reason in its outbox and decides whether to send it again.
 - A doorbell carries no text, so a repeated doorbell is harmless, and its silence means nothing: the
   receipt that counts is the recipient's read (W-095).
-- `read` means the server returned the whole body to one of the recipient's tool calls, or the
-  recipient acknowledged it; it is what the server emitted, not proof that the model took it in.
-  `read` and `acted` come from the recipient's own tool calls (and `read` also from a review
-  mailbox's freeze, section 9.1). They are its declaration, not proof of work; a sender that needs proof asks for it in a request (section 4.4).
+- `read` means the server returned the whole body to one of the recipient's tool calls, the
+  recipient acknowledged it, or a review mailbox froze with it unread (section 9.1). A tool
+  response's `read` is what the server emitted, not proof that the model took it in; the recipient's
+  `read` and `acted` are its declaration, not proof of work; a sender that needs proof asks for it in a request (section 4.4).
 - An explicit `chat.inbox` call returns what the recipient asks for among the visible messages
   (section 4.10). So a model that both reads the inbox and is steered by the bridge may see a message
   twice; that is its own choice.
@@ -314,7 +314,7 @@ A request is a direct message (never to a channel) with a `request` object:
 - an open request whose `expires_at` passes becomes `expired`, and the requester is owed one notice
   (section 8.5), on the request's commit record, whatever its delivery's state. The request and its
   delivery share `expires_at` and expire **in one step**: whichever check finds the deadline (the
-  sweep, the bridge's claim, a refused doorbell, a read, an ack, a response, section 4.10) closes the
+  sweep, the bridge's claim, a reported refusal, a read, an ack, a response, section 4.10) closes the
   request and, when the delivery is `pending`, expires the delivery in the same locked step, without a
   notice of its own. So the requester is owed one notice, never two and never none (shown at least
   once, section 8.5). The request's
@@ -364,7 +364,7 @@ is long because the store, not the recipient's memory, holds the message.
 
 | priority | Claude Code's SDK | jackstay rings the doorbell |
 |---|---|---|
-| `now` | interrupts (recent SDK versions may first move eligible work to the background for a person's message) | at the next tool batch through the hooks, at once through the socket when idle, and a `Stop` hook keeps the turn going while one is unread (section 8.4); named as urgent |
+| `now` | interrupts (recent SDK versions may first move eligible work to the background for a person's message) | at the next tool batch through the hooks, at once through the socket when idle; a `Stop` hook holds the turn the first time it sees a new one, at most 3 times in a row (section 8.4); named as urgent |
 | `next` | read in the same turn after the current tool calls | at the next tool batch or prompt through the hooks, at once through the socket when idle |
 | `later` | held until the turn ends | when the recipient is idle (which wakes it through the socket); through the hooks, at the next prompt |
 
@@ -426,7 +426,9 @@ Events and notices from `jackstay` are not counted against these limits.
 - an armed subscription records the recipient's `idle_generation` (a counter its idle increments,
   section 6.1) and fires on the first idle with a higher one, or when the recipient becomes `gone`,
   whichever comes first, so the idle that came before the message never counts; then it ends;
-- at `until` without either, the watcher is owed a notice that the subscription expired;
+- at `until` without either, the watcher is owed a notice that the subscription expired: the sweep,
+  which every operation runs when it is due (section 7.4), finds it, and so does any step that looks
+  at the recipient's subscriptions; an idle or an end seen after `until` never counts for it;
 - a repeat of the same standalone subscription (same watcher and recipient) while one exists renews
   `until` and returns the same outcome; one that fired within the last 60 s (found as the watcher's
   `idle` notice about that recipient, kept 24 h) returns `subscribed` with `fired` and `fired_at`,
@@ -443,8 +445,8 @@ bridge's steer. A body is **visible to its recipient** while its delivery is not
 or `expired`, on every route. No route shows a body anywhere but there: the native and hooks routes
 ring a doorbell with no text in it (section 8), so the recipient's engine never holds or refuses a
 body jackstay could later show, and nothing a message carries (its ID in another message's `thread`
-or `reply_to`) needs to be treated as evidence (W-095). A refused doorbell is the recipient's engine
-saying no to peer messages, and its delivery is `refused`; the body stays unread.
+or `reply_to`) needs to be treated as evidence (W-095). A doorbell whose connection closes changes
+nothing: the delivery stays `pending` and its body unread (section 8.3).
 
 A channel message is visible through `chat.thread` to every session of the account that has **no
 delivery** of it (the related list limits only sending). A session that has a delivery of a message,
@@ -454,7 +456,7 @@ request ID.
 
 **Deadlines are checked where they matter, not only by the sweep.** In the same locked step in which
 the bridge would set `sending`, in which `chat.inbox` or `chat.thread` would return a body, in which a
-refused doorbell would be recorded, and in which a response or an ack would commit, the store
+reported refusal would be recorded, and in which a response or an ack would commit, the store
 compares `expires_at` with the clock; an overdue `pending` delivery, or an `open` request, is moved
 to `expired` right there (with its notice owed) and the action proceeds as if it had been expired
 already. For a request this is always the request **and** its delivery together (section 4.4): a
@@ -745,8 +747,9 @@ Refusals of a call: `invalid`, `unknown_recipient`, `unknown_message`, `ambiguou
 one-line `detail` that names what to do next (for `loop`: ask your person; for `store_busy`: retry;
 for `unknown_message` with a 0.5.x ID: messages from 0.5.x were not carried over).
 
-Reasons on a receipt: `unconfirmed` (on `delivered`, a bridge's steer), `engine_refused` (a
-refused doorbell), `recipient_ended`, `expired`.
+Reasons on a receipt: `unconfirmed` (on `delivered`, a bridge's steer), `engine_refused` (an
+engine that reports refusing a doorbell; the native pass never sets it, section 8.3),
+`recipient_ended`, `expired`.
 
 ### 5.5 Compatibility with the 0.5.x tools
 
@@ -804,11 +807,14 @@ write a caller can make large).
                       "at": { "type": "string" }, "state": { "enum": ["owed", "shown"] } } } },
     "notices_rung_at": { "type": "string" },
     "stop_blocks": { "type": "integer", "minimum": 0, "maximum": 3 },
+    "ring_failures": { "type": "integer", "minimum": 0 },
+    "ring_next": { "type": "string" },
     "exchange": { "type": "object", "maxProperties": 64,
       "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 40 } } } }
 ```
 
-`exchange` holds the loop counter per peer (section 4.8). `notices` holds idle notices owed to this
+`exchange` holds the loop counter per peer (section 4.8). `ring_failures` and `ring_next` pace the
+native doorbell after confirmed failures (section 8.3). `notices` holds idle notices owed to this
 session (section 4.9), `about` being the other session's address; a shown one is kept 24 h for a
 repeated subscription's answer, and the oldest shown one is removed to make room before an owed one
 is added (when all 32 are owed, the oldest owed is dropped and logged). `idle_generation` counts the
@@ -1091,7 +1097,8 @@ lock, releases it, pushes, then takes the lock again to record the outcome.
 
 ### 7.4 Retention and capacity
 
-The sweep runs at most every 10 minutes, started by any writer, under the exclusive lock:
+The sweep runs at most every 10 minutes, started by any operation that finds it due (`swept.json`
+keeps when it last ran), under the exclusive lock:
 
 - a `sending` delivery older than 60 s becomes `delivered` with `unconfirmed` (its bridge pass died
   after recording it, so the steer may have happened);
@@ -1276,13 +1283,23 @@ notices, the session's `notices_rung_at`). For each due session the pass:
    are marked `rung` and the session's `notices_rung_at` moves to the newest notice it told of; the
    notices stay owed until an inbox read shows them. Then:
    - **the connection stayed open, or the line was taken**: nothing else changes;
-   - **the connection was closed before the 2 s**: the recipient's engine refused the doorbell; each
-     `pending` native delivery it told of becomes `refused` (`engine_refused`, its notice owed), after
-     the deadline check of section 4.10;
-   - **a confirmed failure**, when nothing was written (no socket, connection refused): nothing
+   - **the connection was closed before the 2 s**: this too counts as taken, and nothing is
+     refused. A refusing engine closes the connection, and so does a Claude Code process that exits
+     during the wait; the socket cannot tell them apart, and a doorbell is harmless (W-095, as
+     amended). `engine_refused` stays in the table for an engine that reports a refusal itself;
+     the native pass never sets it;
+   - **a confirmed failure**, when nothing was written (no socket, connection refused, or a line
+     that could not be written whole): nothing
      reached the socket, so nothing is marked, and the next pass tries again after 5 s, 30 s, then
      2 min. The hooks ring meanwhile.
 
+A pass rings from what it found due when it started; a session that turns busy or rebinds during the
+pass may still be rung once, which is harmless. Two limits follow (W-096): after a `/clear` during
+the pass, the ring can reach the new conversation and mark the old one's deliveries rung, which then
+wake it only through its hooks or a newer message; and a notice owed in the same instant as one a
+ring already told of waits for the next prompt hook or the next ring. Neither loses a message or a
+notice: the inbox holds both. A binding is rung only when its own Claude Code
+version is verified. An error reading the store stops the pass; it is never taken as a failed ring.
 A ring is never retried for the same deliveries once taken, but ringing again is harmless: a
 recipient that ignored a doorbell is told again by its hooks, and by the next doorbell once a newer
 message arrives.
@@ -1303,14 +1320,15 @@ on the native route, whose socket rings only when it is idle (W-095).
   of the session on the `native` and `hooks` routes and every owed notice, and returns the doorbell
   line as `additionalContext`: a socket's ring is silent and proves nothing, so each new prompt is
   reminded of what is still unread until it is read or expires. At `PostToolBatch` it counts only the
-  `now` and `next` ones no hook has told it of yet (`hook_rung` on the delivery), marks them, and
-  rings the same way, so a busy turn hears of each new message once. Nothing of a message's text is
-  in either.
+  `now` and `next` ones no hook has told it of yet (`hook_rung` on the delivery) and rings the same
+  way, so a busy turn hears of each new message once. The hook marks them `hook_rung` only after its
+  answer is handed over (`MarkHookRung`), as notices are marked (section 8.5): a hook stopped before
+  that told nothing, and its deliveries ring again. Nothing of a message's text is in either.
 - **Hold the turn.** At `Stop`, when the session has `pending` `now` deliveries no hook has told it
   of, the dispatcher answers `{"decision": "block", "reason": …}` with the doorbell line, so the
   model reads its inbox before the turn ends. When `stop_hook_active` is true (the turn already
   continues because of a `Stop` hook), it blocks again only for `now` deliveries that arrived since,
-  and at most 3 times in a row, well inside Claude Code's cap of 8 consecutive continuations. It
+  and at most 3 times in a row (a `Stop` that is not a continuation starts the count again), well inside Claude Code's cap of 8 consecutive continuations. It
   never holds a turn for `next` or `later`. While it holds, the session stays `busy`.
 - **Waking an idle session** is what the hooks cannot do: on this route an idle session hears its
   doorbell at its next prompt. A background `asyncRewake` hook (one that wakes Claude when it exits
@@ -1621,7 +1639,7 @@ narrower than the last, and review alone does not end that. The model is in
 
 - **TLA+, checked with TLC** (`just tla`, which runs when Java and the TLA+ tools are installed):
   `ChatDelivery.tla` is one delivery on each of the five routes, with two passes of the bridge that
-  may pause or crash at any step, the native doorbell and its refusal, the recipient's reads, acks
+  may pause or crash at any step, the native doorbell (which changes nothing), the recipient's reads, acks
   and answers, the sweep, the deadline, the recipient's end and a mailbox's freeze;
   `ChatSend.tla` is one response and its retry with the same key, a process crash or a machine
   crash (which loses a commit record whose folder was not fsynced) at every step of section 7.3,
@@ -1630,12 +1648,13 @@ narrower than the last, and review alone does not end that. The model is in
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  TLC and the tests reach the same states, 27,056 for a delivery and 335 for a send (7,104 before
-  notices were shown at least once, 30,736 before W-095), and the tests fail if either count changes.
+  TLC and the tests reach the same states, 26,496 for a delivery and 335 for a send (27,056 while a
+  closed doorbell refused, 7,104 before notices were shown at least once, 30,736 before W-095), and
+  the tests fail if either count changes.
 
 Checked: the bridge steers a message at most once, and every other route shows its text only
 through the inbox read (W-095); a crash never makes a steer look not made; final states are never
-left; the deadline is applied before an ack, a read, a steer or a refused doorbell; every `refused`, `dropped` or `expired` delivery
+left; the deadline is applied before an ack, a read or a steer; every `refused`, `dropped` or `expired` delivery
 owes exactly one notice, and a request and its delivery that expire together owe one between them;
 a request and its response agree, answered or closed once and never overwritten; no steer of a
 closed request begins, and no question is written after its freeze; a deadline found by any step
@@ -1757,7 +1776,8 @@ throwaway repositories `#alpha` and `#beta` (`#alpha` relates to `#beta`):
    - `B` is busy in a long tool loop; `A` sends `now`: its hooks ring and `B` reads it before its
      turn ends;
    - on an unverified version: the same through the hooks alone, the `Stop` hold included;
-   - `B` set to refuse peer messages: `A`'s next message is `refused` and `A` is shown the notice;
+   - `B` set to refuse peer messages: `B`'s socket closes the doorbell's connection and `A`'s next
+     message stays `pending`, rung (section 8.3, W-095 as amended), and `B` reads it from its inbox;
      then `B` ends with a message to it still unread: it is `dropped`, and `A` is shown that too;
    - `B` (whose repository has no related list) can write to `#alpha`; a third repository not in
      `#alpha`'s list is refused for `A`;

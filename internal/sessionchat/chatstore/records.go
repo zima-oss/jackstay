@@ -97,7 +97,12 @@ type Session struct {
 	IdleAt     string          `json:"idle_at,omitempty"`
 	Notices    []SessionNotice `json:"notices,omitempty"`
 	StopBlocks int             `json:"stop_blocks,omitempty"`
-	Exchange   map[string]int  `json:"exchange,omitempty"`
+	// NoticesRungAt is the newest owed notice a socket's doorbell told of; RingFailures and RingNext
+	// pace the doorbell after confirmed failures (section 8.3).
+	NoticesRungAt string         `json:"notices_rung_at,omitempty"`
+	RingFailures  int            `json:"ring_failures,omitempty"`
+	RingNext      string         `json:"ring_next,omitempty"`
+	Exchange      map[string]int `json:"exchange,omitempty"`
 }
 
 // channelRecord is a channel's identity and name (section 7.1). Its subscribers are the sessions
@@ -176,6 +181,10 @@ type Delivery struct {
 	NextAttempt string `json:"next_attempt,omitempty"`
 	Notice      string `json:"notice,omitempty"`
 	Note        string `json:"note,omitempty"`
+	// Rung is set once the socket's doorbell told the recipient of the delivery, HookRung once a
+	// hook did (sections 8.3 and 8.4); neither changes a receipt.
+	Rung     bool `json:"rung,omitempty"`
+	HookRung bool `json:"hook_rung,omitempty"`
 }
 
 // Commit is a message's commit record (section 6.3).
