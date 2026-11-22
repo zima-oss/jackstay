@@ -32,16 +32,18 @@ merges before the next: the pin, then the workflows that download 0.6.0, then sc
 jst adopt --plan
 ```
 
-1. The plan names the step that is due, and any blocker that waits on you.
-2. A step that changes `jackstay.json` (the pin, schema 3, an answer to one of adopt's questions)
-   lands in a pull request of its own (rule D0 of `jst lint pr`): apply it with `--settings-only`,
-   so nothing else is written, and land it.
-3. On the merged base, `jst adopt --apply` writes the other files (the workflows, the AGENTS
-   block); land them. Run the plan again, and stop when it finds nothing to change.
+Repeat, on the merged base each time, until the plan finds nothing to change:
+
+1. `jst adopt --plan` names the step that is due, and any blocker that waits on you.
+2. `jst adopt --apply --settings-only` (with `--pin` when the step is the pin) writes
+   `jackstay.json` alone: the pin, schema 3, and adopt's answers. If it wrote anything, land it in a
+   pull request of its own (rule D0 of `jst lint pr`) and start again.
+3. Only when it writes nothing, `jst adopt --apply` writes the other files (the workflows, the
+   AGENTS block). Land them.
 
 Adopt asks, at a terminal, who merges and who reviews, and, once the file is schema 3, whether the
-agent chat is on; each answer is written to `jackstay.json`, so give it to a `--settings-only`
-apply. Without a terminal, the plan names the flag for each: `--autonomy`, `--reviewer`, `--chat`. If the project keeps a workflow adopt does not
+agent chat is on; each answer goes to `jackstay.json`, which is why the `--settings-only` apply comes
+first: the chat question, asked once the file is schema 3, is answered there too. Without a terminal, the plan names the flag for each: `--autonomy`, `--reviewer`, `--chat`. If the project keeps a workflow adopt does not
 manage, the plan waits until a person confirms, with the exception `upgrade:workflows`, that none
 of them still downloads an older jackstay.
 

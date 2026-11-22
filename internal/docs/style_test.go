@@ -288,14 +288,27 @@ func removedName(command string, removed map[string][]string) string {
 }
 
 // namesReplacement says whether a line's commands include one of the replacements a removed
-// command's advice names (`jst gh ci-wait` | `jst checks wait`), as a command jst has.
+// command's advice names (`jst gh ci-wait` | `jst checks wait`), as a command jst has: the
+// command's words up to its first flag are the replacement's words, or those followed by a value
+// that is no action (`jst checks wait 42`). `jst land status` is no replacement for `jst land`.
 func namesReplacement(commands []string, name string, removed map[string][]string, helps map[string]commandHelp, names []string) bool {
 	for _, command := range commands {
 		if removedName(command, removed) != "" || checkCommand(command, helps, names) != "" {
 			continue
 		}
+		var words []string
+		for _, word := range strings.Fields(command)[1:] {
+			if strings.HasPrefix(word, "-") {
+				break
+			}
+			words = append(words, word)
+		}
 		for _, replacement := range removed[name] {
-			if command == "jst "+replacement || strings.HasPrefix(command, "jst "+replacement+" ") {
+			wanted := strings.Fields(replacement)
+			if len(words) < len(wanted) || !slices.Equal(words[:len(wanted)], wanted) {
+				continue
+			}
+			if len(words) == len(wanted) || !actionWord.MatchString(words[len(wanted)]) {
 				return true
 			}
 		}
@@ -536,6 +549,10 @@ func TestARemovedCommandNeedsItsOwnReplacementOnTheLine(t *testing.T) {
 	}
 	if namesReplacement([]string{"jst gh pr-land", "jst status"}, "gh pr-land", removed, helps, names) {
 		t.Error("an unrelated command counts as the replacement")
+	}
+	helps["land"] = parseHelp("land", "usage: jst land [--change N]\n       jst land status [--change N]\n")
+	if namesReplacement([]string{"jst gh pr-land", "jst land status"}, "gh pr-land", removed, helps, names) {
+		t.Error("another action of the replacing command counts as the replacement")
 	}
 }
 
