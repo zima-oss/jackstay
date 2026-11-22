@@ -166,10 +166,15 @@ difference in what is found may matter more than on this fixture.
 ### Upgrading from 0.5.x
 
 0.6.0 reads a 0.5.x `jackstay.json` as it is, except a `resume` key under `test.scopes` or
-`test.steps`: `jst check` names it, and you delete it. Install it on the machine, run `jst setup --plan`
-and `jst doctor`, then move each project in three pull requests that `jst adopt --plan` plans: the
-pin (`jst adopt --apply --pin --settings-only`), the files, then config schema 3 with the `land`
-section. The [upgrading guide](docs/guide/upgrading.md) has the steps.
+`test.steps`: `jst check` names it, and you delete it. Install it on the machine, run `jst setup`
+and `jst doctor`, then move each project the way `jst adopt --plan` plans it: the pin, the
+workflows that download 0.6.0, then config schema 3 with the `land` section, each a pull request a
+person merges. A step that changes `jackstay.json` is applied with `--settings-only` and lands
+alone (rule D0). The [upgrading guide](docs/guide/upgrading.md) has the steps.
+
+`jst land` waits only for the checks the base's rules require and those `land.checks` lists, where
+`jst gh pr-land` stopped on any failed check: make a check that must block required on the host, or
+list it in `land.checks`.
 
 | 0.5.x | 0.6.0 |
 |---|---|
