@@ -118,16 +118,17 @@ jst setup --yes --select sandbox
 The first command reads files only. The other commands apply **only** the selected repair.
 Running `jst setup` in a terminal offers apply, show and skip; with piped input it only prints
 the plan. The quick installer runs that interactive setup after a successful install only when both
-input and output are terminals, and says before it starts that setup shows each change and asks
-before making it, then asks who merges and which reviewer runs; without a terminal it says that setup did not start and that `jst setup` runs
-it. A release without `jst setup` is told apart, with `jst doctor` named instead. Before changing an existing shell profile or Claude Code settings,
+input and output are terminals. Before it starts, it says that setup first asks who merges and which
+reviewer runs (once per machine), then shows each change and asks before making it. Without a
+terminal it says that setup did not start and that `jst setup` runs it once `jst` is on your PATH. A
+release without `jst setup` is told apart, with `jst doctor` named instead. Before changing an existing shell profile or Claude Code settings,
 setup shows the change and saves the original content in a
 unique `*.jackstay-backup-*` file beside it and shows that path. It refuses a symlink, an
 unusual file, a profile with a different jackstay PATH entry, malformed settings, or a sandbox
 deny rule that needs an owner's decision. A second run does not append the same entry again.
 Open a new shell or Claude Code session after a change, then run `jst doctor` again.
 
-After the repairs, setup on a terminal asks, once per machine, who merges a project's changes and
+Before the repairs, setup on a terminal asks, once per machine, who merges a project's changes and
 which reviewer runs `jst review` (Codex recommended), and keeps the answers in
 `~/.jackstay/.all/setup.json`; `jst adopt` offers them first, and a project's `jackstay.json` still
 decides. The plan lists the current answers. To set one without being asked:

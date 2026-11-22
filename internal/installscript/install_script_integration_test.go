@@ -479,7 +479,7 @@ func TestInstalledSetupRunsOnlyWithATerminal(t *testing.T) {
 	if direct.exit != 0 || !strings.HasPrefix(direct.record, "install\n") || strings.Contains(direct.record, "setup") {
 		t.Fatalf("nonterminal install ran setup: exit %d, arguments %q", direct.exit, direct.record)
 	}
-	if !strings.Contains(direct.stderr, "no terminal here, so machine setup does not start: run `jst setup` in a terminal") {
+	if !strings.Contains(direct.stderr, "no terminal here, so machine setup does not start: once jst is on your PATH") {
 		t.Fatalf("a nonterminal install did not say setup was left:\n%s", direct.stderr)
 	}
 	installer := installScript(t)
@@ -497,7 +497,7 @@ func TestInstalledSetupRunsOnlyWithATerminal(t *testing.T) {
 	}
 	output := interactive.stdout + interactive.stderr
 	notice, started := strings.Index(output, "a terminal is here, so machine setup starts now"), strings.Index(output, "fake machine setup started")
-	if notice < 0 || started < 0 || notice > started {
+	if notice < 0 || started < 0 || notice > started || !strings.Contains(output, "asks who merges a project's changes and which reviewer runs") {
 		t.Fatalf("a terminal install did not say setup starts before starting it:\n%s", output)
 	}
 

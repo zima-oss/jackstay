@@ -242,11 +242,13 @@ main() {
   if ! JACKSTAY_TELEMETRY=off "$prefix/bin/jst" setup --help >/dev/null 2>&1; then
     say "this jst has no machine setup (\`jst setup\`); \`jst doctor\` says what is left"
   elif ! [ -t 0 ] || ! [ -t 1 ]; then
-    say "no terminal here, so machine setup does not start: run \`jst setup\` in a terminal for it"
+    say "no terminal here, so machine setup does not start: once jst is on your PATH (see below),"
+    say "run \`jst setup\` in a terminal"
   else
-    say "a terminal is here, so machine setup starts now: it shows what it would change on this"
-    say "machine and asks before each change, then asks who merges a project's changes and which"
-    say "reviewer runs, the recommended answer first; Ctrl-C stops it and leaves the installation as it is"
+    say "a terminal is here, so machine setup starts now: unless this machine has answered them, it"
+    say "asks who merges a project's changes and which reviewer runs, the recommended answer first;"
+    say "then it shows each change it would make and asks before making it. Ctrl-C stops it and"
+    say "leaves the installation as it is"
     if ! JACKSTAY_TELEMETRY=off "$prefix/bin/jst" setup --prefix "$prefix"; then
       say "machine setup stopped; the installation is ready"
     fi
