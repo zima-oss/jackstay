@@ -11,28 +11,42 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/zima-oss/jackstay/internal/adopt"
+	"github.com/zima-oss/jackstay/internal/choices"
 )
 
-const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]"
+const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE | jst setup --reviewer WHO"
 
 const setupHelp = setupUsage + `
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
-POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
+POSIX shell profile, and let Claude Code's enabled sandbox write only the folders of the jackstay
+home jst writes from it (the journal, the lock, chat, jobs, the brief, ids, the trash), replacing
+an entry that names the whole home. Evidence (receipts, gate marks, review rounds, the run log)
+stays read-only to the sandbox; jst test and jst review run outside it.
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
   --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
   --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
+  --autonomy MODE keep merge-when-green or prepare as this machine's answer to who merges
+  --reviewer WHO  keep codex, claude-code or codex,claude-code as this machine's reviewer
+
+Once per machine, a terminal is also asked who merges a project's changes (the agent when the
+required checks pass, or a person) and which reviewer runs jst review (Codex recommended).
+` + "`jst adopt`" + ` offers these answers first; the project's jackstay.json decides.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
 terminal offers apply, show and skip. An existing profile is copied to a
-unique backup beside it before replacement. Unsupported shells and conflicting profiles are
-left for the owner. Open a new shell after applying a PATH repair.
+unique backup beside it before replacement; the settings file keeps its keys in order. A profile
+or settings file that is a symbolic link is named and left for the owner, as are unsupported
+shells and conflicting profiles. Open a new shell after applying a PATH repair.
 
 exit: 0 planned or applied; 1 an applicable repair failed; 2 the request is wrong.
 
@@ -51,6 +65,8 @@ type SetupItem struct {
 	original    []byte
 	replacement []byte
 	mode        os.FileMode
+	// grants are the paths a sandbox repair makes before it writes the settings.
+	grants []string
 }
 
 // SetupPlan retains doctor's manual findings; setup never guesses repairs for them.
@@ -116,6 +132,7 @@ func quotedShellWord(value string) string {
 
 func planSetup(report Report, home, shell string) SetupPlan {
 	plan := SetupPlan{Items: []SetupItem{}}
+	sandboxPlanned := false
 	for _, finding := range report.Problems {
 		item := SetupItem{ID: finding.Kind, Status: "manual", Text: finding.Text, Fix: finding.Fix}
 		if finding.Kind == "path-not-first" {
@@ -147,31 +164,65 @@ func planSetup(report Report, home, shell string) SetupPlan {
 				item.Fix = "put the install's bin folder first on PATH in your shell's configuration"
 			}
 		}
-		if finding.Kind == "sandbox-blocks-state" {
-			item.ID = "sandbox"
-			item.Path, _ = report.Facts["settings"].(string)
-			stateHome, _ := report.Facts["home"].(string)
-			if item.Path != "" && stateHome != "" {
-				original, replacement, mode, err := prepareSandbox(item.Path, stateHome)
-				if err == nil {
-					item.Status = "ready"
-					item.Fix = "add the state folder to sandbox.filesystem.allowWrite in " + item.Path
-					item.Add = stateHome
-					item.Diff = settingsDiff(item.Path, original, replacement)
-					item.original, item.replacement, item.mode = original, replacement, mode
-				} else {
-					item.Fix = finding.Fix + "; setup cannot apply it: " + err.Error()
-				}
+		if finding.Kind == "sandbox-blocks-state" || finding.Kind == "sandbox-writes-evidence" {
+			if sandboxPlanned {
+				continue
 			}
+			sandboxPlanned = true
+			item = planSandbox(report, finding)
 		}
 		plan.Items = append(plan.Items, item)
 	}
 	return plan
 }
 
+// planSandbox is the one sandbox repair for doctor's sandbox findings: allowWrite gets the
+// grants (SandboxGrants) and loses entries naming the whole jackstay home.
+func planSandbox(report Report, finding Finding) SetupItem {
+	item := SetupItem{ID: "sandbox", Status: "manual", Text: finding.Text, Fix: finding.Fix}
+	item.Path, _ = report.Facts["settings"].(string)
+	stateHome, _ := report.Facts["home"].(string)
+	projects, _ := report.Facts["sandbox_projects"].([]string)
+	if item.Path == "" || stateHome == "" {
+		return item
+	}
+	grants := SandboxGrants(stateHome, projects)
+	original, replacement, mode, change, err := prepareSandbox(item.Path, stateHome, projects)
+	switch {
+	case errors.Is(err, errNothingToChange):
+		item.Fix = finding.Fix
+	case err != nil:
+		item.Fix = finding.Fix + "; setup cannot apply it: " + err.Error()
+		return item
+	default:
+		item.Status = "ready"
+		item.Text = "let Claude Code's sandbox write only the jackstay folders jst writes from it (the journal, the lock, chat, " +
+			"jobs, the brief, ids, the trash); receipts, gate marks, review rounds and the run log stay read-only there, so " +
+			"`jst test` and `jst review`, which record them, run outside the sandbox"
+		item.Fix = "change sandbox.filesystem.allowWrite in " + item.Path
+		item.Add = strings.Join(change.Added, "\n")
+		item.Diff = sandboxDiff(item.Path, change)
+		item.original, item.replacement, item.mode, item.grants = original, replacement, mode, grants
+	}
+	if len(change.Kept) > 0 {
+		quoted := make([]string, len(change.Kept))
+		for index, entry := range change.Kept {
+			quoted[index] = strconv.Quote(entry)
+		}
+		note := "still lets the sandbox write evidence: narrow " + strings.Join(quoted, ", ") + " in " + item.Path + " yourself"
+		if item.Status == "ready" {
+			item.Fix += "; " + note
+		} else {
+			item.Fix = note
+		}
+	}
+	return item
+}
+
 // RunSetup is jst setup. Mutations require an interactive choice or --yes with a selected ID.
 func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	planOnly, asJSON, yes, chat, prefix := false, false, false, false, ""
+	planOnly, asJSON, yes, chat, prefix, autonomy, reviewer := false, false, false, false, "", "", ""
+	reviewerGiven := false
 	selected := map[string]bool{}
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
@@ -183,16 +234,23 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			yes = true
 		case "--chat":
 			chat = true
-		case "--select", "--prefix":
-			if index+1 >= len(args) {
+		case "--select", "--prefix", "--autonomy", "--reviewer":
+			option, rest := args[index], args[index+1:]
+			if len(rest) == 0 {
 				fmt.Fprintln(stderr, setupUsage)
 				return 2
 			}
+			value := rest[0]
 			index++
-			if args[index-1] == "--select" {
-				selected[args[index]] = true
-			} else {
-				prefix = args[index]
+			switch option {
+			case "--select":
+				selected[value] = true
+			case "--prefix":
+				prefix = value
+			case "--reviewer":
+				reviewer, reviewerGiven = value, true
+			default:
+				autonomy = value
 			}
 		default:
 			fmt.Fprintln(stderr, setupUsage)
@@ -202,6 +260,34 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if (yes && len(selected) == 0) || (!yes && len(selected) != 0) || (planOnly && yes) || (chat && yes) {
 		fmt.Fprintln(stderr, setupUsage)
 		return 2
+	}
+	if reviewerGiven {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, setupUsage)
+			return 2
+		}
+		if err := choices.Reviewer.Check(reviewer); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 2
+		}
+		if err := choices.SaveMachineAnswers(choices.Defaults{choices.Reviewer.ID: reviewer}); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers review.use %s first on this machine\n", reviewer)
+		return 0
+	}
+	if autonomy != "" {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, setupUsage)
+			return 2
+		}
+		if err := adopt.SaveMachineAutonomy(autonomy); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 2
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers land.autonomy %s first on this machine\n", autonomy)
+		return 0
 	}
 	for identifier := range selected {
 		if identifier != "path" && identifier != "sandbox" {
@@ -220,6 +306,7 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	inputs := RealInputs(prefix)
 	// Settings lives under ~/.claude; the profile belongs directly under account home.
 	plan := planSetup(Diagnose(inputs), filepath.Dir(filepath.Dir(inputs.Settings)), os.Getenv("SHELL"))
+	plan.Items = append(plan.Items, autonomyItem(adopt.MachineAutonomy()), reviewerItem(choices.MachineAnswers()))
 	if chat {
 		plan.Items = append(plan.Items, chatEngineSetupItems(exec.LookPath)...)
 	}
@@ -233,11 +320,94 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if planOnly || (!yes && (!terminalInput(stdin) || !terminalOutput(stdout))) {
 		return 0
 	}
+	return applySetup(plan, yes, chat, selected, stdin, stdout, stderr)
+}
+
+// applySetup asks and applies a plan: the questions at a terminal; with --yes only the selected
+// repairs, unattended, asking nothing.
+func applySetup(plan SetupPlan, yes, chat bool, selected map[string]bool, stdin io.Reader, stdout, stderr io.Writer) int {
 	reader := bufio.NewReader(stdin)
+	if !yes {
+		if err := askMachineAutonomy(plan, reader, stdout, adopt.SaveMachineAutonomy); err != nil {
+			fmt.Fprintf(stderr, "jst setup: autonomy: %v\n", err)
+			return 1
+		}
+		if err := askMachineReviewer(plan, reader, stdout); err != nil {
+			fmt.Fprintf(stderr, "jst setup: reviewer: %v\n", err)
+			return 1
+		}
+	}
 	if chat {
 		promptChatEngineSetup(plan, reader, stdout)
 	}
 	return executeSetup(plan, yes, selected, reader, stdout, stderr)
+}
+
+// autonomyItem is this machine's answer to who merges (docs/design/land.md section 5): asked once,
+// then offered first by `jst adopt`.
+// reviewerItem is this machine's reviewer (W-090): asked once, offered first by `jst adopt`.
+func reviewerItem(saved choices.Defaults, err error) SetupItem {
+	item := SetupItem{ID: "reviewer", Status: "ask", Text: "which reviewer runs `jst review`, offered first by `jst adopt`: not answered on this machine",
+		Fix: "answer the question at a terminal (`jst setup`), or `jst setup --reviewer codex|claude-code|codex,claude-code`"}
+	switch {
+	case err != nil:
+		item.Status, item.Text = "manual", "this machine's reviewer cannot be read: "+err.Error()
+		item.Fix = "fix or remove the file named, then `jst setup --reviewer codex|claude-code|codex,claude-code`"
+	case saved[choices.Reviewer.ID] != "":
+		item.Status, item.Text = "done", "`jst adopt` offers review.use "+saved[choices.Reviewer.ID]+" first on this machine"
+		item.Fix = "`jst setup --reviewer codex|claude-code|codex,claude-code` changes it; a project's jackstay.json decides"
+	}
+	return item
+}
+
+// askMachineReviewer asks the reviewer question when the plan says it is not answered, and keeps it.
+func askMachineReviewer(plan SetupPlan, reader *bufio.Reader, stdout io.Writer) error {
+	for _, item := range plan.Items {
+		if item.ID != "reviewer" || item.Status != "ask" {
+			continue
+		}
+		answer, err := choices.TerminalAsker{In: reader, Out: stdout}.Ask(choices.Reviewer, choices.Reviewer.Recommended())
+		if err != nil {
+			return err
+		}
+		if err := choices.SaveMachineAnswers(choices.Defaults{choices.Reviewer.ID: answer}); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers review.use %s first on this machine\n", answer)
+	}
+	return nil
+}
+
+func autonomyItem(saved string, err error) SetupItem {
+	item := SetupItem{ID: "autonomy", Status: "ask", Text: "who merges a project's changes, offered first by `jst adopt`: not answered on this machine",
+		Fix: "answer the question at a terminal (`jst setup`), or `jst setup --autonomy merge-when-green|prepare`"}
+	switch {
+	case err != nil:
+		item.Status, item.Text = "manual", "this machine's answer to who merges cannot be read: "+err.Error()
+		item.Fix = "fix or remove the file named, then `jst setup --autonomy merge-when-green|prepare`"
+	case saved != "":
+		item.Status, item.Text = "done", "`jst adopt` offers land.autonomy "+saved+" first on this machine"
+		item.Fix = "`jst setup --autonomy merge-when-green|prepare` changes it; a project's jackstay.json decides"
+	}
+	return item
+}
+
+// askMachineAutonomy asks adopt's question when the plan says it is not answered, and keeps the answer.
+func askMachineAutonomy(plan SetupPlan, reader *bufio.Reader, stdout io.Writer, save func(string) error) error {
+	for _, item := range plan.Items {
+		if item.ID != "autonomy" || item.Status != "ask" {
+			continue
+		}
+		answer, err := adopt.AskAutonomy(reader, stdout, "")
+		if err != nil {
+			return err
+		}
+		if err := save(answer); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers land.autonomy %s first on this machine\n", answer)
+	}
+	return nil
 }
 
 func chatEngineSetupItems(lookPath func(string) (string, error)) []SetupItem {
@@ -303,7 +473,9 @@ func executeSetup(plan SetupPlan, yes bool, selected map[string]bool, stdin io.R
 			var backup string
 			var err error
 			if item.ID == "sandbox" {
-				backup, err = replaceWithBackup(item.Path, item.original, item.replacement, item.mode)
+				if err = makeGrants(item.grants); err == nil {
+					backup, err = replaceWithBackup(item.Path, item.original, item.replacement, item.mode)
+				}
 			} else {
 				backup, err = applyProfile(item.Path, item.Add)
 			}
@@ -382,12 +554,16 @@ func readProfile(path string) ([]byte, os.FileMode, error) {
 		return nil, 0, err
 	}
 	defer func() { _ = root.Close() }()
+	if info, err := root.Lstat(filepath.Base(path)); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		target, _ := root.Readlink(filepath.Base(path))
+		return nil, 0, fmt.Errorf("%s is a symbolic link (to %s): setup does not write through a link; make the change in the file it names yourself", path, target)
+	}
 	file, err := root.OpenFile(filepath.Base(path), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, 0o600, nil
 	}
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, fmt.Errorf("%s: %w", path, err)
 	}
 	defer func() { _ = file.Close() }()
 	info, err := file.Stat()
@@ -396,7 +572,7 @@ func readProfile(path string) ([]byte, os.FileMode, error) {
 	}
 	const limit = 1 << 20
 	if !info.Mode().IsRegular() || info.Size() > limit {
-		return nil, 0, fmt.Errorf("profile is not a regular file smaller than 1 MiB")
+		return nil, 0, fmt.Errorf("%s is not a regular file smaller than 1 MiB", path)
 	}
 	content, err := io.ReadAll(io.LimitReader(file, limit+1))
 	if len(content) > limit {

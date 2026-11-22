@@ -216,13 +216,16 @@ type ReviewerRun struct {
 	Exit     int      `json:"exit"`
 	Outcome  string   `json:"outcome"`
 	Reason   string   `json:"reason"`
+	// WaitSeconds is the time from asking for a reviewer slot to holding it and the start lock.
+	WaitSeconds float64 `json:"wait_seconds,omitempty"`
+	// Reused names the earlier attempt whose answer this run is, "" for a run made now.
+	Reused string `json:"reused,omitempty"`
 }
 
 // RoundRecord is `round.json` (section 5).
 type RoundRecord struct {
 	Task          string            `json:"task"`
-	PoolAttempt   string            `json:"pool_attempt,omitempty"`
-	PoolExit      *int              `json:"pool_exit,omitempty"`
+	Request       string            `json:"request,omitempty"`
 	Round         int               `json:"round"`
 	Attempt       int               `json:"attempt"`
 	Chain         int               `json:"chain"`
@@ -238,6 +241,8 @@ type RoundRecord struct {
 	Runs          []ReviewerRun     `json:"runs"`
 	Outcome       Outcome           `json:"outcome"`
 	Summaries     map[string]string `json:"summaries"`
+	// PrepareSeconds is the time taken to get a source view slot and build the pinned view.
+	PrepareSeconds float64 `json:"prepare_seconds,omitempty"`
 }
 
 // AttemptName is an attempt's own record, written first, so a failed attempt keeps what it was for.
@@ -245,11 +250,13 @@ const AttemptName = "attempt.json"
 
 // AttemptRecord is `attempt.json`.
 type AttemptRecord struct {
-	Task        string `json:"task"`
-	PoolAttempt string `json:"pool_attempt,omitempty"`
-	Attempt     int    `json:"attempt"`
-	Commit      string `json:"commit"`
-	Base        string `json:"base"`
+	Task    string `json:"task"`
+	Request string `json:"request,omitempty"`
+	Attempt int    `json:"attempt"`
+	Commit  string `json:"commit"`
+	Base    string `json:"base"`
+	// Binding names what the attempt asks its reviewers (reuse.go); "" before prompting.
+	Binding string `json:"binding,omitempty"`
 }
 
 // Entry is a round or an attempt in a task's folder.
@@ -397,6 +404,8 @@ type IndexLine struct {
 	Rare      int     `json:"rare"`
 	Seconds   float64 `json:"seconds"`
 	Path      string  `json:"path"`
+	// Reused names the attempt whose answer this run reused: its seconds were paid there, not here.
+	Reused string `json:"reused,omitempty"`
 }
 
 // AppendIndex adds lines to the index under its lock.
@@ -629,7 +638,7 @@ func linesOf(task string, entry Entry) []IndexLine {
 			continue
 		}
 		lines = append(lines, IndexLine{At: run.Ended, Task: task, Attempt: entry.Attempt, Reviewer: run.Reviewer,
-			Commit: attempt.Commit, Base: attempt.Base, Outcome: run.Outcome, Seconds: run.Seconds, Path: entry.Path})
+			Commit: attempt.Commit, Base: attempt.Base, Outcome: run.Outcome, Seconds: run.Seconds, Path: entry.Path, Reused: run.Reused})
 	}
 	return lines
 }
@@ -653,7 +662,7 @@ func recordLines(record RoundRecord, path string) []IndexLine {
 	for _, run := range record.Runs {
 		lines = append(lines, IndexLine{At: run.Ended, Task: record.Task, Round: &round, Attempt: record.Attempt,
 			Reviewer: run.Reviewer, Commit: record.Commit, Base: record.Base, Outcome: run.Outcome,
-			Blocks: record.Outcome.Blocks, Realistic: realistic, Rare: rare, Seconds: run.Seconds, Path: path})
+			Blocks: record.Outcome.Blocks, Realistic: realistic, Rare: rare, Seconds: run.Seconds, Path: path, Reused: run.Reused})
 	}
 	return lines
 }

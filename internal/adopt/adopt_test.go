@@ -316,7 +316,7 @@ func TestAnEditInsideTheMarkersIsNeverOverwrittenSilently(t *testing.T) {
 		"CLAUDE.md": "@AGENTS.md\n"})
 	apply(t, optionsFor(root))
 	path := filepath.Join(root, "AGENTS.md")
-	edited := strings.Replace(read(t, root, "AGENTS.md"), "- **Wait**", "- **Wait** (our note)", 1)
+	edited := strings.Replace(read(t, root, "AGENTS.md"), "- **Instead of `sleep N`**", "- **Instead of `sleep N`** (our note)", 1)
 	if err := os.WriteFile(path, []byte(edited), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -546,10 +546,11 @@ func TestThePinMovesOnlyWithPin(t *testing.T) {
 	}
 	newer.Accept = nil
 	newer.Pin = true
-	applyTwice(t, newer)
+	apply(t, newer)
 	if !strings.Contains(read(t, root, ".github/workflows/release.yml"), `JACKSTAY_VERSION: "v0.6.0"`) {
 		t.Fatal("--pin did not move the pin")
 	}
+	landsLast(t, newer)
 }
 
 func TestTheProfilesRulesBecomeConflicts(t *testing.T) {
@@ -689,7 +690,8 @@ func TestAPinMoveLandsSettingsFirst(t *testing.T) {
 		t.Fatalf("after the settings: changes %v, conflicts %v", changeIDs(made.Changes), made.Conflicts)
 	}
 	after.Accept = []string{"workflow:release:edited"}
-	applyTwice(t, after)
+	apply(t, after)
+	landsLast(t, after)
 	if text := read(t, root, ".github/workflows/release.yml"); strings.Contains(text, "# edit") || !strings.Contains(text, `JACKSTAY_VERSION: "v0.6.0"`) {
 		t.Fatal("the files did not follow the settings")
 	}
@@ -827,5 +829,17 @@ func TestNewerKeysAreRefusedForAProjectPinnedBefore060(t *testing.T) {
 	root := project(t, map[string]string{"jackstay.json": `{"jackstay_schema":3,"adopt":{"pin":"v0.5.11"},"brief":{"max_age_hours":24}}`})
 	if _, err := Make(optionsFor(root)); err != nil {
 		t.Fatalf("a key the file already has: %v", err)
+	}
+}
+
+// A project whose only enabling section is `land` still gets the workflow that runs `jst lint pr`
+// (docs/design/land.md section 3.3: rule D0 keeps jackstay.json alone in its pull request).
+func TestALandOnlyProjectGetsTheLintWorkflow(t *testing.T) {
+	var names []string
+	for _, template := range wantedTemplates(nil, map[string]any{"land": map[string]any{"autonomy": "merge-when-green"}}) {
+		names = append(names, template.Name)
+	}
+	if !slices.Contains(names, "card-line") {
+		t.Fatalf("a land-only project's workflows: %v", names)
 	}
 }

@@ -17,12 +17,12 @@ import (
 
 func init() {
 	cli.Register(
-		cli.Command{Name: "release prepare", Summary: "print the next release as the workflow would make it (writes nothing)", Usage: prepareHelp, Run: runPrepare},
+		cli.Command{Name: "release prepare", Summary: "print the next release as the workflow would make it; writes nothing", Usage: prepareHelp, Run: runPrepare},
 		cli.Command{Name: "release override", Summary: "a version given by hand, with its reason, as a file for a pull request", Usage: overrideHelp, Run: runOverride},
 		cli.Command{Name: "release notes", Summary: "a release's notes: markdown, text, TestFlight, Sparkle", Usage: notesHelp, Run: runNotes},
 		cli.Command{Name: "release yank", Summary: "mark a release yanked, as an entry for a pull request", Usage: yankHelp, Run: runYank},
-		cli.Command{Name: "release pr", Summary: "the workflow's: create, refresh or close the release pull request", Usage: pullRequestHelp, Run: runPullRequest},
-		cli.Command{Name: "release publish", Summary: "the workflow's: make, tag and publish what a landed request asks", Usage: publishHelp, Run: runPublish},
+		cli.Command{Name: "release pr", Summary: "the release workflow's step: create, refresh or close the release pull request", Usage: pullRequestHelp, Run: runPullRequest},
+		cli.Command{Name: "release publish", Summary: "the release workflow's step: make, tag and publish a landed release", Usage: publishHelp, Run: runPublish},
 	)
 	changes.Hooks.Check = checkHook
 	changes.Hooks.NextVersion = nextVersionHook

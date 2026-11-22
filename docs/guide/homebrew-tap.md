@@ -1,23 +1,23 @@
 # Preparing the Homebrew tap
 
-The official install channels today are the [installer and release archives](install.md). A
-Homebrew formula can be prepared for a future `zima-oss/homebrew-tap` repository after a signed,
-notarised jackstay release is published. The tap has not been published yet; do not advertise
+This page is for maintainers: it turns a published, signed and notarised release into a Homebrew
+formula for a future `zima-oss/homebrew-tap` repository. The tap is not published yet, so people
+install with the [installer or a release archive](install.md). Do not advertise
 `brew install zima-oss/tap/jackstay` until its formula is in that repository and tested on macOS.
 
 ## Prepare a formula from a release
 
 Download the four `jackstay_<version>_<os>_<arch>.tar.gz` assets and `checksums.txt` from the
-*same published release* into one directory. The formula generator checks every archive against
-the release checksum file and requires an executable `jst`, `LICENSE` and dependency licence files
-at archive root. It prints the formula to standard output and makes no remote changes:
+*same published release* into one folder, then generate the formula and check its syntax:
 
 ```sh
 go run ./cmd/jst-homebrew-formula 0.5.11 /path/to/release-assets > /tmp/jackstay.rb
 ruby -c /tmp/jackstay.rb
 ```
 
-Use the release's actual version in place of `0.5.11`. The output declares distinct URLs and
+Use the release's version in place of `0.5.11`. The generator checks every archive against
+`checksums.txt`, requires an executable `jst`, `LICENSE` and the dependency licence files at each
+archive's root, prints the formula and changes nothing remote. The formula declares distinct URLs and
 SHA-256 hashes for Apple silicon, Intel macOS, Linux arm64 and Linux x86-64. The formula installs
 the release binary unchanged, keeping its existing macOS signature, and installs all licence
 files in Homebrew's package share directory. Its test runs `jst --version`.
@@ -29,7 +29,7 @@ credentials to write another repository, so updating the tap is a separate relea
 dedicated GitHub App or another explicitly scoped credential can automate that step later.
 
 The generated hash verifies downloaded bytes against the formula. Release attestations and any
-independent provenance check follow the [release provenance work](../roadmap/backlog.md#b3-establish-download-provenance-11-and-part-of-1); a hash copied from the same release alone is
+independent provenance check follow the [release provenance work](../roadmap/backlog.md); a hash copied from the same release alone is
 not an independent origin guarantee.
 
 ## Homebrew core

@@ -3,8 +3,7 @@ package trash
 // help is `jst trash --help`.
 const help = usage + `
 
-Moving into the trash is undoable; entries older than trash.keep_days (default 7) are removed
-on the way.
+Entries older than trash.keep_days (default 7) are removed on the way.
   PATH...        files or folders to move; -- before them lets a path be named list, restore,
                  prune or start with -
   --json         with list: as JSON

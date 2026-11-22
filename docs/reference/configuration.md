@@ -93,9 +93,9 @@ Says which GitHub account, remote and repository jackstay uses, and how long its
 | Key | Type | What it does |
 |---|---|---|
 | `account` | string | Names the GitHub login jackstay acts as outside GitHub Actions, whatever account `gh` has active. |
-| `remote` | string | Names the remote that `jst sync`, `jst start`, `jst tidy` and `jst gh` use; without it they take `origin`, else the remote `main` (then `master`) tracks, else the only remote. |
+| `remote` | string | Names the remote that `jst sync`, `jst start`, `jst tidy` and `jst land` use; without it they take `origin`, else the remote `main` (then `master`) tracks, else the only remote. |
 | `repository` | string | Names the repository as `owner/name` when it is not to be read from the remote's URL. |
-| `wait` | object | Sets the defaults of `jst gh ci-wait`, `run-wait` and `pr-land`; their flags still win. |
+| `wait` | object | Sets the defaults of `jst checks wait`, `jst checks run-wait` and `jst land`; their flags still win. |
 | `wait.interval_seconds` | number | Waits this many seconds between looks at GitHub (default 20). |
 | `wait.log_lines` | integer | Shows this many lines of a failed step's log (default 25). |
 | `wait.timeout_seconds` | number | Gives up waiting on GitHub after this many seconds (default 1800). |
@@ -130,6 +130,18 @@ Declares the number series that `jst id` hands out, by series name.
 | `*.files` | string | Gives the path pattern of the series' files, with `{n}` once in the file's name where the number is. |
 | `*.width` | integer | Pads the number with zeros to this many digits, 1 to 9 (default 1). |
 
+## `land`
+
+Says how `jst land` lands a change: who merges, which method, which checks are required and which paths only a person lands.
+
+| Key | Type | What it does |
+|---|---|---|
+| `autonomy` | string | Chooses who merges: `merge-when-green` (the agent, when the required checks pass and no human path is touched) or `prepare` (a person). |
+| `checks` | list of strings | Names checks required in addition to the base's rules, never fewer. |
+| `host` | string | Names the code host's adapter (`github`); unset, the push remote's host. |
+| `human_paths` | list of strings | Lists globs of paths only a person lands, besides jackstay.json, CI workflows and .claude/settings.json. |
+| `method` | string | Chooses the merge method asked of the host: `squash` (the default), `merge` or `rebase`. |
+
 ## `lock`
 
 Turns on the machine-wide lock that heavy test runs take in turn.
@@ -149,17 +161,6 @@ Sets the deadlines of `jst bg`.
 |---|---|---|
 | `default_minutes` | number | Stops a `jst bg` command after this many minutes when `--for` is not given (default 30). |
 | `max_minutes` | number | Caps any `jst bg` deadline at this many minutes (default 240). |
-
-## `queue`
-
-Turns on the local merge candidate queue and says what it lands on.
-
-| Key | Type | What it does |
-|---|---|---|
-| `base_ref` | string | Names the full ref the queue merges onto (`refs/heads/main`, or a fetched `refs/remotes/…`); required when the queue is enabled. |
-| `enabled` | boolean | Turns on `jst queue` for this repository. |
-| `require_pull_request` | boolean | Refuses a handoff that has no pull request: `jst queue add` then needs `--pr`. |
-| `review_task` | string | Requires a current, clear `jst review` round of this task for the pinned base-to-head range before handoff. |
 
 ## `receipts`
 
@@ -232,16 +233,18 @@ Configures `jst review`: the reviewers, what they are told, and how findings dec
 | `cite` | list of strings | Lists files and folders (trailing `/`) the reviewer is told to read as the measure; each must exist in the reviewed tree (default `AGENTS.md` when it exists). |
 | `keep_days` | integer | Removes a task whose newest round is older than this many days, 1 to 3650 (default 30). |
 | `max_concurrent` | integer | Lets this project's reviews hold at most this many reviewer runs at once on the machine (default 4). |
-| `pool` | object | Configures this repository's requests to the machine's reviewer queue (`jst review pool`). |
-| `pool.accepting` | boolean | Accepts new review jobs from this repository (default true); existing jobs can still be queried, retried and processed. Default `true`. |
 | `queue_minutes` | integer | Waits at most this many minutes for a source view, reviewer slots and the start lock, 1 to 120 (default 15). |
 | `repeat_rounds` | integer | Says a place is to be redesigned once it draws a finding this many rounds running, at least 2 (default 2). |
 | `repeat_severities` | list of strings | Lists the severities that count as repeats for redesign (default every severity but the last). |
 | `reviewers` | map of objects | Overrides the built-in reviewers' settings, by name: `codex` or `claude-code`. |
-| `reviewers.*` | object | Overrides one built-in reviewer's command, model, effort, deadline and isolation flags. |
+| `reviewers.*` | object | Overrides one built-in reviewer's command, model, effort, deadline, isolation flags and MCP servers. |
 | `reviewers.*.command` | string | Runs the reviewer as this program, a name on `PATH` or an absolute path (default `codex` for Codex, `claude` for Claude Code). |
 | `reviewers.*.effort` | string | Sets the reviewer's reasoning effort; empty passes none (default `medium` for Codex, the CLI's own for Claude Code). |
 | `reviewers.*.isolation` | list of strings | Replaces Codex's default isolation flags with these words; words jackstay owns are refused, and Claude Code takes none. |
+| `reviewers.*.mcp_servers` | map of objects | Gives these MCP servers back to the reviewer, by name: `command` and `args` (needs `"jackstay_schema": 3`); the user's own stay closed. |
+| `reviewers.*.mcp_servers.*` | object | One MCP server given back to the reviewer. |
+| `reviewers.*.mcp_servers.*.args` | list of strings | Passes these arguments to the MCP server. |
+| `reviewers.*.mcp_servers.*.command` | string | Runs the MCP server as this program. |
 | `reviewers.*.model` | string | Passes this model to the reviewer; empty keeps the CLI's own default. |
 | `reviewers.*.timeout_minutes` | integer | Stops one reviewer run after this many minutes, 1 to 120 (default 20). |
 | `round_limit` | integer | Stops after this round and asks the owner, at least 2 (default 6). |
@@ -253,11 +256,11 @@ Configures `jst review`: the reviewers, what they are told, and how findings dec
 
 ## `status`
 
-Sets the defaults of the workspace overview, `jst workspace board`.
+Sets the defaults of `jst status`.
 
 | Key | Type | What it does |
 |---|---|---|
-| `repos` | list of strings | Lists the repositories the overview reads when none are named: paths relative to this file's folder, or absolute. |
+| `repos` | list of strings | Lists the repositories `jst status` reads when none are named: paths relative to this file's folder, or absolute. |
 
 ## `telemetry`
 

@@ -536,3 +536,56 @@ func TestPromptReferencesBriefWithoutEmbeddingItsContents(t *testing.T) {
 		t.Fatalf("review failed: %+v", result)
 	}
 }
+
+func TestARoundRecordsTheTimeOfItsStages(t *testing.T) {
+	h := newHarness(t, Answer{Verdict: "approve", Summary: "clear"})
+	tick := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	var mutex sync.Mutex
+	h.round.Machine.Now = func() time.Time { // every look at the clock is one second later
+		mutex.Lock()
+		defer mutex.Unlock()
+		tick = tick.Add(time.Second)
+		return tick
+	}
+	result := h.round.Run(context.Background(), Options{})
+	if result.Record == nil || result.Record.PrepareSeconds <= 0 || result.Record.Runs[0].WaitSeconds <= 0 {
+		t.Fatalf("stage times: %+v", result.Record)
+	}
+	saved, err := readRecord(result.Folder)
+	if err != nil || saved.PrepareSeconds != result.Record.PrepareSeconds {
+		t.Fatalf("round.json lacks the stage times: %+v, %v", saved, err)
+	}
+}
+
+func TestTheKeptArgvNamesMCPServersWithoutTheirArguments(t *testing.T) {
+	argv := redactedArgv([]string{"codex", "-c", `mcp_servers.docs={command="docs",args=["--token","made-up"]}`, "-c", "mcp_servers={}",
+		"-c", `mcp_servers={docs={command="x",args=["made-up"]}}`, "-c", `mcp_servers.docs.args=["made-up"]`,
+		"--config=mcp_servers.docs.env={TOKEN=\"made-up\"}", "--mcp-config", `{"mcpServers":{"docs":{"args":["--token","made-up"]}}}`,
+		"-c", "features.apps=false"})
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{"mcp_servers.docs=<redacted>", "mcp_servers={}", "mcp_servers=<redacted>", "mcp_servers.docs.args=<redacted>",
+		"--config=mcp_servers.docs.env=<redacted>", "features.apps=false"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("argv lacks %s: %v", want, argv)
+		}
+	}
+	if strings.Contains(joined, "made-up") {
+		t.Fatalf("a credential reached the kept argv: %v", argv)
+	}
+	if empty := redactedArgv([]string{"--mcp-config", `{"mcpServers":{}}`}); empty[1] != `{"mcpServers":{}}` {
+		t.Fatalf("the empty configuration was hidden: %v", empty)
+	}
+}
+
+func TestAReusedRunIsKeptRedacted(t *testing.T) {
+	folder := t.TempDir()
+	saved := reused{from: "attempt-1", run: ReviewerRun{Reviewer: "codex", Argv: []string{"codex", "-c", `mcp_servers.x={command="made-up"}`}}}
+	run, err := saved.adopt(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(folder, "run.json"))
+	if strings.Contains(string(data), "made-up") || strings.Contains(strings.Join(run.Argv, " "), "made-up") {
+		t.Fatalf("a reused run kept its MCP arguments: %s", data)
+	}
+}

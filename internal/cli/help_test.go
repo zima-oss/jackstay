@@ -102,3 +102,13 @@ func TestHelpOfNothing(t *testing.T) {
 		t.Fatalf("jst --help: %d %q", code, stdout)
 	}
 }
+
+func TestHelpListsCommandsUnderHeadingsAndEndsWithStartHere(t *testing.T) {
+	registerForTest(t, "test", "zzz-ungrouped")
+	_, stdout, _ := call("help")
+	tests := strings.Index(stdout, "\nTests and processes\n  jst test ")
+	other := strings.Index(stdout, "\nOther\n  jst zzz-ungrouped ")
+	if tests < 0 || other < tests || !strings.HasSuffix(stdout, startHere) {
+		t.Fatalf("jst help:\n%s", stdout)
+	}
+}

@@ -83,19 +83,33 @@ darwin-smoke:
 # cmd/jst-sitelinks over every page the build wrote: the menus and the home page's buttons and cards
 # too, at the Pages address's path); and a guide page has the sidebar beside it on a desktop (the
 # guide is of type docs: Hextra's default type hides it, `hx:md:hidden`), its desktop list (not the
-# phone's menu, which lists the guide too) naming the current page and the guide's first
+# phone's menu, which lists the guide too) naming the current page and the guide's first; and
+# every page has its Markdown, llms.txt lists each, llms-full.txt holds them with no link relative to
+# the repository
 docs:
     go test -count=1 -v ./internal/docs
     folder="$(mktemp -d)" && trap 'rm -r "$folder"' EXIT && \
     go run {{hugo}} --source site --panicOnWarning --baseURL {{site_address}} --destination "$folder/public" --quiet && \
     go run ./cmd/jst-sitelinks "$folder/public" {{site_address}} && \
-    page="$folder/public/guide/tests/index.html" && \
+    page="$folder/public/guide/daily-work/tests/index.html" && \
     sidebar="$(grep -o '<aside class="hextra-sidebar-container[^"]*"' "$page")" && \
     desktop="$(perl -0ne 'print $1 if /<ul class="[^"]*hx:max-md:hidden[^"]*">(.*?)<\/aside>/s' "$page")" && \
     if [[ "$sidebar" != *hx:md:sticky* || "$sidebar" == *hx:md:hidden* ]] || \
       [[ "$desktop" != *hextra-sidebar-active-item* ]] || \
-      [[ "$desktop" != *'href="/jackstay/guide/getting-started/"'* ]]; then \
+      [[ "$desktop" != *'href="/jackstay/guide/start/getting-started/"'* ]]; then \
       echo "FAILED: docs: the guide's sidebar is not shown on a desktop ($page)"; exit 1; fi && \
+    pages=$(cd "$folder/public" && find guide -name index.html -exec grep -L 'http-equiv="refresh"' {} + | sort) && \
+    for page in $pages; do \
+      markdown="${page%/index.html}.md"; [[ "$page" == */index.html && -d "$folder/public/${page%/index.html}" && \
+        -n "$(cd "$folder/public/${page%/index.html}" && find . -mindepth 2 -name index.html -print -quit)" ]] && \
+        markdown="${page%.html}.md"; \
+      [[ -s "$folder/public/$markdown" ]] || { echo "FAILED: docs: no Markdown $markdown for $page"; exit 1; }; \
+      grep -qF "{{site_address}}$markdown" "$folder/public/llms.txt" || \
+        { echo "FAILED: docs: llms.txt does not list $markdown"; exit 1; }; done && \
+    if grep -nE '\]\((\.\./|[A-Za-z0-9_-]+\.md)|^ {0,3}\[[^]]+\]: *(\.\./|[A-Za-z0-9_-]+\.md)' "$folder/public/llms-full.txt"; then \
+      echo "FAILED: docs: llms-full.txt keeps a link relative to the repository"; exit 1; fi && \
+    grep -q '^Page: {{site_address}}guide/reference/configuration/$' "$folder/public/llms-full.txt" || \
+      { echo "FAILED: docs: llms-full.txt lacks the configuration reference"; exit 1; } && \
     echo "docs: the site builds"
 
 # The generated pages, written anew from the code: every command's help (internal/cli/testdata/help.txt),
@@ -116,6 +130,33 @@ site:
 # rendered in memory, so it leaves nothing in site/
 site-serve:
     go run {{hugo}} server --source site --panicOnWarning --renderToMemory
+
+# The chat delivery model (docs/design/chat-model) checked by TLC, when Java (JAVA, default `java`)
+# and the TLA+ tools (TLA2TOOLS, default ~/.cache/tla/tla2tools.jar) are installed; otherwise it says
+# so and passes, since the gate runs the same model as Go tests (internal/sessionchat/deliverystate)
+tla:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    jar="${TLA2TOOLS:-$HOME/.cache/tla/tla2tools.jar}"
+    java="${JAVA:-java}"
+    if [ ! -f "$jar" ] || ! "$java" -version > /dev/null 2>&1; then
+      echo "tla: skipped: no Java, or no TLA+ tools at $jar (docs/design/chat-model/README.md)"
+      exit 0
+    fi
+    cd docs/design/chat-model
+    for model in ChatDelivery ChatSend; do
+      meta=$(mktemp -d); out=$(mktemp)
+      status=0
+      "$java" -XX:+UseParallelGC -cp "$jar" tlc2.TLC -workers auto -metadir "$meta" \
+        -config "$model.cfg" "$model.tla" > "$out" 2>&1 || status=$?
+      grep -E '^[0-9]+ states generated|^Error|is violated|No error has been found' "$out" || true
+      rm -r "$meta"
+      if [ "$status" -ne 0 ] || ! grep -q 'No error has been found' "$out"; then
+        cat "$out"; rm -f "$out"; echo "FAILED: tla $model"; exit 1
+      fi
+      rm -f "$out"
+      echo "tla: $model holds"
+    done
 
 # What a push needs (W-040): the Go checks, the integration tests, the security checks and the
 # docs check.
@@ -152,3 +193,9 @@ release-snapshot:
     { cat .goreleaser.yaml; printf '\ndist: "%s"\n' "$folder/dist"; } > "$folder/goreleaser.yaml" && \
     JST_LICENCES="$folder/licenses" go run github.com/goreleaser/goreleaser/v2@v2.20.2 release --snapshot --skip=publish --config "$folder/goreleaser.yaml" && \
     echo "release-snapshot: the archives are in $folder/dist"
+
+# Measure the review wrapper (W-090): seeded defects, jst review vs direct, Codex and Claude Code.
+# It makes real, paid model calls; run it outside an agent's sandbox. Example: just review-bench -runs 5
+review-bench *arguments:
+    go build -trimpath -o .build/jst ./cmd/jst
+    go run ./bench/review -jst "$PWD/.build/jst" {{arguments}}

@@ -29,6 +29,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/adopt/templates"
 	"github.com/zima-oss/jackstay/internal/changes"
 	"github.com/zima-oss/jackstay/internal/check"
+	"github.com/zima-oss/jackstay/internal/choices"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
@@ -60,6 +61,21 @@ type Options struct {
 	// GuardCommand is the hook command a new guard hook gets; "" is GuardCommand(), the launcher of
 	// the install this jst runs from.
 	GuardCommand string
+	// landNow is Make's own: the upgrade's second step is done, so this plan is its third.
+	landNow bool
+	// Autonomy is --autonomy: the `land.autonomy` a new `land` section gets ("": not given, so a
+	// person is asked before --apply writes one; the plan shows Offered).
+	Autonomy string
+	// Offered is the answer offered first when nobody chose (the machine's, from `jst setup`;
+	// "": merge-when-green, the recommended one).
+	Offered string
+	// Answers are --reviewer and --chat, by question ID; they are written even over the project's
+	// value.
+	Answers map[string]string
+	// Ask puts a question the project's file does not settle to a person (nil: nobody to ask, as
+	// without a terminal); Defaults are the machine's answers it offers first (jst setup).
+	Ask      func(question choices.Question, offered string) (string, error)
+	Defaults choices.Defaults
 }
 
 // SplitsSettings says whether the plan's changes touch jackstay.json and another file: one pull
@@ -126,10 +142,30 @@ type Plan struct {
 	Conflicts     []Conflict  `json:"conflicts"`
 	Exceptions    []Exception `json:"exceptions"`
 	Notes         []string    `json:"notes"`
+	// Choices are the reviewer and chat answers this project gets, and where each came from.
+	Choices []Choice `json:"choices"`
+	// Blockers are what keeps the next step of an upgrade from being planned (docs/design/land.md
+	// section 5): the project is not up to date while one stands.
+	Blockers []string `json:"blockers,omitempty"`
 
 	writes  []write
 	inputs  map[string]fileInput
 	profile *profile.Profile
+	// asksAutonomy says the plan writes a new `land` section whose autonomy nobody chose.
+	asksAutonomy bool
+	// asksChoices says a question would be asked at a terminal: nothing settles it.
+	asksChoices bool
+}
+
+// Choice is one question's answer for the project.
+type Choice struct {
+	ID    string `json:"id"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	// From is where the value came from: a flag, the person asked, the project's file, the
+	// profile's defaults; or, when nothing was written, what applies and how to choose.
+	From    string `json:"from"`
+	Written bool   `json:"written"`
 }
 
 type fileInput struct {
@@ -167,34 +203,92 @@ type planner struct {
 	plan     *Plan
 	document *jsondoc.Object // the prospective jackstay.json
 	plain    config.Config
+	// existed says the project had a jackstay.json before this plan.
+	existed bool
+	// profileLand is the profile's `land` defaults for a project without a section (nil: none).
+	profileLand *jsondoc.Object
+	// landComing says the workflows are those of a project with a `land` section, which the
+	// upgrade's third step writes.
+	landComing bool
+	// upgrading says the plan is the upgrade's second or third step, which Make tells apart.
+	upgrading bool
+	// retained are the workflows the project keeps: its own, and those kept by an exception.
+	retained []string
+	// deferred are the schema-3 keys this plan adds while the upgrade is before its third step.
+	deferred []string
+	// exceptions are the project's adopt.exceptions.
+	exceptions map[string]string
 }
 
 // newPlanner is the planner of the project at root: the one place base is set, so every path
 // that reads a recorded profile (Make, BlockOf) reads it from the main checkout.
 func newPlanner(options Options, root string) *planner {
 	return &planner{options: options, root: root, base: mainFolder(root),
-		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}, inputs: map[string]fileInput{}}}
+		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}, Choices: []Choice{}, inputs: map[string]fileInput{}}}
 }
 
-// Make computes the plan; an error is a usage or reading problem (exit 2).
+// Make computes the plan; an error is a usage or reading problem (exit 2). For a project upgrading
+// from 0.5.x past the pin (docs/design/land.md section 5), the whole plan, its settlements and
+// exceptions applied, says whether the workflows step is done; only then is the plan the third
+// step, schema 3 with the `land` section.
 func Make(options Options) (*Plan, error) {
+	plan, planner, err := makePlan(options)
+	if err != nil || !planner.upgrading {
+		return plan, err
+	}
+	_, confirmed := planner.exceptions[ConfirmWorkflows]
+	judged := planner
+	var blockers []string
+	if options.SettingsOnly {
+		whole := options
+		whole.SettingsOnly = false
+		if _, judged, err = makePlan(whole); err != nil {
+			judged = nil
+			blockers = append(blockers, "step 3 is not offered: the workflows cannot be planned: "+err.Error())
+		}
+	}
+	pending := false
+	if judged != nil {
+		var left []string
+		pending, left = judged.stepTwoLeft(confirmed)
+		blockers = append(blockers, left...)
+	}
+	if !pending && len(blockers) == 0 {
+		third := options
+		third.landNow = true
+		plan, _, err = makePlan(third)
+		return plan, err
+	}
+	if len(planner.deferred) > 0 {
+		return nil, schemaWaits(2, planner.deferred)
+	}
+	planner.upgradeNotes(2)
+	plan.Blockers = append(plan.Blockers, blockers...)
+	sort.Strings(plan.Notes)
+	return plan, nil
+}
+
+// makePlan is one plan and the planner that made it.
+func makePlan(options Options) (*Plan, *planner, error) {
 	root, err := projectRoot(options.Dir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner := newPlanner(options, root)
 	original, existed, err := planner.readConfig()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	planner.existed = existed
 	exceptions := stringMap(original.Object("adopt"), "exceptions")
+	planner.exceptions = stringMap(original.Object("adopt"), "exceptions")
 	chosen, err := planner.readProfile(original)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.plan.profile = chosen
 	if err := planner.prospective(original, chosen); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.configChange(original, existed)
 	if chosen != nil {
@@ -203,7 +297,7 @@ func Make(options Options) (*Plan, error) {
 	if options.SettingsOnly {
 		for _, id := range options.Accept {
 			if fileConflict(id) {
-				return nil, &UsageError{fmt.Sprintf("--accept %s is for a managed file: give it to the apply after the settings merge", id)}
+				return nil, nil, &UsageError{fmt.Sprintf("--accept %s is for a managed file: give it to the apply after the settings merge", id)}
 			}
 		}
 		for id := range exceptions {
@@ -212,14 +306,14 @@ func Make(options Options) (*Plan, error) {
 			}
 		}
 	} else if err := planner.managedFiles(chosen); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.except(exceptions)
 	if err := planner.accept(options.Accept); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	planner.sort()
-	return planner.plan, nil
+	return planner.plan, planner, nil
 }
 
 func (planner *planner) managedFiles(chosen *profile.Profile) error {
@@ -403,10 +497,120 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 			setAdopt(document, "profile_sha256", strings.ToLower(planner.plan.ProfileSHA256))
 		}
 	}
+	// A profile's `land` defaults never make the first policy by themselves: landSection decides
+	// it from the project's own file, and the profile fills only its other keys.
+	if original.Object("land") == nil {
+		planner.profileLand = document.Object("land")
+		document = withoutKey(document, "land")
+	}
 	planner.document = document
+	// The answers come first: a section one adds can make a workflow need the pin settled below.
+	if err := planner.choose(original, document); err != nil {
+		return err
+	}
+	if err := planner.settle(original, chosen); err != nil {
+		return err
+	}
+	changed, err := planner.landSection(original, chosen)
+	if err != nil || !changed {
+		return err
+	}
+	return planner.settle(original, chosen)
+}
+
+// choose settles the reviewer and chat questions (W-090): a flag, else the project's own value, else
+// the profile's, else the person's answer when there is a person to ask, else nothing is written and
+// the plan says what applies and how to choose.
+func (planner *planner) choose(original, document *jsondoc.Object) error {
+	// A schema-3 question is asked only of a file that is schema 3 already: the steps that take a
+	// project there (land.md section 5) are adopt's own, and the next apply asks it (W-096).
+	originalSchema, _ := original.Get("jackstay_schema")
+	beforeSchema3 := fmt.Sprint(originalSchema) != fmt.Sprint(config.Schema)
+	for _, question := range choices.All() {
+		choice := Choice{ID: question.ID, Key: question.Key.Name()}
+		ownValue, own := question.Key.Read(original)
+		fromProfile, profiled := question.Key.Read(document)
+		answer, given := planner.options.Answers[question.ID]
+		switch {
+		case given && question.Schema3 && beforeSchema3:
+			return &UsageError{fmt.Sprintf("--%s: %s is a schema-3 key, and jackstay.json is not schema 3 yet: give it to "+
+				"the first jst adopt --apply after the file is schema 3", question.ID, question.Key.Name())}
+		case given:
+			choice.Value, choice.From, choice.Written = answer, "--"+question.ID, true
+		case own:
+			choice.Value, choice.From = ownValue, "this project's jackstay.json"
+		case profiled:
+			choice.Value, choice.From = fromProfile, "the profile's defaults"
+		case question.Schema3 && beforeSchema3:
+			choice.Value = question.Recommended()
+			choice.From = fmt.Sprintf("not asked: %s is asked by the first apply after jackstay.json is schema 3", question.Key.Name())
+		case planner.options.Ask != nil:
+			offered, _ := choices.Offered(question, "", false, planner.options.Defaults)
+			asked, err := planner.options.Ask(question, offered)
+			if err != nil {
+				return &UsageError{fmt.Sprintf("%s: %v", question.ID, err)}
+			}
+			choice.Value, choice.From, choice.Written = asked, "asked", true
+		default:
+			// Nothing is written, so the key stays absent and its default applies; the machine's
+			// answer is only what a terminal apply would offer.
+			planner.plan.asksChoices = true
+			choice.Value = question.Recommended()
+			choice.From = fmt.Sprintf("not written: %s applies while %s is absent; choose with `jst adopt --apply --%s VALUE` "+
+				"(%s) or run it in a terminal", choice.Value, question.Key.Name(), question.ID, question.Values())
+			if offered, from := choices.Offered(question, "", false, planner.options.Defaults); offered != choice.Value {
+				choice.From += fmt.Sprintf(", which offers %s (%s)", offered, from)
+			}
+		}
+		if choice.Written {
+			question.Key.Write(document, choice.Value)
+		}
+		planner.plan.Choices = append(planner.plan.Choices, choice)
+	}
+	return nil
+}
+
+// withoutKey is the object without one key, the others in their order.
+func withoutKey(object *jsondoc.Object, key string) *jsondoc.Object {
+	kept := jsondoc.NewObject()
+	for _, name := range object.Keys() {
+		if name != key {
+			value, _ := object.Get(name)
+			kept.Set(name, value)
+		}
+	}
+	return kept
+}
+
+// templatePlain is the file the wanted workflows are chosen by: with a `land` section while the
+// upgrade's second step writes the workflows the coming policy needs.
+func (planner *planner) templatePlain() map[string]any {
+	if !planner.landComing {
+		return planner.plain
+	}
+	return withLand(planner.plain)
+}
+
+// withLand is a copy of plain with a `land` section when it has none.
+func withLand(plain map[string]any) map[string]any {
+	if _, present := plain["land"]; present {
+		return plain
+	}
+	copied := make(map[string]any, len(plain)+1)
+	for key, value := range plain {
+		copied[key] = value
+	}
+	copied["land"] = map[string]any{}
+	return copied
+}
+
+// settle writes the pin a workflow needs and moves the schema the prospective file's keys need,
+// then sets plain from the document.
+func (planner *planner) settle(original *jsondoc.Object, chosen *profile.Profile) error {
+	document := planner.document
 	planner.plain = config.Config(jsondoc.ToPlain(document).(map[string]any))
-	if planner.usesVersion(chosen) {
-		pin, _ := getString(document.Object("adopt"), "pin")
+	// --pin moves a pin the file has even when no workflow uses it now: a later one may.
+	if pin, _ := getString(document.Object("adopt"), "pin"); planner.usesVersion(chosen) || pin != "" && planner.options.Pin {
 		if pin == "" || planner.options.Pin {
 			pin = "v" + planner.options.Version
 		}
@@ -461,7 +665,7 @@ func (planner *planner) workflowValues(chosen *profile.Profile, pin string) map[
 }
 
 func (planner *planner) usesVersion(chosen *profile.Profile) bool {
-	for _, template := range wantedTemplates(chosen, planner.plain) {
+	for _, template := range wantedTemplates(chosen, planner.templatePlain()) {
 		if slices.Contains(templates.Placeholders(template.Text), "jackstay_version") {
 			return true
 		}
@@ -1052,7 +1256,7 @@ func (planner *planner) workflows(chosen *profile.Profile) error {
 		return err
 	}
 	wanted := map[string]bool{}
-	for _, template := range wantedTemplates(chosen, planner.plain) {
+	for _, template := range wantedTemplates(chosen, planner.templatePlain()) {
 		wanted[template.Name] = true
 		body, err := templates.Render(template.Text, values)
 		if err != nil {
@@ -1099,6 +1303,7 @@ func (planner *planner) workflows(chosen *profile.Profile) error {
 				replacement: &write{path: path, remove: true}, acceptWhat: "remove the workflow edited by hand"})
 		case isWanted:
 		default:
+			planner.retained = append(planner.retained, path)
 			planner.note(path + " is the project's own; jackstay leaves it alone: keep it, or remove from it what jackstay's workflows do")
 		}
 	}
@@ -1152,6 +1357,7 @@ func (planner *planner) except(exceptions map[string]string) {
 			used[conflict.ID] = true
 			planner.plan.Exceptions = append(planner.plan.Exceptions, Exception{ID: conflict.ID, Why: why})
 			if strings.HasPrefix(conflict.ID, "workflow:") {
+				planner.retained = append(planner.retained, conflict.Path)
 				planner.note(conflict.Path + " is kept by an exception: it is the project's own; keep it, or remove from it what jackstay's workflows do")
 			}
 		case excepted:
@@ -1164,7 +1370,8 @@ func (planner *planner) except(exceptions map[string]string) {
 	}
 	planner.plan.Conflicts = kept
 	for _, id := range sortedKeysOf(exceptions) {
-		if !used[id] {
+		// The upgrade's confirmation is read by Make, not matched to a conflict.
+		if !used[id] && (id != ConfirmWorkflows || !planner.upgrading) {
 			planner.note("the exception for " + id + " matches no conflict now (stale): it may be removed from jackstay.json")
 		}
 	}
