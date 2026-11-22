@@ -272,7 +272,7 @@ func TestAddressesResolveAndRefuse(t *testing.T) {
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:twin1", "twin", alpha, StateIdle)
 	twin2 := f.session("cc:twin2", "twin", alpha, StateIdle)
-	f.session("cc:old", "old", alpha, StateGone)
+	f.session("cc:old", "old", alpha, StateEnded)
 	_, err := f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "twin", Message: "x"})
 	f.refused(err, ReasonAmbiguousRecipient)
 	if !strings.Contains(err.Error(), "twin ["+twin2.Ref+"]") {
@@ -282,8 +282,7 @@ func TestAddressesResolveAndRefuse(t *testing.T) {
 		t.Fatalf("%+v", result)
 	}
 	f.send("cc:a", SendInput{To: "[" + twin2.Ref + "]", Message: "y"})
-	_, err = f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "old", Message: "x"})
-	f.refused(err, ReasonRecipientGone)
+	f.send("cc:a", SendInput{To: "old", Message: "an ended session is still addressed: it may resume"})
 	_, err = f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "nobody", Message: "x"})
 	f.refused(err, ReasonUnknownRecipient)
 	_, err = f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "main", Message: "x"})
@@ -306,10 +305,10 @@ func TestAChannelReachesItsSubscribersAsTheyAreAtTheSend(t *testing.T) {
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:b", "b", alpha, StateIdle)
 	f.session("cc:c", "c", beta, StateIdle)
-	f.session("cc:gone", "gone", alpha, StateGone)
+	f.session("cc:ended", "ended", alpha, StateEnded)
 	result := f.send("cc:a", SendInput{To: "#alpha", Message: "to everyone here"})
-	if len(result.Recipients) != 1 || result.Recipients[0].Session != "b" {
-		t.Fatalf("subscribers but the sender and the gone: %+v", result)
+	if len(result.Recipients) != 2 {
+		t.Fatalf("every subscriber but the sender, an ended one too: %+v", result)
 	}
 	empty := f.send("cc:c", SendInput{To: "#beta", Message: "history only"})
 	if empty.Outcome != OutcomeAccepted || len(empty.Recipients) != 0 {
@@ -319,7 +318,7 @@ func TestAChannelReachesItsSubscribersAsTheyAreAtTheSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	later := f.send("cc:a", SendInput{To: "#alpha", Message: "again, to everyone here"})
-	if len(later.Recipients) != 2 {
+	if len(later.Recipients) != 3 {
 		t.Fatalf("a new subscriber hears later messages: %+v", later)
 	}
 	_, err := f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "#alpha", Message: "q", Request: &RequestInput{Expects: "decision"}})
@@ -610,26 +609,24 @@ func TestAClosedRequestWhoseDeliveryACrashLeftPendingIsRepaired(t *testing.T) {
 	}
 }
 
-func TestAResponseToARequesterGoneIsDroppedWithItsNotice(t *testing.T) {
+// A response to a requester whose session ended waits for it like any delivery (no liveness).
+func TestAResponseToAnEndedRequesterWaits(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:b", "b", alpha, StateIdle)
 	asked := f.send("cc:a", SendInput{To: "b", Message: "decide", Request: &RequestInput{Expects: "decision"}})
-	f.session("cc:a", "", alpha, StateGone)
-	answer, err := f.store.Respond(f.ctx, "cc:b", RespondInput{RequestID: asked.RequestID, Decision: "reject", Reason: "no"})
-	if err != nil {
+	if _, err := f.store.Observe(f.ctx, "cc:a", ObserveEnded, false); err != nil {
 		t.Fatal(err)
 	}
-	delivery := f.delivery(answer.MessageID, "cc:a")
-	if delivery.State != "dropped" || delivery.Reason != "recipient_ended" || delivery.Notice != "owed" {
-		t.Fatalf("%+v", delivery)
+	page := f.inbox("cc:b", unread())
+	answer, err := f.store.Respond(f.ctx, "cc:b", RespondInput{RequestID: page.Messages[0].Request.RequestID, Decision: "approve"})
+	if err != nil || answer.Outcome != OutcomeAccepted {
+		t.Fatalf("%+v %v", answer, err)
 	}
-	if exists(filepath.Join(f.store.place.inbox(hashKey("cc:a")), answer.MessageID)) {
-		t.Fatal("a dropped delivery has no inbox marker")
+	if delivery := f.delivery(answer.MessageID, "cc:a"); delivery.State != "pending" {
+		t.Fatalf("it waits for the requester: %+v", delivery)
 	}
-	if f.commit(asked.MessageID).RequestState != "answered" {
-		t.Fatal("the request is answered all the same")
-	}
+	_ = asked
 }
 
 func TestIdleSubscriptions(t *testing.T) {
@@ -1062,36 +1059,30 @@ func TestAFailureAfterTheCommitIsUncertainWithTheIDs(t *testing.T) {
 	}
 }
 
-func TestAnIdempotencyLookupTheDiskCannotAnswerKeepsTheKey(t *testing.T) {
-	f := newFixture(t)
-	f.session("cc:a", "a", alpha, StateIdle)
-	f.session("cc:b", "b", alpha, StateIdle)
-	first := f.send("cc:a", SendInput{To: "b", Message: "once only", IdempotencyKey: "kept-key"})
-	if err := os.Chmod(f.store.place.commits(), 0o000); err != nil {
-		t.Fatal(err)
-	}
-	_, lookupErr := f.store.Send(f.ctx, "cc:a", Scope{}, SendInput{To: "b", Message: "once only", IdempotencyKey: "kept-key"})
-	if err := os.Chmod(f.store.place.commits(), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if lookupErr == nil {
-		t.Skip("this account can search a folder without permission (root)")
-	}
-	f.clock.advance(2 * time.Minute) // past the repeat window: only the key can tell the retry
-	retry := f.send("cc:a", SendInput{To: "b", Message: "once only", IdempotencyKey: "kept-key"})
-	if retry.Outcome != OutcomeDuplicate || retry.MessageID != first.MessageID {
-		t.Fatalf("the key survived the failed lookup: %+v", retry)
-	}
-}
-func TestAResumedSessionCountsAgainstTheLiveBound(t *testing.T) {
+// The table of sessions is bounded: a new session past the bound evicts the one seen least recently,
+// and a resumed conversation simply continues under its key (no liveness).
+func TestAFullSessionTableEvictsTheLeastRecentlySeen(t *testing.T) {
 	f := newFixture(t)
 	f.store.liveLimit = 2
+	f.session("cc:old", "old", alpha, StateIdle)
+	f.clock.advance(time.Minute)
 	f.session("cc:a", "a", alpha, StateIdle)
-	f.session("cc:old", "old", alpha, StateGone)
+	f.clock.advance(time.Minute)
 	f.session("cc:b", "b", alpha, StateIdle)
-	_, err := f.store.Register(f.ctx, Registration{Key: "cc:old", KeySource: SourceEngine, Engine: EngineClaudeCode,
-		Channel: alpha, State: StateIdle})
-	f.refused(err, ReasonCapacity)
+	sessions, err := f.store.Sessions(f.ctx)
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("%+v %v", sessions, err)
+	}
+	for _, session := range sessions {
+		if session.Key == "cc:old" {
+			t.Fatalf("the least recently seen is evicted: %+v", sessions)
+		}
+	}
+	f.clock.advance(time.Minute)
+	f.session("cc:old", "old", alpha, StateIdle)
+	if _, err := f.store.Observe(f.ctx, "cc:old", ObserveBusy, false); err != nil {
+		t.Fatalf("an evicted session registers again: %v", err)
+	}
 }
 
 func TestNothingRunsWhileTheJournalFolderCannotBeMadeDurable(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 // reached by some input.
 func TestApplyFollowsTheTableExactly(t *testing.T) {
 	reasons := []Reason{NoReason, Unconfirmed}
-	kinds := []Kind{Claim, Answer, Failure, Stale, RingRefused, Expire, End, ReadWhole, Peek, AckRead, AckActed, Freeze, CloseRequest}
+	kinds := []Kind{Claim, Answer, Failure, Stale, RingRefused, Expire, ReadWhole, Peek, AckRead, AckActed, Freeze, CloseRequest}
 	answers := []EngineAnswer{Accepted, Lost}
 	reached := map[Edge]bool{}
 	inputs := 0
@@ -43,7 +43,7 @@ func TestApplyFollowsTheTableExactly(t *testing.T) {
 											if next.Route != route {
 												t.Fatalf("%+v %+v: route changed to %s", delivery, event, next.Route)
 											}
-											if (next.State == Refused || next.State == Dropped || next.State == Expired && !request) &&
+											if (next.State == Refused || next.State == Expired && !request) &&
 												state != next.State && next.Notice != NoticeOwed {
 												t.Fatalf("%+v %+v: became %s without an owed notice", delivery, event, next.State)
 											}
@@ -139,10 +139,10 @@ func TestTheFourthConfirmedFailureStopsTheBridge(t *testing.T) {
 	}
 }
 
-func TestEveryRouteShowsTheBodyUntilItIsRefusedDroppedOrExpired(t *testing.T) {
+func TestEveryRouteShowsTheBodyUntilItIsRefusedOrExpired(t *testing.T) {
 	for _, route := range Routes {
 		for _, state := range States {
-			want := state != Refused && state != Dropped && state != Expired
+			want := state != Refused && state != Expired
 			if got := Visible(Delivery{Route: route, State: state}); got != want {
 				t.Errorf("%s %s: visible %v", route, state, got)
 			}
@@ -207,12 +207,8 @@ func TestADeliveryKeepsItsMessageWhileItMayStillBeRead(t *testing.T) {
 	}
 }
 
-func TestAResponseToAGoneRequesterOwesItsNotice(t *testing.T) {
-	created := New(Native, false, true)
-	if created.State != Dropped || created.Reason != RecipientEnded || created.Notice != NoticeOwed {
-		t.Fatalf("got %+v", created)
-	}
-	if fresh := New(Hooks, true, false); fresh.State != Pending || fresh.Notice != NoNotice || !fresh.Request {
+func TestADeliveryStartsPending(t *testing.T) {
+	if fresh := New(Hooks, true); fresh.State != Pending || fresh.Notice != NoNotice || !fresh.Request {
 		t.Fatalf("got %+v", fresh)
 	}
 }
@@ -220,7 +216,7 @@ func TestAResponseToAGoneRequesterOwesItsNotice(t *testing.T) {
 // A steer under way when its request reaches its deadline may still arrive; it cannot be answered.
 func TestASteerUnderWayWhenTheRequestClosesCannotBeAnswered(t *testing.T) {
 	request := Request{State: Open}
-	delivery, _ := Apply(New(Bridge, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+	delivery, _ := Apply(New(Bridge, true), Event{Kind: Claim, Pusher: "pass-1"})
 	request, delivery, _ = ExpireRequest(request, delivery)
 	_, delivery, err := ApplyMessage(request, delivery, Event{Kind: Answer, Pusher: "pass-1", Answer: Accepted})
 	if err != nil || delivery.State != Delivered {
@@ -268,12 +264,12 @@ func TestAResponseNeedsAnOpenRequest(t *testing.T) {
 
 // Review rounds 1 and 2: a freeze waits for a question being steered.
 func TestAFreezeWaitsForAQuestionBeingSteered(t *testing.T) {
-	sending, _ := Apply(New(Bridge, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+	sending, _ := Apply(New(Bridge, true), Event{Kind: Claim, Pusher: "pass-1"})
 	if FreezeMayProceed([]Delivery{sending}) {
 		t.Fatal("froze beside a steer under way")
 	}
 	swept, _ := Apply(sending, Event{Kind: Stale})
-	if !FreezeMayProceed([]Delivery{swept, New(Hooks, true, false)}) {
+	if !FreezeMayProceed([]Delivery{swept, New(Hooks, true)}) {
 		t.Fatal("a swept steer still holds the freeze")
 	}
 }
@@ -282,7 +278,7 @@ func TestAFreezeWaitsForAQuestionBeingSteered(t *testing.T) {
 // step repairs it instead of steering a closed question.
 func TestAClosureCutShortIsRepairedBeforeAnySteer(t *testing.T) {
 	closed := Request{State: Closed, Notice: NoticeOwed}
-	_, delivery, err := ApplyMessage(closed, New(Bridge, true, false), Event{Kind: Claim, Pusher: "pass-1"})
+	_, delivery, err := ApplyMessage(closed, New(Bridge, true), Event{Kind: Claim, Pusher: "pass-1"})
 	if err != nil || delivery.State != Expired || delivery.Notice != NoNotice {
 		t.Fatalf("got %+v %v", delivery, err)
 	}
@@ -313,11 +309,11 @@ func TestAnOverdueEventOfAnotherRouteChangesNothing(t *testing.T) {
 // Round 3: a read that marks nothing repairs a closure cut short and applies the deadline.
 func TestAReadThatMarksNothingRepairsAndChecksTheDeadline(t *testing.T) {
 	closed := Request{State: Closed, Notice: NoticeOwed}
-	_, repaired, err := ApplyMessage(closed, New(Native, true, false), Event{Kind: Peek})
+	_, repaired, err := ApplyMessage(closed, New(Native, true), Event{Kind: Peek})
 	if err != nil || repaired.State != Expired || Visible(repaired) {
 		t.Fatalf("a cut-short closure: %+v %v", repaired, err)
 	}
-	request, expired, err := ApplyMessage(Request{State: Open}, New(Hooks, true, false), Event{Kind: Peek, Overdue: true})
+	request, expired, err := ApplyMessage(Request{State: Open}, New(Hooks, true), Event{Kind: Peek, Overdue: true})
 	if err != nil || request.State != Closed || expired.State != Expired || Visible(expired) {
 		t.Fatalf("an overdue peek: %+v %+v %v", request, expired, err)
 	}

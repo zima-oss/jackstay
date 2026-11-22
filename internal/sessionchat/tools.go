@@ -40,7 +40,7 @@ func objectField() map[string]any { return map[string]any{"type": "object"} }
 // tools are the tools of section 5.2, the 0.5.x names of section 5.5, and the review tools.
 var tools = []tool{
 	{"chat.whoami", "This session's identity; with name, renames it", map[string]any{"name": stringField(64)}, nil, false},
-	{"chat.sessions", "Who can be addressed", map[string]any{"channel": stringField(140), "include_gone": booleanField(), "limit": integerField(1, 100)}, nil, true},
+	{"chat.sessions", "Who can be addressed", map[string]any{"channel": stringField(140), "limit": integerField(1, 100)}, nil, true},
 	{"chat.channels", "The known channels", map[string]any{"cursor": stringField(512)}, nil, true},
 	{"chat.subscribe", "Subscribe to or leave one channel", map[string]any{"channel": stringField(140), "subscribed": booleanField()}, []string{"channel", "subscribed"}, false},
 	{"chat.send", "Send one message, request, reply or idle subscription; retry with the same idempotency_key", map[string]any{
@@ -90,7 +90,6 @@ func toolDefinitions() []map[string]any {
 type arguments struct {
 	Name             string                 `json:"name"`
 	Channel          string                 `json:"channel"`
-	IncludeGone      bool                   `json:"include_gone"`
 	Limit            int                    `json:"limit"`
 	Cursor           string                 `json:"cursor"`
 	Subscribed       *bool                  `json:"subscribed"`
@@ -367,7 +366,7 @@ func sessionsOf(ctx context.Context, store *chatstore.Store, self chatstore.Sess
 	}
 	var rows []map[string]any
 	for _, session := range sessions {
-		if session.ChannelID != channelID || (session.State == chatstore.StateGone && !input.IncludeGone) {
+		if session.ChannelID != channelID {
 			continue
 		}
 		if len(rows) == limit {
@@ -396,7 +395,7 @@ func channelsOf(ctx context.Context, store *chatstore.Store, self chatstore.Sess
 		subscribers := 0
 		for _, session := range sessions {
 			for _, subscription := range session.Subscriptions {
-				if subscription == channel.ID && session.State != chatstore.StateGone {
+				if subscription == channel.ID {
 					subscribers++
 				}
 			}

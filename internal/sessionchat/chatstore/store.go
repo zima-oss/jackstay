@@ -99,7 +99,6 @@ const (
 	ReasonUnknownRecipient   = "unknown_recipient"
 	ReasonUnknownMessage     = "unknown_message"
 	ReasonAmbiguousRecipient = "ambiguous_recipient"
-	ReasonRecipientGone      = "recipient_gone"
 	ReasonNoParent           = "no_parent"
 	ReasonOutOfScope         = "out_of_scope"
 	ReasonRequestToChannel   = "request_to_channel"

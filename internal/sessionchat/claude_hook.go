@@ -158,7 +158,7 @@ func dispatch(ctx context.Context, hook hookInput) (hookAnswer, error) {
 	case "StopFailure":
 		startPusher(ctx, chat.store)
 	case "SessionEnd":
-		_, err = chat.store.Observe(ctx, key, chatstore.ObserveGone, false)
+		_, err = chat.store.Observe(ctx, key, chatstore.ObserveEnded, false) // a hint: it drops nothing
 		if process, found := findClaude(); found && err == nil {
 			err = chat.store.Unbind(ctx, process.PID, processStart(process))
 		}

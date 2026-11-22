@@ -22,7 +22,7 @@ events from jackstay itself.
 
 1. [What changes from 0.5.x](#1-what-changes-from-05x)
 2. [Scope: one store, channels, related repositories](#2-scope-one-store-channels-related-repositories)
-3. [Identity, names and liveness](#3-identity-names-and-liveness)
+3. [Identity, names and the busy or idle state](#3-identity-names-and-the-busy-or-idle-state)
 4. [The message contract](#4-the-message-contract)
 5. [MCP tools](#5-mcp-tools)
 6. [Stored records and bounds](#6-stored-records-and-bounds)
@@ -111,7 +111,7 @@ breaking halfway, and both are narrow:
 Without `chat.related` a session may send to, and read, every channel and session of the account. The
 list limits what a repository's sessions send. It does not filter what they receive (W-091).
 
-## 3. Identity, names and liveness
+## 3. Identity, names and the busy or idle state
 
 ### 3.1 The session key
 
@@ -171,24 +171,28 @@ An address (the `to` of a send, at most 300 characters on one line, as in Claude
 | `main` | the session that started this one (`parent`, section 6.1); none: refused `no_parent` |
 | `#channel` or `#channel [ref]` | the channel's current subscribers (section 4.5) |
 
-A session is **addressable** when its state is not `gone`. A name that matches only `gone` sessions
-is refused as `recipient_gone`, so a message is never queued for someone who will not come back. The
-one exception is a review round's mailbox (section 9.1), which stays addressable between rounds.
+Every known session is **addressable**: there is no liveness (the owner's ruling, "remove liveness
+altogether"). A message to a session that never reads it expires by its own deadline, and its sender
+is told. A session ended by `SessionEnd` may be resumed under the same key, and reads what waited.
 
-### 3.3 Liveness and the busy or idle state
+### 3.3 The busy or idle state
 
-A session's `state` is one of `busy`, `idle`, `gone` or `unknown`, with the time it was entered:
+A session's `state` is one of `busy`, `idle`, `ended` or `unknown`, with the time it was entered:
 
-| engine | `busy` | `idle` | `gone` |
+| engine | `busy` | `idle` | `ended` |
 |---|---|---|---|
-| Claude Code | `UserPromptSubmit`, `PostToolBatch` | a `Stop` that lets the turn end, `StopFailure`, and `SessionStart` (a session starts idle); always an estimate (section 8.2) | `SessionEnd`, or the bound process is no longer alive (process ID and start time checked on every read) |
-| Codex, bridged | the app-server's turn started | its turn completed | the bridge ends or the thread is closed |
-| review round mailbox | never | from the round's result until the next round starts | when the next round starts, or 7 days after the round |
-| token or ephemeral, no hooks | `unknown` | `unknown` | the MCP connection closes (ephemeral) or 24 h without a call (token) |
+| Claude Code | `UserPromptSubmit`, `PostToolBatch` | a `Stop` that lets the turn end, `StopFailure`, and `SessionStart` (a session starts idle); always an estimate (section 8.2) | `SessionEnd` |
+| Codex, bridged | the app-server's turn started | its turn completed | — |
+| review round mailbox | never | from the round's result until the next round starts | — |
+| token or ephemeral, no hooks | `unknown` | `unknown` | — |
 
-`last_seen` is updated by every hook and tool call. A sender sees the recipient's live state in
-`chat.sessions` and in each outbox receipt (`live_state`), which is the "sender status" the
-maintainer asked for: whether the other side is working, waiting or gone.
+`ended` is a hint for listings and `jst status`, and nothing more: nothing is dropped, refused or
+fired because of it, and the next hook or tool call of the session replaces it. jackstay never guesses
+whether a session lives: it checks no process, ends nothing on a closed connection, and reaps
+nothing. The table of sessions is bounded instead (section 6.4): past its bound, a new session evicts
+the one seen least recently. `last_seen` is updated by every hook and tool call. A sender sees the
+recipient's state in `chat.sessions` and in each outbox receipt (`live_state`): whether the other
+side is working, waiting or has ended.
 
 ## 4. The message contract
 
@@ -203,7 +207,7 @@ same meaning:
 | `message`: the plain-text body | `message`, at most 32 KiB of UTF-8; larger content is an attachment (section 4.7) |
 | `summary`: at most 200 characters | the same bound, defaulting to the first line of `message`. jackstay **stores and shows** it: it is the preview in every listing (in Claude Code's own tool, as this version describes it, the summary labels the sender's transcript row and the recipient previews the first line) |
 | `notify_when_idle`: one notice when the recipient next goes idle or ends; one-shot; expires after 12 h; can be sent with no message; immediate when the recipient is already idle | the same (section 4.9); the notice is shown to the watcher, not stored as a message (section 8.5) |
-| outcomes delivered, held, refused | per recipient, receipts of what the recipient read (section 4.2): `read`, `acted`, and `refused`, `dropped`, `expired`; the socket is only a doorbell (W-095) |
+| outcomes delivered, held, refused | per recipient, receipts of what the recipient read (section 4.2): `read`, `acted`, and `refused`, `expired`; the socket is only a doorbell (W-095) |
 | limits: a burst cap, a queue of 50 per receiver, identical repeats dropped, long exchanges paused | the same shape with fixed numbers (section 4.8) |
 | "a message from another session never counts as your consent"; commands in a message arrive as plain text | the same rule, in every rendering of a message (section 13) |
 
@@ -236,11 +240,9 @@ pushes the text, once.
 | `read` | the recipient received the whole body from `chat.inbox` in one response, or acknowledged it as read; or a review mailbox froze with it unread (section 9.1) |
 | `acted` | the recipient said it handled it (`chat.ack` with `acted`), or answered it with `chat.respond` |
 | `refused` | the recipient's engine reported refusing the doorbell; a closed connection is not one (section 8.3), so no route sets it today |
-| `dropped` | it can no longer reach the recipient: the recipient ended, or its review mailbox closed |
 | `expired` | its `expires_at` passed while it was `pending` |
 
-A delivery starts `pending`, or `dropped` (`recipient_ended`, with its notice owed) when it is a
-response to a requester that is already `gone` (section 4.4). Every allowed transition, and nothing
+A delivery starts `pending`. Every allowed transition, and nothing
 else (the table is the package `internal/sessionchat/deliverystate`, checked by the model of section
 15.0):
 
@@ -250,13 +252,12 @@ else (the table is the package `internal/sessionchat/deliverystate`, checked by 
 | `sending` | `delivered` | the app-server's acceptance of a steer; or, with the reason `unconfirmed`, a steer whose answer never came, or a `sending` record older than 60 s (its pass died) |
 | `sending` | `pending` | a confirmed failure: nothing reached the app-server (section 9.2); for a request already closed (its mailbox froze), `expired` instead, so a closed question is never steered |
 | `pending` | `refused` | the recipient's engine reporting a refusal itself; a closed connection on the native doorbell is not one and leaves the delivery `pending` (section 8.3) |
-| `pending`, `sending` | `dropped` | `SessionEnd`, a dead process, or a closed mailbox (`recipient_ended`); from `sending` the bridge's later outcome is then dropped (compare-and-set) |
 | `pending` | `expired` | the deadline, found by the sweep or by any step of section 4.10; the closing of its request (section 4.4) |
 | `pending`, `delivered` | `read` | `chat.inbox` emitting the whole body in one response, while the body is visible (section 4.10); `chat.ack` with `read` |
 | `pending` (a mailbox's) | `read` | a review mailbox's freeze (section 9.1) |
 | `pending`, `sending`, `delivered`, `read` | `acted` | `chat.ack` with `acted`, or `chat.respond` to this request (from `sending`: the recipient read it before the bridge recorded the answer) |
 
-`refused`, `dropped`, `expired` and `acted` are final. The bridge records its outcome only if the
+`refused`, `expired` and `acted` are final. The bridge records its outcome only if the
 delivery is still `sending` under its own `pusher` ID; if anything else moved it meanwhile (a
 response, the sweep's `unconfirmed`), the late outcome is dropped and logged. Expiry applies only to
 `pending`: a message the recipient read, or the bridge steered, is not reported as expired.
@@ -278,7 +279,7 @@ response, the sweep's `unconfirmed`), the late outcome is dropped and logged. Ex
   (section 4.10). So a model that both reads the inbox and is steered by the bridge may see a message
   twice; that is its own choice.
 
-**Notices to the sender.** A transition to `refused`, `dropped` or `expired` sets the delivery's
+**Notices to the sender.** A transition to `refused` or `expired` sets the delivery's
 `notice` to `owed` in the same write, so each such delivery owes exactly one notice. The one
 exception is the expiry of a request's delivery: the request and its delivery expire in one step
 (section 4.4), and the notice is owed once, on the request's commit record. Owed notices are shown to
@@ -310,7 +311,7 @@ A request is a direct message (never to a channel) with a `request` object:
   optional `choice` from `options`, a `reason` (at most 2,000 characters) and an optional `message`;
 - the response is a message of kind `response` in the same thread to the requester; in one commit
   (section 7.3) the request becomes `answered` and the request's delivery becomes `acted`, unless
-  that delivery is already final (for example `dropped` after the recipient ended and resumed);
+  that delivery is already final (for example `expired`);
 - an open request whose `expires_at` passes becomes `expired`, and the requester is owed one notice
   (section 8.5), on the request's commit record, whatever its delivery's state. The request and its
   delivery share `expires_at` and expire **in one step**: whichever check finds the deadline (the
@@ -334,9 +335,8 @@ A request is a direct message (never to a channel) with a `request` object:
 Request states are `open`, `answered` and `expired`, kept apart from the delivery state, so a
 request's deadline never erases a truthful `read` receipt. A second response is refused as
 `already_answered`, and a response after `expires_at` as `request_closed`, even when the sweep has
-not yet run (section 4.10). A response is stored
-even when the requester is `gone`; its delivery is then `dropped` (`recipient_ended`), the responder
-is owed its notice like any other dropped delivery, and sees it in its outbox.
+not yet run (section 4.10). A response to a requester whose session ended waits for it like any
+delivery.
 
 An `approve` from a session is that session's answer, nothing more. It is never a person's approval,
 never grants a permission, and jackstay never acts on it by itself (section 13).
@@ -408,11 +408,10 @@ Events and notices from `jackstay` are not counted against these limits.
 
 ### 4.9 Idle notices
 
-`notify_when_idle: true` subscribes the sender to the recipient's next idle or end, once:
+`notify_when_idle: true` subscribes the sender to the recipient's next idle, once:
 
 - the recipient must be an addressable session (not a channel, section 3.2) whose state is
-  observable (not `unknown`); a `gone` one is refused as `recipient_gone`, which already tells the
-  sender it ended, and an `unknown` one as `idle_unobservable`;
+  observable (not `unknown`); an `unknown` one is refused as `idle_unobservable`;
 - **standalone** (no `message`): nothing is stored but the subscription on the recipient's session
   record, keyed by the watcher; the outcome is `subscribed` with its `until` (12 h later). If the
   recipient is `idle` at that moment, the notice is owed at once, as Claude Code does for a standalone
@@ -420,13 +419,13 @@ Events and notices from `jackstay` are not counted against these limits.
 - **with a message**: the subscription is written with the send, in the same commit (replacing any
   earlier subscription of the same watcher to the same recipient), and arms only on evidence that the
   message arrived: its delivery becoming `read` or `acted`, or `delivered` without `unconfirmed` (a
-  bridge's steer). If the delivery instead ends `refused`, `dropped` or `expired`, or stays
+  bridge's steer). If the delivery instead ends `refused` or `expired`, or stays
   `unconfirmed`, the subscription ends with a notice saying the message was not confirmed delivered,
   never with an idle notice;
 - an armed subscription records the recipient's `idle_generation` (a counter its idle increments,
-  section 6.1) and fires on the first idle with a higher one, or when the recipient becomes `gone`,
-  whichever comes first, so the idle that came before the message never counts; then it ends;
-- at `until` without either, the watcher is owed a notice that the subscription expired: the sweep,
+  section 6.1) and fires on the first idle with a higher one, so the idle that came before the
+  message never counts; then it ends;
+- at `until` without one, the watcher is owed a notice that the subscription expired: the sweep,
   which every operation runs when it is due (section 7.4), finds it, and so does any step that looks
   at the recipient's subscriptions; an idle or an end seen after `until` never counts for it;
 - a repeat of the same standalone subscription (same watcher and recipient) while one exists renews
@@ -441,8 +440,8 @@ where every path that shows notices finds it (section 8.5). An idle notice is no
 ### 4.10 Visibility and deadlines
 
 **One visibility rule** governs every read that reaches a model: `chat.inbox`, `chat.thread` and the
-bridge's steer. A body is **visible to its recipient** while its delivery is not `refused`, `dropped`
-or `expired`, on every route. No route shows a body anywhere but there: the native and hooks routes
+bridge's steer. A body is **visible to its recipient** while its delivery is not `refused` or
+`expired`, on every route. No route shows a body anywhere but there: the native and hooks routes
 ring a doorbell with no text in it (section 8), so the recipient's engine never holds or refuses a
 body jackstay could later show, and nothing a message carries (its ID in another message's `thread`
 or `reply_to`) needs to be treated as evidence (W-095). A doorbell whose connection closes changes
@@ -451,7 +450,7 @@ nothing: the delivery stays `pending` and its body unread (section 8.3).
 A channel message is visible through `chat.thread` to every session of the account that has **no
 delivery** of it (the related list limits only sending). A session that has a delivery of a message,
 in a channel's history or in any thread, sees it in `chat.thread` as its own delivery allows: a
-refused, dropped or expired delivery shows only that a message is there, not its sender, summary or
+refused or expired delivery shows only that a message is there, not its sender, summary or
 request ID.
 
 **Deadlines are checked where they matter, not only by the sweep.** In the same locked step in which
@@ -505,9 +504,9 @@ change nothing carry `readOnlyHint: true`.
     },
     "attachments": { "type": "array", "maxItems": 8, "items": { "$ref": "#/$defs/attachment" } },
     "idempotency_key": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[\\x21-\\x7e]+$" },
-    "delivery_state": { "enum": ["pending", "sending", "delivered", "read", "acted", "refused", "dropped", "expired"] },
+    "delivery_state": { "enum": ["pending", "sending", "delivered", "read", "acted", "refused", "expired"] },
     "request_state": { "enum": ["open", "answered", "expired"] },
-    "live_state": { "enum": ["busy", "idle", "gone", "unknown"] },
+    "live_state": { "enum": ["busy", "idle", "ended", "unknown"] },
     "event": { "enum": ["review.finished", "gate.passed", "gate.failed", "land.merged", "brief.stale"] },
     "session_ref": {
       "type": "object", "additionalProperties": false,
@@ -544,7 +543,6 @@ Returns `address`, `name`, `ref`, `engine`, `key_source` (`engine`, `token` or `
 { "type": "object", "additionalProperties": false,
   "properties": {
     "channel": { "$ref": "#/$defs/channel" },
-    "include_gone": { "type": "boolean", "default": false },
     "limit": { "type": "integer", "minimum": 1, "maximum": 100, "default": 50 } } }
 ```
 
@@ -653,7 +651,7 @@ recipient acknowledges it with `chat.ack`.
 ```
 
 States only move forward (section 4.2); an ack of a state already passed is accepted and changes
-nothing; an ack of a delivery that is `refused`, `dropped` or `expired` is accepted, changes nothing,
+nothing; an ack of a delivery that is `refused` or `expired` is accepted, changes nothing,
 and says so. Only the recipient may ack (a forged ack is refused as `not_recipient`, as in 0.5.x).
 
 **`chat.respond`**: answer a request addressed to this session.
@@ -746,15 +744,14 @@ page is up to a few hundred bytes a message longer (W-096).
 ### 5.4 Refusal reasons and receipt reasons
 
 Refusals of a call: `invalid`, `unknown_recipient`, `unknown_message`, `ambiguous_recipient`,
-`recipient_gone`, `no_parent`, `out_of_scope`, `request_to_channel`, `idle_unobservable`,
+`no_parent`, `out_of_scope`, `request_to_channel`, `idle_unobservable`,
 `not_recipient`, `already_answered`, `request_closed`, `too_large`, `rate_limited`,
 `recipient_full`, `repeated`, `loop`, `capacity`, `chat_disabled`, `store_busy`. Each comes with a
 one-line `detail` that names what to do next (for `loop`: ask your person; for `store_busy`: retry;
 for `unknown_message` with a 0.5.x ID: messages from 0.5.x were not carried over).
 
 Reasons on a receipt: `unconfirmed` (on `delivered`, a bridge's steer), `engine_refused` (an
-engine that reports refusing a doorbell; the native pass never sets it, section 8.3),
-`recipient_ended`, `expired`.
+engine that reports refusing a doorbell; the native pass never sets it, section 8.3), `expired`.
 
 ### 5.5 Compatibility with the 0.5.x tools
 
@@ -793,7 +790,7 @@ write a caller can make large).
     "mailbox": { "type": "boolean" },
     "worktree": { "type": "string", "maxLength": 4096 },
     "parent": { "type": "string", "maxLength": 140 },
-    "state": { "enum": ["busy", "idle", "gone", "unknown"] },
+    "state": { "enum": ["busy", "idle", "ended", "unknown"] },
     "since": { "type": "string" },
     "last_seen": { "type": "string" },
     "registered": { "type": "string" },
@@ -807,7 +804,7 @@ write a caller can make large).
     "idle_generation": { "type": "integer", "minimum": 0 },
     "notices": { "type": "array", "maxItems": 32, "items": {
       "type": "object", "additionalProperties": false, "required": ["id", "kind", "about", "at", "state"],
-      "properties": { "id": { "type": "string", "maxLength": 140 }, "kind": { "enum": ["idle", "ended", "not_delivered", "subscription_expired"] },
+      "properties": { "id": { "type": "string", "maxLength": 140 }, "kind": { "enum": ["idle", "not_delivered", "subscription_expired"] },
                       "about": { "type": "string", "maxLength": 80 }, "message_id": { "$ref": "#/$defs/message_id" },
                       "at": { "type": "string" }, "state": { "enum": ["owed", "shown"] } } } },
     "notices_rung_at": { "type": "string" },
@@ -899,7 +896,7 @@ Each recipient's **delivery** is its own small file:
     "route": { "enum": ["native", "hooks", "bridge", "mailbox", "poll"] },
     "state": { "$ref": "#/$defs/delivery_state" },
     "at": { "type": "string" },
-    "reason": { "enum": ["unconfirmed", "engine_refused", "recipient_ended", "expired"] },
+    "reason": { "enum": ["unconfirmed", "engine_refused", "expired"] },
     "pusher": { "type": "string", "maxLength": 64 },
     "attempts": { "type": "integer", "minimum": 0, "maximum": 4 },
     "whole": { "type": "boolean" },
@@ -914,7 +911,7 @@ Each recipient's **delivery** is its own small file:
 bridge pass that set `sending`; `attempts` (confirmed failures, at most 4), `next_attempt` and
 `whole` (a steer carried the whole body) belong to the Codex bridge. `rung` is set once the socket's
 doorbell told the recipient of the delivery (section 8.3), and `hook_rung` once a hook did (section
-8.4); neither changes a receipt, and neither stops the other from ringing. `notice` is set to `owed` with a final `refused`, `dropped` or
+8.4); neither changes a receipt, and neither stops the other from ringing. `notice` is set to `owed` with a final `refused` or
 `expired` state (except a request's expired delivery, whose notice is the request's, section 4.4),
 and to `shown` once the sender has seen it (section 8.5).
 
@@ -956,7 +953,7 @@ are keys). Each is checked before a write, so the store never reaches a state it
 | a commit record as encoded | 1 KiB | read whole, with a limit |
 | a session as encoded | 64 KiB | every field at its bound in plain text is about 36 KiB (worktree 4 KiB, `exchange` 10 KiB, `idle_watchers` 9 KiB, `notices` 6 KiB); the rest covers non-ASCII paths |
 | recipients of one message | 256 | the session cap |
-| live sessions (not `gone`) | 256 per account | well above a machine's real parallelism |
+| sessions | 256 per account; past it, a new session evicts the one seen least recently (no liveness, section 3.3) | well above a machine's real parallelism |
 | live messages | 4,096 per account; events only below 90% (3,686) | 16 per session |
 | deliveries `pending` or `sending` per recipient | 50 | Claude Code's receiver queue |
 | sends per sender | 30 per 60 s | jackstay's own number; Claude Code throttles bursts without publishing one |
@@ -1118,8 +1115,8 @@ keeps when it last ran), under the exclusive lock:
   last change (24 h for an event), then removed with everything it has;
 - a message that is not done is kept until 7 days after its `expires_at`; then it is removed, and any
   notice still owed on it is dropped with it;
-- a session `gone` for 7 days is removed, with its subscriptions; a binding whose process is gone is
-  removed at once.
+- sessions and bindings are never removed by the sweep: each table is bounded, and a new entry past
+  its bound evicts the session seen least recently, or the binding written longest ago (section 6.4).
 
 **Capacity is counted by charges, not by sizes.** Each record is charged its bound (section 6.4)
 when it is created, not its size on disk: a body its byte length, an envelope 48 KiB, each delivery
@@ -1176,6 +1173,11 @@ Not promised:
   record: those found by their envelope are removed again by the next sweep; the others stay,
   charged, with nothing to find them by. This leak is accepted as rare. A restored idempotency entry
   without its commit record is a leftover and makes the retry fresh (section 7.3).
+- **Knowing whether a session lives** (section 3.3). There is no liveness: a message to a session
+  that will never read it waits until its deadline and then owes its sender an expiry notice; an
+  ended session is still listed and addressed; the session table and the bindings are bounded, and an
+  evicted session that comes back registers afresh, with a new ref. A ring to the socket of a process
+  that is gone is harmless (section 8.3).
 - **A retry across a disk error.** An idle observation that a read error stops is not retried: the
   error goes to the hook, and the subscription ends as usual, with an expiry notice.
 
@@ -1218,7 +1220,7 @@ JSON from stdin and dispatches on `hook_event_name`:
 | `PostToolBatch` | state `busy` (the turn goes on); ring the doorbell | |
 | `Stop` | hold the turn for `now` (section 8.4); if it does not hold: state `idle` | |
 | `StopFailure` | state `idle` | |
-| `SessionEnd` | state `gone`; deliveries `pending` or `sending` to it become `dropped` (`recipient_ended`) | |
+| `SessionEnd` | state `ended`, a hint only: nothing is dropped; the binding is removed | |
 
 The dispatcher never fails a turn: any error is written to jackstay's log and the hook exits 0 with
 no output. Its time budget is 2 s, and the lock deadline of section 7.2 keeps it inside.
@@ -1344,7 +1346,7 @@ on the native route, whose socket rings only when it is idle (W-095).
 
 ### 8.5 Notices to the sender
 
-Owed notices live where they arise: on a delivery (`refused`, `dropped`, `expired`), on a request's
+Owed notices live where they arise: on a delivery (`refused`, `expired`), on a request's
 commit record (expired), and on the watcher's session record (idle notices, section 4.9). Each is
 shown to the session it is owed to, without being stored as a message, in the `notices` of its next
 `chat.inbox` result: at most 50 lines, with the number left in `notices_more`. A doorbell says that
@@ -1422,7 +1424,7 @@ rounds.
    all under one exclusive lock:
    1. it creates `journal/freeze-<mailbox hash>` holding the mailbox's key, the task, the round it
       belongs to, and the absolute path of the snapshot it will write in the next round's attempt
-      folder; and sets the mailbox `gone`, so later sends are refused as `recipient_gone`;
+      folder; and sets the mailbox `frozen`, so later sends to it are refused;
    2. it writes the **snapshot** (the questions, the answers, and every message sent to the mailbox,
       whatever its state) atomically to that path; the snapshot is the freeze's commit point;
    3. it sets the mailbox's `pending` deliveries `read` and its open requests `expired`, each with
@@ -1636,13 +1638,10 @@ section 8.3, and jackstay's events to the sessions they name (section 10). These
 - the review round's mailbox (section 9.1) and `jst setup --chat` (section 12);
 - `jst chat inbox`, the shell's inbox (section 5.2): a session reads through `jst chat serve`, and
   the doorbell names only `chat.inbox`;
-- ending a token session: a token names a session its launcher keeps, so jackstay never ends one;
-  an abandoned token session stays among the 256 live sessions until it is marked gone. Reuse a
-  token for the same session.
 
-In 0.6.0 an ephemeral session ends when its connection closes, and a Claude Code session whose
-process is gone without its `SessionEnd` is ended, with its binding, by the next hook, server or
-pusher that looks (section 7.4).
+There is no liveness (section 3.3): no session is ever ended by jackstay. A session that is gone for
+good stays in the table until a newer one evicts it, and what was sent to it expires by its own
+deadline, with its notice to the sender.
 
 The 0.5.x store is removed in 0.6.0; its state under `session-chat/` is neither read nor imported.
 
@@ -1683,13 +1682,14 @@ narrower than the last, and review alone does not end that. The model is in
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  TLC and the tests reach the same states, 26,496 for a delivery and 335 for a send (27,056 while a
+  TLC and the tests reach the same states, 8,505 for a delivery and 335 for a send (26,496 while a
+  recipient could end, 27,056 while a
   closed doorbell refused, 7,104 before notices were shown at least once, 30,736 before W-095), and
   the tests fail if either count changes.
 
 Checked: the bridge steers a message at most once, and every other route shows its text only
 through the inbox read (W-095); a crash never makes a steer look not made; final states are never
-left; the deadline is applied before an ack, a read or a steer; every `refused`, `dropped` or `expired` delivery
+left; the deadline is applied before an ack, a read or a steer; every `refused` or `expired` delivery
 owes exactly one notice, and a request and its delivery that expire together owe one between them;
 a request and its response agree, answered or closed once and never overwritten; no steer of a
 closed request begins, and no question is written after its freeze; a deadline found by any step
@@ -1726,7 +1726,7 @@ durable, so a machine crash could restore a record standing for nothing (7.3).
   plus one; the server's own checks (kind rules for attachments, `options` only with `answer`, empty
   `message` only with `notify_when_idle`, encoded envelope size) each have a refusal case.
 - **Names and addresses.** Channel-name normalisation (`My App`, an all-symbol name, `common`, a
-  60-character name); session and channel addresses; ambiguous and gone names; ref lengthening on a
+  60-character name); session and channel addresses; ambiguous names; ref lengthening on a
   prefix collision; a review mailbox addressable between rounds.
 - **Scope.** A matrix of sender repository × related list × target (session, channel, `#common`),
   including ambiguous and unknown entries and both exceptions (a response, a `reply_to` back to the
@@ -1738,11 +1738,11 @@ durable, so a machine crash could restore a record standing for nothing (7.3).
   loop count and its reset, capacity with and without a sweep that frees room; a full store refuses
   sends and events while owed notices stay correct.
 - **Idle notices.** Standalone to an idle target (at once), with a message (armed only on confirmed
-  delivery; a refused, dropped, expired or unconfirmed message ends it with a "not delivered" notice; the idle
+  delivery; a refused, expired or unconfirmed message ends it with a "not delivered" notice; the idle
   before the message never counts), a `Stop` followed by a `PostToolBatch` in the same turn,
-  `SessionEnd`, `gone` and `unknown` refused, renewal, a repeat after firing with `fired`, expiry at
+  `unknown` refused, renewal, a repeat after firing with `fired`, expiry at
   `until`.
-- **Visibility and deadlines.** A refused, dropped or expired delivery shows nothing of its body in
+- **Visibility and deadlines.** A refused or expired delivery shows nothing of its body in
   `chat.inbox` or `chat.thread`; no doorbell carries any of a message's text; a steer, a refused
   doorbell, a read, an ack and a response each expire an overdue delivery or request themselves,
   before the sweep.
@@ -1813,7 +1813,8 @@ throwaway repositories `#alpha` and `#beta` (`#alpha` relates to `#beta`):
    - on an unverified version: the same through the hooks alone, the `Stop` hold included;
    - `B` set to refuse peer messages: `B`'s socket closes the doorbell's connection and `A`'s next
      message stays `pending`, rung (section 8.3, W-095 as amended), and `B` reads it from its inbox;
-     then `B` ends with a message to it still unread: it is `dropped`, and `A` is shown that too;
+     then `B` ends with a message to it still unread: it stays `pending`, and `B` reads it when
+     its conversation is resumed;
    - `B` (whose repository has no related list) can write to `#alpha`; a third repository not in
      `#alpha`'s list is refused for `A`;
    - `/clear` in `B`: its key changes and its server follows without a restart.

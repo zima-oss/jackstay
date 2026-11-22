@@ -25,12 +25,11 @@ const (
 	Read      State = "read"
 	Acted     State = "acted"
 	Refused   State = "refused"
-	Dropped   State = "dropped"
 	Expired   State = "expired"
 )
 
 // States lists every delivery state.
-var States = []State{Pending, Sending, Delivered, Read, Acted, Refused, Dropped, Expired}
+var States = []State{Pending, Sending, Delivered, Read, Acted, Refused, Expired}
 
 // Route is the one way a delivery is pushed (section 8.1).
 type Route string
@@ -55,9 +54,8 @@ const (
 	NoReason    Reason = ""
 	Unconfirmed Reason = "unconfirmed"
 	// EngineRefused: the recipient's engine refused the native doorbell (it closed the connection).
-	EngineRefused  Reason = "engine_refused"
-	RecipientEnded Reason = "recipient_ended"
-	ExpiredReason  Reason = "expired"
+	EngineRefused Reason = "engine_refused"
+	ExpiredReason Reason = "expired"
 )
 
 // Notice is the state of the notice a delivery owes its sender (section 8.5).
@@ -107,8 +105,6 @@ const (
 	RingRefused Kind = "ring-refused"
 	// Expire is the sweep, or another step's deadline check, finding `expires_at` passed.
 	Expire Kind = "expire"
-	// End is the recipient's end: SessionEnd, a dead process, or a mailbox closed without a freeze.
-	End Kind = "end"
 	// ReadWhole is chat.inbox emitting the whole body in one response.
 	ReadWhole Kind = "read-whole"
 	// Peek is a read that marks nothing (chat.inbox with mark_read false, a body cut into pieces,
@@ -160,7 +156,7 @@ var (
 
 // Final reports whether a state is never left.
 func Final(state State) bool {
-	return state == Acted || state == Refused || state == Dropped || state == Expired
+	return state == Acted || state == Refused || state == Expired
 }
 
 // Unread reports whether a delivery keeps its inbox marker (section 7.1).
@@ -178,11 +174,11 @@ func CountsAgainstQueue(state State) bool {
 func Expirable(state State) bool { return state == Pending }
 
 // Visible reports whether the body is visible to the recipient (section 4.10): on every route, until
-// the delivery is refused, dropped or expired. No route shows a body anywhere but the inbox read,
+// the delivery is refused or expired. No route shows a body anywhere but the inbox read,
 // except the bridge's steer, which is the same text the inbox returns.
 func Visible(delivery Delivery) bool {
 	switch delivery.State {
-	case Refused, Dropped, Expired:
+	case Refused, Expired:
 		return false
 	}
 	return true
@@ -279,13 +275,6 @@ func apply(delivery Delivery, event Event) (Delivery, error) {
 			return delivery, ErrNotAllowed
 		}
 		return expire(delivery), nil
-	case End:
-		if delivery.State != Pending && delivery.State != Sending {
-			return delivery, ErrNotAllowed
-		}
-		delivery.State, delivery.Reason, delivery.Pusher = Dropped, RecipientEnded, ""
-		delivery.Notice = NoticeOwed
-		return delivery, nil
 	case ReadWhole:
 		if delivery.State != Pending && delivery.State != Delivered {
 			return delivery, ErrNotVisible
@@ -363,8 +352,6 @@ var Table = []Edge{
 	{Pending, Expired, RingRefused},
 	{Pending, Expired, Expire},
 	{Pending, Expired, CloseRequest},
-	{Pending, Dropped, End},
-	{Sending, Dropped, End},
 	{Pending, Read, ReadWhole},
 	{Delivered, Read, ReadWhole},
 	{Pending, Expired, ReadWhole},
@@ -546,11 +533,8 @@ func NeedsMessage(delivery Delivery, whole bool) bool {
 	return false
 }
 
-// New is a delivery as a send creates it: `pending` on its route, or, for a response to a requester
-// already gone, `dropped` (recipient_ended) with its notice owed like any other dropped delivery.
-func New(route Route, request, recipientGone bool) Delivery {
-	if recipientGone {
-		return Delivery{Route: route, State: Dropped, Reason: RecipientEnded, Notice: NoticeOwed, Request: request}
-	}
+// New is a delivery as a send creates it: `pending` on its route. There is no liveness: a delivery
+// to a session that never reads it expires by its own deadline (section 4.2).
+func New(route Route, request bool) Delivery {
 	return Delivery{Route: route, State: Pending, Request: request}
 }

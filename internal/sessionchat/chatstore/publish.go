@@ -20,13 +20,13 @@ const eventExpirySeconds = 24 * 60 * 60
 // producer writes in its `verdict` (review.OutcomeWord).
 var blocking = map[string]bool{"blocks": true, "redesign due": true, "the owner decides": true}
 
-// ErrNotRegistered is a recipient the store does not know yet, or one that is gone: the event stays
-// owed to it, to be published again once it is registered and live.
+// ErrNotRegistered is a recipient the store does not know (yet, or since its eviction): the event
+// stays owed to it, to be published again once it has registered.
 var ErrNotRegistered = errors.New("the recipient has not registered with the chat yet")
 
 // Publish stores one of jackstay's own events (section 10): a message of kind `event` from the sender
-// `jackstay`, one to each session in the event's Recipients. A recipient that is gone is skipped: it
-// will not read. One the store does not know yet makes Publish return ErrNotRegistered for it, so a
+// `jackstay`, one to each session in the event's Recipients, ended or not: a resumed conversation
+// reads it (there is no liveness). One the store does not know makes Publish return ErrNotRegistered for it, so a
 // producer keeps the event owed to it. The event's Key, with the recipient, makes a repeat a
 // duplicate, which stores nothing new. Events are stored only while the store stays under 90% of
 // each bound (section 7.4); one that does not fit is refused as `capacity`.
@@ -52,10 +52,6 @@ func (store *Store) Publish(ctx context.Context, event chatevent.Event) error {
 			}
 			if err != nil {
 				return err
-			}
-			if session.State == StateGone {
-				// A conversation can be resumed under the same key: the event waits until it is live.
-				return fmt.Errorf("%s is gone: %w", recipient, ErrNotRegistered)
 			}
 			sessions, err := transaction.listSessions()
 			if err != nil {

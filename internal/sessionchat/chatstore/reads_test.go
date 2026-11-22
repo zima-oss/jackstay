@@ -296,21 +296,27 @@ func TestIdleSubscriptionsFireOnTheNextIdleOnly(t *testing.T) {
 	}
 }
 
-func TestASessionEndDropsWhatWaitsForItAndTellsItsWatchers(t *testing.T) {
+// A session's end is only a hint (no liveness): what waits for it stays, and its subscriptions wait
+// for their idle or their until.
+func TestASessionEndDropsNothing(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.session("cc:b", "b", alpha, StateBusy)
-	sent := f.send("cc:a", SendInput{To: "b", Message: "never read"})
-	f.send("cc:a", SendInput{To: "b", NotifyWhenIdle: true})
-	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveGone, false); err != nil {
+	sent := f.send("cc:a", SendInput{To: "b", Message: "read me after you resume", NotifyWhenIdle: true})
+	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveEnded, false); err != nil {
 		t.Fatal(err)
 	}
-	if delivery := f.delivery(sent.MessageID, "cc:b"); delivery.State != "dropped" || delivery.Reason != "recipient_ended" {
-		t.Fatalf("%+v", delivery)
+	if delivery := f.delivery(sent.MessageID, "cc:b"); delivery.State != "pending" || delivery.Notice != "" {
+		t.Fatalf("an end drops nothing: %+v", delivery)
 	}
-	notices := f.inbox("cc:a", unread()).Notices
-	if len(notices) != 2 {
-		t.Fatalf("one dropped notice and one ended notice: %v", notices)
+	if record := f.record("cc:b"); record.State != StateEnded || len(record.IdleWatchers) != 1 {
+		t.Fatalf("the end is shown, and the subscription waits: %+v", record)
+	}
+	if notices := f.record("cc:a").Notices; len(notices) != 0 {
+		t.Fatalf("no notice for an end: %+v", notices)
+	}
+	if page := f.inbox("cc:b", unread()); len(page.Messages) != 1 {
+		t.Fatalf("a resumed session reads it: %+v", page)
 	}
 }
 
@@ -389,23 +395,6 @@ func TestPressureRemovesOnlyDoneMessages(t *testing.T) {
 		t.Fatal("a message a recipient may still read is never removed")
 	}
 	f.refused(err, ReasonCapacity)
-}
-
-func TestAnEndBeforeTheMessageArrivedOwesOneOutcomeForTheSubscription(t *testing.T) {
-	f := newFixture(t)
-	f.session("cc:a", "a", alpha, StateIdle)
-	f.session("cc:b", "b", alpha, StateBusy)
-	f.send("cc:a", SendInput{To: "b", Message: "tell me when done", NotifyWhenIdle: true})
-	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveGone, false); err != nil {
-		t.Fatal(err)
-	}
-	kinds := map[string]int{}
-	for _, notice := range f.record("cc:a").Notices {
-		kinds[notice.Kind]++
-	}
-	if kinds[NoticeNotDelivered] != 1 || kinds[NoticeEnded] != 0 {
-		t.Fatalf("one not_delivered, no ended: %v", kinds)
-	}
 }
 
 func TestAnAnswerArmsTheRequestersIdleSubscription(t *testing.T) {
@@ -598,54 +587,6 @@ func TestAClosureCutShortStillEndsItsSubscriptionOnce(t *testing.T) {
 	}
 }
 
-func TestAnEndCutShortOwesOneOutcomeForTheSubscription(t *testing.T) {
-	f := newFixture(t)
-	f.session("cc:a", "a", alpha, StateIdle)
-	f.session("cc:b", "b", alpha, StateBusy)
-	sent := f.send("cc:a", SendInput{To: "b", Message: "tell me when done", NotifyWhenIdle: true})
-	// The end dropped the delivery and owed not_delivered, then stopped before it removed the
-	// subscription.
-	f.setDelivery(sent.MessageID, "cc:b", func(delivery *Delivery) {
-		delivery.State, delivery.Reason, delivery.Notice = "dropped", "recipient_ended", "owed"
-	})
-	if err := os.Remove(filepath.Join(f.store.place.inbox(hashKey("cc:b")), sent.MessageID)); err != nil {
-		t.Fatal(err)
-	}
-	recipient := f.record("cc:b")
-	watcher := f.record("cc:a")
-	watcher.Notices = append(watcher.Notices, SessionNotice{ID: subscriptionID(recipient, recipient.IdleWatchers[0]), Kind: NoticeNotDelivered,
-		About: "[" + f.record("cc:b").Ref + "]", MessageID: sent.MessageID, At: stamp(f.clock.at), State: "owed"})
-	if err := writeRecord(f.store.place.session(hashKey("cc:a")), watcher, sessionBound); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveGone, false); err != nil {
-		t.Fatal(err)
-	}
-	kinds := map[string]int{}
-	for _, notice := range f.record("cc:a").Notices {
-		kinds[notice.Kind]++
-	}
-	if kinds[NoticeNotDelivered] != 1 || kinds[NoticeEnded] != 0 || len(f.record("cc:b").IdleWatchers) != 0 {
-		t.Fatalf("%v", kinds)
-	}
-}
-
-func TestAnEndDropsWhatWaitsBehindADeliveredMessage(t *testing.T) {
-	f := newFixture(t)
-	f.session("cc:a", "a", alpha, StateIdle)
-	f.session("cc:b", "b", alpha, StateBusy)
-	older := f.send("cc:a", SendInput{To: "b", Message: "older"})
-	f.clock.advance(time.Second)
-	newer := f.send("cc:a", SendInput{To: "b", Message: "newer"})
-	f.setDelivery(older.MessageID, "cc:b", func(delivery *Delivery) { delivery.State = "delivered" })
-	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveGone, false); err != nil {
-		t.Fatal(err)
-	}
-	if delivery := f.delivery(newer.MessageID, "cc:b"); delivery.State != "dropped" {
-		t.Fatalf("%+v", delivery)
-	}
-}
-
 func TestAClosureCutShortAfterItsDeliveryStillEndsItsSubscription(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
@@ -677,7 +618,8 @@ func TestASubscriptionHasOneOutcomeWhateverCrashesBetween(t *testing.T) {
 	if err := writeRecord(f.store.place.session(hashKey("cc:a")), watcher, sessionBound); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveGone, false); err != nil {
+	f.clock.advance(13 * time.Hour) // past the subscription's until
+	if err := f.store.Sweep(f.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if notices := f.record("cc:a").Notices; len(notices) != 1 {
@@ -703,7 +645,7 @@ func TestAFiringCutShortIsFinishedBeforeAnythingElse(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveGone, false); err != nil {
+	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveBusy, false); err != nil {
 		t.Fatal(err)
 	}
 	if notices := f.record("cc:a").Notices; len(notices) != 1 || notices[0].Kind != NoticeIdle || len(f.record("cc:b").IdleWatchers) != 0 {
@@ -1003,27 +945,6 @@ func TestARepeatedIdleAfterTheDeadlineDoesNotFire(t *testing.T) {
 	}
 }
 
-func TestAnEndAfterTheDeadlineIsAnExpiry(t *testing.T) {
-	f := newFixture(t)
-	f.session("cc:a", "a", alpha, StateIdle)
-	f.session("cc:b", "b", alpha, StateBusy)
-	f.send("cc:a", SendInput{To: "b", Message: "still pending", NotifyWhenIdle: true})
-	f.clock.advance(12*time.Hour + time.Second)
-	if err := writeRecord(f.store.place.swept(), sweptRecord{V: 1, At: stamp(f.clock.at)}, 256); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.store.Observe(f.ctx, "cc:b", ObserveGone, false); err != nil {
-		t.Fatal(err)
-	}
-	kinds := map[string]int{}
-	for _, notice := range f.record("cc:a").Notices {
-		kinds[notice.Kind]++
-	}
-	if kinds[NoticeSubscriptionExpired] != 1 || kinds[NoticeNotDelivered] != 0 {
-		t.Fatalf("%v", kinds)
-	}
-}
-
 func TestAnOpenMailboxKeepsItsMessagesPastTheirRetention(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
@@ -1077,40 +998,6 @@ func TestShowingASessionNoticeKeepsAnArmingFromTheSameRead(t *testing.T) {
 	}
 	if watchers := f.record("cc:b").IdleWatchers; len(watchers) != 1 || !watchers[0].Armed {
 		t.Fatalf("the arming survives the notice's write: %+v", watchers)
-	}
-}
-
-func TestAnEndReplayedAfterTheDeadlineDecidesAsTheEndWould(t *testing.T) {
-	f := newFixture(t)
-	f.session("cc:a", "a", alpha, StateIdle)
-	f.session("cc:b", "b", alpha, StateBusy)
-	f.send("cc:a", SendInput{To: "b", Message: "never read", NotifyWhenIdle: true})
-	f.clock.advance(12*time.Hour - time.Minute)
-	if err := f.store.update(f.ctx, func(transaction *transaction) error {
-		session, err := transaction.readSession(hashKey("cc:b"))
-		if err != nil {
-			return err
-		}
-		session.State, session.Since = StateGone, stamp(transaction.now)
-		entry := journalEntry{Op: opObserve, ID: "observe-end", Observed: &observation{Session: hashKey("cc:b"),
-			State: StateGone, Since: session.Since, Generation: session.IdleGeneration}}
-		if err := transaction.publishJournal(entry); err != nil {
-			return err
-		}
-		return transaction.writeSession(session)
-	}); err != nil {
-		t.Fatal(err)
-	}
-	f.clock.advance(2 * time.Minute)
-	if _, err := f.store.Sessions(f.ctx); err != nil {
-		t.Fatal(err)
-	}
-	kinds := map[string]int{}
-	for _, notice := range f.record("cc:a").Notices {
-		kinds[notice.Kind]++
-	}
-	if kinds[NoticeNotDelivered] != 1 || kinds[NoticeSubscriptionExpired] != 0 {
-		t.Fatalf("%v", kinds)
 	}
 }
 

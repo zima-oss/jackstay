@@ -85,7 +85,6 @@ func runPush(args []string, _ io.Reader, _ io.Writer, diagnostics io.Writer) int
 	pass := pusher.Pass{Store: store, Ringer: claudenative.Writer{}, Alive: alive, Verified: claudenative.Verified}
 	quietSince := time.Now()
 	for ctx.Err() == nil && time.Since(quietSince) < pushIdle {
-		reapDeadBindings(ctx, store)
 		rung, err := pass.Run(ctx)
 		if err != nil {
 			fmt.Fprintf(diagnostics, "chat push: %v\n", err)
@@ -110,13 +109,11 @@ func runPush(args []string, _ io.Reader, _ io.Writer, diagnostics io.Writer) int
 	return 0
 }
 
-// startPusher reaps the bindings of processes that are gone, then starts `jst chat push` when a
-// doorbell is due. It starts it through an intermediary (`jst chat push --detach`) that starts the
+// startPusher starts `jst chat push` when a doorbell is due. It starts it through an intermediary (`jst chat push --detach`) that starts the
 // pusher in a session of its own and exits, so the pusher descends from no Claude Code session
 // (section 8.3); neither chat token is in its environment. A pusher already running keeps the lock,
 // and the new one exits at once. Errors are ignored: the hooks still ring.
 func startPusher(ctx context.Context, store *chatstore.Store) {
-	reapDeadBindings(ctx, store)
 	if due, err := store.DueRings(ctx); err != nil || len(due) == 0 {
 		return
 	}
@@ -177,32 +174,4 @@ func orphaned(intermediary int, wait time.Duration) bool {
 		time.Sleep(20 * time.Millisecond)
 	}
 	return true
-}
-
-// reapDeadBindings removes the bindings whose process is gone (section 7.4), and ends a session no
-// live binding names any more: a Claude Code process killed before its SessionEnd hook leaves both.
-func reapDeadBindings(ctx context.Context, store *chatstore.Store) {
-	bindings, err := store.Bindings(ctx)
-	if err != nil {
-		return
-	}
-	living := map[string]bool{}
-	var dead []chatstore.Binding
-	for _, binding := range bindings {
-		if alive(binding) {
-			living[binding.Key] = true
-		} else {
-			dead = append(dead, binding)
-		}
-	}
-	// The session is ended first, then its binding removed: a stop between the two leaves the
-	// binding, and the next reaper ends the session again, which changes nothing.
-	for _, binding := range dead {
-		if !living[binding.Key] {
-			if _, err := store.Observe(ctx, binding.Key, chatstore.ObserveGone, false); err != nil && chatstore.ReasonOf(err) == "" {
-				continue
-			}
-		}
-		_ = store.Unbind(ctx, binding.ProcessID, binding.ProcessStart)
-	}
 }

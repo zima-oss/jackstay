@@ -53,37 +53,20 @@ func TestASendToAnIdleNativeSessionStartsThePusher(t *testing.T) {
 	}
 }
 
-// An ephemeral session ends with its connection, and a binding whose process is gone is reaped with
-// its session.
-func TestClosedAndDeadSessionsAreEnded(t *testing.T) {
+// A session's end is only a hint: a closed connection ends nothing, and SessionEnd keeps what waits
+// so a resumed conversation reads it (no liveness).
+func TestAnEndedSessionKeepsWhatWaitsForIt(t *testing.T) {
 	root, _ := chatRepository(t)
-	chat, err := localChat(context.Background(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	passing := &Server{chat: chat}
-	call(t, passing, "chat.whoami", nil)
-	passing.end()
+	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionStart", "cwd": root})
+	alice := tokenServer(t, root, "alice", strings.Repeat("a", 64))
 	store, _ := openStore()
-	if sessions, _ := store.Sessions(context.Background()); len(sessions) != 1 || sessions[0].State != chatstore.StateGone {
-		t.Fatalf("an ephemeral session ends with its connection: %+v", sessions)
-	}
-	hook(t, map[string]any{"session_id": "killed", "hook_event_name": "SessionStart", "cwd": root})
-	if err := store.Bind(context.Background(), chatstore.Binding{ProcessID: 1 << 22, ProcessStart: "1", Key: "cc:killed", Cwd: root}); err != nil {
-		t.Fatal(err)
-	}
-	startPusher(context.Background(), store)
-	if bindings, _ := store.Bindings(context.Background()); len(bindings) != 0 {
-		t.Fatalf("a dead process's binding is reaped: %+v", bindings)
-	}
-	sessions, err := store.Sessions(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, session := range sessions {
-		if session.Key == "cc:killed" && session.State != chatstore.StateGone {
-			t.Fatalf("its session ends: %+v", session)
-		}
+	sessions, _ := store.Sessions(context.Background())
+	sent := call(t, alice, "chat.send", map[string]any{"to": sessions[0].Name, "message": "read me after the resume"})
+	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionEnd", "cwd": root})
+	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionStart", "cwd": root})
+	page, err := store.Inbox(context.Background(), "cc:resumable", chatstore.InboxInput{UnreadOnly: true, Limit: 5})
+	if err != nil || len(page.Messages) != 1 || page.Messages[0].ID != sent["message_id"] {
+		t.Fatalf("%+v %v", page.Messages, err)
 	}
 }
 
@@ -182,39 +165,20 @@ func TestSameNamedChannelsAreToldApart(t *testing.T) {
 	}
 }
 
-// A gone session keeps its events owed: its conversation can be resumed under the same key.
-func TestAnEventToAGoneSessionStaysOwed(t *testing.T) {
+// An event reaches an ended session too: its conversation can be resumed under the same key.
+func TestAnEventReachesAnEndedSession(t *testing.T) {
 	root, _ := chatRepository(t)
 	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionStart", "cwd": root})
 	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionEnd", "cwd": root})
 	event := chatevent.Event{Kind: "review.finished", Worktree: root, Summary: "done", Key: "review/r/1",
 		Recipients: []string{"cc:resumable"}}
-	if err := (publisher{}).Publish(context.Background(), event); !errors.Is(err, chatstore.ErrNotRegistered) {
-		t.Fatalf("stays owed while gone: %v", err)
+	if err := (publisher{}).Publish(context.Background(), event); err != nil {
+		t.Fatalf("published while ended: %v", err)
 	}
 	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionStart", "cwd": root})
-	if err := (publisher{}).Publish(context.Background(), event); err != nil {
-		t.Fatalf("published once it is back: %v", err)
-	}
-}
-
-// An ephemeral server binds its own process, so the reaper can end it if the server is killed.
-func TestAnEphemeralServerBindsItsOwnProcess(t *testing.T) {
-	root, _ := chatRepository(t)
-	chat, err := localChat(context.Background(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &Server{chat: chat}
-	call(t, server, "chat.whoami", nil)
 	store, _ := openStore()
-	bindings, err := store.Bindings(context.Background())
-	if err != nil || len(bindings) != 1 || bindings[0].ProcessID != os.Getpid() || bindings[0].Key != server.ephemeral {
-		t.Fatalf("%+v %v", bindings, err)
-	}
-	server.end()
-	if bindings, _ := store.Bindings(context.Background()); len(bindings) != 0 {
-		t.Fatalf("an ended server removes its binding: %+v", bindings)
+	if page, err := store.Inbox(context.Background(), "cc:resumable", chatstore.InboxInput{UnreadOnly: true, Limit: 5}); err != nil || len(page.Messages) != 1 {
+		t.Fatalf("the resumed conversation reads it: %+v %v", page.Messages, err)
 	}
 }
 

@@ -25,7 +25,7 @@ func (store *Store) OverviewOf(ctx context.Context, channelID string) (Overview,
 			return err
 		}
 		for _, session := range sessions {
-			if session.ChannelID != channelID || session.State == StateGone {
+			if session.ChannelID != channelID || session.State == StateEnded {
 				continue
 			}
 			overview.Sessions++

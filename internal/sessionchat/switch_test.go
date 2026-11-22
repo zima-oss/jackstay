@@ -236,7 +236,7 @@ func TestTheHookRingsAndHoldsATurnForUrgentWork(t *testing.T) {
 		t.Fatalf("a Stop holds the turn for an urgent message: %+v", stop)
 	}
 	hook(t, with("SessionEnd", nil))
-	if sessions, _ := store.Sessions(context.Background()); sessions[0].State != chatstore.StateGone {
+	if sessions, _ := store.Sessions(context.Background()); sessions[0].State != chatstore.StateEnded {
 		t.Fatalf("SessionEnd: %+v", sessions[0])
 	}
 }

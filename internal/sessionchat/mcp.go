@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
-	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
 	"github.com/zima-oss/jackstay/internal/strictjson"
 )
@@ -102,25 +101,7 @@ func Run(args []string, input io.Reader, output, diagnostics io.Writer) int {
 		return 2
 	}
 	_, server.claude = findClaude()
-	startPusher(ctx, chat.store) // bindings of processes gone since are reaped there
-	code := server.Serve(input, output, diagnostics)
-	server.end()
-	return code
-}
-
-// end marks an ephemeral session gone when its connection closes: nothing can read its inbox again.
-func (server *Server) end() {
-	if server.ephemeral == "" {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if _, err := server.chat.store.Observe(ctx, server.ephemeral, chatstore.ObserveGone, false); err != nil {
-		return
-	}
-	if self, found, err := procs.Row(os.Getpid()); err == nil && found {
-		_ = server.chat.store.Unbind(ctx, self.PID, processStart(self))
-	}
+	return server.Serve(input, output, diagnostics)
 }
 
 // Serve handles newline-delimited JSON-RPC messages on one stdio connection.
@@ -238,25 +219,15 @@ func (server *Server) session(ctx context.Context) (chatstore.Session, error) {
 			key, source = bound, chatstore.SourceEngine
 		}
 	}
-	fresh := false
 	if key == "" {
 		if server.ephemeral == "" {
-			server.ephemeral, fresh = ephemeralKey(), true
+			server.ephemeral = ephemeralKey()
 		}
 		key, source, engine, delivery = server.ephemeral, chatstore.SourceEphemeral, chatstore.EngineOther, chatstore.DeliveryPoll
 	}
 	registration := chatstore.Registration{Key: key, KeySource: source, Engine: engine, Name: server.name,
 		Channel: server.chat.channel, Worktree: server.chat.worktree, Branch: server.chat.branch, Delivery: delivery}
-	session, err := server.chat.store.Register(ctx, registration)
-	if err == nil && fresh {
-		// The server's own process names an ephemeral session, so a server killed before its end
-		// leaves a binding the reaper finds (section 7.4).
-		if self, found, rowErr := procs.Row(os.Getpid()); rowErr == nil && found {
-			err = server.chat.store.Bind(ctx, chatstore.Binding{ProcessID: self.PID, ProcessStart: processStart(self),
-				Key: key, Cwd: server.chat.worktree})
-		}
-	}
-	return session, err
+	return server.chat.store.Register(ctx, registration)
 }
 
 func toolFailure(reason string) map[string]any {
