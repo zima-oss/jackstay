@@ -272,8 +272,17 @@ func (store *Store) DueRings(ctx context.Context) ([]DueRing, error) {
 				ring.Deliveries = append(ring.Deliveries, item.found.envelope.ID)
 				unrung = unrung || !item.delivery.Rung
 			}
-			// Every owed notice, not only an inbox page's 50, so a new one past them still rings.
-			owed, more, err := transaction.collectNotices(session, sessions, math.MaxInt)
+			// Every owed notice, not only an inbox page's 50, so a new one past them still rings. The
+			// collection can settle a deadline and owe the session a notice of its own, so it is taken
+			// again from the record as that left it.
+			if _, _, err := transaction.collectNotices(session, sessions, math.MaxInt); err != nil {
+				return err
+			}
+			current, err := transaction.readSession(hashKey(session.Key))
+			if err != nil {
+				return err
+			}
+			owed, more, err := transaction.collectNotices(current, sessions, math.MaxInt)
 			if err != nil {
 				return err
 			}

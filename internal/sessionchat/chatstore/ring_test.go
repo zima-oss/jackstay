@@ -323,3 +323,21 @@ func TestARecordRingErrorIsNotAnOutcome(t *testing.T) {
 		t.Fatal("an unreadable session record is an error")
 	}
 }
+
+// A notice the due scan itself makes owed (an expiry that ends an idle subscription) is counted in the
+// same ring, so the ring's mark never passes it (review round 2).
+func TestADueScanCountsTheNoticesItsOwnSettlementOwes(t *testing.T) {
+	f := newFixture(t)
+	f.native("cc:n", "n")
+	f.session("cc:b", "b", alpha, StateBusy)
+	f.send("cc:n", SendInput{To: "b", Message: "tell me when done", NotifyWhenIdle: true, ExpiresInSeconds: 60})
+	f.clock.advance(time.Minute)
+	due, err := f.store.DueRings(f.ctx)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("%+v %v", due, err)
+	}
+	owed := len(f.inbox("cc:n", InboxInput{UnreadOnly: true}).Notices)
+	if owed < 2 || !strings.Contains(due[0].Text, fmt.Sprintf("%d notices", owed)) {
+		t.Fatalf("the ring counts all %d owed notices: %q", owed, due[0].Text)
+	}
+}

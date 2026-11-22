@@ -48,7 +48,8 @@ func TestAPassRingsEachDueSessionOnceAndNeverCarriesText(t *testing.T) {
 		}
 	}
 	ringer := &recorder{outcome: chatstore.RingTaken}
-	pass := Pass{Store: store, Ringer: ringer, Alive: func(chatstore.Binding) bool { return true }}
+	pass := Pass{Store: store, Ringer: ringer, Alive: func(chatstore.Binding) bool { return true },
+		Verified: func(version string) bool { return version == "2.1.328" }}
 	count, err := pass.Run(ctx)
 	if err != nil || count != 2 || len(ringer.sockets) != 1 || ringer.sockets[0] != "/sockets/n.sock" {
 		t.Fatalf("%d %v %+v", count, err, ringer)
@@ -89,5 +90,9 @@ func TestAPassRingsOnlyAVerifiedVersion(t *testing.T) {
 		Verified: func(version string) bool { return version == "2.1.328" }}
 	if _, err := pass.Run(ctx); err != nil || len(ringer.sockets) != 0 {
 		t.Fatalf("an unverified version is not rung: %v %+v", err, ringer)
+	}
+	pass.Verified = nil
+	if _, err := pass.Run(ctx); err != nil || len(ringer.sockets) != 0 {
+		t.Fatalf("without a verifier nothing is rung: %v %+v", err, ringer)
 	}
 }

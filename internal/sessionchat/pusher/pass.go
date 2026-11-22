@@ -19,7 +19,8 @@ type Ringer interface {
 type Pass struct {
 	Store  *chatstore.Store
 	Ringer Ringer
-	// Verified reports whether a binding's Claude Code version may be rung on its socket.
+	// Verified reports whether a binding's Claude Code version may be rung on its socket; without
+	// it, nothing is rung.
 	Verified func(version string) bool
 	// Alive reports whether a binding's process still runs (process ID and start).
 	Alive func(chatstore.Binding) bool
@@ -54,7 +55,7 @@ func socketOf(key string, bindings []chatstore.Binding, alive func(chatstore.Bin
 	found := false
 	for _, binding := range bindings {
 		if binding.Key != key || binding.Socket == "" || (alive != nil && !alive(binding)) ||
-			(verified != nil && !verified(binding.ClaudeVersion)) {
+			verified == nil || !verified(binding.ClaudeVersion) {
 			continue
 		}
 		if !found || binding.Written > best.Written {
