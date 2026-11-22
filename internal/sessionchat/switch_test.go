@@ -167,11 +167,11 @@ func TestServeMarksNoticesOnlyAfterTheResponseIsWritten(t *testing.T) {
 	if code := alice.Serve(request(), &failingWriter{}, &diagnostics); code != 2 {
 		t.Fatalf("a failed write ends the connection: %d", code)
 	}
-	if notices, _ := call(t, alice, "chat.inbox", nil)["notices"].([]any); len(notices) != 1 {
-		t.Fatalf("a notice whose response was never written comes again: %+v", notices)
+	if _, fields := inbox(t, alice); len(fields["notices"].([]any)) != 1 {
+		t.Fatalf("a notice whose response was never written comes again: %+v", fields)
 	}
-	if notices, _ := call(t, alice, "chat.inbox", nil)["notices"].([]any); len(notices) != 0 {
-		t.Fatalf("once written, it is marked: %+v", notices)
+	if _, fields := inbox(t, alice); fields["notices"] != nil && len(fields["notices"].([]any)) != 0 {
+		t.Fatalf("once written, it is marked: %+v", fields)
 	}
 }
 
@@ -310,4 +310,37 @@ func TestTheCodexBridgeWaitsForJackstayOne(t *testing.T) {
 	if code := command.Run(nil, strings.NewReader(""), &bytes.Buffer{}, &diagnostics); code != 2 || !strings.Contains(diagnostics.String(), "jackstay 1") {
 		t.Fatalf("%d %q", code, diagnostics.String())
 	}
+}
+
+// inbox runs chat.inbox through a whole MCP exchange and returns its text and its fields.
+func inbox(t *testing.T, server *Server) (string, map[string]any) {
+	t.Helper()
+	var input bytes.Buffer
+	input.WriteString(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}` + "\n")
+	input.WriteString(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"chat.inbox","arguments":{}}}` + "\n")
+	var output, diagnostics bytes.Buffer
+	if code := server.Serve(&input, &output, &diagnostics); code != 0 {
+		t.Fatalf("serve: %d %s", code, diagnostics.String())
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	var response struct {
+		Result struct {
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &response); err != nil || len(response.Result.Content) != 1 {
+		t.Fatalf("%v: %s", err, output.String())
+	}
+	text := response.Result.Content[0].Text
+	index := strings.LastIndex(text, "fields: ")
+	if index < 0 {
+		t.Fatalf("no fields: %s", text)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(text[index+len("fields: "):])), &fields); err != nil {
+		t.Fatal(err)
+	}
+	return text, fields
 }

@@ -738,6 +738,11 @@ If you have already handled msg_…, ignore this copy.
 </jackstay-message>
 ```
 
+In an MCP result the frames are one text block, followed by the messages' other fields (without
+their body or summary, which the frames hold), the notices and the paging as JSON; there is no second,
+structured copy. The page is cut by the 48 KiB of section 5.2, measured without the frames, so a full
+page is up to a few hundred bytes a message longer (W-096).
+
 ### 5.4 Refusal reasons and receipt reasons
 
 Refusals of a call: `invalid`, `unknown_recipient`, `unknown_message`, `ambiguous_recipient`,
@@ -1161,9 +1166,10 @@ Not promised:
 
 - **Exactly once for notices and idle firings.** A stop, or a mark that cannot be written, shows a
   notice again.
-- **The last stretch to the client for read receipts.** A process stopped after a read and before
-  its result reaches the client leaves the messages it read marked `read` (notices are marked only
-  after the handoff, section 8.5). The messages stay readable with `chat.thread`, and the sender's
+- **The last stretch to the client for read receipts.** `chat.inbox` marks what it returns `read`
+  in its own step (`mark_read`, on by default), so a process stopped after the read and before its
+  result reaches the client leaves those messages `read`, and the next default inbox does not show
+  them (notices are marked only after the handoff, section 8.5). The messages stay readable with `chat.thread`, and the sender's
   outbox shows the receipt.
 - **A stop followed by a machine crash.** Only the folders the rules above name are fsynced. A
   machine crash right after a stopped removal can bring back files it had unlinked after the commit

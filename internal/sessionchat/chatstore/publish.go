@@ -16,8 +16,12 @@ import (
 // eventExpirySeconds is an event's expiry (section 10): 24 hours.
 const eventExpirySeconds = 24 * 60 * 60
 
-// ErrNotRegistered is a recipient the store does not know yet: the event stays owed to it, to be
-// published again once it has registered.
+// blocking are the review outcomes a review.finished event is urgent for: the words the review
+// producer writes in its `verdict` (review.OutcomeWord).
+var blocking = map[string]bool{"blocks": true, "redesign due": true}
+
+// ErrNotRegistered is a recipient the store does not know yet, or one that is gone: the event stays
+// owed to it, to be published again once it is registered and live.
 var ErrNotRegistered = errors.New("the recipient has not registered with the chat yet")
 
 // Publish stores one of jackstay's own events (section 10): a message of kind `event` from the sender
@@ -32,7 +36,7 @@ var ErrNotRegistered = errors.New("the recipient has not registered with the cha
 func (store *Store) Publish(ctx context.Context, event chatevent.Event) error {
 	body := eventBody(event)
 	priority := PriorityLater
-	if event.Kind == "gate.failed" || (event.Kind == "review.finished" && event.Meta["verdict"] == "blocking") {
+	if event.Kind == "gate.failed" || (event.Kind == "review.finished" && blocking[event.Meta["verdict"]]) {
 		priority = PriorityNow
 	}
 	var failures []error
@@ -50,7 +54,8 @@ func (store *Store) Publish(ctx context.Context, event chatevent.Event) error {
 				return err
 			}
 			if session.State == StateGone {
-				return nil
+				// A conversation can be resumed under the same key: the event waits until it is live.
+				return fmt.Errorf("%s is gone: %w", recipient, ErrNotRegistered)
 			}
 			sessions, err := transaction.listSessions()
 			if err != nil {

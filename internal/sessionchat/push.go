@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -55,7 +56,7 @@ func runPush(args []string, _ io.Reader, _ io.Writer, diagnostics io.Writer) int
 	}
 	// Started through an intermediary (startPusher): wait until it has exited and this process no
 	// longer descends from the session that started it, before any ring.
-	if os.Getenv(detachedMark) == "1" && !orphaned(os.Getppid(), 5*time.Second) {
+	if intermediary, err := strconv.Atoi(os.Getenv(detachedMark)); err == nil && !orphaned(intermediary, 5*time.Second) {
 		fmt.Fprintln(diagnostics, "chat push: still a descendant of the process that started it; not ringing")
 		return 0
 	}
@@ -68,7 +69,12 @@ func runPush(args []string, _ io.Reader, _ io.Writer, diagnostics io.Writer) int
 	if err != nil {
 		return 0 // another pusher runs
 	}
-	defer held.Release()
+	released := false
+	defer func() {
+		if !released {
+			held.Release()
+		}
+	}()
 	store, err := openStore()
 	if err != nil {
 		fmt.Fprintf(diagnostics, "chat push: %v\n", err)
@@ -92,6 +98,15 @@ func runPush(args []string, _ io.Reader, _ io.Writer, diagnostics io.Writer) int
 		case <-time.After(pushEvery):
 		}
 	}
+	// A send during the last wait may have started a pusher that found the lock held and left. With
+	// the lock released, anything due now is this pusher's to hand on.
+	held.Release()
+	released = true
+	if ctx.Err() == nil {
+		if due, err := store.DueRings(context.Background()); err == nil && len(due) > 0 {
+			_ = launchPusher("--detach")
+		}
+	}
 	return 0
 }
 
@@ -108,7 +123,8 @@ func startPusher(ctx context.Context, store *chatstore.Store) {
 	_ = launchPusher("--detach")
 }
 
-// detachedMark is set in the environment of a pusher its intermediary started.
+// detachedMark is set, in the environment of a pusher its intermediary started, to the
+// intermediary's process ID.
 const detachedMark = "JACKSTAY_CHAT_PUSHER_DETACHED"
 
 // launchPusher starts `jst chat push` with args; a test replaces it.
@@ -135,7 +151,7 @@ func launch(args ...string) error {
 		}
 	}
 	if len(args) == 0 {
-		environment = append(environment, detachedMark+"=1")
+		environment = append(environment, detachedMark+"="+strconv.Itoa(os.Getpid()))
 	}
 	_, _, err = supervise.Detach(append([]string{executable, "chat", "push"}, args...), folder, environment, filepath.Join(folder, "pusher.log"))
 	return err
@@ -150,11 +166,11 @@ func detachPusher() int {
 	return 0
 }
 
-// orphaned waits up to wait for this process's parent to change from start: the intermediary has
+// orphaned waits up to wait until this process's parent is no longer the intermediary: it has
 // exited, and the process is no longer anyone's child in the session's tree.
-func orphaned(start int, wait time.Duration) bool {
+func orphaned(intermediary int, wait time.Duration) bool {
 	deadline := time.Now().Add(wait)
-	for os.Getppid() == start {
+	for os.Getppid() == intermediary {
 		if !time.Now().Before(deadline) {
 			return false
 		}
@@ -179,10 +195,14 @@ func reapDeadBindings(ctx context.Context, store *chatstore.Store) {
 			dead = append(dead, binding)
 		}
 	}
+	// The session is ended first, then its binding removed: a stop between the two leaves the
+	// binding, and the next reaper ends the session again, which changes nothing.
 	for _, binding := range dead {
-		if store.Unbind(ctx, binding.ProcessID, binding.ProcessStart) != nil || living[binding.Key] {
-			continue
+		if !living[binding.Key] {
+			if _, err := store.Observe(ctx, binding.Key, chatstore.ObserveGone, false); err != nil && chatstore.ReasonOf(err) == "" {
+				continue
+			}
 		}
-		_, _ = store.Observe(ctx, binding.Key, chatstore.ObserveGone, false)
+		_ = store.Unbind(ctx, binding.ProcessID, binding.ProcessStart)
 	}
 }

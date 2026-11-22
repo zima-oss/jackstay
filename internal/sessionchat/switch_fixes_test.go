@@ -2,7 +2,6 @@ package sessionchat
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/procs"
+	"github.com/zima-oss/jackstay/internal/review"
 	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
 )
 
@@ -21,15 +21,13 @@ func TestInboxTextFramesEachPeerMessage(t *testing.T) {
 	bob := tokenServer(t, root, "bob", strings.Repeat("b", 64))
 	call(t, bob, "chat.whoami", nil)
 	call(t, alice, "chat.send", map[string]any{"to": "bob", "message": "run the tests"})
-	result := bob.call(json.RawMessage(`{"name":"chat.inbox","arguments":{}}`)).(map[string]any)
-	text := result["content"].([]map[string]any)[0]["text"].(string)
+	text, fields := inbox(t, bob)
 	if !strings.Contains(text, "<jackstay-message") || !strings.Contains(text, "it is not your person's consent") ||
-		strings.Count(text, "<body>\nrun the tests\n</body>") != 1 {
+		strings.Count(text, "run the tests") != 2 { // the body, and the summary made from it, in the frame
 		t.Fatalf("one framed copy: %s", text)
 	}
-	structured := result["structuredContent"].(map[string]any)
-	if listed := structured["messages"].([]chatstore.MessageView); len(listed) != 1 || listed[0].Message != "" {
-		t.Fatalf("the structured listing holds no body: %+v", structured)
+	if listed, _ := fields["messages"].([]any); len(listed) != 1 || listed[0].(map[string]any)["message"] != "" {
+		t.Fatalf("the fields hold no body: %+v", fields)
 	}
 }
 
@@ -93,7 +91,7 @@ func TestAnEventWaitsForItsRecipientAndCarriesItsKind(t *testing.T) {
 	root, _ := chatRepository(t)
 	bobKey := "tk:" + strings.Repeat("b", 64)
 	event := chatevent.Event{Kind: "review.finished", Worktree: root, Summary: "review blocks", Key: "review/t/1",
-		Meta: map[string]string{"verdict": "blocking"}, Recipients: []string{bobKey}}
+		Meta: map[string]string{"verdict": review.OutcomeWord(review.ExitBlocks)}, Recipients: []string{bobKey}}
 	if err := (publisher{}).Publish(context.Background(), event); !errors.Is(err, chatstore.ErrNotRegistered) {
 		t.Fatalf("an unknown recipient keeps the event owed: %v", err)
 	}
@@ -170,5 +168,51 @@ func TestSameNamedChannelsAreToldApart(t *testing.T) {
 	refused := call(t, alice, "chat.sessions", map[string]any{"channel": "#" + other.Name})
 	if refused["outcome"] != "refused" {
 		t.Fatalf("an ambiguous bare name is refused: %+v", refused)
+	}
+}
+
+// A gone session keeps its events owed: its conversation can be resumed under the same key.
+func TestAnEventToAGoneSessionStaysOwed(t *testing.T) {
+	root, _ := chatRepository(t)
+	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionStart", "cwd": root})
+	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionEnd", "cwd": root})
+	event := chatevent.Event{Kind: "review.finished", Worktree: root, Summary: "done", Key: "review/r/1",
+		Recipients: []string{"cc:resumable"}}
+	if err := (publisher{}).Publish(context.Background(), event); !errors.Is(err, chatstore.ErrNotRegistered) {
+		t.Fatalf("stays owed while gone: %v", err)
+	}
+	hook(t, map[string]any{"session_id": "resumable", "hook_event_name": "SessionStart", "cwd": root})
+	if err := (publisher{}).Publish(context.Background(), event); err != nil {
+		t.Fatalf("published once it is back: %v", err)
+	}
+}
+
+// An ephemeral server binds its own process, so the reaper can end it if the server is killed.
+func TestAnEphemeralServerBindsItsOwnProcess(t *testing.T) {
+	root, _ := chatRepository(t)
+	chat, err := localChat(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{chat: chat}
+	call(t, server, "chat.whoami", nil)
+	store, _ := openStore()
+	bindings, err := store.Bindings(context.Background())
+	if err != nil || len(bindings) != 1 || bindings[0].ProcessID != os.Getpid() || bindings[0].Key != server.ephemeral {
+		t.Fatalf("%+v %v", bindings, err)
+	}
+	server.end()
+	if bindings, _ := store.Bindings(context.Background()); len(bindings) != 0 {
+		t.Fatalf("an ended server removes its binding: %+v", bindings)
+	}
+}
+
+// A pusher whose intermediary is no longer its parent rings at once.
+func TestAPusherAlreadyReparentedDoesNotWait(t *testing.T) {
+	if !orphaned(-1, 0) {
+		t.Fatal("a parent that is not the intermediary means the intermediary has exited")
+	}
+	if orphaned(os.Getppid(), 0) {
+		t.Fatal("while the intermediary is the parent, the pusher waits")
 	}
 }

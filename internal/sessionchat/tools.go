@@ -189,35 +189,34 @@ func (server *Server) call(raw json.RawMessage) any {
 	return toolResult(result)
 }
 
-// framedResult is a result that carries other sessions' text (section 5.3): each message in its
-// frame, once, in the text the model reads; the structured content holds the same messages without
-// their bodies, and the paging.
+// framedResult is a result that carries other sessions' text (section 5.3), as one text block:
+// each message in its frame, once, then the messages' other fields (without their body or summary,
+// which the frame holds), the notices and the paging. It has no second, structured copy.
 func framedResult(messages []chatstore.MessageView, notices []string, paging map[string]any) map[string]any {
 	var text strings.Builder
-	listed := make([]chatstore.MessageView, 0, len(messages))
+	fields := make([]chatstore.MessageView, 0, len(messages))
 	for _, view := range messages {
 		frame, _ := chatstore.Frame(view, view.ID, view.Message, 0)
 		text.WriteString(frame + "\n")
-		view.Message = ""
-		listed = append(listed, view)
+		view.Message, view.Summary = "", ""
+		fields = append(fields, view)
 	}
 	if len(messages) == 0 {
 		text.WriteString("No messages.\n")
 	}
-	for _, notice := range notices {
-		text.WriteString("notice: " + notice + "\n")
-	}
-	structured := map[string]any{"messages": listed, "notices": notices}
+	rest := map[string]any{"messages": fields, "notices": notices}
 	for name, value := range paging {
-		structured[name] = value
+		rest[name] = value
 	}
-	if encoded, err := json.Marshal(paging); err == nil {
-		text.WriteString("paging: " + string(encoded) + "\n")
+	encoded, err := json.Marshal(rest)
+	if err != nil {
+		return toolFailure("the result could not be encoded")
 	}
+	text.WriteString("fields: " + string(encoded) + "\n")
 	if text.Len() > maxResponseBytes/2 {
 		return toolFailure("the result exceeds its size limit; ask for fewer")
 	}
-	return map[string]any{"content": []map[string]any{{"type": "text", "text": text.String()}}, "structuredContent": structured}
+	return map[string]any{"content": []map[string]any{{"type": "text", "text": text.String()}}}
 }
 
 func (server *Server) run(ctx context.Context, name string, session chatstore.Session, input arguments) (any, error) {
