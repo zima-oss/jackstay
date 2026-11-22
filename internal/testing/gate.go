@@ -2,32 +2,13 @@ package scopes
 
 import (
 	"bytes"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 
-	"golang.org/x/sys/unix"
-
-	"github.com/zima-oss/jackstay/internal/durable"
-	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/receipts"
-	"github.com/zima-oss/jackstay/internal/version"
-)
-
-// Folders whose untracked files are no change to the tree a step tests: agents' own, written all
-// the time, and regenerable ones.
-var (
-	agentFolders       = []string{".claude", ".omc", ".omx", ".codex", ".cursor"}
-	regenerableFolders = []string{".build", "DerivedData", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache", ".venv", "venv"}
 )
 
 // gitText is git's output in the checkout, or nil when git failed.
@@ -49,361 +30,9 @@ func zeroSeparated(listed []byte) []string {
 	return found
 }
 
-// cleanCheckout is "" when the checkout is clean (no change, no untracked file, no skip-worktree
-// or assume-unchanged entry), else why not.
-func (proj *project) cleanCheckout() string {
-	status, err := proj.git(proj.ctx, proj.root, "status", "--porcelain", "--untracked-files=all", "-z")
-	if err != nil {
-		return "git status could not be read"
-	}
-	if changed := zeroSeparated(status); len(changed) > 0 {
-		return fmt.Sprintf("the checkout has changes (%s)", strings.TrimSpace(changed[0]))
-	}
-	// An untracked file hidden only by a rule outside the committed `.gitignore` files is still a
-	// change to the tree.
-	hidden, err := proj.git(proj.ctx, proj.root, "ls-files", "-z", "--others", "--exclude-per-directory=.gitignore")
-	if err != nil {
-		return "git ls-files could not be read"
-	}
-	for _, name := range zeroSeparated(hidden) {
-		parts := strings.Split(name, "/")
-		if slices.Contains(agentFolders, parts[0]) || parts[len(parts)-1] == ".DS_Store" {
-			continue
-		}
-		regenerable := false
-		for _, part := range parts[:len(parts)-1] {
-			if slices.Contains(regenerableFolders, part) {
-				regenerable = true
-			}
-		}
-		if !regenerable {
-			return fmt.Sprintf("an untracked file only a rule outside the committed .gitignore files hides (%s)", name)
-		}
-	}
-	tags, err := proj.git(proj.ctx, proj.root, "ls-files", "-v", "-z")
-	if err != nil {
-		return "git ls-files could not be read"
-	}
-	for _, item := range zeroSeparated(tags) {
-		if tag := item[:1]; tag != strings.ToUpper(tag) || tag == "S" {
-			return fmt.Sprintf("git is told not to look at %s (assume-unchanged or skip-worktree)", item[min(2, len(item)):])
-		}
-	}
-	return ""
-}
-
 // head is HEAD's commit, or "".
 func (proj *project) head() string {
 	return strings.TrimSpace(string(proj.gitText("rev-parse", "--verify", "--quiet", "HEAD^{commit}")))
-}
-
-func fileStamp(info fs.FileInfo) string {
-	if status, ok := info.Sys().(*unix.Stat_t); ok {
-		return fmt.Sprintf("%d:%d:%d:%d", status.Ino, status.Size, status.Mtim.Nano(), status.Ctim.Nano())
-	}
-	return fmt.Sprintf("%d:%d", info.Size(), info.ModTime().UnixNano())
-}
-
-// checkoutStamps are every tracked file's identity, size and times, and `receipts.extra_files`
-// with their content: equal before and after means nothing in the checkout was rewritten. nil
-// when git cannot list the files.
-func (proj *project) checkoutStamps() map[string]string {
-	listed := proj.gitText("ls-files", "-z")
-	if listed == nil {
-		return nil
-	}
-	found := map[string]string{}
-	for _, name := range zeroSeparated(listed) {
-		info, err := os.Lstat(filepath.Join(proj.root, name))
-		if err != nil {
-			found[name] = "missing"
-			continue
-		}
-		found[name] = fileStamp(info)
-	}
-	for _, name := range textsOf(proj.receipts["extra_files"]) {
-		place := filepath.Join(proj.root, name)
-		info, err := os.Lstat(place)
-		data, readErr := os.ReadFile(place)
-		if err != nil || readErr != nil {
-			found["extra:"+name] = "missing"
-			continue
-		}
-		digest := sha256.Sum256(data)
-		found["extra:"+name] = fileStamp(info) + ":" + hex.EncodeToString(digest[:])
-	}
-	return found
-}
-
-// vetoesOf are the receipts entry's veto for the words, as a list.
-func (proj *project) vetoesOf(argv []string) []string {
-	if veto := textOf(receipts.CommandEntry(proj.receipts, argv)["veto"]); veto != "" {
-		return []string{veto}
-	}
-	return []string{}
-}
-
-// stepKey is the key a step mark and a bar are filed under, or "" and why none can be made.
-func (proj *project) stepKey(chosen leaf, argv []string, base, relative string) (string, string) {
-	head := proj.head()
-	if head == "" {
-		return "", "HEAD is no commit"
-	}
-	entry := receipts.CommandEntry(proj.receipts, argv)
-	wantedRefs := append(textsOf(proj.receipts["refs"]), textsOf(entry["refs"])...)
-	wantedBases := append(textsOf(proj.receipts["merge_bases"]), textsOf(entry["merge_bases"])...)
-	if base != "" {
-		wantedRefs, wantedBases = append(wantedRefs, base), append(wantedBases, base)
-	}
-	refs, bases := map[string]string{}, map[string]string{}
-	for _, name := range wantedRefs {
-		commit := strings.TrimSpace(string(proj.gitText("rev-parse", "--verify", "--quiet", name+"^{commit}")))
-		if commit == "" {
-			return "", fmt.Sprintf("the ref %s cannot be resolved, so a move of it could not be seen", name)
-		}
-		refs[name] = commit
-	}
-	for _, name := range wantedBases {
-		found := strings.TrimSpace(string(proj.gitText("merge-base", "HEAD", name)))
-		if found == "" {
-			return "", fmt.Sprintf("the merge base of HEAD and %s cannot be found", name)
-		}
-		bases[name] = found
-	}
-	extra := map[string]string{}
-	for _, name := range textsOf(proj.receipts["extra_files"]) {
-		data, err := os.ReadFile(filepath.Join(proj.root, name))
-		if err != nil {
-			extra[name] = "missing"
-			continue
-		}
-		digest := sha256.Sum256(data)
-		extra[name] = hex.EncodeToString(digest[:])
-	}
-	cwd := filepath.Clean(filepath.Join(proj.root, chosen.cwd))
-	env := withEnv(commandEnv(proj.environ), chosen.env)
-	facts, err := receipts.EnvironmentFacts(proj.ctx, proj.receipts, cwd, env)
-	if err != nil {
-		return "", err.Error()
-	}
-	requires := make([]map[string]any, 0, len(chosen.requires))
-	for _, each := range chosen.requires {
-		requires = append(requires, map[string]any{"run": each.run, "why": each.why, "timeout": each.timeout})
-	}
-	material := map[string]any{"project": proj.name, "jackstay": version.Version, "head": head,
-		"definition": definition(chosen, argv, relative), "lock_wait": chosen.lockWait, "requires": requires,
-		"leftovers": items(proj.section["leftovers"]), "vetoes": proj.vetoesOf(argv), "facts": facts, "refs": refs,
-		"merge_bases": bases, "extra_files": extra}
-	data, err := json.Marshal(material)
-	if err != nil {
-		return "", err.Error()
-	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), ""
-}
-
-func (proj *project) stateFolder(name string) string {
-	folder, err := receipts.StateFolder(proj.name, name)
-	if err != nil {
-		return ""
-	}
-	return folder
-}
-
-func (proj *project) maxAge() time.Duration { return receipts.MaxAge(proj.receipts) }
-
-// bar is a failed run's bar of a key.
-type bar struct {
-	Key     string  `json:"key"`
-	Step    string  `json:"step"`
-	Outcome string  `json:"outcome"`
-	RunID   string  `json:"run_id"`
-	At      string  `json:"at"`
-	AtEpoch float64 `json:"at_epoch"`
-	// why says what stands in for a bar that cannot be read (not stored).
-	why string
-}
-
-// barOf is the newest bar of a key, or nil. A folder that cannot be listed is a bar: it cannot be
-// shown that the step did not fail.
-func (proj *project) barOf(key string) *bar {
-	folder := proj.stateFolder("gate-bars")
-	entries, err := os.ReadDir(folder)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return &bar{why: fmt.Sprintf("the bars cannot be listed (%v)", err)}
-	}
-	var newest *bar
-	for _, entry := range entries {
-		if !strings.HasPrefix(entry.Name(), key+".") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(folder, entry.Name()))
-		var read bar
-		if err != nil || json.Unmarshal(data, &read) != nil {
-			newest = &bar{why: "a bar that cannot be read: " + entry.Name()}
-			continue
-		}
-		newest = &read
-	}
-	return newest
-}
-
-func (found *bar) when() string {
-	if found.At != "" {
-		return found.At
-	}
-	return found.why
-}
-
-func (proj *project) timeText() string { return proj.clock.Now().Format("2006-01-02T15:04:05-0700") }
-
-// writeBar files the bar of a key a step failed on; bars live as long as any mark can be used
-// (receipts.max_age_hours) and a day more.
-func (proj *project) writeBar(key, step string, ended result) {
-	folder := proj.stateFolder("gate-bars")
-	now := proj.clock.Now()
-	data, err := json.Marshal(bar{Key: key, Step: step, Outcome: ended.outcome, RunID: ended.runID, At: proj.timeText(),
-		AtEpoch: epochSeconds(now)})
-	if err == nil {
-		err = os.MkdirAll(folder, 0o700)
-	}
-	if err == nil {
-		err = createOnce(filepath.Join(folder, fmt.Sprintf("%s.%020d-%d", key, now.UnixNano(), proj.pid)), data)
-	}
-	if err != nil {
-		proj.say("the bar of the failed step %s could not be written (%v): a later --resume may not know it failed", step, err)
-	}
-	proj.prune(folder, proj.maxAge()+24*time.Hour)
-}
-
-// createOnce makes a file that must not exist yet.
-func createOnce(place string, data []byte) error {
-	file, err := os.OpenFile(place, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	_, writeErr := file.Write(data)
-	if closeErr := file.Close(); writeErr == nil {
-		writeErr = closeErr
-	}
-	return writeErr
-}
-
-// mark is a step's pass on a key, which `--resume` may stand on. Its ID is new for each mark
-// written; DepMarks are the IDs of the marks its deps stood on when it passed (depMarksOf), so a
-// dep that ran again since, with a new mark, makes it stale (docs/design/land.md section 7.2).
-type mark struct {
-	ID             string   `json:"id"`
-	DepMarks       []string `json:"dep_marks"`
-	Key            string   `json:"key"`
-	Step           string   `json:"step"`
-	Outcome        string   `json:"outcome"`
-	RunID          string   `json:"run_id"`
-	Head           string   `json:"head"`
-	Seconds        float64  `json:"seconds"`
-	At             string   `json:"at"`
-	AtEpoch        float64  `json:"at_epoch"`
-	Jackstay       string   `json:"jackstay"`
-	AdapterVersion int      `json:"adapter_version,omitempty"`
-	Counted        int      `json:"counted,omitempty"`
-}
-
-// markPath is the one file of a node's current mark in this checkout: a node has one mark per
-// checkout, whatever its key, and the key is checked inside it (readMark).
-func (proj *project) markPath(node string) string {
-	digest := sha256.Sum256([]byte(proj.root + "\x00" + node))
-	return filepath.Join(proj.stateFolder("gate-marks"), hex.EncodeToString(digest[:])+".json")
-}
-
-// writeMark files a step's pass, after the marks of its deps; its new ID, or "" when it wrote
-// none. A key with a bar gets none (a mark could outlive its bar).
-func (proj *project) writeMark(key, step string, ended result, head string, adapterVersion int, depMarks []string) string {
-	if adapterVersion != 0 && (ended.outcome != receipts.OutcomePassed || ended.counted <= 0) {
-		return ""
-	}
-	if proj.barOf(key) != nil {
-		proj.say("step %s: no mark (this step failed on this same tree before; its bar stands)", step)
-		return ""
-	}
-	random := make([]byte, 16)
-	_, err := rand.Read(random)
-	id := hex.EncodeToString(random)
-	folder := proj.stateFolder("gate-marks")
-	if err == nil {
-		var data []byte
-		data, err = json.Marshal(mark{ID: id, DepMarks: nonNil(depMarks), Key: key, Step: step, Outcome: ended.outcome, RunID: ended.runID, Head: head,
-			Seconds: ended.seconds, At: proj.timeText(), AtEpoch: epochSeconds(proj.clock.Now()), Jackstay: version.Version,
-			AdapterVersion: adapterVersion, Counted: ended.counted})
-		if err == nil {
-			err = os.MkdirAll(folder, 0o700)
-		}
-		if err == nil {
-			err = durable.WriteAtomic(proj.markPath(step), data, 0o600, 0)
-		}
-	}
-	if err != nil {
-		proj.say("the mark of step %s could not be written (%v); a later --resume runs it again", step, err)
-		return ""
-	}
-	proj.prune(folder, max(proj.maxAge(), 24*time.Hour))
-	return id
-}
-
-// removeMark takes a node's mark away, before every run of it; an error when one stays (a
-// missing mark is none).
-func (proj *project) removeMark(node string) error {
-	err := receipts.RemoveFile(proj.markPath(node))
-	if err == nil || errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	return fmt.Errorf("the mark %s cannot be removed (%v): a failure of this run could not undo it; run it outside the sandbox", proj.markPath(node), err)
-}
-
-// readMark is the node's mark when it is usable now for the key, or why not.
-func (proj *project) readMark(key, step, head string, adapterVersion int) (*mark, string) {
-	data, err := os.ReadFile(proj.markPath(step))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, "no mark"
-	}
-	var found mark
-	if err != nil || json.Unmarshal(data, &found) != nil {
-		return nil, "the mark cannot be read"
-	}
-	if found.Key != key || found.Step != step || found.Head != head || found.RunID == "" || found.ID == "" || found.Jackstay != version.Version {
-		return nil, "the mark is not one for this key"
-	}
-	if found.Outcome != receipts.OutcomePassed && found.Outcome != receipts.OutcomeExited0 {
-		return nil, "the mark is not a successful step"
-	}
-	if found.AdapterVersion != adapterVersion || (adapterVersion != 0 && (found.Outcome != receipts.OutcomePassed || found.Counted <= 0)) {
-		return nil, "the mark has no counted pass for the current adapter"
-	}
-	if found.AtEpoch == 0 {
-		return nil, "the mark's time cannot be read"
-	}
-	age := epochSeconds(proj.clock.Now()) - found.AtEpoch
-	if age < -300 || age > proj.maxAge().Seconds() {
-		return nil, fmt.Sprintf("the mark is older than receipts.max_age_hours (%s h)", formatSeconds(proj.maxAge().Hours()))
-	}
-	return &found, ""
-}
-
-// prune removes a folder's files older than age.
-func (proj *project) prune(folder string, age time.Duration) {
-	entries, err := os.ReadDir(folder)
-	if err != nil {
-		return
-	}
-	before := proj.clock.Now().Add(-age)
-	for _, entry := range entries {
-		place := filepath.Join(folder, entry.Name())
-		if info, err := os.Lstat(place); err == nil && info.ModTime().Before(before) {
-			_ = os.Remove(place)
-		}
-	}
 }
 
 // step is one node's line in the run's record.
@@ -423,13 +52,13 @@ const (
 // failureOrder is the order in which a node's outcome that is not a pass becomes the run's
 // (section 7.2): the first the run has wins, with or without --keep-going.
 var failureOrder = []string{receipts.OutcomeFailed, receipts.OutcomePassedOnRetry, outcomeTimedOut, receipts.OutcomeStopped,
-	receipts.OutcomeStoppedWaiting, receipts.OutcomeUnjudged, receipts.OutcomeNothingRun, receipts.OutcomeGaveUp, outcomeRefused,
+	receipts.OutcomeStoppedWaiting, receipts.OutcomeUnjudged, receipts.OutcomeNothingRun, receipts.OutcomeGaveUp,
 	receipts.OutcomeNotStarted}
 
 // passing says whether a node that ended so lets the nodes that depend on it run.
 func passing(outcome string) bool {
 	switch outcome {
-	case receipts.OutcomePassed, receipts.OutcomeExited0, outcomeSkipped, outcomeResumed:
+	case receipts.OutcomePassed, receipts.OutcomeExited0, outcomeSkipped:
 		return true
 	}
 	return false
@@ -473,13 +102,8 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 	if len(order) == 1 {
 		plural = ""
 	}
-	resuming := ""
-	if proj.options.resume {
-		resuming = " (resuming passed steps)"
-	}
-	proj.say("%s: %d node%s: %s%s", label, len(order), plural, joinComma(order), resuming)
-	startFields := map[string]any{"gate_run_id": gateID, "scope": label, "started_epoch": epochText(began), "steps": nonNil(order),
-		"resume": proj.options.resume}
+	proj.say("%s: %d node%s: %s", label, len(order), plural, joinComma(order))
+	startFields := map[string]any{"gate_run_id": gateID, "scope": label, "started_epoch": epochText(began), "steps": nonNil(order)}
 	// A run stopped or killed while a node runs ends with that node (its own line says `stopped`);
 	// this line, with no `gate` line of the same id, says the run did not end.
 	if !proj.log("gate-start", []string{label}, "", startFields) {
@@ -507,13 +131,9 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		}
 	}
 	outcomes := map[string]string{}
-	// marks are the IDs of the marks each node of this run stands on: a node with `run`, the mark
-	// it resumed from or wrote; a composite, its eligible deps'. A node missing from it has none.
-	marks := map[string][]string{}
 	ended := false
 	for _, name := range order {
 		kind, entry := find(proj.section, name)
-		depMarks, depsMarked := depMarksOf(nodes, entry, marks)
 		var line step
 		switch {
 		case ended:
@@ -524,17 +144,10 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 			line = step{"step": name, "outcome": outcomeNotRun, "seconds": 0}
 		case isComposite(entry):
 			line = step{"step": name, "outcome": receipts.OutcomePassed, "seconds": 0, "composite": true}
-			if depsMarked {
-				marks[name] = depMarks
-			}
 		default:
 			var signalled *int
-			var markID string
-			if line, markID, signalled = proj.gateStep(name, kind, entry, gateID, depMarks, depsMarked); signalled != nil {
+			if line, signalled = proj.gateStep(name, kind, entry, gateID); signalled != nil {
 				return *signalled
-			}
-			if markID != "" {
-				marks[name] = []string{markID}
 			}
 		}
 		outcome := textOf(line["outcome"])
@@ -564,8 +177,8 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 }
 
 // settle is the run's outcome from its nodes' (section 7.2): the first failure in failureOrder;
-// else `skipped` when a scope asked for is not eligible here; `resumed` when every node with `run`
-// was resumed; `exited-0` when a scope asked for ended so; else `passed`.
+// else `skipped` when a scope asked for is not eligible here; `exited-0` when a scope asked for
+// ended so; else `passed`.
 func (state *gateState) settle(asked []string, outcomes map[string]string) {
 	if state.outcome != "" {
 		return
@@ -583,41 +196,14 @@ func (state *gateState) settle(asked []string, outcomes map[string]string) {
 			return
 		}
 	}
-	resumed := 0
-	ran := 0
-	for _, line := range state.steps {
-		if line["composite"] == nil && line["outcome"] != outcomeSkipped {
-			ran++
-			if line["outcome"] == outcomeResumed {
-				resumed++
-			}
-		}
-	}
 	switch {
 	case slices.ContainsFunc(asked, func(name string) bool { return outcomes[name] == outcomeSkipped }):
 		state.outcome, state.status = outcomeSkipped, statusSkipped
-	case ran > 0 && resumed == ran:
-		state.outcome = outcomeResumed
 	case slices.ContainsFunc(asked, func(name string) bool { return outcomes[name] == receipts.OutcomeExited0 }):
 		state.outcome = receipts.OutcomeExited0
 	default:
 		state.outcome = receipts.OutcomePassed
 	}
-}
-
-// depMarksOf are the IDs of the marks a node's eligible deps stand on in this run, a composite's
-// through its own deps; depsMarked is false when one of them has none.
-func depMarksOf(nodes *graph, entry map[string]any, marks map[string][]string) (ids []string, depsMarked bool) {
-	depsMarked = true
-	for _, dep := range depsOf(entry) {
-		if !nodes.eligible(dep) {
-			continue
-		}
-		found, known := marks[dep]
-		depsMarked = depsMarked && known
-		ids = append(ids, found...)
-	}
-	return ids, depsMarked
 }
 
 func nonNil(names []string) []string {
@@ -627,30 +213,22 @@ func nonNil(names []string) []string {
 	return names
 }
 
-// gateStep runs or resumes one node with `run`: its `requires`, its mark or bar under --resume,
-// then the command. depMarks are the IDs of the marks its deps stand on in this run (depsMarked:
-// every dep has one); its own mark is used only when it recorded the same. markID is the ID of
-// the mark the node resumed from or wrote, or "". signalled is set when jackstay was asked to
-// stop: the status it ends with.
-func (proj *project) gateStep(name, kind string, entry map[string]any, gateID string, depMarks []string,
-	depsMarked bool) (line step, markID string, signalled *int) {
-	resume := proj.options.resume
+// gateStep runs one node with `run`: its `requires`, then the command. signalled is set when
+// jackstay was asked to stop: the status it ends with.
+func (proj *project) gateStep(name, kind string, entry map[string]any, gateID string) (step, *int) {
 	chosen := resolve(proj.section, name, kind, entry)
-	adapterVersion := judge.AdapterVersion(judge.Kind(chosen.judge))
 	found, err := proj.wordsOf(chosen, proj.argumentsOf(name))
 	if err != nil {
 		proj.say("%v", err)
-		return step{"step": name, "outcome": receipts.OutcomeNotStarted, "seconds": 0, "status": statusRefused}, "", nil
+		return step{"step": name, "outcome": receipts.OutcomeNotStarted, "seconds": 0, "status": statusRefused}, nil
 	}
-	// Every `requires`, before the step may be resumed: a mark says the step passed, not that what
-	// it needs is there now.
 	whyNot := ""
 	cwd := filepath.Clean(filepath.Join(proj.root, chosen.cwd))
 	for _, each := range chosen.requires {
 		result := proj.runCheck(each, cwd, withEnv(commandEnv(proj.environ), chosen.env))
 		if result.asked != 0 {
 			status := proj.ended(result.stoppedResult(), nil).status
-			return nil, "", &status
+			return nil, &status
 		}
 		if !result.passed() {
 			whyNot = name + ": " + checkWhy(each, result)
@@ -662,71 +240,15 @@ func (proj *project) gateStep(name, kind string, entry map[string]any, gateID st
 	}
 	if whyNot != "" {
 		proj.say("step %s: not started (%s)", name, whyNot)
-		return step{"step": name, "outcome": receipts.OutcomeNotStarted, "seconds": 0, "why": whyNot, "status": statusRefused}, "", nil
-	}
-	relative, relErr := filepath.Rel(proj.root, cwd)
-	if relErr != nil {
-		relative = chosen.cwd
-	}
-	key, head := "", ""
-	var stamps map[string]string
-	dirty := proj.cleanCheckout()
-	switch {
-	case dirty == "" && chosen.resume:
-		var whyNoKey string
-		key, whyNoKey = proj.stepKey(chosen, found.argv, found.base, relative)
-		head, stamps = proj.head(), proj.checkoutStamps()
-		if key == "" {
-			proj.say("step %s: no mark can be kept (%s)", name, whyNoKey)
-		}
-	case resume && dirty != "":
-		proj.say("step %s: runs (%s: only a clean checkout is resumed)", name, dirty)
-	}
-	switch {
-	case resume && key != "":
-		if found := proj.barOf(key); found != nil {
-			proj.say("step %s: nothing has changed since this step failed (%s); change the tree or run the gate without --resume",
-				name, found.when())
-			return step{"step": name, "outcome": outcomeRefused, "seconds": 0, "status": statusRefused}, "", nil
-		}
-		found, _ := proj.readMark(key, name, head, adapterVersion)
-		switch {
-		case found == nil:
-		case !depsMarked || !slices.Equal(found.DepMarks, depMarks):
-			proj.say("step %s: runs (its deps' marks are not the ones it passed after: a dep ran since, or has no mark)", name)
-		default:
-			proj.say("step %s: resumed (it %s at %s on this same tree; run %s)", name, found.Outcome, found.At, found.RunID)
-			return step{"step": name, "outcome": outcomeResumed, "seconds": 0, "mark_of": found.RunID}, found.ID, nil
-		}
-	case resume && !chosen.resume:
-		proj.say("step %s: runs (\"resume\": false)", name)
+		return step{"step": name, "outcome": receipts.OutcomeNotStarted, "seconds": 0, "why": whyNot, "status": statusRefused}, nil
 	}
 	proj.say("step %s: %s", name, shellWords(found.argv))
-	var ended result
-	// The step runs again: its old pass no longer speaks for this checkout, also if this run can
-	// write no new mark (a dirty tree, "resume": false) or is stopped before it can say anything. A
-	// pass on a clean tree writes a new mark. A mark that cannot be removed could not be undone by
-	// a failure: the step does not start, and the gate records that like any other outcome.
-	if err := proj.removeMark(name); err != nil {
-		ended = proj.notStarted(err.Error())
-	}
-	if ended.outcome == "" {
-		ended = proj.runLeaf(chosen, proj.argumentsOf(name), gateID, true)
-	}
+	ended := proj.runLeaf(chosen, proj.argumentsOf(name), gateID, true)
 	if ended.signalled {
-		return nil, "", &ended.status
-	}
-	passed := ended.outcome == receipts.OutcomePassed || ended.outcome == receipts.OutcomeExited0
-	switch {
-	case key != "" && passed:
-		markID = proj.markAfter(name, key, head, stamps, chosen, found, relative, ended, depMarks)
-	case key != "" && ended.outcome == receipts.OutcomeFailed:
-		proj.writeBar(key, name, ended)
-	case key != "":
-		_ = proj.removeMark(name) // removed before the step ran; nothing new to undo
+		return nil, &ended.status
 	}
 	return step{"step": name, "outcome": ended.outcome, "seconds": ended.seconds, "run_id": nullableText(ended.runID),
-		"status": ended.status}, markID, nil
+		"status": ended.status}, nil
 }
 
 // stoppedResult is the result of a check during which jackstay was asked to stop.
@@ -736,46 +258,6 @@ func (result checkResult) stoppedResult() result {
 
 func resultOf(outcome string, status int, signalled bool) result {
 	return result{outcome: outcome, status: status, signalled: signalled}
-}
-
-// markAfter writes a passed step's mark when the tree is the same as when it started: clean, the
-// same key and HEAD, and no file of the checkout rewritten, after the marks of its deps; the new
-// mark's ID, or "" when none was written.
-func (proj *project) markAfter(name, key, head string, stamps map[string]string, chosen leaf, found words, relative string,
-	ended result, depMarks []string) string {
-	if dirty := proj.cleanCheckout(); dirty != "" {
-		proj.say("step %s: no mark (%s after it ran)", name, dirty)
-		return ""
-	}
-	after, _ := proj.stepKey(chosen, found.argv, found.base, relative)
-	if after != key || proj.head() != head {
-		proj.say("step %s: no mark (its key changed while it ran: HEAD, a ref, the toolchain or the environment)", name)
-		return ""
-	}
-	now := proj.checkoutStamps()
-	var changed []string
-	for _, file := range sortedKeys(mergeKeys(now, stamps)) {
-		if now[file] != stamps[file] {
-			changed = append(changed, file)
-		}
-	}
-	if stamps == nil || now == nil || len(changed) > 0 {
-		proj.say("step %s: no mark (a file of the checkout was rewritten while it ran: %s)", name,
-			joinComma(changed[:min(3, len(changed))]))
-		return ""
-	}
-	return proj.writeMark(key, name, ended, head, judge.AdapterVersion(judge.Kind(chosen.judge)), depMarks)
-}
-
-func mergeKeys(first, second map[string]string) map[string]bool {
-	merged := map[string]bool{}
-	for name := range first {
-		merged[name] = true
-	}
-	for name := range second {
-		merged[name] = true
-	}
-	return merged
 }
 
 // compositeRequires is why a list of steps may not run now (its first failing `requires`), or "".
@@ -864,8 +346,6 @@ func (proj *project) gateLine(label, gateID string, began time.Time, state *gate
 		detail += "; here: " + orNone(joinComma(each)) + "; ci: " + orNone(joinComma(leftToCI)) + "; elsewhere: " + orNone(split.elsewhereText())
 	}
 	switch state.outcome {
-	case outcomeResumed:
-		proj.say("outcome=resumed (every step was resumed: nothing ran, and this is not counted as a pass; %s)", joinComma(each))
 	case outcomeNeedsOtherSystem:
 		proj.say("outcome=%s (%s; %s)", state.outcome, split.elsewhereText(), detail)
 	default:

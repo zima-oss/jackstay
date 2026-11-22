@@ -125,7 +125,7 @@ func UncoveredCommand(args []string, _ io.Reader, stdout, stderr io.Writer) int 
 // `passed` or `left-to-ci` line is the record `jst install` from a checkout needs.
 func (base *tester) uncovered(args []string) int {
 	_, rest, chosen, err := parse(append([]string{uncoveredCommand}, args...))
-	if err == nil && (len(rest) > 0 || chosen.resume || chosen.base != "") {
+	if err == nil && (len(rest) > 0 || chosen.base != "") {
 		err = refused("usage: jst test uncovered [--commit REV] [--keep-going] [--project NAME]")
 	}
 	revision := chosen.commit

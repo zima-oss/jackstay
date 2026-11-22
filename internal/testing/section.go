@@ -214,7 +214,7 @@ func expectProblems(values []string, where string) []string {
 
 // listOnlyKeys are the keys that belong to a step running a command, never to a list of steps.
 var listOnlyKeys = []string{"judge", "evidence", "veto", "env", "base", "slow", "expect", "cwd", "durations", "timeout", "report", "reports", "empty_exit",
-	"lock_wait", "lock", "resume", "selector", "xcresult_bundles"}
+	"lock_wait", "lock", "selector", "xcresult_bundles"}
 
 func definitionProblems(section map[string]any, kind, name string, entry map[string]any) []string {
 	here := fmt.Sprintf("test.%s.%s", kind, name)
@@ -417,7 +417,6 @@ type leaf struct {
 	slow      slowRule
 	durations bool
 	expect    []string
-	resume    bool
 	requires  []check
 	when      string
 }
@@ -431,7 +430,7 @@ func secondsOf(value any) float64 {
 func resolve(section map[string]any, name, kind string, entry map[string]any) leaf {
 	resolved := leaf{name: name, kind: kind, run: textsOf(entry["run"]), cwd: ".", judge: judgeOf(section, entry),
 		evidence: textOf(entry["evidence"]), veto: textOf(entry["veto"]), lock: !slices.Contains(unlockedByDefault, name),
-		env: map[string]string{}, base: textOf(entry["base"]), resume: true, when: textOf(entry["when"])}
+		env: map[string]string{}, base: textOf(entry["base"]), when: textOf(entry["when"])}
 	resolved.selector = textOf(entry["selector"])
 	resolved.report = textOf(entry["report"])
 	resolved.reports = textsOf(entry["reports"])
@@ -472,9 +471,6 @@ func resolve(section map[string]any, name, kind string, entry map[string]any) le
 	}
 	if len(resolved.expect) == 0 {
 		resolved.expect = []string{"xctest"}
-	}
-	if resume, present := entry["resume"].(bool); present {
-		resolved.resume = resume
 	}
 	resolved.requires = checksOf(entry)
 	return resolved

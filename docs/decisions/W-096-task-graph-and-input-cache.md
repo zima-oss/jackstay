@@ -35,11 +35,11 @@ The [landing design](../design/land.md) section 7 is the specification. `jacksta
 existing projects keep their order.
 
 The cache is not in 0.6.0 (land.md section 7.3 records its direction only), so 0.6.0 accepts no
-`inputs` or `cache` key, and the gate's step marks and bars, `--resume`, the `resumed` and
-`refused` outcomes, the `resume` key and receipts reuse for scopes stay, per node of the graph.
-Marks are chained through the deps: each mark has its own ID and records the IDs of the dep marks
-it passed on, and a node resumes only when those equal its deps' current marks, so a dep that runs
-again invalidates every mark after it. The later cache's key chains the same way. CI has one job per system, which runs
+`inputs` or `cache` key. 0.6.0 also removes `--resume`, the gate's step marks and bars, the
+`resumed` and `refused` outcomes and the `resume` key, with no shim: `--resume` is refused and
+names the removal, and the `resume` key is refused by `jst check`. Until 1.0, an interrupted gate
+reruns in full; reuse of passes comes with the cache, whose key chains through the deps' keys.
+Receipts reuse for scopes stays. CI has one job per system, which runs
 that system's covered graph once in graph order and is what the base's rules require, with no
 cache steps: it runs every covered scope each time. Written limits: jobs running at once on one
 commit both run every scope, and a release or a manual dispatch runs the job in full.

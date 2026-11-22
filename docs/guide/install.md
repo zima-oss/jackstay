@@ -103,7 +103,7 @@ data. Setup can put the installed prefix's `bin` first on `PATH` in zsh, bash, s
 profile. When Claude Code's sandbox is enabled, it can let the sandbox write the folders of the
 jackstay home jst writes from it (logs, locks, chat, jobs, the brief, ids, the trash), each in
 `sandbox.filesystem.allowWrite`, and replace an entry naming the whole home, so evidence (receipts,
-gate marks, review rounds, the run log) stays read-only there. No deny rule may cover a folder it
+review rounds, the run log) stays read-only there. No deny rule may cover a folder it
 adds. The plan shows the entries removed and added; the settings file keeps its order and gets a
 backup beside it.
 Other findings carry doctor's manual fix. Fish and other shells need their own configuration,

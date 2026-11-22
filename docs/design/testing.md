@@ -5,8 +5,8 @@ project defines its selection) and [W-013](../decisions/W-013-quality-testing-de
 time-sensitive tests; everything declarative and general). Status: built. 0.6.0 runs scopes as a
 graph ([land.md](land.md) section 7, after
 [W-096](../decisions/W-096-task-graph-and-input-cache.md)), which section 5 summarises; the cache
-by input hash is not in 0.6.0 (planned for a later version, whose design may differ), so a gate's
-`--resume`, marks and bars still work, per node. How to use scopes is the
+by input hash is not in 0.6.0 (planned for jackstay 1, whose design may differ), and 0.6.0 removes
+a gate's `--resume`, marks and bars: a gate runs every node each time. How to use scopes is the
 [tests guide](../guide/tests.md); the raw form `jst test -- COMMAND`, its outcomes, receipts and run
 record are [implementation.md](implementation.md) section 9. The
 [compatibility baseline](testing-compatibility.md) pins the outcomes; the
@@ -228,11 +228,10 @@ A slow class is skipped from `quick`, never excused from `full` (W-013).
 
 How several scopes run together is [land.md](land.md) section 7: each scope once, after its
 `deps`, in a stable order; a failure stops the run unless `--keep-going`. A `steps` list is read as
-`deps`, so 0.5.x gates keep their order. Under `--resume` a node whose mark is on this same tree is
-not run and is `resumed`, but only when its deps stand on the marks it recorded when it passed
-(marks are chained through deps, land.md section 7.2); a bar makes it `refused`.
-The cache by input hash that was to replace the marks and bars is not in 0.6.0 (section 7.3
-there); what 0.6.0 keeps from 0.5.x is listed in its section 7.7.
+`deps`, so 0.5.x gates keep their order. `--resume`, the gate's marks and bars, the `resumed` and
+`refused` outcomes and the `resume` key are removed in 0.6.0: `--resume` is refused (2), and an
+interrupted gate runs in full. Reuse of passes comes with the cache by input hash (section 7.3
+there), in jackstay 1; what 0.6.0 changes from 0.5.x is listed in its section 7.7.
 
 What stays here:
 
@@ -295,7 +294,7 @@ SwiftPM/XCTest/Swift Testing for the `swift-test` judge.
 - After a normal end the session has up to 1 s to empty by itself before what is left is stopped.
 - Durations are recorded from `passed` and `failed` runs (not `unjudged`, `timed-out`, `stopped`).
 - A run of more than one node writes a `gate-start` line and, at its end, a `gate` line (`steps`:
-  each node's outcome, seconds and run id, and the run a `resumed` node's mark came from); each
+  each node's outcome, seconds and run id); each
   node's own `start`/`run` lines carry `step` and `gate_run_id`. A run stopped or killed during a node leaves the
   node's `stopped` line and a `gate-start` with no `gate`. `jst test last --scope gate` shows it.
 - A recorded run whose `start` has no `run` overlaps only while its pid is alive.
@@ -306,7 +305,7 @@ SwiftPM/XCTest/Swift Testing for the `swift-test` judge.
   (SwiftPM starts `xctest` in a group of its own). While the stop waits it reads the process table
   again and signals what is new at once.
 - A process table that cannot be read is "the end of the tree cannot be confirmed", not "nothing
-  left": the run is `unjudged` (`tree_unconfirmed`, no receipt, no mark) and a `requires` check is
+  left": the run is `unjudged` (`tree_unconfirmed`, no receipt) and a `requires` check is
   not passed. `JACKSTAY_PROC_UNREADABLE=1` makes jackstay act so (tests only).
 - A bundle that ends without starting is `unjudged`.
 - `jst test`'s own files in `$TMPDIR` are removed before it ends by re-raising a signal.

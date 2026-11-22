@@ -71,7 +71,7 @@ func (log RunLog) attributes(key string) []attribute.KeyValue {
 }
 
 // notFailures are the outcomes that are not failures of the run.
-var notFailures = map[string]bool{OutcomePassed: true, OutcomeReused: true, "exited-0": true, "resumed": true, "would-hit": true}
+var notFailures = map[string]bool{OutcomePassed: true, OutcomeReused: true, "exited-0": true, "would-hit": true}
 
 func endWithVerdict(span *telemetry.Span, outcome string, fields map[string]any) {
 	verdict := []attribute.KeyValue{attribute.String(telemetry.AttrTestOutcome, outcome)}

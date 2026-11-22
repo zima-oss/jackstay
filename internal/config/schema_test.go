@@ -177,8 +177,8 @@ func TestOnlyAScopeSaysWhereItRunsAndASchema3CompositeChecksNothing(t *testing.T
 		`"gate":{"steps":["x-go"],"requires":[{"run":["y"],"why":"z"}]}}}}`); len(found) != 0 {
 		t.Fatalf("a schema-2 list keeps its requires: %v", found)
 	}
-	if found := strings.Join(problemsOf(`{"jackstay_schema":3,"test":{"scopes":{"x-go":{"run":["x"]},"gate":{"deps":["x-go"]}}}}`), "; "); !strings.Contains(found, "receipts.toolchain") {
-		t.Fatalf("deps without receipts.toolchain: %s", found)
+	if found := problemsOf(`{"jackstay_schema":3,"test":{"scopes":{"x-go":{"run":["x"]},"gate":{"deps":["x-go"]}}}}`); len(found) != 0 {
+		t.Fatalf("deps without receipts.toolchain: %v", found)
 	}
 }
 
@@ -189,5 +189,28 @@ func TestBriefExpiryAndOverviewRepositories(t *testing.T) {
 	repositories := StatusRepositories(map[string]any{"repos": []any{"../service", "/abs/app", ""}}, "/work/project")
 	if strings.Join(repositories, ",") != "/work/service,/abs/app" {
 		t.Fatalf("repositories %v", repositories)
+	}
+}
+
+// The `resume` key went with `jst test --resume` in 0.6.0: it is refused, in both schemas, by a
+// line that says so, not as an unknown key.
+func TestTheRemovedResumeKeyIsRefusedByName(t *testing.T) {
+	for _, schema := range []string{"2", "3"} {
+		parsed, err := Parse([]byte(`{"jackstay_schema": ` + schema + `, "test": {"scopes": {
+			"full": {"run": ["true"], "resume": false},
+			"gate": {"steps": ["cheap"]}},
+			"steps": {"cheap": {"run": ["true"], "resume": true}}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		problems := strings.Join(SectionProblems(parsed).Of("test"), "\n")
+		for _, where := range []string{"test.scopes.full.resume", "test.steps.cheap.resume"} {
+			if !strings.Contains(problems, "`"+where+"` was removed: it went with `jst test --resume` in jackstay 0.6.0") {
+				t.Errorf("schema %s, %s: %s", schema, where, problems)
+			}
+		}
+		if strings.Contains(problems, "unknown key") {
+			t.Errorf("schema %s: %s", schema, problems)
+		}
 	}
 }

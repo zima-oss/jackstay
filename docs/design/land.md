@@ -250,7 +250,8 @@ declares which scopes CI runs and on which systems; CI is the gate for those, an
 machine runs the rest. This follows [W-096](../decisions/W-096-task-graph-and-input-cache.md): a
 task graph on the model of monorepo task runners, with simple behaviour and written limits. It
 replaces the ordered lists of `steps` (section 7.7). The cache by input hash that W-096 also names
-is not in 0.6.0 (section 7.3): the gate's step marks, bars and `--resume` stay, per node.
+is not in 0.6.0 (section 7.3), and neither is any reuse of a node's pass: 0.6.0 removes
+`--resume`, the gate's step marks and bars (section 7.7), so a gate runs every node each time.
 
 **Prior art.** Nx runs a target after the targets named in its `dependsOn` and hashes a task from
 its `inputs`, its command, the runtime and the hashes of what it depends on
@@ -280,7 +281,7 @@ A system is Go's name for it: `darwin`, `linux`. The three keys need `"jackstay_
 
 ```json
 "scopes": {
-  "x-build": {"run": ["just", "build"], "judge": "exit", "resume": false},
+  "x-build": {"run": ["just", "build"], "judge": "exit"},
   "x-go":    {"run": ["just", "go"], "deps": ["x-build"], "ci": ["linux"]},
   "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
   "x-ios":   {"run": ["just", "ios"], "deps": ["x-build"], "systems": ["darwin"]},
@@ -290,7 +291,7 @@ A system is Go's name for it: `darwin`, `linux`. The three keys need `"jackstay_
 
 **A scope with no `run`** (a composite, such as `gate`) carries only its `deps`, with `ci`,
 `systems` and `when`. It runs nothing and checks nothing of its own: `requires` and every other run
-setting (`judge`, `timeout`, `lock_wait`, `lock`, `env`, `resume`) belong to scopes with
+setting (`judge`, `timeout`, `lock_wait`, `lock`, `env`) belong to scopes with
 `run`. It passes when every dep eligible on this system (section 7.2) passed, and at least one
 did.
 
@@ -298,8 +299,8 @@ did.
 and 3, so a schema-2 project keeps working unchanged; a scope with both is an error in
 `jackstay.json`. A name in the `steps` section is a node of the graph like a scope. A list of steps
 with no deps between its members runs in its declared order and stops at the first failure, as in
-0.5.x; what changes is that a step two lists share runs once. `--resume`, its marks and bars, and
-the `resume` key keep working, per node (section 7.7). A schema-2 list's own `requires` keep
+0.5.x; what changes is that a step two lists share runs once, and that `--resume`, its marks and
+bars, and the `resume` key are gone (section 7.7). A schema-2 list's own `requires` keep
 one meaning: when the list is in the run's graph, they run once, before any node of the run
 starts, and gate the whole run (one that fails makes the run `not-started`, 2, with nothing run);
 a run whose graph does not contain the list does not run them. In schema 3 a composite's `requires` are refused (below).
@@ -333,23 +334,12 @@ run and in `jst test plan` alike, before the walk.
    1. **Not on this system**: it is not eligible on this machine's system (below). It is
       `skipped`. A `skipped` dep is not a failed one: a composite ignores it (section 7.1), and
       nothing else is stopped by it.
-   2. **A dep did not pass**: a dep ended other than `passed`, `exited-0`, `resumed` or `skipped`.
+   2. **A dep did not pass**: a dep ended other than `passed`, `exited-0` or `skipped`.
       It is `not-run`.
-   3. **`requires`**: its checks run, every time, before a mark is looked at. One that fails makes
-      the node `not-started`, and no mark is read for it.
-   4. **`--resume`** (section 7.7), on a clean checkout: a bar of its key makes it `refused`; a mark
-      of its key makes it `resumed`, and it does not run, but only when its deps still stand on the
-      marks it passed after. Marks are chained through deps: each mark written has a new ID and
-      records the IDs of the marks its deps stood on when it passed, a composite dep giving those
-      of its own eligible deps. In a run, a dep that resumed stands on the mark it resumed from;
-      a dep that ran stands on the new mark it wrote; a dep that wrote none (`"resume": false`, a
-      dirty tree, a bar) stands on none, and the nodes after it run. So a dep that ran again
-      makes every node after it run, transitively, also when the run that rebuilt it was stopped
-      before they ran. A node has one current mark per checkout, which holds its key (a read
-      with another key finds none), and every run of a node removes it first, also a run that can
-      write none (a dirty tree, `"resume": false`) or that is stopped.
-   5. Otherwise it **runs**.
-5. **After a failure.** A node that did not pass (anything but `passed`, `exited-0`, `resumed` or
+   3. **`requires`**: its checks run, every time. One that fails makes the node `not-started`.
+   4. Otherwise it **runs**. Every run runs it: 0.6.0 reuses no earlier pass (section 7.7), so a
+      gate that was stopped or failed runs every node again, the ones that passed included.
+5. **After a failure.** A node that did not pass (anything but `passed`, `exited-0` or
    `skipped`) is a failure. Without `--keep-going`, the first failure ends the run and every
    node after it is `not-run`. With `--keep-going`, the walk goes on and step 4 settles each node as
    usual, so work that does not depend on the failure still runs. Either way the run keeps the
@@ -391,14 +381,12 @@ with its status:
 | 6 | `unjudged` | a node | 77 |
 | 7 | `nothing-run` | a node | 76 |
 | 8 | `gave-up` | a node that did not get the lock | 75 |
-| 9 | `refused` | a node's bar under `--resume` | 2 |
-| 10 | `not-started` | a node's `requires`, a schema-2 list's `requires`, or an unusable configuration | 2 |
-| 11 | `needs-other-system` | `jst test changed` (section 7.4) | 80 |
-| 12 | `skipped` | a scope asked for that is not eligible here | 79 |
-| 13 | `left-to-ci` | `jst test changed` or `jst test uncovered` with nothing to run here (section 7.4) | 0 |
-| 14 | `resumed` | under `--resume`, every node with `run` that was not skipped resumed | 0 |
-| 15 | `exited-0` | every scope asked for passed or ended `exited-0`, and one ended `exited-0` | 0 |
-| 16 | `passed` | every scope asked for passed | 0 |
+| 9 | `not-started` | a node's `requires`, a schema-2 list's `requires`, or an unusable configuration (also `--resume`, removed) | 2 |
+| 10 | `needs-other-system` | `jst test changed` (section 7.4) | 80 |
+| 11 | `skipped` | a scope asked for that is not eligible here | 79 |
+| 12 | `left-to-ci` | `jst test changed` or `jst test uncovered` with nothing to run here (section 7.4) | 0 |
+| 13 | `exited-0` | every scope asked for passed or ended `exited-0`, and one ended `exited-0` | 0 |
+| 14 | `passed` | every scope asked for passed | 0 |
 
 `not-run` is never the run's outcome: a node is `not-run` only after a failure higher in the order.
 Only `passed` is a pass, as before; its detail names each node's outcome, with the `skipped` deps
@@ -414,7 +402,8 @@ nodes with their deps, then the groups, as `here:`, `left to CI:` and `elsewhere
 **Not in 0.6.0.** The cache by input hash is planned for a later version, and its design there may
 differ from this section, which records the direction only. In 0.6.0 nothing of it is built: the
 keys `inputs` and `cache` and `test.cache.dir` are not accepted, CI has no cache steps
-(section 7.4), and the gate's `--resume`, marks and bars stay, per node (section 7.7).
+(section 7.4), and nothing reuses a node's pass: `--resume`, its marks and bars are removed
+(section 7.7). Reuse of passes comes with this cache, in jackstay 1.
 
 A node with `run` has a **hash**: SHA-256 over
 
@@ -430,8 +419,8 @@ A node with `run` has a **hash**: SHA-256 over
   `receipts.merge_bases` and the command's `merge_bases`, and, for a `{base}` in its words, the
   base's tip and its merge base with HEAD;
 - the hash of each dep, in declared order. A composite dep contributes the hashes of its own deps.
-  This is the chain the marks of `--resume` already use (section 7.2, step 4.4), with the hash in
-  place of the mark's ID.
+  So a node's key includes its deps' keys, chained: a dep that changes changes every key after it,
+  transitively.
 
 HEAD's commit is not in the hash: two commits whose inputs are the same share an entry, so a scope
 that passed on a branch is cached on the merge commit with the same tree.
@@ -588,8 +577,8 @@ the job has no cache steps (section 7.3): it runs every covered scope each time.
 ### 7.5 What it does not do
 
 - Run two nodes at once, or split one scope into shards: one node at a time.
-- Skip a scope whose inputs passed before: the cache is not in 0.6.0 (section 7.3). Only
-  `--resume` skips a node, by its mark on the same tree (section 7.7).
+- Skip a scope whose inputs passed before, or a node that passed in an earlier run: the cache is
+  not in 0.6.0 (section 7.3), and `--resume` is removed (section 7.7).
 - Find overlap between scopes: `quick` inside `full` both run when both are asked for; the graph
   removes repeats of a scope, not of a test.
 - Keep a test from running twice in CI. jackstay schedules each scope once, but cannot see inside
@@ -627,19 +616,22 @@ gate. Each scope with `ci` tests a set no other one does:
 Linux CI has one job, `jst test ci (linux)`, running `x-go`, `x-check`, `x-sec` and `x-docs`. The
 release workflow runs the same job before publishing; a failure stops the release.
 
-### 7.7 What changes, and what stays until the cache
+### 7.7 What changes, and what is removed until the cache
 
 | 0.5.x | 0.6.0 |
 |---|---|
 | `steps`: a list run in order, expanded into its leaves, a shared step run each time it appears | read as `deps`; each node once |
-| `jst test gate --resume` and the step mark of a leaf (`gate-marks/`) | kept, per node of the graph; a mark records the marks of its deps it passed after, and a node resumes only when its deps stand on the same marks (section 7.2, step 4.4) |
-| bars (`gate-bars/`) and the `refused` outcome | kept, per node |
-| the gate's `resumed` outcome | kept: a node's, and the run's when every node with `run` resumed |
-| the `resume` key | kept |
+| `jst test gate --resume` and the step mark of a leaf (`gate-marks/`) | removed: `--resume` is refused (2), saying it was removed and that reuse comes with jackstay 1's cache; a gate runs every node each time |
+| bars (`gate-bars/`) and the `refused` outcome | removed |
+| the gate's `resumed` outcome | removed |
+| the `resume` key | removed: `jst check` refuses it, in schema 2 and 3, naming the removal |
+| `receipts.toolchain` written out for a scope with steps or deps (part of a mark's key) | no longer needed for the graph; reuse still needs it |
 | receipts reuse for a scope whose words match a `receipts.commands` entry with `"reuse": true` | kept, never inside the run of a scope with deps |
 
-The cache of section 7.3 was to replace the marks, bars, `--resume`, `resumed`, `refused`, the
-`resume` key and receipts reuse for a scope. Since it is not in 0.6.0, none of them goes in 0.6.0.
+The marks could not say, simply and for certain, that a pass still spoke for the tree and for the
+deps a node ran after; so 0.6.0 removes them with no replacement, and with them `--resume`, the
+bars, `resumed`, `refused` and the `resume` key, with no shim. Until the cache of section 7.3,
+in jackstay 1, an interrupted gate runs in full. Receipts reuse for a scope stays.
 
 ## 8. Tests
 
@@ -662,12 +654,10 @@ The cache of section 7.3 was to replace the marks, bars, `--resume`, `resumed`, 
   deps passed; a composite passes when its deps passed, with a `skipped` dep named, and is `skipped`
   (79) when all are; a node with `run` after a `skipped` dep is `skipped`; a dep `skipped` for
   `systems` neither stopping the run nor failing a composite; `--keep-going` running the nodes that
-  do not depend on a failure and nothing else changed; `requires` checked before every mark is
-  read, a failing check making the node `not-started` with no mark read; under `--resume` a node
-  resumed from its mark only when its deps stand on the marks it recorded, also through a composite:
-  a dep rebuilt in this run, a dep whose mark was rewritten by a run stopped after it, a
-  rebuild on a dirty tree stopped before its test with the edit undone after, and a rerun at the
-  start of a chain of three each make the nodes after it run,
+  do not depend on a failure and nothing else changed; `requires` checked before every run, a
+  failing check making the node `not-started`; `--resume` refused (2) naming its removal, a gate
+  that failed and runs again running every node again, and neither `resumed` nor `refused` in its
+  lines; the `resume` key refused by name in schema 2 and 3;
   `requires` or another run setting on a schema-3 composite refused, naming the scope; a schema-2
   list's `requires` run once before any node when the list is in the graph, a failing one making
   the run `not-started` (2) with nothing run, and not run when a scope whose graph lacks the list is
@@ -675,8 +665,7 @@ The cache of section 7.3 was to replace the marks, bars, `--resume`, `resumed`, 
   walk on Linux for a gate over a `darwin`-only test whose build could run on either: the test
   `skipped`, the build not run unless an eligible scope needs it; the run's outcome and exit status
   for each row of the order in section 7.2, under `--keep-going` the first failure in that order; a
-  schema-2 file with `steps` and
-  `"resume": false` read unchanged.
+  schema-2 file with `steps` read unchanged.
 - **The cache**: none in 0.6.0 (section 7.3); its tests come with it, in a later version.
 - **Where tests run**: covered through `ci` and through a dependent, only where the scope is
   eligible (section 7.2); every node in exactly one of **here**, **ci** and **elsewhere**, for

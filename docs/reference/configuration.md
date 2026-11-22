@@ -190,7 +190,7 @@ Says what goes into a tree's key and which commands may reuse a receipt of a pas
 | `merge_bases` | list of strings | Adds the merge base of HEAD with each of these refs to every command's key. |
 | `no_reuse_branches` | list of strings | Always runs the command on these branches and on the commits they point at (default `main` and `master`). |
 | `refs` | list of strings | Adds the commit each of these refs names to every command's key. |
-| `toolchain` | list of list of strings | Adds what each of these commands prints (`[["go", "version"]]`) to the key; reuse and scope steps need it written out, even empty. |
+| `toolchain` | list of list of strings | Adds what each of these commands prints (`[["go", "version"]]`) to the key; reuse needs it written out, even empty. |
 
 ## `records`
 
@@ -303,7 +303,6 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 | `scopes.*.requires[].run` | list of strings | Runs these words as the check. |
 | `scopes.*.requires[].timeout` | number | Stops the check after this many seconds (default 60). |
 | `scopes.*.requires[].why` | string | Says what the run reports when the check fails. |
-| `scopes.*.resume` | boolean | Lets `jst test gate --resume` skip this step after a pass on the same tree; false always runs it (default true). |
 | `scopes.*.run` | list of strings | Runs these words, with placeholders such as `{tests}`, `{base}`, `{slow}` and `{report}` filled in. |
 | `scopes.*.selector` | string | Expands one test ID into the runner's filter: `go-test` or `jest-test`, for a `focused` or `x-` scope. |
 | `scopes.*.slow` | object | Defines which test classes `{slow}` skips, from their recorded durations. |

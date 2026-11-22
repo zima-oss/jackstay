@@ -133,8 +133,9 @@ func TestBadSections(t *testing.T) {
 	}
 }
 
-func TestAGateNeedsTheToolchainWrittenOut(t *testing.T) {
-	if found := sectionProblems(t, goodSection(), map[string]any{}); !strings.Contains(strings.Join(found, " "), "receipts.toolchain") {
+// The toolchain was part of the gate marks' key; with them gone, a gate needs no receipts.toolchain.
+func TestAGateNeedsNoToolchain(t *testing.T) {
+	if found := sectionProblems(t, goodSection(), map[string]any{}); len(found) != 0 {
 		t.Fatalf("problems: %v", found)
 	}
 	if found := sectionProblems(t, map[string]any{"scopes": map[string]any{"full": map[string]any{"run": argv("x")}}}, map[string]any{}); len(found) != 0 {
@@ -149,7 +150,7 @@ func TestTheWalkAndResolve(t *testing.T) {
 	}
 	full := resolve(section, "full", kindScope, objectOf(objectOf(section["scopes"])["full"]))
 	if full.timeout != 2400 || full.lockWait != 2400 || !full.lock || !full.durations || full.judge != "swift-test" ||
-		strings.Join(full.expect, ",") != "xctest" || full.scope != "full" || !full.resume {
+		strings.Join(full.expect, ",") != "xctest" || full.scope != "full" {
 		t.Fatalf("full: %+v", full)
 	}
 	quick := resolve(section, "quick", kindScope, objectOf(objectOf(section["scopes"])["quick"]))

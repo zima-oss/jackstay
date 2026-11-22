@@ -152,7 +152,7 @@ func TestACommitOnNoRefChecksOutThroughTheAlternates(t *testing.T) {
 func TestResumeAndANonCommitAreRefused(t *testing.T) {
 	w := newCleanWorld(t)
 	w.expectStatus(w.jst("x-clean", "--commit", "HEAD", "--resume"), 2)
-	w.expectSaid("takes no --resume")
+	w.expectSaid("--resume was removed in jackstay 0.6.0")
 	w.expectStatus(w.jst("x-clean", "--commit", "no-such-thing"), 2)
 	w.expectSaid("is not a commit here")
 	w.expectStatus(w.jst("x-clean", "--commit", "--help"), 2)

@@ -2,7 +2,7 @@ package receipts
 
 // testHelp is `jst test --help`: a scope's run and the raw form.
 const testHelp = `usage: jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock]
-                [--resume] [--keep-going] [--commit REV]
+                [--keep-going] [--commit REV]
        jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]
 
 Runs a scope (` + "`jst test list`" + `) or, after --, any command. Only the outcome passed is a pass: read
@@ -16,12 +16,11 @@ not built yet.
   --lock          take the machine-wide lock; --no-lock: do not (default: the scope's lock)
   --project NAME  the project's name in the record (default jackstay.json's)
   --base REF      the scope's {base} or the base for automatic selection
-  --resume        a scope with deps: skip the steps that passed on this same tree
   --keep-going    a scope with deps: after a failure, run the steps that do not depend on it
   --commit REV    run on a clean copy of REV that jackstay makes and then removes
 
-A scope with steps or deps needs receipts.toolchain in jackstay.json: the commands that print
-your tools' versions (` + "`[[\"go\", \"version\"]]`" + `), or [] for none.
+A scope with deps runs every node each time: --resume was removed in 0.6.0, and reuse of passes
+comes with the cache of jackstay 1.
 
 exit: 0 passed (or exited 0 uncounted); 1 failed; 2 not started or refused, nothing ran;
 75 gave up waiting for the lock; 76 no test ran; 77 unjudged (output not read to its end, or

@@ -331,11 +331,16 @@ func (schema *schemaType) names() string {
 	return strings.Join(out, ", ")
 }
 
+// removedKeys are keys jackstay once read and now refuses, each with what to do instead.
+var removedKeys = map[string]string{
+	"resume": "it went with `jst test --resume` in jackstay 0.6.0 (a gate runs every node each time); delete it",
+}
+
 var testRun = object(
 	"run", texts(), "steps", texts(), "cwd", str(), "judge", str(), "evidence", regex(), "veto", regex(),
 	"timeout", number(), "lock_wait", number(), "lock", boolean(), "env", mapOf(text()), "when", str(),
 	"base", str(), "slow", object("class_seconds", number(), "case_seconds", number()), "durations", boolean(),
-	"expect", texts(), "resume", boolean(), "selector", str(),
+	"expect", texts(), "selector", str(),
 	"report", str(), "reports", texts(), "empty_exit", integer(), "xcresult_bundles", texts(),
 	"requires", list(object("run", texts(), "why", str(), "timeout", number())), "deps", texts(),
 )
@@ -595,6 +600,10 @@ func typeProblems(value any, wanted *schemaType, where string) []string {
 			here = where + "." + key
 		}
 		sub, known := wanted.keys[key]
+		if why, gone := removedKeys[key]; !known && gone {
+			found = append(found, fmt.Sprintf("`%s` was removed: %s", here, why))
+			continue
+		}
 		if !known {
 			found = append(found, fmt.Sprintf("unknown key `%s` (the keys here are: %s)", here, wanted.names()))
 			continue
@@ -836,20 +845,11 @@ func sectionCheck(section string, config Config) []string {
 	return found
 }
 
-// testGraphProblems are the test section's rules that read other keys of the file: a scope with
-// deps needs receipts.toolchain for its steps' keys, and in schema 3 a scope with no `run` carries
-// no `requires` (docs/design/land.md section 7.1).
+// testGraphProblems are the test section's rules that read other keys of the file: in schema 3 a
+// scope with no `run` carries no `requires` (docs/design/land.md section 7.1).
 func testGraphProblems(config Config) []string {
 	var found []string
 	test := objectOf(config["test"])
-	scopes := objectOf(test["scopes"])
-	for _, scopeName := range sortedKeys(scopes) {
-		scope := objectOf(scopes[scopeName])
-		if (has(scope, "steps") || has(scope, "deps")) && !has(objectOf(config["receipts"]), "toolchain") {
-			found = append(found, "`receipts.toolchain` must be written out when a scope lists steps or deps: the commands whose output names the toolchain (`[[\"go\", \"version\"]]`), part of each step's key, or [] for none")
-			break
-		}
-	}
 	if schema, _ := numberOf(config["jackstay_schema"]); schema < 3 {
 		return found
 	}

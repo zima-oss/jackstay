@@ -1,6 +1,6 @@
 // Package scopes is `jst test <scope>`: one vocabulary of test scopes declared in the `test`
 // section of a project's jackstay.json, a judge (internal/judge), a timeout that ends the whole run, per
-// class durations and the `quick` scope's `{slow}`, a gate of steps with resume, marks and bars,
+// class durations and the `quick` scope's `{slow}`, a gate of steps,
 // and declared leftovers (docs/design/testing.md, "Details of the behaviour"; docs/design/implementation.md
 // sections 5.2 and 9). Nothing here names a project.
 //
@@ -47,12 +47,10 @@ const (
 	statusRefused  = 2
 
 	outcomeTimedOut = "timed-out"
-	outcomeResumed  = "resumed"
-	outcomeRefused  = "refused"
 )
 
 // Usage is how `jst test <scope>` and its siblings are called.
-const Usage = "usage: jst test <scope> [ARGS…] [--no-reuse] [--wait S] [--base REF] [--lock|--no-lock] [--resume] [--keep-going] [--commit REV]\n" +
+const Usage = "usage: jst test <scope> [ARGS…] [--no-reuse] [--wait S] [--base REF] [--lock|--no-lock] [--keep-going] [--commit REV]\n" +
 	"       jst test changed [BASE..REV] | jst test auto [--base REF] | jst test uncovered [--commit REV] | jst test ci | jst test list | jst test plan <scope> [ARGS…] | jst test last [--scope S] | jst test -- COMMAND …"
 
 // unreadableVariable makes jackstay act as though the process table could not be read (tests only).
@@ -72,7 +70,6 @@ func init() {
 type options struct {
 	noReuse   bool
 	lock      *bool
-	resume    bool
 	keepGoing bool
 	project   string
 	base      string
@@ -87,6 +84,9 @@ type refusal struct{ words string }
 func (problem *refusal) Error() string { return problem.words }
 
 func refused(words string) error { return &refusal{words: words} }
+
+// resumeRemoved is what `--resume` gets: it went in 0.6.0, with the gate's marks and bars.
+const resumeRemoved = "--resume was removed in jackstay 0.6.0: a gate runs every node each time; reuse of passes comes with the cache of jackstay 1"
 
 var secondsWord = regexp.MustCompile(`^\d+(\.\d+)?$`)
 
@@ -104,7 +104,7 @@ func parse(args []string) (scope string, rest []string, chosen options, err erro
 			locked := word == "--lock"
 			chosen.lock = &locked
 		case word == "--resume":
-			chosen.resume = true
+			return "", nil, chosen, refused(resumeRemoved)
 		case word == "--keep-going":
 			chosen.keepGoing = true
 		case (word == "--project" || word == "--base" || word == "--wait" || word == "--commit") && index+1 < len(args):
@@ -320,9 +320,6 @@ func (base *tester) scope(args []string) int {
 	if err == nil && name == "" {
 		err = refused("which scope? " + Usage)
 	}
-	if err == nil && chosen.commit != "" && chosen.resume {
-		err = refused("--commit is a whole run on a clean copy of the commit: it takes no --resume")
-	}
 	var signals *supervise.Signals
 	if err == nil && chosen.commit != "" {
 		chosen.noReuse = true
@@ -410,8 +407,8 @@ func (base *tester) scope(args []string) int {
 			err = refused("the pinned gate must list its steps")
 		case len(depsOf(entry)) > 0 && namesRefusal(name, entry, rest) != nil:
 			err = namesRefusal(name, entry, rest)
-		case len(depsOf(entry)) == 0 && (chosen.resume || chosen.keepGoing):
-			err = refused("--resume and --keep-going are for a scope with deps (or that lists steps)")
+		case len(depsOf(entry)) == 0 && chosen.keepGoing:
+			err = refused("--keep-going is for a scope with deps (or that lists steps)")
 		}
 	}
 	if err != nil {

@@ -11,13 +11,11 @@ status alone: a test command may itself end with 2 or 77.
 
 | Outcome | Meaning |
 |---|---|
-| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A gate: every step `passed`, `exited-0`, `resumed` or `skipped`, and at least one ran now; a gate of exit-judged steps alone can pass with no test counted, so read each step's outcome on the same line |
+| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A gate: every step `passed`, `exited-0` or `skipped`, and at least one ran; a gate of exit-judged steps alone can pass with no test counted, so read each step's outcome on the same line |
 | `exited-0` | ended 0, but nothing counted its tests: **not a pass** |
 | `reused` | nothing ran: a receipt for this tree exists and reuse is on |
-| `resumed` | a gate under `--resume` where every step was skipped: nothing ran, not a pass |
 | `failed` | ended non-zero, or a veto line was seen |
 | `not-started` | `jackstay.json` or the lock could not be used, or a `requires` check failed; nothing ran |
-| `refused` | `--resume` met a step that failed before on this same tree |
 | `skipped` | the scope asked for cannot run on this system (its `systems`); in a gate, a step so is ignored |
 | `not-run` | in a gate, a step whose dep did not pass, or one after a failure ended the run |
 | `needs-other-system` | `jst test changed`: a test of the change runs on no CI system and not on this machine |
@@ -107,14 +105,12 @@ The keys of a scope or a step:
 - `requires`: checks run first; each has 60 seconds unless it gives its own `timeout`.
 - `env`, `lock`, `when`.
 
-A scope that lists `steps` or `deps` needs `receipts.toolchain` written out, even as an empty list.
 
 ### The gate
 
 ```sh
 jst test gate
 jst test gate --keep-going
-jst test gate --resume
 jst test gate --commit HEAD
 ```
 
@@ -122,8 +118,8 @@ A run is a graph: each scope or step once, after its `deps`, one at a time, in t
 declarations give (depth first, deps in their declared order). A step two lists share runs once. The
 first that does not pass ends the run, and what comes after it is `not-run`; `--keep-going` runs
 every step whose deps passed and reports each. A step whose `systems` leave this machine out is
-`skipped`, which stops nothing. `--resume` skips the steps that passed before on this same clean
-tree. `--commit HEAD` runs on a clean copy of HEAD that jackstay makes and removes.
+`skipped`, which stops nothing. Every run runs every step: a gate that stopped or failed runs in
+full again. `--commit HEAD` runs on a clean copy of HEAD that jackstay makes and removes.
 
 ```text
 jst test: outcome=passed (gate, 0.9 s: lint=exited-0, full=passed)
@@ -137,9 +133,8 @@ jst test: outcome=failed (gate failed at full, exit 1, 0.9 s: lint=exited-0, ful
 - `jst check` refuses a cycle of deps, an unknown dep, `steps` with `deps`, a dep that needs test
   names, and, in schema 3, `requires` on a scope with no `run`: the check goes to the dep that
   needs it. A schema-2 list's own `requires` run once, before anything, when the list is in the run.
-- `--resume` skips a step only on a clean checkout whose key (HEAD, the step's definition, the
-  listed environment and toolchain, the refs it depends on) matches a step that passed. A step that
-  failed on this tree is not run again: the gate ends `refused` until the tree changes.
+- `--resume` and the `resume` key were removed in 0.6.0: `--resume` is refused (2), and
+  `jst check` refuses the key. Reuse of passes comes with the cache of jackstay 1.
 - `--commit REV` runs on a clone that shares the repository's objects, so your uncommitted work
   cannot make it pass or fail. It has no ignored files (`node_modules`, build folders): a step that
   needs them builds them.
@@ -233,7 +228,7 @@ jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; c
 - jackstay schedules each scope once but cannot see inside a command: scopes CI runs on one system
   must test disjoint sets, or a test runs twice.
 - Not in 0.6.0: the cache by input hash, planned for a later version ([land.md](../design/land.md)
-  section 7.3); `--resume` and its marks work as above, per node. Not built yet: the CI workflow
+  section 7.3), which is also when a gate will reuse earlier passes. Not built yet: the CI workflow
   `jst adopt` writes for these jobs.
 
 ## Structured test reports
@@ -475,7 +470,7 @@ run-record parts have anything to read. Every flag: `jst baseline --help`.
 | `timed-out` | The scope's `timeout` ended the whole tree. Raise it, or split the scope. |
 | A scope name refused | Only the six names, or `x-…`. `jst test list` shows yours. |
 | `gave-up` (75) | The lock was busy past `--wait`; `jst lock status` shows who holds it. |
-| `jst test` says to run it outside the sandbox | It records evidence (the run log, receipts, gate marks) that Claude Code's sandbox may only read ([Claude Code](claude-code.md#the-sandbox)). Run it outside the sandbox. |
+| `jst test` says to run it outside the sandbox | It records evidence (the run log, receipts) that Claude Code's sandbox may only read ([Claude Code](claude-code.md#the-sandbox)). Run it outside the sandbox. |
 | `jst lock` exit 2 inside an agent sandbox | The lock is not among the folders the sandbox may write: run `jst setup` ([Claude Code](claude-code.md#the-sandbox)). |
 
 The design: [testing.md](../design/testing.md), and for receipts, the lock and `jst baseline`,

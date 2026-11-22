@@ -729,7 +729,7 @@
           "type": "array"
         },
         "toolchain": {
-          "description": "Adds what each of these commands prints (`[[\"go\", \"version\"]]`) to the key; reuse and scope steps need it written out, even empty.",
+          "description": "Adds what each of these commands prints (`[[\"go\", \"version\"]]`) to the key; reuse needs it written out, even empty.",
           "items": {
             "items": {
               "pattern": "\\S",
@@ -1201,10 +1201,6 @@
                 },
                 "type": "array"
               },
-              "resume": {
-                "description": "Lets `jst test gate --resume` skip this step after a pass on the same tree; false always runs it (default true).",
-                "type": "boolean"
-              },
               "run": {
                 "description": "Runs these words, with placeholders such as `{tests}`, `{base}`, `{slow}` and `{report}` filled in.",
                 "items": {
@@ -1422,9 +1418,6 @@
                   "type": "object"
                 },
                 "type": "array"
-              },
-              "resume": {
-                "type": "boolean"
               },
               "run": {
                 "items": {

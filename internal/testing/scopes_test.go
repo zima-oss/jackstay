@@ -107,8 +107,10 @@ func TestAnUndeclaredScopeIsRefusedWithTheDeclaredOnes(t *testing.T) {
 	w.expectStatus(w.jst("full", "--frobnicate"), 2)
 	w.expectSaid("unknown option --frobnicate")
 	w.expectStatus(w.jst("full", "--wait", "soon"), 2)
+	w.expectStatus(w.jst("full", "--keep-going"), 2)
+	w.expectSaid("--keep-going is for a scope with deps")
 	w.expectStatus(w.jst("full", "--resume"), 2)
-	w.expectSaid("--resume and --keep-going are for a scope with deps")
+	w.expectSaid("--resume was removed in jackstay 0.6.0")
 }
 
 func TestFocusedNeedsNamesAndOthersTakeNone(t *testing.T) {
