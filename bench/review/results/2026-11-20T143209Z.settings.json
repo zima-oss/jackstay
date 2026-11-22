@@ -1,0 +1,6 @@
+{
+  "codex-model": "gpt-6.2-sol",
+  "codex-effort": "medium",
+  "claude-model": "opus[1m]",
+  "claude-effort": ""
+}

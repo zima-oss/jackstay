@@ -20,8 +20,9 @@ jst doctor
 ```
 
 Each problem it reports is followed by a `fix:` line. If you use Claude Code with its sandbox on,
-let the sandbox write `~/.jackstay` ([Claude Code](claude-code.md#the-sandbox)), or runs inside
-sessions are not recorded. To read the script first, or to install another way:
+run `jst setup`: it lets the sandbox write the folders jst needs there and keeps evidence such as
+receipts read-only to it, so `jst test` and `jst review` run outside the sandbox
+([Claude Code](claude-code.md#the-sandbox)). To read the script first, or to install another way:
 [Install](install.md).
 
 ## 2. Adopt a project

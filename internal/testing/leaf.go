@@ -202,6 +202,9 @@ func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bo
 	if err != nil {
 		return proj.notStarted(err.Error())
 	}
+	if path := receipts.UnwritableEvidence(proj.name); path != "" {
+		return proj.notStarted(receipts.EvidenceRefusal(path))
+	}
 	run := &leafRun{project: proj, leaf: chosen, words: found, gate: gate,
 		runCwd: filepath.Clean(filepath.Join(proj.root, chosen.cwd))}
 	if info, statErr := os.Stat(run.runCwd); statErr != nil || !info.IsDir() {
@@ -255,7 +258,9 @@ func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bo
 			barKey, _ = proj.stepKey(chosen, found.argv, found.base, relative)
 			if barKey != "" {
 				// It runs again: a stop now must not leave the old pass standing.
-				proj.removeMark(barKey)
+				if err := proj.removeMark(barKey); err != nil {
+					return proj.notStarted(err.Error())
+				}
 			}
 		}
 	}
@@ -279,7 +284,7 @@ func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bo
 		// --resume must not stand on an earlier mark of it, whatever the run left in the checkout.
 		proj.writeBar(barKey, chosen.name, ended)
 	case barKey != "" && ended.outcome != receipts.OutcomePassed && ended.outcome != receipts.OutcomeExited0:
-		proj.removeMark(barKey) // the latest run on this tree gave no verdict
+		_ = proj.removeMark(barKey) // the latest run on this tree gave no verdict (removed before it ran)
 	}
 	return proj.ended(ended, held)
 }

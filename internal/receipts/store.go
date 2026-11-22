@@ -97,6 +97,13 @@ func numberOf(value any) (float64, bool) {
 	return 0, false
 }
 
+// RemoveFile removes a receipt or a gate mark a run is about to replace; tests make it fail, as a
+// protected file would.
+var RemoveFile = os.Remove
+
+// truncateFile empties a receipt that cannot be removed; tests make it fail with RemoveFile.
+var truncateFile = os.Truncate
+
 func (store Store) receiptPath(key string) string { return filepath.Join(store.Folder, key+".json") }
 
 // failurePrefix is the name every failure note of the key begins with.
@@ -163,14 +170,14 @@ func (store Store) Remove(key string) (bool, error) {
 		return false, nil
 	}
 	place := store.receiptPath(key)
-	err := os.Remove(place)
+	err := RemoveFile(place)
 	if err == nil {
 		return true, nil
 	}
 	if errors.Is(err, fs.ErrNotExist) {
 		return false, nil
 	}
-	if truncateErr := os.Truncate(place, 0); truncateErr == nil {
+	if truncateErr := truncateFile(place, 0); truncateErr == nil {
 		return true, nil
 	}
 	return false, fmt.Errorf("the receipt %s can be neither removed nor emptied; remove it by hand", place)

@@ -29,6 +29,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/adopt/templates"
 	"github.com/zima-oss/jackstay/internal/changes"
 	"github.com/zima-oss/jackstay/internal/check"
+	"github.com/zima-oss/jackstay/internal/choices"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
@@ -68,6 +69,13 @@ type Options struct {
 	// Offered is the answer offered first when nobody chose (the machine's, from `jst setup`;
 	// "": merge-when-green, the recommended one).
 	Offered string
+	// Answers are --reviewer and --chat, by question ID; they are written even over the project's
+	// value.
+	Answers map[string]string
+	// Ask puts a question the project's file does not settle to a person (nil: nobody to ask, as
+	// without a terminal); Defaults are the machine's answers it offers first (jst setup).
+	Ask      func(question choices.Question, offered string) (string, error)
+	Defaults choices.Defaults
 }
 
 // SplitsSettings says whether the plan's changes touch jackstay.json and another file: one pull
@@ -134,6 +142,8 @@ type Plan struct {
 	Conflicts     []Conflict  `json:"conflicts"`
 	Exceptions    []Exception `json:"exceptions"`
 	Notes         []string    `json:"notes"`
+	// Choices are the reviewer and chat answers this project gets, and where each came from.
+	Choices []Choice `json:"choices"`
 	// Blockers are what keeps the next step of an upgrade from being planned (docs/design/land.md
 	// section 5): the project is not up to date while one stands.
 	Blockers []string `json:"blockers,omitempty"`
@@ -143,6 +153,19 @@ type Plan struct {
 	profile *profile.Profile
 	// asksAutonomy says the plan writes a new `land` section whose autonomy nobody chose.
 	asksAutonomy bool
+	// asksChoices says a question would be asked at a terminal: nothing settles it.
+	asksChoices bool
+}
+
+// Choice is one question's answer for the project.
+type Choice struct {
+	ID    string `json:"id"`
+	Key   string `json:"key"`
+	Value string `json:"value"`
+	// From is where the value came from: a flag, the person asked, the project's file, the
+	// profile's defaults; or, when nothing was written, what applies and how to choose.
+	From    string `json:"from"`
+	Written bool   `json:"written"`
 }
 
 type fileInput struct {
@@ -201,7 +224,7 @@ type planner struct {
 // that reads a recorded profile (Make, BlockOf) reads it from the main checkout.
 func newPlanner(options Options, root string) *planner {
 	return &planner{options: options, root: root, base: mainFolder(root),
-		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}, inputs: map[string]fileInput{}}}
+		plan: &Plan{Root: root, Changes: []Change{}, Conflicts: []Conflict{}, Exceptions: []Exception{}, Notes: []string{}, Choices: []Choice{}, inputs: map[string]fileInput{}}}
 }
 
 // Make computes the plan; an error is a usage or reading problem (exit 2). For a project upgrading
@@ -481,6 +504,10 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		document = withoutKey(document, "land")
 	}
 	planner.document = document
+	// The answers come first: a section one adds can make a workflow need the pin settled below.
+	if err := planner.choose(original, document); err != nil {
+		return err
+	}
 	if err := planner.settle(original, chosen); err != nil {
 		return err
 	}
@@ -489,6 +516,58 @@ func (planner *planner) prospective(original *jsondoc.Object, chosen *profile.Pr
 		return err
 	}
 	return planner.settle(original, chosen)
+}
+
+// choose settles the reviewer and chat questions (W-090): a flag, else the project's own value, else
+// the profile's, else the person's answer when there is a person to ask, else nothing is written and
+// the plan says what applies and how to choose.
+func (planner *planner) choose(original, document *jsondoc.Object) error {
+	// A schema-3 question is asked only of a file that is schema 3 already: the steps that take a
+	// project there (land.md section 5) are adopt's own, and the next apply asks it (W-096).
+	originalSchema, _ := original.Get("jackstay_schema")
+	beforeSchema3 := fmt.Sprint(originalSchema) != fmt.Sprint(config.Schema)
+	for _, question := range choices.All() {
+		choice := Choice{ID: question.ID, Key: question.Key.Name()}
+		ownValue, own := question.Key.Read(original)
+		fromProfile, profiled := question.Key.Read(document)
+		answer, given := planner.options.Answers[question.ID]
+		switch {
+		case given && question.Schema3 && beforeSchema3:
+			return &UsageError{fmt.Sprintf("--%s: %s is a schema-3 key, and jackstay.json is not schema 3 yet: give it to "+
+				"the first jst adopt --apply after the file is schema 3", question.ID, question.Key.Name())}
+		case given:
+			choice.Value, choice.From, choice.Written = answer, "--"+question.ID, true
+		case own:
+			choice.Value, choice.From = ownValue, "this project's jackstay.json"
+		case profiled:
+			choice.Value, choice.From = fromProfile, "the profile's defaults"
+		case question.Schema3 && beforeSchema3:
+			choice.Value = question.Recommended()
+			choice.From = fmt.Sprintf("not asked: %s is asked by the first apply after jackstay.json is schema 3", question.Key.Name())
+		case planner.options.Ask != nil:
+			offered, _ := choices.Offered(question, "", false, planner.options.Defaults)
+			asked, err := planner.options.Ask(question, offered)
+			if err != nil {
+				return &UsageError{fmt.Sprintf("%s: %v", question.ID, err)}
+			}
+			choice.Value, choice.From, choice.Written = asked, "asked", true
+		default:
+			// Nothing is written, so the key stays absent and its default applies; the machine's
+			// answer is only what a terminal apply would offer.
+			planner.plan.asksChoices = true
+			choice.Value = question.Recommended()
+			choice.From = fmt.Sprintf("not written: %s applies while %s is absent; choose with `jst adopt --apply --%s VALUE` "+
+				"(%s) or run it in a terminal", choice.Value, question.Key.Name(), question.ID, question.Values())
+			if offered, from := choices.Offered(question, "", false, planner.options.Defaults); offered != choice.Value {
+				choice.From += fmt.Sprintf(", which offers %s (%s)", offered, from)
+			}
+		}
+		if choice.Written {
+			question.Key.Write(document, choice.Value)
+		}
+		planner.plan.Choices = append(planner.plan.Choices, choice)
+	}
+	return nil
 }
 
 // withoutKey is the object without one key, the others in their order.

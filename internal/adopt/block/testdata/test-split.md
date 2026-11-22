@@ -7,7 +7,9 @@
 
 - **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`
   (`jst test list` names them and when each is due). Only `passed` is a pass: read the last
-  `jst test:` line. After a failure, `jst test last`, not a rerun. No scope fits: `jst test -- COMMAND`.
+  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its
+  output file). No scope fits: `jst test -- COMMAND`.
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Where tests run**: CI runs x-docs, x-go on Linux; x-ui on macOS and Linux and is the gate.
   Before a pull request: `jst test changed`. Before an install or a tag: `jst test uncovered`.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a

@@ -207,8 +207,13 @@ func Diagnose(inputs Inputs) Report {
 	checkLayout(&report, inputs)
 	checkLogs(&report, inputs)
 	checkMarks(&report, inputs)
-	if blocked, fix := SandboxBlocks(inputs.Settings, inputs.Home); blocked != "" {
+	projects := SandboxProjects(inputs.Home, inputs.Expected)
+	report.Facts["sandbox_projects"] = projects
+	if blocked, fix := SandboxBlocks(inputs.Settings, inputs.Home, projects); blocked != "" {
 		report.problem("sandbox-blocks-state", blocked, fix)
+	}
+	if exposed, fix, _ := SandboxWritesEvidence(inputs.Settings, inputs.Home, projects); exposed != "" {
+		report.problem("sandbox-writes-evidence", exposed, fix)
 	}
 	checkLock(&report, inputs)
 	checkAdoption(&report, inputs)
@@ -500,10 +505,24 @@ func checkLock(report *Report, inputs Inputs) {
 		return
 	}
 	report.Facts["lock"] = filepath.Join(inputs.LockFolder, flock.FileName)
-	if !canWriteLockFolder(inputs.LockFolder) {
-		report.problem("lock-unwritable", fmt.Sprintf("%s is not writable here: no heavy run can start (inside an agent sandbox this is expected).", inputs.LockFolder),
-			fmt.Sprintf("let this account write %s; inside Claude Code's sandbox, add \"~/.jackstay\" to sandbox.filesystem.allowWrite in %s", inputs.LockFolder, inputs.Settings))
+	lock := filepath.Join(inputs.LockFolder, flock.FileName)
+	if !canWriteLock(lock) && !canWriteLockFolder(inputs.LockFolder) {
+		report.problem("lock-unwritable", fmt.Sprintf("%s is not writable here: no heavy run can start.", lock),
+			fmt.Sprintf("let this account write %s; inside Claude Code's sandbox, `jst setup` adds the lock and its queue to "+
+				"sandbox.filesystem.allowWrite in %s", inputs.LockFolder, inputs.Settings))
 	}
+}
+
+// canWriteLock says the lock file and its queue folder exist and may be written: what a sandbox
+// that grants only them (SandboxGrants) allows, while their folder stays read-only.
+func canWriteLock(lock string) bool {
+	info, err := os.Stat(lock)
+	if err != nil || !info.Mode().IsRegular() || unix.Access(lock, unix.W_OK) != nil {
+		return false
+	}
+	queue := flock.QueueFolder(lock)
+	info, err = os.Stat(queue)
+	return err == nil && info.IsDir() && unix.Access(queue, unix.W_OK|unix.X_OK) == nil
 }
 
 func canWriteLockFolder(folder string) bool {

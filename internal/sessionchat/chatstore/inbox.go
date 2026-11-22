@@ -36,6 +36,8 @@ type InboxResult struct {
 	NoticesMore int           `json:"notices_more,omitempty"`
 	More        int           `json:"more,omitempty"`
 	NextCursor  string        `json:"next_cursor,omitempty"`
+	// NoticeRefs are the notices returned, for MarkShown once the result is handed over.
+	NoticeRefs []NoticeRef `json:"-"`
 }
 
 // cursor is a page's position: after (rank, id), or inside the body of id from offset. Filters is a
@@ -139,7 +141,6 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 		if err != nil {
 			return err
 		}
-		// Sized with every collected notice; finish keeps only those it could mark shown.
 		result.Notices, result.NoticesMore = noticeLines(notices), noticesMore
 		page := pager{budget: ResultBound, base: marshalCompact(result)}
 		start := 0
@@ -170,9 +171,7 @@ func (store *Store) Inbox(ctx context.Context, key string, input InboxInput) (In
 					result.Messages[entry.row].State = updated.State
 				}
 			}
-			shown := transaction.markShown(hash, notices)
-			result.Notices = noticeLines(shown)
-			result.NoticesMore += len(notices) - len(shown)
+			result.NoticeRefs = notices
 			return nil
 		}
 		for index := start; index < len(visible) && len(result.Messages) < input.Limit; index++ {

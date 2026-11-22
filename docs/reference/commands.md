@@ -1017,10 +1017,13 @@ example: jst uninstall
 Plan and apply selected machine setup repairs.
 
 ```text
-usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE
+usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE | jst setup --reviewer WHO
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
-POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
+POSIX shell profile, and let Claude Code's enabled sandbox write only the folders of the jackstay
+home jst writes from it (the journal, the lock, chat, jobs, the brief, ids, the trash), replacing
+an entry that names the whole home. Evidence (receipts, gate marks, review rounds, the run log)
+stays read-only to the sandbox; jst test and jst review run outside it.
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
   --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
@@ -1028,16 +1031,18 @@ POSIX shell profile and allow jackstay's state folder in Claude Code's enabled s
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
   --autonomy MODE keep merge-when-green or prepare as this machine's answer to who merges
+  --reviewer WHO  keep codex, claude-code or codex,claude-code as this machine's reviewer
 
-Once per machine, a terminal is also asked who merges a project's changes: the agent when the
-required checks pass, or a person. `jst adopt` offers that answer first when it writes a project's
-land section; the project's jackstay.json decides.
+Once per machine, a terminal is also asked who merges a project's changes (the agent when the
+required checks pass, or a person) and which reviewer runs jst review (Codex recommended).
+`jst adopt` offers these answers first; the project's jackstay.json decides.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
 terminal offers apply, show and skip. An existing profile is copied to a
-unique backup beside it before replacement. Unsupported shells and conflicting profiles are
-left for the owner. Open a new shell after applying a PATH repair.
+unique backup beside it before replacement; the settings file keeps its keys in order. A profile
+or settings file that is a symbolic link is named and left for the owner, as are unsupported
+shells and conflicting profiles. Open a new shell after applying a PATH repair.
 
 exit: 0 planned or applied; 1 an applicable repair failed; 2 the request is wrong.
 
@@ -1074,7 +1079,7 @@ Bring jackstay.json, the AGENTS block, the guard hook and workflows to jackstay'
 
 ```text
 usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--autonomy MODE] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--autonomy MODE] [--reviewer WHO] [--chat on|off] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Works on the project around DIR (default: here) and changes nothing else; what it must not decide
@@ -1088,6 +1093,12 @@ is a conflict.
                    --apply again on the merged base
   --autonomy MODE  merge-when-green or prepare: who merges, for a new land section (at a
                    terminal --apply asks; without one it needs this flag); an existing one is kept
+  --reviewer WHO   codex (recommended), claude-code, or codex,claude-code: who runs jst review
+                   (review.use); written over the project's value
+  --chat on|off    the agent chat here (chat.enabled, once jackstay.json is schema 3; off
+                   recommended); written over the project's value. Without these, --apply at a terminal asks what jackstay.json does not
+                   answer, offering this machine's answer from jst setup; without a terminal it
+                   writes none and the plan's choices say what applies
   --profile PATH   an organisation's profile; --apply records it in jackstay.json
   --profile-sha256 DIGEST  the exact bundle bytes to accept; recorded by --apply
   --json           the plan as one JSON object

@@ -1,0 +1,423 @@
+{
+  "ranges": [
+    {
+      "name": "orders",
+      "step": "step1",
+      "subject": "Read orders from files and reserve their lines"
+    },
+    {
+      "name": "cache",
+      "step": "step2",
+      "subject": "Cache lookups and release reserved stock"
+    },
+    {
+      "name": "pages",
+      "step": "step3",
+      "subject": "Pages, retries and an export to a report"
+    }
+  ],
+  "defects": [
+    {
+      "id": "A1",
+      "range": "orders",
+      "file": "order.go",
+      "symbol": "ParseLine",
+      "words": [
+        "index out of range",
+        "out of range",
+        "off-by-one",
+        "off by one",
+        "panic",
+        "<=",
+        "bounds",
+        "len(fields)",
+        "one past the end",
+        "past the end"
+      ],
+      "what": "the note loop reads fields[len(fields)]: every line with two or more fields panics"
+    },
+    {
+      "id": "A2",
+      "range": "orders",
+      "file": "order.go",
+      "symbol": "ParseLine",
+      "words": [
+        "atoi",
+        "quantit",
+        "non-numeric",
+        "not a number",
+        "as zero",
+        "as 0",
+        "quantity 0",
+        "parse error",
+        "conversion"
+      ],
+      "what": "a quantity that is not a number is read as 0 with no error"
+    },
+    {
+      "id": "A3",
+      "range": "orders",
+      "file": "order.go",
+      "symbol": "LoadOrder",
+      "words": [
+        "close",
+        "leak",
+        "descriptor",
+        "file handle",
+        "left open",
+        "never closed",
+        "not closed"
+      ],
+      "what": "the opened file is never closed"
+    },
+    {
+      "id": "A4",
+      "range": "orders",
+      "file": "stock.go",
+      "symbol": "ReserveLines",
+      "words": [
+        "capacity",
+        "bypass",
+        "skips reserve",
+        "without reserve",
+        "negative",
+        "overbook",
+        "over-reserve",
+        "oversell",
+        "without the lock",
+        "without locking",
+        "unsynchronized",
+        "data race",
+        "mutex",
+        "race",
+        "lose updates",
+        "lost update",
+        "corrupt",
+        "more stock than",
+        "nonpositive",
+        "non-positive",
+        "reservation totals"
+      ],
+      "what": "lines are added to Reserved without Reserve: no capacity check, no lock, negative quantities accepted"
+    },
+    {
+      "id": "B1",
+      "range": "cache",
+      "file": "cache.go",
+      "symbol": "Get",
+      "words": [
+        "race",
+        "unsynchronized",
+        "without the mutex",
+        "without locking",
+        "without a lock",
+        "without the lock",
+        "concurrent",
+        "mutex",
+        "holding the lock"
+      ],
+      "what": "Get reads the map without the mutex Put holds: a data race"
+    },
+    {
+      "id": "B2",
+      "range": "cache",
+      "file": "cache.go",
+      "symbol": "Get",
+      "words": [
+        "inverted",
+        "reversed",
+        "backwards",
+        "wrong direction",
+        "returns expired",
+        "fresh entries",
+        "treated as expired",
+        "served after",
+        "after expiry",
+        "never a hit",
+        "always a miss",
+        "reject fresh",
+        "accept expired",
+        "only after they expire",
+        "expired values"
+      ],
+      "what": "the expiry test is inverted: fresh entries are misses and expired ones hits"
+    },
+    {
+      "id": "B3",
+      "range": "cache",
+      "file": "stock.go",
+      "symbol": "Release",
+      "words": [
+        "negative",
+        "below zero",
+        "more than",
+        "underflow",
+        "over-release",
+        "exceed",
+        "double release",
+        "above capacity",
+        "validat",
+        "corrupt",
+        "unchecked",
+        "invalid release",
+        "oversell",
+        "overselling",
+        "unavailable stock"
+      ],
+      "what": "Release accepts any count: Reserved can go below zero and Free above Capacity"
+    },
+    {
+      "id": "C1",
+      "range": "pages",
+      "file": "page.go",
+      "symbol": "Page",
+      "words": [
+        "last page",
+        "partial",
+        "final page",
+        "short page",
+        "truncat",
+        "drops",
+        "dropped",
+        "clamp",
+        "remaining items"
+      ],
+      "what": "the last, partial page is returned as nil instead of its items"
+    },
+    {
+      "id": "C2",
+      "range": "pages",
+      "file": "retry.go",
+      "symbol": "Retry",
+      "words": [
+        "return nil",
+        "returns nil",
+        "last error",
+        "swallow",
+        "reports success",
+        "lost error",
+        "discards the error",
+        "success after",
+        "nil after"
+      ],
+      "what": "after every attempt failed it returns nil, not the last error"
+    },
+    {
+      "id": "C3",
+      "range": "pages",
+      "file": "export.go",
+      "symbol": "Export",
+      "words": [
+        "injection",
+        "shell",
+        "sh -c",
+        "quote",
+        "quoting",
+        "escape",
+        "sanitiz",
+        "untrusted",
+        "metacharacter"
+      ],
+      "what": "the pattern and paths go into a shell command line: command injection"
+    }
+  ],
+  "extras": [
+    {
+      "id": "E1",
+      "range": "orders",
+      "file": "order.go",
+      "symbol": "LoadOrder",
+      "words": [
+        "64",
+        "long line",
+        "longer",
+        "token too long",
+        "Buffer",
+        "scanner",
+        "long notes",
+        "long lines",
+        "long note"
+      ],
+      "what": "bufio.Scanner stops at lines over 64 KiB"
+    },
+    {
+      "id": "E2",
+      "range": "pages",
+      "file": "retry.go",
+      "symbol": "Retry",
+      "words": [
+        "final",
+        "after the last",
+        "last attempt",
+        "needless",
+        "extra sleep",
+        "waits after"
+      ],
+      "what": "Retry sleeps once more after its final attempt"
+    },
+    {
+      "id": "E3",
+      "range": "pages",
+      "file": "page.go",
+      "symbol": "Page",
+      "words": [
+        "overflow",
+        "large page",
+        "huge",
+        "beyond",
+        "start >",
+        "large",
+        "pagination inputs",
+        "pagination arguments"
+      ],
+      "what": "number*size can overflow, or start past the end panics"
+    },
+    {
+      "id": "E4",
+      "range": "pages",
+      "file": "export.go",
+      "symbol": "Export",
+      "words": [
+        "no match",
+        "no lines",
+        "exit status 1",
+        "exit code 1",
+        "nothing matches",
+        "zero matches",
+        "empty result",
+        "empty match"
+      ],
+      "what": "grep exits 1 when nothing matches, reported as a failure"
+    },
+    {
+      "id": "E5",
+      "range": "cache",
+      "file": "stock.go",
+      "symbol": "ReserveLines",
+      "words": [
+        "race",
+        "lock",
+        "mutex",
+        "concurrent",
+        "lose an update",
+        "while releasing"
+      ],
+      "what": "ReserveLines (from the orders range) races with Release"
+    },
+    {
+      "id": "E6",
+      "range": "orders",
+      "file": "stock.go",
+      "symbol": "ReserveLines",
+      "words": [
+        "partial",
+        "partly",
+        "partway",
+        "half-reserved",
+        "earlier lines",
+        "earlier reservations",
+        "rollback",
+        "roll back",
+        "atomic",
+        "left in place",
+        "leaves",
+        "leave stock reserved",
+        "failed order"
+      ],
+      "what": "a failed order leaves its earlier lines reserved"
+    },
+    {
+      "id": "E7",
+      "range": "orders",
+      "file": "stock.go",
+      "symbol": "ReserveLines",
+      "words": [
+        "nil stock",
+        "nil entry",
+        "nil pointer",
+        "nil"
+      ],
+      "what": "a nil stock entry panics"
+    },
+    {
+      "id": "E8",
+      "range": "orders",
+      "file": "order.go",
+      "symbol": "ParseLine",
+      "words": [
+        "omit its item",
+        "empty item",
+        "no item",
+        "missing item"
+      ],
+      "what": "a line with an empty item parses"
+    },
+    {
+      "id": "E9",
+      "range": "pages",
+      "file": "export.go",
+      "symbol": "Export",
+      "words": [
+        "option",
+        "dash",
+        "begin with -",
+        "operands",
+        "spaces"
+      ],
+      "what": "grep reads a pattern or path as an option; paths with spaces split"
+    },
+    {
+      "id": "E10",
+      "range": "pages",
+      "file": "export.go",
+      "symbol": "Export",
+      "words": [
+        "erase",
+        "destroy",
+        "truncat",
+        "previous report",
+        "existing report"
+      ],
+      "what": "a failed export truncates the previous report"
+    },
+    {
+      "id": "E11",
+      "range": "pages",
+      "file": "page.go",
+      "symbol": "Page",
+      "words": [
+        "alias",
+        "backing array",
+        "shares the"
+      ],
+      "what": "the returned page aliases the caller's slice"
+    },
+    {
+      "id": "E12",
+      "range": "cache",
+      "file": "cache.go",
+      "symbol": "Put",
+      "words": [
+        "never evicted",
+        "never removed",
+        "accumulate",
+        "grows without bound",
+        "without bound",
+        "without a bound"
+      ],
+      "what": "expired entries are never evicted: the cache grows without bound"
+    },
+    {
+      "id": "E13",
+      "range": "cache",
+      "file": "cache.go",
+      "symbol": "Put",
+      "words": [
+        "zero-value",
+        "nil map",
+        "nil clock"
+      ],
+      "what": "a zero-value Cache panics on Put (nil map, nil clock)"
+    }
+  ]
+}

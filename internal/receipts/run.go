@@ -123,6 +123,9 @@ func (base *tester) raw(asked request) int {
 	if run.project = asked.project; run.project == "" {
 		run.project = config.ProjectName(root, loaded, run.here)
 	}
+	if path := UnwritableEvidence(run.project); path != "" {
+		return run.notStarted(EvidenceRefusal(path))
+	}
 	run.entry = CommandEntry(run.section, asked.argv)
 	evidence, err := NewEvidence(run.entry)
 	if err != nil {
@@ -493,7 +496,8 @@ func (run *session) command(evidenceJudge *Evidence, key Key, keyErr error, held
 		// a run that is stopped or fails leaves none behind.
 		removed, err := run.store.Remove(key.Value)
 		if err != nil {
-			run.say("%v", err)
+			// A failure could not undo this receipt: the run does not start.
+			return run.notStarted(err.Error())
 		}
 		did.setAside = removed
 	}
@@ -788,8 +792,11 @@ func (run *session) last(did *ran, written bool, words string) {
 	switch {
 	case did.kept != nil && !whole:
 		run.say("the kept output is not whole (writing it failed): %s", did.kept.Path)
-	case did.kept != nil:
+	case did.kept != nil && written:
 		run.say("the whole output: %s  (`jst test last` shows this again)", did.kept.Path)
+	case did.kept != nil:
+		// Without its run-log line `jst test last` cannot find this run.
+		run.say("the whole output: %s", did.kept.Path)
 	}
 	if !written {
 		run.notLogged("this run")

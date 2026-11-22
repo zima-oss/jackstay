@@ -6,7 +6,9 @@
 ### Instead of a hand-written command
 
 - **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test -- COMMAND`.
-  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`.
+  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`
+  (a run not logged names its output file).
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a
   log line matches.
 - **Instead of `git worktree add` or `remove`**, run `jst start NAME` and, once it is merged,

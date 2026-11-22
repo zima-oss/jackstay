@@ -3,7 +3,6 @@ package doctor
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zima-oss/jackstay/internal/adopt"
+	"github.com/zima-oss/jackstay/internal/choices"
 	"github.com/zima-oss/jackstay/internal/config"
 )
 
@@ -87,23 +87,38 @@ func TestMacBashSetupUsesActiveLoginProfile(t *testing.T) {
 	}
 }
 
-func TestSandboxRepairPreservesSettingsAndBackup(t *testing.T) {
-	home := t.TempDir()
+func TestSandboxRepairReplacesTheWholeHomeKeepingOrderAndBackup(t *testing.T) {
+	home := realPath(t.TempDir())
 	settings := filepath.Join(home, ".claude", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	original := []byte(`{"custom":{"long":12345678901234567890},"sandbox":{"enabled":true,"filesystem":{"allowWrite":["/other"],"denyWrite":["/unrelated"]},"other":17},"permissions":{"allow":["Bash(ls:*)"]}}`)
+	stateHome := filepath.Join(home, ".jackstay")
+	original := []byte(`{
+  "permissions": {"allow": ["Bash(ls:*)"]},
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {"denyWrite": ["/unrelated"], "allowWrite": ["/other", "` + stateHome + `/**", "` + stateHome + `/.all/procs"]},
+    "other": 17
+  },
+  "custom": {"long": 12345678901234567890}
+}
+`)
 	if err := os.WriteFile(settings, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stateHome := filepath.Join(home, ".jackstay")
-	report := Report{Facts: map[string]any{"settings": settings, "home": stateHome},
-		Problems: []Finding{{Kind: "sandbox-blocks-state", Text: "blocked", Fix: "add allowWrite"}}}
+	report := Report{Facts: map[string]any{"settings": settings, "home": stateHome, "sandbox_projects": []string{"app"}},
+		Problems: []Finding{{Kind: "sandbox-blocks-state", Text: "blocked", Fix: "add allowWrite"},
+			{Kind: "sandbox-writes-evidence", Text: "exposed", Fix: "narrow"}}}
 	plan := planSetup(report, home, "/bin/zsh")
+	if len(plan.Items) != 1 {
+		t.Fatalf("one sandbox item expected: %+v", plan.Items)
+	}
 	item := plan.Items[0]
-	if item.Status != "ready" || !strings.Contains(item.Diff, "+\""+stateHome+"\"") || strings.Contains(item.Diff, "Bash(ls:*)") {
-		t.Fatalf("sandbox plan: %+v", item)
+	if item.Status != "ready" || !strings.Contains(item.Diff, "-\""+stateHome+"/**\"") ||
+		!strings.Contains(item.Diff, "+\""+filepath.Join(stateHome, "app", "ids")+"\"") ||
+		strings.Contains(item.Diff, "+\""+filepath.Join(stateHome, ".all", "procs")+"\"") || strings.Contains(item.Diff, "Bash(ls:*)") {
+		t.Fatalf("sandbox plan: %+v\n%s", item, item.Diff)
 	}
 	var output, diagnostics bytes.Buffer
 	if status := executeSetup(plan, true, map[string]bool{"sandbox": true}, strings.NewReader(""), &output, &diagnostics); status != 0 {
@@ -118,27 +133,46 @@ func TestSandboxRepairPreservesSettingsAndBackup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var before, after map[string]json.RawMessage
-	if err := json.Unmarshal(original, &before); err != nil {
+	text := string(updated)
+	order := []string{`"permissions"`, `"sandbox"`, `"enabled"`, `"filesystem"`, `"denyWrite"`, `"allowWrite"`, `"/other"`,
+		`"other": 17`, `"custom"`, `12345678901234567890`}
+	last := -1
+	for _, piece := range order {
+		at := strings.Index(text, piece)
+		if at <= last {
+			t.Fatalf("%s out of order in:\n%s", piece, text)
+		}
+		last = at
+	}
+	if strings.Contains(text, stateHome+"/**") || !strings.Contains(text, filepath.Join(stateHome, ".all", "heavy-suite.lock")) {
+		t.Fatalf("allowWrite not narrowed: %s", text)
+	}
+	for _, grant := range SandboxGrants(stateHome, []string{"app"}) {
+		if _, err := os.Stat(grant); err != nil {
+			t.Fatalf("grant not made: %v", err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(stateHome, "app", "receipts")); err == nil {
+		t.Fatal("setup made an evidence folder")
+	}
+	report.Facts["settings"] = settings
+	if again := planSetup(report, home, "/bin/zsh"); again.Items[0].Status == "ready" {
+		t.Fatalf("a second plan changes again: %+v", again.Items[0])
+	}
+}
+
+func TestSandboxRepairLeavesAnOwnersBroadEntryAndSaysSo(t *testing.T) {
+	home := realPath(t.TempDir())
+	settings := filepath.Join(home, "settings.json")
+	stateHome := filepath.Join(home, ".jackstay")
+	if err := os.WriteFile(settings, []byte(`{"sandbox":{"enabled":true,"filesystem":{"allowWrite":["`+home+`/**"]}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(updated, &after); err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"custom", "permissions"} {
-		var beforeCompact, afterCompact bytes.Buffer
-		if err := json.Compact(&beforeCompact, before[key]); err != nil {
-			t.Fatal(err)
-		}
-		if err := json.Compact(&afterCompact, after[key]); err != nil {
-			t.Fatal(err)
-		}
-		if !bytes.Equal(beforeCompact.Bytes(), afterCompact.Bytes()) {
-			t.Fatalf("unrelated %s changed: %s -> %s", key, before[key], after[key])
-		}
-	}
-	if !bytes.Contains(updated, []byte(stateHome)) {
-		t.Fatalf("state folder absent: %s", updated)
+	report := Report{Facts: map[string]any{"settings": settings, "home": stateHome},
+		Problems: []Finding{{Kind: "sandbox-writes-evidence", Text: "exposed", Fix: "narrow"}}}
+	item := planSetup(report, home, "/bin/zsh").Items[0]
+	if item.Status != "manual" || !strings.Contains(item.Fix, "narrow \""+home+"/**\"") {
+		t.Fatalf("broad entry: %+v", item)
 	}
 }
 
@@ -150,13 +184,15 @@ func TestSandboxRepairRefusesUnsafeInputAndConcurrentEdit(t *testing.T) {
 		"malformed":        `{`,
 		"duplicate keys":   `{"sandbox":{"enabled":false,"enabled":true}}`,
 		"deny":             `{"sandbox":{"enabled":true,"filesystem":{"denyWrite":["` + stateHome + `"]}}}`,
+		"deny inside":      `{"sandbox":{"enabled":true,"filesystem":{"denyWrite":["` + stateHome + `/.all/procs/sessions"]}}}`,
 		"wrong allow type": `{"sandbox":{"enabled":true,"filesystem":{"allowWrite":"bad"}}}`,
+		"not enabled":      `{"sandbox":{"enabled":"yes"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := os.WriteFile(settings, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, _, err := prepareSandbox(settings, stateHome); err == nil {
+			if _, _, _, _, err := prepareSandbox(settings, stateHome, nil); err == nil {
 				t.Fatal("unsafe settings accepted")
 			}
 		})
@@ -167,8 +203,9 @@ func TestSandboxRepairRefusesUnsafeInputAndConcurrentEdit(t *testing.T) {
 	if err := os.Symlink(filepath.Join(home, "elsewhere"), settings); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := prepareSandbox(settings, stateHome); err == nil {
-		t.Fatal("symlink settings accepted")
+	_, _, _, _, err := prepareSandbox(settings, stateHome, nil)
+	if err == nil || !strings.Contains(err.Error(), settings+" is a symbolic link (to "+filepath.Join(home, "elsewhere")+")") {
+		t.Fatalf("symlink settings: %v", err)
 	}
 	if err := os.Remove(settings); err != nil {
 		t.Fatal(err)
@@ -176,7 +213,7 @@ func TestSandboxRepairRefusesUnsafeInputAndConcurrentEdit(t *testing.T) {
 	if err := os.WriteFile(settings, []byte(`{"sandbox":{"enabled":true}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	original, replacement, mode, err := prepareSandbox(settings, stateHome)
+	original, replacement, mode, _, err := prepareSandbox(settings, stateHome, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,6 +226,18 @@ func TestSandboxRepairRefusesUnsafeInputAndConcurrentEdit(t *testing.T) {
 	content, err := os.ReadFile(settings)
 	if err != nil || !bytes.Contains(content, []byte(`"user":1`)) {
 		t.Fatalf("concurrent edit lost: %s, %v", content, err)
+	}
+}
+
+func TestASymlinkedProfileIsNamedInTheError(t *testing.T) {
+	home := t.TempDir()
+	profile := filepath.Join(home, ".zshrc")
+	if err := os.Symlink(filepath.Join(home, "dotfiles", "zshrc"), profile); err != nil {
+		t.Fatal(err)
+	}
+	_, err := applyProfile(profile, "export PATH='/x':\"$PATH\"")
+	if err == nil || !strings.Contains(err.Error(), profile+" is a symbolic link (to "+filepath.Join(home, "dotfiles", "zshrc")+")") {
+		t.Fatalf("error %v", err)
 	}
 }
 
@@ -389,5 +438,30 @@ func TestAnUnattendedSetupAsksNothing(t *testing.T) {
 	}
 	if saved, err := adopt.MachineAutonomy(); saved != "" || err != nil {
 		t.Fatalf("kept %q, %v", saved, err)
+	}
+}
+
+func TestSetupKeepsThisMachinesReviewerBesideTheAutonomy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	var output, diagnostics bytes.Buffer
+	if status := RunSetup([]string{"--autonomy", "prepare"}, nil, &output, &diagnostics); status != 0 {
+		t.Fatalf("autonomy: exit %d: %s", status, &diagnostics)
+	}
+	if status := RunSetup([]string{"--reviewer", "claude-code"}, nil, &output, &diagnostics); status != 0 ||
+		!strings.Contains(output.String(), "offers review.use claude-code first") {
+		t.Fatalf("reviewer: exit %d: %s%s", status, &output, &diagnostics)
+	}
+	stored, err := os.ReadFile(filepath.Join(home, ".all", "setup.json"))
+	if err != nil || !strings.Contains(string(stored), `"reviewer": "claude-code"`) || !strings.Contains(string(stored), `"land_autonomy": "prepare"`) {
+		t.Fatalf("setup.json: %s %v", stored, err)
+	}
+	if item := reviewerItem(choices.MachineAnswers()); item.Status != "done" || !strings.Contains(item.Text, "claude-code") {
+		t.Fatalf("item %+v", item)
+	}
+	for _, args := range [][]string{{"--reviewer", "gpt"}, {"--reviewer", ""}, {"--reviewer", "codex", "--plan"}} {
+		if status := RunSetup(args, nil, &output, &diagnostics); status != 2 {
+			t.Errorf("%v: exit %d", args, status)
+		}
 	}
 }
