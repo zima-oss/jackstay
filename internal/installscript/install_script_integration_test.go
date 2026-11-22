@@ -27,8 +27,13 @@ import (
 // The fake jst writes its arguments, one per line, to the file JST_RECORD names: what install.sh
 // ran it with, or no file when it was never run. Run as `jst install --prefix P …`, it also puts
 // itself at P/bin/jst, as an install does, so which jst a PATH runs can be asked.
-const fakeJst = "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$JST_RECORD\"\n" +
-	"if [ \"$1 $2\" = 'install --prefix' ]; then mkdir -p \"$3/bin\" && cp \"$0\" \"$3/bin/jst\"; fi\n"
+// Asked `setup --help` (install.sh's probe), it records nothing and answers whether it has setup:
+// not when JST_NO_SETUP is set, as a release before setup.
+const fakeJst = "#!/bin/sh\n" +
+	"if [ \"$1 $2\" = 'setup --help' ]; then [ -z \"$JST_NO_SETUP\" ]; exit; fi\n" +
+	"printf '%s\\n' \"$@\" > \"$JST_RECORD\"\n" +
+	"if [ \"$1 $2\" = 'install --prefix' ]; then mkdir -p \"$3/bin\" && cp \"$0\" \"$3/bin/jst\"; fi\n" +
+	"if [ \"$1\" = setup ]; then echo 'fake machine setup started' >&2; fi\n"
 
 // release is a fake GitHub releases page: /latest redirects to the newest tag, and
 // /download/vX.Y.Z/NAME serves the files of that release. It also serves install.sh itself, at
@@ -172,6 +177,7 @@ func tarGz(t *testing.T, files map[string]string) []byte {
 // run is one run of install.sh, by the shell named, against the fake release.
 type run struct {
 	exit   int
+	stdout string // what a terminal shows, when the command is run under script
 	stderr string
 	record string // the fake jst's arguments; "" when it never ran
 	prefix string
@@ -218,10 +224,13 @@ func runCommand(t *testing.T, command *exec.Cmd, fake *release, path string, env
 		"JACKSTAY_PREFIX=" + prefix,
 		"JST_RECORD=" + record,
 	}, environment...)
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	if command.Stdout == nil {
+		command.Stdout = &stdout
+	}
 	command.Stderr = &stderr
 	err := command.Run()
-	result := run{stderr: stderr.String(), prefix: prefix}
+	result := run{stdout: stdout.String(), stderr: stderr.String(), prefix: prefix}
 	if exitError, ok := err.(*exec.ExitError); ok {
 		result.exit = exitError.ExitCode()
 	} else if err != nil {
@@ -467,8 +476,11 @@ func TestInstalledSetupRunsOnlyWithATerminal(t *testing.T) {
 	fake.publish(t, "v1.2.4", "")
 	paths := pathWithout(t)
 	direct := runScript(t, "sh", fake, paths)
-	if direct.exit != 0 || !strings.HasPrefix(direct.record, "install\n") {
+	if direct.exit != 0 || !strings.HasPrefix(direct.record, "install\n") || strings.Contains(direct.record, "setup") {
 		t.Fatalf("nonterminal install ran setup: exit %d, arguments %q", direct.exit, direct.record)
+	}
+	if !strings.Contains(direct.stderr, "no terminal here, so machine setup does not start: once jst is on your PATH") {
+		t.Fatalf("a nonterminal install did not say setup was left:\n%s", direct.stderr)
 	}
 	installer := installScript(t)
 	var command *exec.Cmd
@@ -482,6 +494,22 @@ func TestInstalledSetupRunsOnlyWithATerminal(t *testing.T) {
 	if want := "setup\n--prefix\n" + interactive.prefix + "\n"; interactive.exit != 0 || interactive.record != want {
 		t.Fatalf("terminal install: exit %d, arguments %q, want %q\n%s",
 			interactive.exit, interactive.record, want, interactive.stderr)
+	}
+	output := interactive.stdout + interactive.stderr
+	notice, started := strings.Index(output, "a terminal is here, so machine setup starts now"), strings.Index(output, "fake machine setup started")
+	if notice < 0 || started < 0 || notice > started || !strings.Contains(output, "asks who merges a project's changes and which reviewer runs") {
+		t.Fatalf("a terminal install did not say setup starts before starting it:\n%s", output)
+	}
+
+	// A release without setup, with a terminal or without, is told apart and runs nothing more.
+	older := runCommand(t, exec.Command(command.Args[0], command.Args[1:]...), fake, paths, "JST_NO_SETUP=1")
+	plain := runScript(t, "sh", fake, paths, "JST_NO_SETUP=1")
+	for name, result := range map[string]run{"terminal": older, "no terminal": plain} {
+		said := result.stdout + result.stderr
+		if result.exit != 0 || !strings.HasPrefix(result.record, "install\n") ||
+			!strings.Contains(said, "this jst has no machine setup") || strings.Contains(said, "run `jst setup`") {
+			t.Fatalf("%s, a release without setup: exit %d, arguments %q\n%s", name, result.exit, result.record, said)
+		}
 	}
 }
 
