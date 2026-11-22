@@ -173,6 +173,28 @@ func TestTheScopeAskedForTakesTheTestNamesAndItsDepsNone(t *testing.T) {
 	}
 }
 
+// The plan refuses test names where the run does, before the walk: a composite takes none, nor
+// does a scope with `run` whose words need none.
+func TestThePlanRefusesTestNamesWhereTheRunDoes(t *testing.T) {
+	section := map[string]any{"judge": "exit", "scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-a")},
+		"x-a":     map[string]any{"run": counted("x-a", "true"), "deps": argv("x-build")},
+		"x-build": map[string]any{"run": counted("x-build", "true")},
+	}}
+	w := newWorld(t, section, nil)
+	for _, scope := range []string{"gate", "x-a"} {
+		w.stdout.Reset()
+		w.expectStatus(w.jst(scope, "Some.Test"), 2)
+		w.stderr.Reset()
+		w.expectStatus(w.jst("plan", scope, "Some.Test"), 2)
+		w.expectSaid("`" + scope + "` has deps (or lists steps) and takes no names; given: Some.Test")
+		if plan := w.stdout.String(); plan != "" {
+			t.Fatalf("the plan of %s walked the graph:\n%s", scope, plan)
+		}
+	}
+	w.expectCounters("x-a x-build", 0, 0)
+}
+
 func TestAFailureEndsTheRunAndKeepGoingRunsWhatDoesNotDependOnIt(t *testing.T) {
 	section := map[string]any{"judge": "exit", "scopes": map[string]any{
 		"gate":    map[string]any{"deps": argv("x-a", "x-other")},

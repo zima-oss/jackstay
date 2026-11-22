@@ -145,6 +145,8 @@ func (base *tester) plan(args []string) int {
 		switch {
 		case entry == nil:
 			err = refused("`" + name + "` is not a scope of " + proj.name + "; its scopes: " + joinComma(sortedKeys(scopes)))
+		case namesRefusal(name, entry, rest) != nil:
+			err = namesRefusal(name, entry, rest)
 		case split != nil:
 			order = newGraph(proj.section, proj.operatingSystem).walk(split.here)
 			rest = nil

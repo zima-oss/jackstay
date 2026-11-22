@@ -312,7 +312,8 @@ the check to the dep that needs it). Each refusal is also `not-started` (2) befo
 
 A scope with `run` and deps whose words take test arguments (`{tests}`, `{test_args}` or a typed
 selector) is given those of `jst test SCOPE ARGS…` and `jst test plan SCOPE ARGS…`; its deps are
-given none. A scope with deps that takes none, or a composite, refuses test arguments (2).
+given none. A scope with deps that takes none, or a composite, refuses test arguments (2), in the
+run and in `jst test plan` alike, before the walk.
 
 ### 7.2 The run
 

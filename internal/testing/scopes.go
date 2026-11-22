@@ -408,8 +408,8 @@ func (base *tester) scope(args []string) int {
 				" (`jst test list`)")
 		case base.pin != nil && !isComposite(entry):
 			err = refused("the pinned gate must list its steps")
-		case len(depsOf(entry)) > 0 && len(rest) > 0 && (isComposite(entry) || !needsTestArguments(entry)):
-			err = refused("`" + name + "` has deps (or lists steps) and takes no names; given: " + joinSpace(rest))
+		case len(depsOf(entry)) > 0 && namesRefusal(name, entry, rest) != nil:
+			err = namesRefusal(name, entry, rest)
 		case len(depsOf(entry)) == 0 && (chosen.resume || chosen.keepGoing):
 			err = refused("--resume and --keep-going are for a scope with deps (or that lists steps)")
 		}
@@ -426,6 +426,19 @@ func (base *tester) scope(args []string) int {
 		return proj.gate(name, []string{name}, nil)
 	}
 	return proj.runLeaf(resolve(proj.section, name, kindScope, entry), rest, "", false).status
+}
+
+// namesRefusal is why a scope refuses the test names given, or nil: a composite takes none, nor
+// does a scope whose words need none. `jst test` and `jst test plan` both check it before the walk.
+func namesRefusal(name string, entry map[string]any, rest []string) error {
+	switch {
+	case len(rest) == 0 || !isComposite(entry) && needsTestArguments(entry):
+		return nil
+	case len(depsOf(entry)) > 0:
+		return refused("`" + name + "` has deps (or lists steps) and takes no names; given: " + joinSpace(rest))
+	default:
+		return refused("`" + name + "` takes no names (its words hold no {tests}); given: " + joinSpace(rest))
+	}
 }
 
 // listenUnless listens for requests to stop, unless the clean copy's listener already does.
