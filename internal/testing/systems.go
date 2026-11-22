@@ -29,8 +29,9 @@ func CIJobName(system string) string { return "jst test ci (" + system + ")" }
 // partitionOf puts every node with `run` that the walk from the selected scopes reaches on this
 // system in one group, the first that fits: here (eligible here and not covered, in the command's
 // sense), ci (covered on some system), elsewhere (neither). The same walk on each other system
-// adds to elsewhere the nodes with `run` it reaches that are eligible there, not here, and covered
-// on no system: a selected scope that cannot run here still leaves its tests to another machine.
+// adds to elsewhere, with that system, the nodes with `run` it reaches that are eligible there,
+// covered on no system and not reached by this system's walk (eligible here or not): a selected
+// scope that cannot run here still leaves its tests to another machine.
 func (proj *project) partitionOf(command string, selected []string) partition {
 	nodes := newGraph(proj.section, proj.operatingSystem)
 	nodes.withoutBase = command == uncoveredCommand
@@ -39,7 +40,8 @@ func (proj *project) partitionOf(command string, selected []string) partition {
 		covered[system] = coveredOn(proj.section, system)
 	}
 	split := partition{command: command, where: map[string][]string{}}
-	for _, name := range nodes.walk(selected) {
+	reached := nodes.walk(selected)
+	for _, name := range reached {
 		if _, entry := find(proj.section, name); isComposite(entry) || nodes.withoutBase && needsBase(entry) {
 			continue
 		}
@@ -65,11 +67,14 @@ func (proj *project) partitionOf(command string, selected []string) partition {
 		other.withoutBase = nodes.withoutBase
 		for _, name := range other.walk(selected) {
 			_, entry := find(proj.section, name)
-			if isComposite(entry) || !other.eligible(name) || nodes.eligible(name) || slices.Contains(split.elsewhere, name) ||
+			if isComposite(entry) || !other.eligible(name) || slices.Contains(reached, name) ||
 				slices.ContainsFunc(operatingSystems, func(system string) bool { return covered[system][name] }) {
 				continue
 			}
-			split.addElsewhere(proj.section, name)
+			if !slices.Contains(split.elsewhere, name) {
+				split.elsewhere = append(split.elsewhere, name)
+			}
+			split.where[name] = append(split.where[name], system)
 		}
 	}
 	return split

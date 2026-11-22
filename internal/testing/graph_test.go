@@ -310,6 +310,21 @@ func TestChangedFindsWhatOnlyAnotherSystemRunsBehindACompositeThatCannotRunHere(
 	}
 }
 
+// A portable test that only a selected macOS-only composite reaches is not run here by that
+// selection: it needs the system whose walk reaches it.
+func TestChangedSendsAPortableTestReachedOnlyThroughAnotherSystemElsewhere(t *testing.T) {
+	section := with(whereSection(), "scopes", "x-mac", map[string]any{"deps": argv("x-smoke"), "systems": argv("darwin")})
+	section = with(section, "scopes", "x-smoke", counting("x-smoke", nil))
+	section["selection"] = map[string]any{"order": argv("x-mac", "x-docs", "gate"),
+		"rules": []any{map[string]any{"glob": "mac/**", "scope": "x-mac"}, map[string]any{"glob": "docs/**", "scope": "x-docs"}}}
+	linux := newWorld(t, section, nil)
+	linux.system = "linux"
+	linux.repo.Commit("change", map[string]string{"mac/a.swift": "let a = 1\n"})
+	linux.expectStatus(linux.jst("changed", "--base", "main"), statusNeedsOtherSystem)
+	linux.expectLast("outcome=needs-other-system (darwin: x-smoke; changed, ", "here: none; ci: none")
+	linux.expectCounters("x-smoke", 0)
+}
+
 func TestUncoveredRunsWhatCIDoesNotCoverOnThisSystemOnACleanCopy(t *testing.T) {
 	// The focused scope needs test names: it is left out.
 	section := with(whereSection(), "scopes", "focused", map[string]any{"run": argv("sh", "-c", "echo {tests}")})

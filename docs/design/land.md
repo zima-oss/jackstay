@@ -512,8 +512,9 @@ leads to its deps:
 2. **ci**: it is covered on some system;
 3. **elsewhere**: neither; it is not covered, and it is not eligible on this system.
 
-The same walk from the selected scopes on each other system adds to **elsewhere** every node with
-`run` it reaches that is eligible there, not eligible on this system and covered on no system. So
+The same walk from the selected scopes on each other system adds to **elsewhere**, with that
+system, every node with `run` it reaches that is eligible there, covered on no system and not
+reached by this system's walk, even one that could run here: the selection runs it there only. So
 a selected scope that cannot run here (a composite over a `darwin`-only test, changed on Linux)
 still leads to its tests: `needs-other-system`, never `left-to-ci`, when no CI covers them.
 `jst test auto` does not split: it runs the scope it selects, as before.
@@ -680,7 +681,8 @@ The cache of section 7.3 was to replace the marks, bars, `--resume`, `resumed`, 
   and only after **here** passed; `left-to-ci` from `jst test changed` only when **here** and
   **elsewhere** are empty, and from `jst test uncovered` whenever **here** is empty, **elsewhere**
   listed and never holding it; a selected composite that cannot run here leading, through the walk
-  on another system, to a test only that system runs and no CI covers: `needs-other-system`;
+  on another system, to a test only that system runs and no CI covers, or to a portable test only
+  that walk reaches: `needs-other-system`;
   `jst test auto` running its selected scope without the split;
   `jst test uncovered` leaving out selector scopes, on a clean copy; `jst check` refusing a dep
   that needs test arguments, and a scope with `run` and deps given the test arguments, in the run
