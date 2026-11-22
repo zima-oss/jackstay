@@ -16,7 +16,7 @@ import (
 // The jackstay home holds two kinds of things. Some jst writes while an agent's Bash command
 // runs inside Claude Code's sandbox: the journal, the heavy-suite lock with its queue and holder,
 // session chat, background jobs, the brief, ids and the trash. The rest is evidence jackstay later
-// trusts: receipts and failure notes, gate marks and bars, review rounds, the run log, the adopted
+// trusts: receipts and failure notes, review rounds, the run log, the adopted
 // delivery and the expected projects. The sandbox may write the first and only read the second,
 // so an agent cannot forge a pass it did not run (#59, W-090). `jst test` and `jst review` record
 // evidence, so they run outside the sandbox; `jst test` refuses to run inside it.

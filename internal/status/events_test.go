@@ -21,3 +21,11 @@ func TestStagesOfGitHubCommandsOfBothGenerations(t *testing.T) {
 		}
 	}
 }
+
+// A gate recorded before 0.6.0 removed `--resume` keeps its `resumed` outcome in the history.
+func TestAResumedGateFromBeforeTheUpgradeKeepsItsOutcome(t *testing.T) {
+	span := journal.Span{Name: "test.gate", Attributes: map[string]any{telemetry.AttrOutcome: "resumed"}}
+	if got := statusOf(span); got != "resumed" {
+		t.Fatalf("status %q, want resumed", got)
+	}
+}

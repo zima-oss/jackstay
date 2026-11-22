@@ -72,7 +72,7 @@ func Say(stderr io.Writer, format string, values ...any) {
 }
 
 // StateFolder is where a project's per-key state lives: `<jackstay home>/<project>/<parts…>`
-// (receipts, failure notes, gate marks and bars).
+// (receipts and failure notes).
 func StateFolder(project string, parts ...string) (string, error) {
 	return homedir.ProjectPath(project, parts...)
 }

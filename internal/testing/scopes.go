@@ -85,9 +85,6 @@ func (problem *refusal) Error() string { return problem.words }
 
 func refused(words string) error { return &refusal{words: words} }
 
-// resumeRemoved is what `--resume` gets: it went in 0.6.0, with the gate's marks and bars.
-const resumeRemoved = "--resume was removed in jackstay 0.6.0: a gate runs every node each time; reuse of passes comes with the cache of jackstay 1"
-
 var secondsWord = regexp.MustCompile(`^\d+(\.\d+)?$`)
 
 // parse reads `<scope> [ARGS…] [OPTIONS]` (options anywhere; `--` ends them).
@@ -104,7 +101,7 @@ func parse(args []string) (scope string, rest []string, chosen options, err erro
 			locked := word == "--lock"
 			chosen.lock = &locked
 		case word == "--resume":
-			return "", nil, chosen, refused(resumeRemoved)
+			return "", nil, chosen, refused(receipts.ResumeRemoved)
 		case word == "--keep-going":
 			chosen.keepGoing = true
 		case (word == "--project" || word == "--base" || word == "--wait" || word == "--commit") && index+1 < len(args):
