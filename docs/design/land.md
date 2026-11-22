@@ -589,8 +589,10 @@ the job has no cache steps (section 7.3): it runs every covered scope each time.
 
 ### 7.6 jackstay's own scopes
 
-The configuration jackstay applies to itself with the code, so that no test runs twice on one
-commit in Linux CI. Each scope with `ci` tests a set no other one does:
+The configuration jackstay moves to once the graph's code has landed, so that no test runs twice
+on one commit in Linux CI. Its `jackstay.json` and workflows are human paths: they move in a
+separate pull request after the code, which the owner merges; until then they keep the 0.5.x
+gate. Each scope with `ci` tests a set no other one does:
 
 ```json
 "scopes": {
