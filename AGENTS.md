@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:ee12d6d88616 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:9073c9249e69 — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,
@@ -58,6 +58,10 @@ the same rules hold.
   the expected digest, revision and key from a trusted source, never from the receipt.
 - **When the guard refuses** a command, run what it names instead, never a workaround. Read a
   `jst guard let this command run, with a warning` line before going on.
+- **Land a change**: `jst land --title T` pushes, opens the change request, waits for the required
+  checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,
+  `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
+  (`gh pr merge` is refused), never run `--confirm`.
 - **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`
   or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.
 - **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
@@ -71,6 +75,7 @@ the same rules hold.
 - **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
 - **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
+- **Share an adoption profile** with `jst profile export`; verify its digest before adopting it.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.
 <!-- jackstay-adopt: end agents-block -->

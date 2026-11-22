@@ -94,5 +94,15 @@
     "default_minutes": 30,
     "max_minutes": 240
   },
-  "review": {}
+  "review": {},
+  "land": {
+    "host": "github",
+    "autonomy": "merge-when-green",
+    "method": "squash",
+    "checks": [],
+    "human_paths": []
+  },
+  "adopt": {
+    "pin": "v0.5.11"
+  }
 }
