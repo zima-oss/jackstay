@@ -35,3 +35,13 @@ switched itself off at once.
 
 See [the chat design](../design/chat.md), sections 4.2, 4.10 and 8, and
 [its model](../design/chat-model/README.md). The delivery model shrinks from 30,736 states to 7,104.
+
+## Amendment (2026-11-22): a closed connection is not a refusal
+
+A refusing session closes the connection, and so does a Claude Code process that exits while the
+doorbell waits; at the socket the two look the same. Recording a closed connection as a refusal
+would hide unread messages of a conversation that may resume. So a closed connection counts as a
+taken ring: what it told of is marked rung, and nothing is refused. The `engine_refused` reason and
+the table's refusal event stay, for an engine that reports a refusal itself; the native pass never
+applies them. Recording a ring then only marks, and a pass stopped part way leaves nothing to undo.
+The delivery model loses the doorbell's refusal step (27,056 states to 26,496).

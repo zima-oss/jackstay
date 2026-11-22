@@ -65,12 +65,13 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | `CommitHasFiles` | send | a commit record never stands for files that are gone |
 | `RequestAgrees` | send | the request a response answers is answered or closed once, never overwritten |
 
-TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **27,056** distinct states for a delivery (130,742
+TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **26,496** distinct states for a delivery (128,210
 generated, the temporal properties checked over the whole graph) and **335** for a send (607
-generated) with no error. The Go exploration reaches the same 27,056 and 335 states, and its tests
+generated) with no error. The Go exploration reaches the same 26,496 and 335 states, and its tests
 fail if either count changes, so the two forms cannot drift apart unnoticed. Showing a notice, with
 a stop between the page and its mark, took the delivery model from 7,104 states to 27,056
-([W-096](../../decisions/W-096-clear-limits-over-more-machinery.md)).
+([W-096](../../decisions/W-096-clear-limits-over-more-machinery.md)); a closed doorbell no longer
+refusing a delivery (W-095, as amended) took it to 26,496.
 Before W-095, when the native route still pushed the text, both reached 30,736 delivery states; the
 doorbell model is the same world with the native push, the engine's hold and the hooks'
 announcement taken out.

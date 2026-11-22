@@ -134,21 +134,23 @@ func TestANativeRingMarksWhatItToldOfWhateverCameBack(t *testing.T) {
 	}
 }
 
-func TestAClosedConnectionRefusesWhatTheRingToldOf(t *testing.T) {
+// A closed connection is not a refusal: a refusing engine and an exiting Claude Code look the same,
+// so the ring counts as taken and refuses nothing (W-095, as amended).
+func TestAClosedConnectionIsATakenRingNotARefusal(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.native("cc:n", "n")
-	sent := f.send("cc:a", SendInput{To: "n", Message: "refused"})
+	sent := f.send("cc:a", SendInput{To: "n", Message: "still waiting"})
 	due, _ := f.store.DueRings(f.ctx)
 	if err := f.store.RecordRing(f.ctx, due[0], RingClosed); err != nil {
 		t.Fatal(err)
 	}
 	delivery := f.delivery(sent.MessageID, "cc:n")
-	if delivery.State != "refused" || delivery.Reason != "engine_refused" || delivery.Notice != "owed" {
-		t.Fatalf("%+v", delivery)
+	if delivery.State != "pending" || !delivery.Rung || delivery.Notice != "" {
+		t.Fatalf("marked rung, nothing refused: %+v", delivery)
 	}
 	if again, _ := f.store.DueRings(f.ctx); len(again) != 0 {
-		t.Fatalf("a refused ring is not rung again: %+v", again)
+		t.Fatalf("not rung again until something new: %+v", again)
 	}
 }
 
@@ -215,9 +217,8 @@ func TestANoticeAloneRingsOnce(t *testing.T) {
 	}
 }
 
-// A refused ring refuses every pending delivery it counted, also one an earlier ring told of
-// (review round 1).
-func TestARefusedRingRefusesEveryDeliveryItCounted(t *testing.T) {
+// A ring marks every pending delivery it counted, also one an earlier ring told of (review round 1).
+func TestARingMarksEveryDeliveryItCounted(t *testing.T) {
 	f := newFixture(t)
 	f.session("cc:a", "a", alpha, StateIdle)
 	f.native("cc:n", "n")
@@ -229,15 +230,15 @@ func TestARefusedRingRefusesEveryDeliveryItCounted(t *testing.T) {
 	f.clock.advance(3 * time.Second)
 	second := f.send("cc:a", SendInput{To: "n", Message: "new work"})
 	due, _ = f.store.DueRings(f.ctx)
-	if len(due) != 1 || !strings.Contains(due[0].Text, "2 new messages") {
+	if len(due) != 1 || !strings.Contains(due[0].Text, "2 new messages") || len(due[0].Deliveries) != 2 {
 		t.Fatalf("%+v", due)
 	}
 	if err := f.store.RecordRing(f.ctx, due[0], RingClosed); err != nil {
 		t.Fatal(err)
 	}
 	for _, sent := range []SendResult{first, second} {
-		if delivery := f.delivery(sent.MessageID, "cc:n"); delivery.State != "refused" {
-			t.Fatalf("%s is %s, not refused", sent.MessageID, delivery.State)
+		if delivery := f.delivery(sent.MessageID, "cc:n"); delivery.State != "pending" || !delivery.Rung {
+			t.Fatalf("%s: %+v", sent.MessageID, delivery)
 		}
 	}
 }

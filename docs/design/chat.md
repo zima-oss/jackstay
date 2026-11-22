@@ -747,8 +747,9 @@ Refusals of a call: `invalid`, `unknown_recipient`, `unknown_message`, `ambiguou
 one-line `detail` that names what to do next (for `loop`: ask your person; for `store_busy`: retry;
 for `unknown_message` with a 0.5.x ID: messages from 0.5.x were not carried over).
 
-Reasons on a receipt: `unconfirmed` (on `delivered`, a bridge's steer), `engine_refused` (a
-refused doorbell), `recipient_ended`, `expired`.
+Reasons on a receipt: `unconfirmed` (on `delivered`, a bridge's steer), `engine_refused` (an
+engine that reports refusing a doorbell; the native pass never sets it, section 8.3),
+`recipient_ended`, `expired`.
 
 ### 5.5 Compatibility with the 0.5.x tools
 
@@ -1282,9 +1283,11 @@ notices, the session's `notices_rung_at`). For each due session the pass:
    are marked `rung` and the session's `notices_rung_at` moves to the newest notice it told of; the
    notices stay owed until an inbox read shows them. Then:
    - **the connection stayed open, or the line was taken**: nothing else changes;
-   - **the connection was closed before the 2 s**: the recipient's engine refused the doorbell; each
-     `pending` native delivery it told of (every one it counted, also one an earlier ring told of)
-     becomes `refused` (`engine_refused`, its notice owed), after the deadline check of section 4.10;
+   - **the connection was closed before the 2 s**: this too counts as taken, and nothing is
+     refused. A refusing engine closes the connection, and so does a Claude Code process that exits
+     during the wait; the socket cannot tell them apart, and a doorbell is harmless (W-095, as
+     amended). `engine_refused` stays in the table for an engine that reports a refusal itself;
+     the native pass never sets it;
    - **a confirmed failure**, when nothing was written (no socket, connection refused, or a line
      that could not be written whole): nothing
      reached the socket, so nothing is marked, and the next pass tries again after 5 s, 30 s, then
@@ -1641,8 +1644,9 @@ narrower than the last, and review alone does not end that. The model is in
 - **the same worlds explored in Go**, in the tests of `internal/sessionchat/deliverystate`, the
   package that holds the transition table of section 4.2 and the journal rules of section 7.3 for
   the store to import. The tests explore every reachable state breadth first, and run in the gate.
-  TLC and the tests reach the same states, 27,056 for a delivery and 335 for a send (7,104 before
-  notices were shown at least once, 30,736 before W-095), and the tests fail if either count changes.
+  TLC and the tests reach the same states, 26,496 for a delivery and 335 for a send (27,056 while a
+  closed doorbell refused, 7,104 before notices were shown at least once, 30,736 before W-095), and
+  the tests fail if either count changes.
 
 Checked: the bridge steers a message at most once, and every other route shows its text only
 through the inbox read (W-095); a crash never makes a steer look not made; final states are never

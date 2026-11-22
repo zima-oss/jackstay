@@ -231,7 +231,8 @@ type RingOutcome string
 const (
 	// RingTaken: the line was written and the connection stayed open, or was answered.
 	RingTaken RingOutcome = "taken"
-	// RingClosed: the session closed the connection before the 2 s: its engine refused the doorbell.
+	// RingClosed: the session closed the connection before the 2 s. A refusing engine and a Claude
+	// Code process that exits look the same, so it counts as taken: nothing is refused (section 8.3).
 	RingClosed RingOutcome = "closed"
 	// RingFailed: nothing reached the socket (none, or a refused connection): a confirmed failure.
 	RingFailed RingOutcome = "failed"
@@ -307,8 +308,8 @@ func (store *Store) DueRings(ctx context.Context) ([]DueRing, error) {
 }
 
 // RecordRing records what became of a native ring (section 8.3). A ring that reached the socket told
-// of everything in it, whatever came back: its deliveries are marked rung and notices_rung_at moves
-// on; a closed connection also refuses those still pending. A confirmed failure reached nothing, so
+// of everything in it, whatever came back, a closed connection included: its deliveries are marked
+// rung and notices_rung_at moves on; nothing is refused. A confirmed failure reached nothing, so
 // nothing is marked, and the next ring waits 5 s, 30 s, then 2 min.
 func (store *Store) RecordRing(ctx context.Context, ring DueRing, outcome RingOutcome) error {
 	return store.update(ctx, func(transaction *transaction) error {
@@ -326,29 +327,16 @@ func (store *Store) RecordRing(ctx context.Context, ring DueRing, outcome RingOu
 			return transaction.writeSession(session)
 		}
 		for _, id := range ring.Deliveries {
-			found, err := transaction.message(id)
-			if errors.Is(err, errNoDelivery) {
-				continue // removed since the ring
-			}
-			if err != nil {
-				return err
+			if !messageIDPattern.MatchString(id) {
+				continue
 			}
 			var delivery Delivery
-			err = readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery)
+			err := readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery)
 			if errors.Is(err, os.ErrNotExist) {
 				continue
 			}
 			if err != nil {
 				return err
-			}
-			if outcome == RingClosed {
-				refused, stepErr := transaction.stepLoaded(found, hash, delivery, deliverystate.Event{Kind: deliverystate.RingRefused})
-				switch {
-				case stepErr == nil:
-					delivery = refused
-				case !errors.Is(stepErr, deliverystate.ErrNotAllowed):
-					return stepErr // an error is never taken as an outcome
-				}
 			}
 			if !delivery.Rung {
 				delivery.Rung = true

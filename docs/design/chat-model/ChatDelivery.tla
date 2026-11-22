@@ -5,7 +5,7 @@
 (* hooks routes ring a doorbell and carry no text: a message's text        *)
 (* reaches the recipient's model only through its inbox read, or, on the   *)
 (* Codex bridge, through one steer. Modelled: two bridge passes that may   *)
-(* pause or crash at any step, the native doorbell and its refusal, the    *)
+(* pause or crash at any step, the native doorbell (changing nothing), the *)
 (* recipient's reads, acks and answers, the sweep, the deadline, the       *)
 (* recipient's end, a review mailbox's freeze, of the recipient or of      *)
 (* the requester, and the sender's inbox showing an owed notice.           *)
@@ -247,14 +247,10 @@ Crash(p) ==
     /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
-(* The native doorbell (section 8.3): a ring the engine takes or ignores changes nothing; one it *)
-(* refuses (the connection closed) refuses the delivery. A hook's ring changes nothing at all.   *)
-
-DoorbellRefused ==
-    /\ alive /\ d.route = "native"
-    /\ LET r == Step(Ev("ring-refused", "", "none", overdue)) IN r.ok /\ SetMsg(r)
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
-                   pushedClosed, overdue, alive>>
+(* The doorbell (section 8.3) changes no delivery, whatever came back: a closed connection is not  *)
+(* a refusal, since a refusing engine and an exiting process look the same (W-095, as amended). So *)
+(* no step of the doorbell is modelled; the table's ring-refused event stays for an engine that    *)
+(* reports a refusal itself.                                                                       *)
 
 (* The recipient's own calls; a review mailbox makes none. *)
 
@@ -373,7 +369,6 @@ ShowsRequestNotice ==
 
 Next ==
     \/ \E p \in Passes : Claim(p) \/ WriteFails(p) \/ Steer(p) \/ Record(p) \/ RecordFailure(p) \/ Crash(p)
-    \/ DoorbellRefused
     \/ InboxReads \/ InboxPeeks \/ Acks \/ Responds
     \/ Sweep
     \/ RecipientMailboxFreezes \/ RequestingMailboxFreezes \/ RecipientEnds \/ DeadlinePasses
@@ -433,7 +428,7 @@ RequestAgrees == rq.state = "answered" => d.state \in Final
 \* Final states are never left.
 FinalStable == [][d.state \in Final => d'.state = d.state]_vars
 
-\* The deadline is applied before a steer, a read, an ack or a refused doorbell.
+\* The deadline is applied before a steer, a read or an ack.
 DeadlineFirst ==
     [][(overdue /\ d.state \in Expirable /\ d'.state # d.state) => d'.state \in {"expired", "dropped"}]_vars
 

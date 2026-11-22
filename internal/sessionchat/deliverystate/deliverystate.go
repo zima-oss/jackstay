@@ -101,8 +101,9 @@ const (
 	Failure Kind = "failure"
 	// Stale is the sweep finding `sending` older than 60 s.
 	Stale Kind = "stale"
-	// RingRefused is the recipient's engine refusing the native doorbell: it closed the connection
-	// before the line was taken (section 8.3). A doorbell it took, or ignored, changes nothing.
+	// RingRefused is the recipient's engine refusing the native doorbell. The socket cannot tell a
+	// refusal from a process that exits (both close the connection), so the native pass never
+	// applies it (section 8.3); it stays for an engine that reports a refusal itself.
 	RingRefused Kind = "ring-refused"
 	// Expire is the sweep, or another step's deadline check, finding `expires_at` passed.
 	Expire Kind = "expire"
