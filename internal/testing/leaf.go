@@ -252,18 +252,6 @@ func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bo
 			return result{outcome: receipts.OutcomeReused}
 		}
 	}
-	barKey := ""
-	if gate == "" && chosen.resume {
-		if dirty := proj.cleanCheckout(); dirty == "" {
-			barKey, _ = proj.stepKey(chosen, found.argv, found.base, relative)
-			if barKey != "" {
-				// It runs again: a stop now must not leave the old pass standing.
-				if err := proj.removeMark(barKey); err != nil {
-					return proj.notStarted(err.Error())
-				}
-			}
-		}
-	}
 	asked := proj.clock.Now()
 	var held *flock.Held
 	if run.locked {
@@ -278,14 +266,6 @@ func (proj *project) runLeaf(chosen leaf, args []string, gate string, checked bo
 		return result{outcome: receipts.OutcomeReused}
 	}
 	ended := run.command(asked, held)
-	switch {
-	case barKey != "" && ended.outcome == receipts.OutcomeFailed:
-		// The same step failed on the tree it started on (clean, keyed before it ran): a gate's
-		// --resume must not stand on an earlier mark of it, whatever the run left in the checkout.
-		proj.writeBar(barKey, chosen.name, ended)
-	case barKey != "" && ended.outcome != receipts.OutcomePassed && ended.outcome != receipts.OutcomeExited0:
-		_ = proj.removeMark(barKey) // the latest run on this tree gave no verdict (removed before it ran)
-	}
 	return proj.ended(ended, held)
 }
 

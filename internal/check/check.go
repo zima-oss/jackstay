@@ -11,7 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -107,16 +107,14 @@ func Warnings(section map[string]any, project string) []string {
 		return found
 	}
 	medians := stepMedians(project)
-	scopes, _ := section["scopes"].(map[string]any)
-	for _, name := range sortedNames(scopes) {
-		entry, _ := scopes[name].(map[string]any)
-		if _, listed := entry["steps"]; !listed {
+	declared, _ := section["scopes"].(map[string]any)
+	for _, name := range sortedNames(declared) {
+		entry, _ := declared[name].(map[string]any)
+		_, listed := entry["steps"]
+		if _, depends := entry["deps"]; !listed && !depends {
 			continue
 		}
-		order, ok := leaves(section, name, nil)
-		if !ok {
-			continue
-		}
+		order := scopes.RunOrder(section, name, runtime.GOOS)
 		for index, dear := range order {
 			if medians[dear] <= dearSeconds {
 				continue
@@ -146,50 +144,6 @@ func sortedNames(members map[string]any) []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-var placeholder = regexp.MustCompile(`\{([a-z_]+)\}`)
-
-// leaves are the leaf steps (ones with `run`) a scope or step runs, in order, expanded; false on a
-// cycle, an unknown name, or a listed leaf that needs names on the command line.
-func leaves(section map[string]any, name string, trail []string) ([]string, bool) {
-	steps, _ := section["steps"].(map[string]any)
-	scopes, _ := section["scopes"].(map[string]any)
-	entry, isStep := steps[name].(map[string]any)
-	if !isStep {
-		var isScope bool
-		if entry, isScope = scopes[name].(map[string]any); !isScope {
-			return nil, false
-		}
-	}
-	if slices.Contains(trail, name) {
-		return nil, false
-	}
-	listed, hasSteps := entry["steps"].([]any)
-	if !hasSteps {
-		if len(trail) > 0 {
-			words, _ := entry["run"].([]any)
-			for _, word := range words {
-				text, _ := word.(string)
-				for _, match := range placeholder.FindAllStringSubmatchIndex(text, -1) {
-					if text[match[2]:match[3]] == "tests" && (match[0] == 0 || text[match[0]-1] != '$') {
-						return nil, false
-					}
-				}
-			}
-		}
-		return []string{name}, true
-	}
-	var found []string
-	for _, item := range listed {
-		each, _ := item.(string)
-		more, ok := leaves(section, each, append(slices.Clone(trail), name))
-		if !ok {
-			return nil, false
-		}
-		found = append(found, more...)
-	}
-	return found, true
 }
 
 // stepMedians are the median seconds of each step or scope from the run record's finished runs

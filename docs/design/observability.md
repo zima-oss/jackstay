@@ -280,7 +280,7 @@ guard's only record.
 
 ## 9. jackstay's stores stay the source of truth
 
-Receipts, `runs.jsonl`, review folders, `procs`, id counters, the expected list and gate marks are
+Receipts, `runs.jsonl`, review folders, `procs`, id counters and the expected list are
 written first and read by the commands. Spans **observe** them and link to them by path or id. No
 command reads the journal to decide anything; its readers are `jst log`, `jst stats` and
 `jst doctor`'s 7-day report. A journal deleted whole changes no behaviour (each instrumented

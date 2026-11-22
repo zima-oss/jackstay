@@ -3,6 +3,8 @@ package doctor
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -96,6 +98,52 @@ func TestLandChecks(t *testing.T) {
 	facts := landReport(t, land(""), read, nil).Facts["land"].(map[string]any)
 	if required, _ := facts["required_checks"].([]string); strings.Join(required, ",") != "build,card-line" || facts["base"] != "main" {
 		t.Fatalf("facts %v", facts)
+	}
+}
+
+// A system with scopes CI covers needs its job, `jst test ci (SYSTEM)`, required by the base's rules.
+func TestDoctorReportsACIJobTheRulesDoNotRequire(t *testing.T) {
+	file := `{"jackstay_schema":3,"land":{"autonomy":"prepare"},"test":{"scopes":{` +
+		`"x-go":{"run":["go","test"],"ci":["linux"]},"x-ui":{"run":["ui"],"ci":["darwin","linux"]},"gate":{"deps":["x-go","x-ui"]}}}}`
+	rules := hosting.Rules{ChecksRead: true, Required: []hosting.RequiredCheck{{Name: "card-line"}, {Name: "jst test ci (linux)"}},
+		MethodsRead: true, Methods: []hosting.Method{hosting.Squash}}
+	report := landReport(t, file, rules, nil)
+	if kinds(report.Problems) != "land-ci-job-not-required" || !strings.Contains(report.Problems[0].Text, "`jst test ci (darwin)`") {
+		t.Fatalf("problems %+v", report.Problems)
+	}
+	rules.Required = append(rules.Required, hosting.RequiredCheck{Name: "jst test ci (darwin)"})
+	if report := landReport(t, file, rules, nil); len(report.Problems) != 0 {
+		t.Fatalf("both jobs required: %+v", report.Problems)
+	}
+	if report := landReport(t, file, hosting.Rules{Unread: "refused"}, nil); strings.Contains(kinds(report.Problems), "ci-job") {
+		t.Fatalf("unread rules: %+v", report.Problems)
+	}
+}
+
+// A project whose scopes CI covers needs the jobs required also when it has no land section.
+func TestDoctorReportsACIJobTheRulesDoNotRequireWithoutLand(t *testing.T) {
+	file := `{"jackstay_schema":3,"test":{"scopes":{"x-go":{"run":["go","test"],"ci":["linux"]}}}}`
+	report := landReport(t, file, hosting.Rules{ChecksRead: true, Required: []hosting.RequiredCheck{{Name: "build"}}}, nil)
+	if kinds(report.Problems) != "land-ci-job-not-required" || kinds(report.Notes) != "" {
+		t.Fatalf("problems %+v, notes %+v", report.Problems, report.Notes)
+	}
+	report = landReport(t, file, hosting.Rules{}, errors.New("no token"))
+	if len(report.Problems) != 0 || kinds(report.Notes) != "ci-jobs-unchecked" {
+		t.Fatalf("no account: problems %+v, notes %+v", report.Problems, report.Notes)
+	}
+	// The project around the folder is read for its `ci` scopes alone.
+	folder := t.TempDir()
+	if err := os.WriteFile(filepath.Join(folder, config.Name), []byte(file), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(folder)
+	if _, found := realLandProject(); !found {
+		t.Fatal("a project with ci scopes and no land section was not read")
+	}
+	// Without a land section and with no `ci`, the host is not asked.
+	report = landReport(t, `{"jackstay_schema":3,"test":{"scopes":{"x-go":{"run":["go","test"]}}}}`, hosting.Rules{}, errors.New("asked"))
+	if len(report.Problems)+len(report.Notes) != 0 {
+		t.Fatalf("no ci: %+v", report)
 	}
 }
 

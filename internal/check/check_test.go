@@ -59,21 +59,6 @@ func TestCheck(t *testing.T) {
 	}
 }
 
-func TestLeaves(t *testing.T) {
-	section := map[string]any{
-		"steps":  map[string]any{"a": map[string]any{"run": []any{"x"}}, "t": map[string]any{"run": []any{"x", "{tests}"}}, "s": map[string]any{"run": []any{"${tests}"}}},
-		"scopes": map[string]any{"g": map[string]any{"steps": []any{"a", "h"}}, "h": map[string]any{"steps": []any{"s", "a"}}, "c": map[string]any{"steps": []any{"c"}}, "u": map[string]any{"steps": []any{"t"}}},
-	}
-	if got, ok := leaves(section, "g", nil); !ok || strings.Join(got, ",") != "a,s,a" {
-		t.Errorf("%v %v", got, ok)
-	}
-	for _, bad := range []string{"c", "u", "nope"} {
-		if _, ok := leaves(section, bad, nil); ok {
-			t.Errorf("%s expanded", bad)
-		}
-	}
-}
-
 func TestReleaseValidator(t *testing.T) {
 	t.Setenv("JACKSTAY_HOME", t.TempDir())
 	folder := t.TempDir()

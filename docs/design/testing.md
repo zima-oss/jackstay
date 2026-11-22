@@ -2,10 +2,11 @@
 
 Decisions: [W-012](../decisions/W-012-test-scopes-vocabulary.md) (one vocabulary of scopes; each
 project defines its selection) and [W-013](../decisions/W-013-quality-testing-declarative.md) (no
-time-sensitive tests; everything declarative and general). Status: built, except that 0.6.0 runs
-scopes as a graph with a cache by input hash ([land.md](land.md) section 7, after
-[W-096](../decisions/W-096-task-graph-and-input-cache.md)), which section 5 summarises and which
-is not built yet. How to use scopes is the
+time-sensitive tests; everything declarative and general). Status: built. 0.6.0 runs scopes as a
+graph ([land.md](land.md) section 7, after
+[W-096](../decisions/W-096-task-graph-and-input-cache.md)), which section 5 summarises; the cache
+by input hash is not in 0.6.0 (planned for jackstay 1, whose design may differ), and 0.6.0 removes
+a gate's `--resume`, marks and bars: a gate runs every node each time. How to use scopes is the
 [tests guide](../guide/tests.md); the raw form `jst test -- COMMAND`, its outcomes, receipts and run
 record are [implementation.md](implementation.md) section 9. The
 [compatibility baseline](testing-compatibility.md) pins the outcomes; the
@@ -75,8 +76,8 @@ Keys of a scope (all optional except `run` or `steps`):
   (section 4), `{report}` (section 2.1). A placeholder is `{name}` of lower-case letters and `_`,
   not after `$`; an unknown one is an error. Other braces (`${VAR}`, `{2,3}`) are literal.
 - `steps`: instead of `run`, a list of step names (`steps` section) or scope names, read as `deps`.
-- `deps`, `ci`, `systems`, `inputs`, `cache`: what must pass first, where CI runs the scope, where
-  it runs at all, the files its cache hash reads, and whether it is cached;
+- `deps`, `ci`, `systems`: what must pass first, where CI runs the scope, and where it runs at all
+  (the cache's `inputs` and `cache` are not in 0.6.0);
   [land.md](land.md) section 7.1.
 - `judge`: `swift-test` (section 2), `steps` (a count line declared by `evidence`),
   `go-json`, `junit`, `jest-json` and `trx` (section 2.1), or `exit` (status only; the outcome is
@@ -125,7 +126,7 @@ It reads both streams, escape sequences removed, to their end, and requires, for
    something else could not be judged (an unattributed leftover, a bundle that did not end):
    `failed` > `timed-out` > `stopped` > `unjudged` > `nothing-run` > `passed`. A status caused by
    jackstay's own stop (the timeout, or a signal sent to `jst test`) is not a failure: such a run is
-   `timed-out` or `stopped` unless a failure line or veto was seen before the stop. A `failed` run always writes its failure note, and the failure note of its cache hash.
+   `timed-out` or `stopped` unless a failure line or veto was seen before the stop. A `failed` run always writes its failure note.
 
 The judge prints its reading as the last line's detail:
 `jst test: outcome=passed (… s, counted=2290 bundles=9/9 xctest=2290 swift-testing=0 skipped=1)`
@@ -174,9 +175,7 @@ name. Unavailable timings are left out. Swift class selection uses its existing 
 The format name, adapter version and semantic report settings are keyed. The allocated report
 path is transport only. Receipt lookup recomputes the saved material's digest and requires a
 positive count. Changing the adapter version changes the key without rewriting the historical
-records. A scope's cache entry ([land.md](land.md) section 7.3) carries the adapter version and the
-counted pass, so a hit needs no report file after the private report directory is removed.
-The [producer guide](../guide/tests.md#structured-test-reports) lists the pinned probes. The
+records. The [producer guide](../guide/tests.md#structured-test-reports) lists the pinned probes. The
 [compatibility baseline](testing-compatibility.md) records the original exit and reporting contracts.
 
 ## 3. A timeout that ends the whole run
@@ -225,14 +224,14 @@ are found, remembered by id and start time, and signalled is
 
 A slow class is skipped from `quick`, never excused from `full` (W-013).
 
-## 5. The gate: a graph of scopes, cached
+## 5. The gate: a graph of scopes
 
-How several scopes run together, and when one is skipped because it passed before, is
-[land.md](land.md) section 7: each scope once, after its `deps`, in a stable order; a failure stops
-the run unless `--keep-going`; a scope whose inputs have a counted pass in the cache is not run and
-is marked `cached`. A `steps` list is read as `deps`, so 0.5.x gates keep their order. What 0.6.0
-removes from 0.5.x (step marks, bars, `--resume`, the `resumed` and `refused` outcomes, the
-`resume` key, receipts reuse for a scope) is listed in its section 7.7.
+How several scopes run together is [land.md](land.md) section 7: each scope once, after its
+`deps`, in a stable order; a failure stops the run unless `--keep-going`. A `steps` list is read as
+`deps`, so 0.5.x gates keep their order. `--resume`, the gate's marks and bars, the `resumed` and
+`refused` outcomes and the `resume` key are removed in 0.6.0: `--resume` is refused (2), and an
+interrupted gate runs in full. Reuse of passes comes with the cache by input hash (section 7.3
+there), in jackstay 1; what 0.6.0 changes from 0.5.x is listed in its section 7.7.
 
 What stays here:
 
@@ -290,13 +289,13 @@ SwiftPM/XCTest/Swift Testing for the `swift-test` judge.
 - `requires` checks run in `jst test` itself, before the lock and before a receipt is looked up.
   A failed check writes a `not-started` `run` line, which no count takes as a run; one stopped at
   its timeout fails whatever it ended with (`requires_session`, `requires_killed`).
-- A scope is skipped only by the cache of [land.md](land.md) section 7.3; receipts reuse is for
-  `jst test -- COMMAND`.
+- A scope's receipt is reused only when its words are a `receipts.commands` entry with
+  `"reuse": true`, and never inside the run of a scope with deps.
 - After a normal end the session has up to 1 s to empty by itself before what is left is stopped.
 - Durations are recorded from `passed` and `failed` runs (not `unjudged`, `timed-out`, `stopped`).
 - A run of more than one node writes a `gate-start` line and, at its end, a `gate` line (`steps`:
-  each node's outcome, `cached` mark, seconds and run id); each node's own `start`/`run` or
-  `cached` lines carry `step` and `gate_run_id`. A run stopped or killed during a node leaves the
+  each node's outcome, seconds and run id); each
+  node's own `start`/`run` lines carry `step` and `gate_run_id`. A run stopped or killed during a node leaves the
   node's `stopped` line and a `gate-start` with no `gate`. `jst test last --scope gate` shows it.
 - A recorded run whose `start` has no `run` overlaps only while its pid is alive.
 - An inner run killed outright (no result) is `unjudged` to the run: no verdict, no failure note.
@@ -306,7 +305,7 @@ SwiftPM/XCTest/Swift Testing for the `swift-test` judge.
   (SwiftPM starts `xctest` in a group of its own). While the stop waits it reads the process table
   again and signals what is new at once.
 - A process table that cannot be read is "the end of the tree cannot be confirmed", not "nothing
-  left": the run is `unjudged` (`tree_unconfirmed`, no receipt, no cache entry) and a `requires` check is
+  left": the run is `unjudged` (`tree_unconfirmed`, no receipt) and a `requires` check is
   not passed. `JACKSTAY_PROC_UNREADABLE=1` makes jackstay act so (tests only).
 - A bundle that ends without starting is `unjudged`.
 - `jst test`'s own files in `$TMPDIR` are removed before it ends by re-raising a signal.

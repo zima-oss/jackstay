@@ -8,9 +8,11 @@ generated from the binary by `just reference`; change a command's help in its pa
 | Command | What it does |
 |---|---|
 | [`jst test`](#jst-test) | run a test scope or command, judged, recorded and keyed by the tree |
+| [`jst test ci`](#jst-test-ci) | every scope CI covers on this system, once, in graph order (the CI job) |
 | [`jst test last`](#jst-test-last) | the last run of this project: outcome, what went wrong, where its output is |
 | [`jst test list`](#jst-test-list) | the project's test scopes: what each runs, and when the project runs it |
 | [`jst test plan`](#jst-test-plan) | the words a scope would run, step by step; nothing is run |
+| [`jst test uncovered`](#jst-test-uncovered) | what CI does not cover on this system, on a clean copy of the commit |
 | [`jst receipts`](#jst-receipts) | the receipts: key, stats, list, export and verify |
 | [`jst receipts export`](#jst-receipts-export) | write a portable record of a stored test pass |
 | [`jst receipts key`](#jst-receipts-key) | the key of a command here and what went into it; nothing is run |
@@ -31,31 +33,51 @@ Run a test scope or command, judged, recorded and keyed by the tree.
 
 ```text
 usage: jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock]
-                [--resume] [--keep-going] [--commit REV]
+                [--keep-going] [--commit REV]
        jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]
 
 Runs a scope (`jst test list`) or, after --, any command. Only the outcome passed is a pass: read
-the last `jst test:` line. With test.selection, `jst test changed [BASE..REV]` picks the scope from
-the changed paths.
+the last `jst test:` line. A scope with deps runs them first, each once, in declared order. With
+test.selection, `jst test changed [BASE..REV]` picks the scope from the changed paths; when a scope
+has `ci` or `systems`, it runs only what CI does not cover and this machine can run.
+`jst test uncovered` and `jst test ci`: their own --help. The cache keys `inputs` and `cache` are
+not built yet.
   --no-reuse      run even when a receipt of this tree could be reused
   --wait S        give up waiting for the machine-wide lock after S seconds
   --lock          take the machine-wide lock; --no-lock: do not (default: the scope's lock)
   --project NAME  the project's name in the record (default jackstay.json's)
   --base REF      the scope's {base} or the base for automatic selection
-  --resume        a gate: skip the steps that passed on this same tree
-  --keep-going    a gate: run the remaining steps after one fails
+  --keep-going    a scope with deps: after a failure, run the steps that do not depend on it
   --commit REV    run on a clean copy of REV that jackstay makes and then removes
 
-A scope with steps needs receipts.toolchain in jackstay.json: the commands that print your tools'
-versions (`[["go", "version"]]`), or [] for none.
+A scope with deps runs every node each time: --resume was removed in 0.6.0, and reuse of passes
+comes with the cache of jackstay 1.
 
 exit: 0 passed (or exited 0 uncounted); 1 failed; 2 not started or refused, nothing ran;
 75 gave up waiting for the lock; 76 no test ran; 77 unjudged (output not read to its end, or
 leftovers that cannot be attributed); 78 passed only on retry (not a clean pass); 124 timed out;
+79 the scope cannot run on this system (its systems); 80 a test of the change needs another system;
 127 the command cannot start. A command that ran and failed passes its own status on, so 2 or 77
 may be its own: the last jst test: line names the outcome.
 
 example: jst test gate --commit HEAD
+```
+
+### jst test ci
+
+Every scope CI covers on this system, once, in graph order (the CI job)
+
+```text
+usage: jst test ci [--keep-going] [--project NAME] [--lock | --no-lock]
+
+Runs every scope whose `ci` names this system, with its deps, each once in graph order: the one
+command of the CI job `jst test ci (SYSTEM)`, which the base's rules require.
+  --keep-going     after a failure, run the nodes that do not depend on it
+
+exit: 0 passed; 2 not started, or no scope names this system in its ci; otherwise the first
+failure's own status, as `jst test SCOPE`.
+
+example: jst test ci
 ```
 
 ### jst test last
@@ -110,6 +132,27 @@ exit: 0 the plan (a step that cannot run as asked says so on its line); 2 refuse
 scope of the project, or the request or jackstay.json's test section cannot be used.
 
 example: jst test plan auto --base origin/main
+```
+
+### jst test uncovered
+
+What CI does not cover on this system, on a clean copy of the commit.
+
+```text
+usage: jst test uncovered [--commit REV] [--keep-going] [--project NAME] [--lock | --no-lock]
+
+Runs, on a clean copy of REV (default HEAD), every scope that needs no test names and that CI does
+not cover on this system, with its deps. The last line names three groups: here (what ran), ci
+(covered by CI) and elsewhere (runs only on another system, listed, never holding the run). Its
+passed or left-to-ci line is the record `jst install` from a checkout needs when the commit's
+jackstay.json gives some scope a `ci`.
+  --commit REV     the commit to test (default HEAD)
+  --keep-going     after a failure, run the nodes that do not depend on it
+
+exit: 0 passed, or left-to-ci (nothing to run here); 2 not started; otherwise the first failure's
+own status, as `jst test SCOPE`.
+
+example: jst test uncovered
 ```
 
 ### jst receipts
@@ -1049,7 +1092,8 @@ Checks the installed layout, the jst on PATH, the guard refusing, its logs of th
 projects heard from and expected, Claude Code's sandbox settings and the lock; in a project, its
 adoption and, with a land section, its landing policy against the host's branch rules (the
 account, the required checks, the merge method). It reports a missing lint workflow and a base
-whose rules require no `card-line` check; whether rule D0 is enforced is the person's to confirm.
+whose rules require no `card-line` check, or no `jst test ci (SYSTEM)` job for a system some
+scope's `ci` names; whether rule D0 is enforced is the person's to confirm.
 Only the landing part asks the host.
   --json          the report as one JSON object
   --prefix DIR    the install prefix to inspect (default: this binary's own)

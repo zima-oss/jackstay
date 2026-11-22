@@ -155,7 +155,7 @@ func UnwritableEvidence(project string) string {
 	if project == "" {
 		return ""
 	}
-	for _, name := range []string{"receipts", "gate-marks", "gate-bars"} {
+	for _, name := range []string{"receipts"} {
 		folder, err := StateFolder(project, name)
 		if err != nil || !canCreateIn(folder) {
 			return folder

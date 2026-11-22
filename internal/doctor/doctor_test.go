@@ -333,7 +333,7 @@ func TestSandboxGrantsAndEvidence(t *testing.T) {
 		len(entries) != 1 || entries[0] != home+"/app/receipts/*.json" {
 		t.Fatalf("an entry for files inside the receipts: %q %v", exposed, entries)
 	}
-	write(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": ["`+home+`"], "denyWrite": ["`+home+`/app/receipts", "`+home+`/app/gate-marks", "`+home+`/app/gate-bars", "`+home+`/app/reviews", "`+home+`/.all/runs.jsonl", "`+home+`/.all/reviews", "`+home+`/.all/review-pool", "`+home+`/.all/delivery", "`+home+`/.all/expected-projects"]}}}`)
+	write(t, settings, `{"sandbox": {"enabled": true, "filesystem": {"allowWrite": ["`+home+`"], "denyWrite": ["`+home+`/app/receipts", "`+home+`/app/reviews", "`+home+`/.all/runs.jsonl", "`+home+`/.all/reviews", "`+home+`/.all/review-pool", "`+home+`/.all/delivery", "`+home+`/.all/expected-projects"]}}}`)
 	if exposed, _, _ := SandboxWritesEvidence(settings, home, []string{"app"}); exposed != "" {
 		t.Fatalf("denied evidence counted as exposed: %s", exposed)
 	}

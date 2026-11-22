@@ -96,6 +96,8 @@ func setSchemaHints(root map[string]any) {
 		"test.scopes.*.judge":        testJudges,
 		"test.steps.*.judge":         testJudges,
 		"test.scopes.*.selector":     {"go-test", "jest-test"},
+		"test.scopes.*.ci.[]":        {"linux", "darwin"},
+		"test.scopes.*.systems.[]":   {"linux", "darwin"},
 		"receipts.commands.[].judge": {"go-json", "junit", "jest-json", "trx", "xcresult-json"},
 	} {
 		node := root

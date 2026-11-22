@@ -170,7 +170,7 @@ func TestUnwritableEvidenceNamesEachProtectedPiece(t *testing.T) {
 	if entries, _ := os.ReadDir(home); len(entries) != 0 {
 		t.Fatalf("the check left something behind: %v", entries)
 	}
-	for _, name := range []string{"receipts", "gate-marks", "gate-bars"} {
+	for _, name := range []string{"receipts"} {
 		folder := filepath.Join(home, "demo", name)
 		if err := os.MkdirAll(folder, 0o700); err != nil {
 			t.Fatal(err)

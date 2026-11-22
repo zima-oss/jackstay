@@ -49,8 +49,8 @@ func (base *tester) list(args []string) int {
 	fmt.Fprintf(base.stdout, "%s: scopes (`jst test <scope>`; when each is required is the project's rule, below)\n", proj.name)
 	for _, name := range order {
 		entry := objectOf(scopes[name])
-		what, limit := "steps: "+joinComma(textsOf(entry["steps"])), ""
-		if !has(entry, "steps") {
+		what, limit := "deps: "+joinComma(depsOf(entry)), ""
+		if !isComposite(entry) {
 			chosen := resolve(proj.section, name, kindScope, entry)
 			what = shellWords(chosen.run)
 			limit = "  [no timeout: runs unbounded]"
@@ -131,18 +131,27 @@ func (base *tester) plan(args []string) int {
 			}
 		}
 	}
-	var paths []leafPath
+	// A project that says where its scopes run plans what the run does: the nodes here with
+	// their deps, and what it leaves to CI or to other systems (docs/design/land.md section 7.4).
+	var split *partition
+	if err == nil && selectChanged && declaresWhere(proj.section) {
+		made := proj.partitionOf("changed", []string{name})
+		split = &made
+	}
+	order := []string{name}
 	if err == nil {
 		scopes := objectOf(proj.section["scopes"])
 		entry := objectOf(scopes[name])
 		switch {
 		case entry == nil:
 			err = refused("`" + name + "` is not a scope of " + proj.name + "; its scopes: " + joinComma(sortedKeys(scopes)))
-		case has(entry, "steps"):
-			paths, err = leafPaths(proj.section, name, nil)
+		case namesRefusal(name, entry, rest) != nil:
+			err = namesRefusal(name, entry, rest)
+		case split != nil:
+			order = newGraph(proj.section, proj.operatingSystem).walk(split.here)
 			rest = nil
-		default:
-			paths = []leafPath{{name: name, kind: kindScope, entry: entry}}
+		case len(depsOf(entry)) > 0:
+			order = newGraph(proj.section, proj.operatingSystem).walk(order)
 		}
 	}
 	if err != nil {
@@ -150,14 +159,30 @@ func (base *tester) plan(args []string) int {
 		return statusRefused
 	}
 	out := base.stdout
-	for _, path := range paths {
-		leafOf := resolve(proj.section, path.name, path.kind, path.entry)
-		found, err := proj.wordsOf(leafOf, rest)
-		if err != nil {
-			fmt.Fprintf(out, "%s: cannot run as asked: %v\n", path.name, err)
+	nodes := newGraph(proj.section, proj.operatingSystem)
+	requested := name
+	for _, name := range order {
+		kind, entry := find(proj.section, name)
+		switch {
+		case !nodes.eligible(name):
+			fmt.Fprintf(out, "%s: skipped (it cannot run on %s)\n", name, proj.operatingSystem)
+			continue
+		case isComposite(entry):
+			fmt.Fprintf(out, "%s: passes when its deps that run here pass (%s)\n", name, joinComma(depsOf(entry)))
 			continue
 		}
-		fmt.Fprintf(out, "%s: %s\n", path.name, shellWords(found.argv))
+		leafOf := resolve(proj.section, name, kind, entry)
+		// The scope asked for takes the test arguments; its deps none.
+		var args []string
+		if name == requested {
+			args = rest
+		}
+		found, err := proj.wordsOf(leafOf, args)
+		if err != nil {
+			fmt.Fprintf(out, "%s: cannot run as asked: %v\n", name, err)
+			continue
+		}
+		fmt.Fprintf(out, "%s: %s\n", name, shellWords(found.argv))
 		timeout := "none"
 		if leafOf.timeout > 0 {
 			timeout = formatSeconds(leafOf.timeout)
@@ -189,6 +214,17 @@ func (base *tester) plan(args []string) int {
 		for _, class := range found.classes {
 			fmt.Fprintf(out, "    skipped: %s  (median %.1f s, slowest case %.1f s)\n", class.name, class.total, class.slowest)
 		}
+	}
+	if split != nil {
+		var leftToCI []string
+		for _, name := range split.ci {
+			if !slices.Contains(order, name) {
+				leftToCI = append(leftToCI, name)
+			}
+		}
+		fmt.Fprintf(out, "here: %s\n", orNone(joinComma(split.here)))
+		fmt.Fprintf(out, "left to CI: %s\n", orNone(joinComma(leftToCI)))
+		fmt.Fprintf(out, "elsewhere: %s\n", orNone(split.elsewhereText()))
 	}
 	return 0
 }

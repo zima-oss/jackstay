@@ -140,12 +140,12 @@ cannot be written never fails its tool, except `jst test`, which checks its evid
 `jst setup` lets Claude Code's sandbox write only what jst writes from a sandboxed command
 (`doctor.SandboxGrants`: the journals, the heavy-suite lock with its queue and holder note,
 `procs`, `chat`, `session-chat`, `context-brief`, each project's `ids`, the trash). Evidence (receipts and
-failure notes, gate marks and bars, review rounds, the run log, the delivery record, the expected
+failure notes, review rounds, the run log, the delivery record, the expected
 projects) stays read-only there, so a sandboxed agent cannot forge a pass (#59): `jst test` and
 `jst review` run outside it. Before running, `jst test` appends-opens the run log, makes and removes
-a file in the project's receipts, gate marks and bars (`receipts.UnwritableEvidence`) and removes
-the receipt or mark it replaces; when one fails it runs nothing. Outside the sandbox every session
-of the account may write here, so receipts, cache entries, marks and the run record can be forged: a known limit,
+a file in the project's receipts (`receipts.UnwritableEvidence`) and removes
+the receipt it replaces; when one fails it runs nothing. Outside the sandbox every session
+of the account may write here, so receipts and the run record can be forged: a known limit,
 not a boundary (guard.md).
 
 ### 3.2 The project file: `jackstay.json`

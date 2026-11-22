@@ -2,27 +2,30 @@ package receipts
 
 // testHelp is `jst test --help`: a scope's run and the raw form.
 const testHelp = `usage: jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock]
-                [--resume] [--keep-going] [--commit REV]
+                [--keep-going] [--commit REV]
        jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]
 
 Runs a scope (` + "`jst test list`" + `) or, after --, any command. Only the outcome passed is a pass: read
-the last ` + "`jst test:`" + ` line. With test.selection, ` + "`jst test changed [BASE..REV]`" + ` picks the scope from
-the changed paths.
+the last ` + "`jst test:`" + ` line. A scope with deps runs them first, each once, in declared order. With
+test.selection, ` + "`jst test changed [BASE..REV]`" + ` picks the scope from the changed paths; when a scope
+has ` + "`ci`" + ` or ` + "`systems`" + `, it runs only what CI does not cover and this machine can run.
+` + "`jst test uncovered`" + ` and ` + "`jst test ci`" + `: their own --help. The cache keys ` + "`inputs`" + ` and ` + "`cache`" + ` are
+not built yet.
   --no-reuse      run even when a receipt of this tree could be reused
   --wait S        give up waiting for the machine-wide lock after S seconds
   --lock          take the machine-wide lock; --no-lock: do not (default: the scope's lock)
   --project NAME  the project's name in the record (default jackstay.json's)
   --base REF      the scope's {base} or the base for automatic selection
-  --resume        a gate: skip the steps that passed on this same tree
-  --keep-going    a gate: run the remaining steps after one fails
+  --keep-going    a scope with deps: after a failure, run the steps that do not depend on it
   --commit REV    run on a clean copy of REV that jackstay makes and then removes
 
-A scope with steps needs receipts.toolchain in jackstay.json: the commands that print your tools'
-versions (` + "`[[\"go\", \"version\"]]`" + `), or [] for none.
+A scope with deps runs every node each time: --resume was removed in 0.6.0, and reuse of passes
+comes with the cache of jackstay 1.
 
 exit: 0 passed (or exited 0 uncounted); 1 failed; 2 not started or refused, nothing ran;
 75 gave up waiting for the lock; 76 no test ran; 77 unjudged (output not read to its end, or
 leftovers that cannot be attributed); 78 passed only on retry (not a clean pass); 124 timed out;
+79 the scope cannot run on this system (its systems); 80 a test of the change needs another system;
 127 the command cannot start. A command that ran and failed passes its own status on, so 2 or 77
 may be its own: the last jst test: line names the outcome.
 

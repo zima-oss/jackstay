@@ -5,10 +5,13 @@
 package block
 
 import (
+	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/adopt/templates"
+	scopes "github.com/zima-oss/jackstay/internal/testing"
 )
 
 // Inputs are what the block is printed from.
@@ -47,6 +50,9 @@ func hasSection(name string) func(map[string]any) bool {
 
 var items = []item{
 	{id: "test", commands: []string{"test", "test list", "test last"}, wanted: always, first: true, text: testText},
+	{id: "test-split", commands: []string{"test", "test uncovered"}, wanted: func(config map[string]any) bool {
+		return len(coveredScopes(config)) > 0
+	}, first: true, text: splitText},
 	{id: "checks", commands: []string{"checks"}, wanted: func(config map[string]any) bool {
 		account, _ := section(config, "github")["account"].(string)
 		return account != ""
@@ -137,13 +143,95 @@ func testText(config map[string]any) string {
 		"  (`jst test list` names them and when each is due). Only `passed` is a pass: read the last\n" +
 		"  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its\n" +
 		"  output file)."
-	if _, gate := scopes["gate"]; gate {
+	if _, gate := scopes["gate"]; gate && !splitsChanges(config) {
 		text += "\n  Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit)."
 	}
 	if section(section(config, "test"), "selection") != nil {
 		text += "\n  Preview path-based selection with `jst test plan changed --base REF`."
 	}
 	return text + " No scope fits: `jst test -- COMMAND`.\n" + evidenceText
+}
+
+// systemNames are the systems a scope's `ci` names, as people call them.
+var systemNames = map[string]string{"linux": "Linux", "darwin": "macOS"}
+
+// coveredScopes are the nodes with `run` that CI covers, through their own `ci` or as a dep of a
+// scope that has one, each with the systems it is covered on (docs/design/land.md section 7.4).
+func coveredScopes(config map[string]any) map[string][]string {
+	// The graph reads the section as encoding/json gives it; a Go literal is brought to that form.
+	var test map[string]any
+	if data, err := json.Marshal(section(config, "test")); err != nil || json.Unmarshal(data, &test) != nil {
+		return nil
+	}
+	return scopes.CoveredSystems(test)
+}
+
+// splitsChanges says whether `jst test changed` can split a change between here and CI: some
+// scope is covered and the project selects scopes by path (`test.selection`).
+func splitsChanges(config map[string]any) bool {
+	return len(coveredScopes(config)) > 0 && section(section(config, "test"), "selection") != nil
+}
+
+// splitText states where tests run (docs/design/land.md section 7.4): what CI runs, on which
+// systems, and what an agent runs before a pull request (when the project selects by path) and
+// before an install or a tag.
+func splitText(config map[string]any) string {
+	covered := coveredScopes(config)
+	var order []string
+	groups := map[string][]string{}
+	for _, name := range slices.Sorted(maps.Keys(covered)) {
+		var words []string
+		for _, system := range covered[name] {
+			word, known := systemNames[system]
+			if !known {
+				word = system
+			}
+			words = append(words, word)
+		}
+		where := strings.Join(words, " and ")
+		if _, seen := groups[where]; !seen {
+			order = append(order, where)
+		}
+		groups[where] = append(groups[where], name)
+	}
+	parts := make([]string, 0, len(order))
+	for _, where := range order {
+		parts = append(parts, strings.Join(groups[where], ", ")+" on "+where)
+	}
+	text := "- **Where tests run**: CI runs " + strings.Join(parts, "; ") + " and is the gate. "
+	// Without `test.selection`, `jst test changed` cannot split a change: the test item's gate line
+	// says what to run before a pull request.
+	if splitsChanges(config) {
+		text += "Before a pull request: `jst test changed`. "
+	}
+	return wrap(text + "Before an install or a tag: `jst test uncovered`.")
+}
+
+// wrap breaks an item's text at spaces outside code spans into lines of at most 100 characters,
+// the later ones indented by two spaces.
+func wrap(text string) string {
+	var words []string
+	for _, field := range strings.Fields(text) {
+		if last := len(words) - 1; last >= 0 && strings.Count(words[last], "`")%2 == 1 {
+			words[last] += " " + field
+			continue
+		}
+		words = append(words, field)
+	}
+	var lines []string
+	line := ""
+	for _, word := range words {
+		switch {
+		case line == "":
+			line = word
+		case len(line)+1+len(word) > 100:
+			lines = append(lines, line)
+			line = "  " + word
+		default:
+			line += " " + word
+		}
+	}
+	return strings.Join(append(lines, line), "\n")
 }
 
 // evidenceText says where the commands that record evidence run (#59).

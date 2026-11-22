@@ -77,7 +77,7 @@ refuses: [The guard](guard.md).
 
 Claude Code's Bash sandbox writes only the folders its settings allow. jackstay keeps two kinds of
 things in `~/.jackstay`. Some it writes while an agent's command runs in the sandbox; the rest is
-evidence it later trusts (receipts, gate marks, review rounds, the run log), which the sandbox may
+evidence it later trusts (receipts, review rounds, the run log), which the sandbox may
 only read, so an agent cannot record a pass it did not run. `jst test` and `jst review` record
 that evidence, so they run outside the sandbox: inside it, `jst test` runs nothing and says so.
 `jst setup` adds the rest to `sandbox.filesystem.allowWrite` in `~/.claude/settings.json`, one
@@ -131,7 +131,7 @@ in `review.use`. Rounds, verdicts and the `review` section: [Reviews](review.md)
 | A hook error on every Bash call, and commands run unchecked | `jst-guard` is not at the path the settings name (127). Install, or fix the path. |
 | `jst doctor`: `guard-never-called` / `expected-never-called` | No session has called the hook: the project's settings are not loaded (trust dialog), or the path is wrong. |
 | `jst doctor`: `sandbox-blocks-state` | jst cannot keep its logs, locks, chat or jobs in sandboxed sessions; run `jst setup`, which adds only the folders listed above. |
-| `jst doctor`: `sandbox-writes-evidence` | the sandbox may write receipts or gate marks; run `jst setup` to replace a whole-home entry, or narrow a broader one yourself. |
+| `jst doctor`: `sandbox-writes-evidence` | the sandbox may write receipts; run `jst setup` to replace a whole-home entry, or narrow a broader one yourself. |
 | `jst test`: `Run it outside the sandbox.` | the run records evidence the sandbox may only read; run that command outside it. |
 | The guard says `config-unusable` on every call | `jackstay.json` is broken; the built-in rules still apply. Run `jst check`. |
 

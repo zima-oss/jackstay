@@ -38,7 +38,7 @@ var homeGrants = []string{".trash"}
 // sharedEvidence and projectEvidence are paths the sandbox must not write; doctor checks them.
 var (
 	sharedEvidence  = []string{"runs.jsonl", "reviews", "review-pool", "delivery", "expected-projects"}
-	projectEvidence = []string{"receipts", "gate-marks", "gate-bars", "reviews"}
+	projectEvidence = []string{"receipts", "reviews"}
 )
 
 // SandboxProjects are the projects whose folders the grants name: each folder already in home (a

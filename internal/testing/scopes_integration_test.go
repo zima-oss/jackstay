@@ -138,25 +138,15 @@ func TestIntegrationATimeoutEndsTheWholeSessionTree(t *testing.T) {
 	}
 }
 
-func TestIntegrationAGateFailsFastAndItsBarRefusesResume(t *testing.T) {
+func TestIntegrationAGateFailsFastAndRunsEveryNodeAgain(t *testing.T) {
 	w, _ := realWorld(t, gateSection())
 	w.repo.Git("branch", "base-ref")
 	w.flag("middle-fails", true)
 	w.expectStatus(w.jst("gate"), 1)
-	w.expectLast("gate gate failed at middle")
+	w.expectLast("gate failed at middle")
 	w.expectCounters("cheap middle full", 1, 1, 0)
 	w.flag("middle-fails", false)
-	w.expectStatus(w.jst("gate", "--resume"), 2)
-	w.expectSaid("nothing has changed since this step failed")
-	w.expectLast("outcome=refused", "middle=refused")
-	w.expectCounters("cheap middle full", 1, 1, 0)
-	// A change of the tree lifts the bar; then a pass is resumed.
-	w.repo.Write(map[string]string{"Sources/b.swift": "let b = 2\n"})
-	w.commit()
-	w.expectStatus(w.jst("gate", "--resume"), 0)
-	w.expectCounters("cheap middle full", 2, 2, 1)
-	w.expectStatus(w.jst("gate", "--resume"), 0)
-	w.expectLast("outcome=resumed")
+	w.expectStatus(w.jst("gate"), 0)
 	w.expectCounters("cheap middle full", 2, 2, 1)
 }
 

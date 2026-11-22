@@ -7,7 +7,8 @@ Checks the installed layout, the jst on PATH, the guard refusing, its logs of th
 projects heard from and expected, Claude Code's sandbox settings and the lock; in a project, its
 adoption and, with a land section, its landing policy against the host's branch rules (the
 account, the required checks, the merge method). It reports a missing lint workflow and a base
-whose rules require no ` + "`card-line`" + ` check; whether rule D0 is enforced is the person's to confirm.
+whose rules require no ` + "`card-line`" + ` check, or no ` + "`jst test ci (SYSTEM)`" + ` job for a system some
+scope's ` + "`ci`" + ` names; whether rule D0 is enforced is the person's to confirm.
 Only the landing part asks the host.
   --json          the report as one JSON object
   --prefix DIR    the install prefix to inspect (default: this binary's own)
