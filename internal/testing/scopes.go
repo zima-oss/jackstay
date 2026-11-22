@@ -228,6 +228,19 @@ type project struct {
 	options  options
 	signals  *supervise.Signals
 	runLog   receipts.RunLog
+	// argumentsFor is the scope asked for by name, the one node of its run given the command
+	// line's test arguments; a dep is given none.
+	argumentsFor string
+	arguments    []string
+}
+
+// argumentsOf are the command line's test arguments for a node of the run: the scope asked for
+// gets them, its deps none.
+func (proj *project) argumentsOf(name string) []string {
+	if name == proj.argumentsFor {
+		return proj.arguments
+	}
+	return nil
 }
 
 // needs are the sections a scope reads.
@@ -395,7 +408,7 @@ func (base *tester) scope(args []string) int {
 				" (`jst test list`)")
 		case base.pin != nil && !isComposite(entry):
 			err = refused("the pinned gate must list its steps")
-		case len(depsOf(entry)) > 0 && len(rest) > 0:
+		case len(depsOf(entry)) > 0 && len(rest) > 0 && (isComposite(entry) || !needsTestArguments(entry)):
 			err = refused("`" + name + "` has deps (or lists steps) and takes no names; given: " + joinSpace(rest))
 		case len(depsOf(entry)) == 0 && (chosen.resume || chosen.keepGoing):
 			err = refused("--resume and --keep-going are for a scope with deps (or that lists steps)")
@@ -409,6 +422,7 @@ func (base *tester) scope(args []string) int {
 	proj.listenUnless(signals)
 	defer proj.signals.Close()
 	if len(depsOf(entry)) > 0 || !runsOn(entry, proj.operatingSystem) {
+		proj.argumentsFor, proj.arguments = name, rest
 		return proj.gate(name, []string{name}, nil)
 	}
 	return proj.runLeaf(resolve(proj.section, name, kindScope, entry), rest, "", false).status

@@ -150,7 +150,6 @@ func (base *tester) plan(args []string) int {
 			rest = nil
 		case len(depsOf(entry)) > 0:
 			order = newGraph(proj.section, proj.operatingSystem).walk(order)
-			rest = nil
 		}
 	}
 	if err != nil {
@@ -159,6 +158,7 @@ func (base *tester) plan(args []string) int {
 	}
 	out := base.stdout
 	nodes := newGraph(proj.section, proj.operatingSystem)
+	requested := name
 	for _, name := range order {
 		kind, entry := find(proj.section, name)
 		switch {
@@ -170,7 +170,12 @@ func (base *tester) plan(args []string) int {
 			continue
 		}
 		leafOf := resolve(proj.section, name, kind, entry)
-		found, err := proj.wordsOf(leafOf, rest)
+		// The scope asked for takes the test arguments; its deps none.
+		var args []string
+		if name == requested {
+			args = rest
+		}
+		found, err := proj.wordsOf(leafOf, args)
 		if err != nil {
 			fmt.Fprintf(out, "%s: cannot run as asked: %v\n", name, err)
 			continue

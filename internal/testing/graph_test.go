@@ -1,6 +1,8 @@
 package scopes
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -149,6 +151,26 @@ func TestASharedDepRunsOnceAfterWhatItNeeds(t *testing.T) {
 	w.expectLast("outcome=exited-0 (x-a, ")
 	w.expectStatus(w.jst("x-a", "Some.Test"), 2)
 	w.expectSaid("has deps (or lists steps) and takes no names")
+}
+
+// A scope with `run` and deps that takes test names gets them; its deps get none, in the run and
+// in the plan.
+func TestTheScopeAskedForTakesTheTestNamesAndItsDepsNone(t *testing.T) {
+	section := map[string]any{"judge": "exit", "scopes": map[string]any{
+		"focused": map[string]any{"run": argv("sh", "-c", `echo "$0" >> "$SIDE/focused-names"`, "{tests}"), "deps": argv("x-build")},
+		"x-build": map[string]any{"run": counted("x-build", "true")},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("focused", "Some.Test"), 0)
+	w.expectCounters("x-build", 1)
+	w.expectLast("outcome=exited-0 (focused, ", "x-build=exited-0, focused=exited-0")
+	if names, err := os.ReadFile(filepath.Join(w.side, "focused-names")); err != nil || strings.TrimSpace(string(names)) != `^Some\.Test(/|$)` {
+		t.Fatalf("the names focused got: %q, %v", names, err)
+	}
+	w.expectStatus(w.jst("plan", "focused", "Some.Test"), 0)
+	if plan := w.stdout.String(); !strings.Contains(plan, "x-build: sh -c") || !strings.Contains(plan, `Some\.Test`) {
+		t.Fatalf("the plan:\n%s", plan)
+	}
 }
 
 func TestAFailureEndsTheRunAndKeepGoingRunsWhatDoesNotDependOnIt(t *testing.T) {

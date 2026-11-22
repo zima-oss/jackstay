@@ -604,7 +604,7 @@ func (proj *project) gateStep(name, kind string, entry map[string]any, gateID, r
 	resume := proj.options.resume
 	chosen := resolve(proj.section, name, kind, entry)
 	adapterVersion := judge.AdapterVersion(judge.Kind(chosen.judge))
-	found, err := proj.wordsOf(chosen, nil)
+	found, err := proj.wordsOf(chosen, proj.argumentsOf(name))
 	if err != nil {
 		proj.say("%v", err)
 		return step{"step": name, "outcome": receipts.OutcomeNotStarted, "seconds": 0, "status": statusRefused}, nil
@@ -679,7 +679,7 @@ func (proj *project) gateStep(name, kind string, entry map[string]any, gateID, r
 		}
 	}
 	if ended.outcome == "" {
-		ended = proj.runLeaf(chosen, nil, gateID, true)
+		ended = proj.runLeaf(chosen, proj.argumentsOf(name), gateID, true)
 	}
 	if ended.signalled {
 		return nil, &ended.status

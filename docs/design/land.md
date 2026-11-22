@@ -310,6 +310,10 @@ breaks it), a dep that needs test arguments (`{tests}` or a typed selector), and
 `requires` or another run setting on a composite (naming the scope, and telling the person to move
 the check to the dep that needs it). Each refusal is also `not-started` (2) before anything runs.
 
+A scope with `run` and deps whose words take test arguments (`{tests}`, `{test_args}` or a typed
+selector) is given those of `jst test SCOPE ARGS…` and `jst test plan SCOPE ARGS…`; its deps are
+given none. A scope with deps that takes none, or a composite, refuses test arguments (2).
+
 ### 7.2 The run
 
 1. **The walk.** From the scopes asked for, descend into deps, but only into deps eligible on
