@@ -88,6 +88,13 @@ func TestACheckoutIsInstalledOnlyAfterItsUncoveredTestsPassed(t *testing.T) {
 	if err := refusing.uncoveredPassed("/work/jackstay", "abc1234"); err == nil || asked != "/work/jackstay abc1234" {
 		t.Fatalf("refused %v after asking %q", err, asked)
 	}
+	// Another prefix holds a checkout's commit as long as the account's does: it needs the record too.
+	asked = ""
+	elsewhere := refusing
+	elsewhere.Prefix = filepath.Join(t.TempDir(), "elsewhere")
+	if err := elsewhere.uncoveredPassed("/work/jackstay", "abc1234"); err == nil || asked != "/work/jackstay abc1234" {
+		t.Fatalf("another prefix: refused %v after asking %q", err, asked)
+	}
 	accepting := Options{Prefix: AccountPrefix(), Uncovered: func(string, string) error { return nil }}
 	if err := accepting.uncoveredPassed("/work/jackstay", "abc1234"); err != nil {
 		t.Fatal(err)
@@ -98,7 +105,7 @@ func TestACheckoutIsInstalledOnlyAfterItsUncoveredTestsPassed(t *testing.T) {
 		{AccountPrefix(), "release", "abc1234"},
 		{AccountPrefix(), "binary /tmp/jst", "abc1234"},
 		{AccountPrefix(), "/work/jackstay", "abc1234+changes"},
-		{filepath.Join(t.TempDir(), "trial"), "/work/jackstay", "abc1234"},
+		{filepath.Join(t.TempDir(), "trial"), "/work/jackstay", "abc1234+changes"},
 	} {
 		asked = ""
 		trial := refusing

@@ -231,12 +231,11 @@ func Install(options Options) int {
 	return options.finish(state, versionText, target, already)
 }
 
-// uncoveredPassed is nil unless a checkout's commit goes to the account's prefix without a passed
-// `jst test uncovered` for it (docs/design/land.md section 7). A binary, a trial build with changes
-// and another prefix need none.
+// uncoveredPassed is nil unless a checkout's commit is installed, at any prefix, without a passed
+// `jst test uncovered` for it (docs/design/land.md section 7.4). A binary and a trial build with
+// changes (only ever at another prefix) need none.
 func (options Options) uncoveredPassed(source, commit string) error {
-	if !strings.HasPrefix(source, "/") || commit == "unknown" || strings.HasSuffix(commit, "+changes") ||
-		!samePath(options.Prefix, AccountPrefix()) {
+	if !strings.HasPrefix(source, "/") || commit == "unknown" || strings.HasSuffix(commit, "+changes") {
 		return nil
 	}
 	if options.Uncovered != nil {
