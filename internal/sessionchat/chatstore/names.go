@@ -147,6 +147,19 @@ func parseAddress(text string) (address, error) {
 }
 
 // ChannelAddress is a channel's address, with its ref when another channel shares its name.
+// ChannelAddress is a channel's address among the known ones: its name, and a short ref when another
+// known channel has the same name (section 3.2).
+func ChannelAddress(channel Channel, known []Channel) string { return channelAddressOf(channel, known) }
+
+// ResolveChannel is the channel an address names, refused as ambiguous when a bare name fits several.
+func ResolveChannel(text string, known []Channel) (Channel, error) {
+	parsed, err := parseAddress(text)
+	if err != nil || !parsed.channel {
+		return Channel{}, refuse(ReasonInvalid, "a channel is addressed as #name or #name [ref]")
+	}
+	return resolveChannel(parsed, known)
+}
+
 func channelAddressOf(channel Channel, known []Channel) string {
 	shared := false
 	var ids []string

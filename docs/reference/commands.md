@@ -710,9 +710,11 @@ example: jst review show parser-fix 2
 
 | Command | What it does |
 |---|---|
-| [`jst chat claude-hook`](#jst-chat-claude-hook) | announce pending chat at a Claude Code boundary |
-| [`jst chat codex-bridge`](#jst-chat-codex-bridge) | deliver pending chat to a managed Codex turn |
-| [`jst chat serve`](#jst-chat-serve) | serve repository-local agent session chat over MCP |
+| [`jst chat claude-hook`](#jst-chat-claude-hook) | the old name of jst hook claude |
+| [`jst chat codex-bridge`](#jst-chat-codex-bridge) | not in jackstay 0.6: the Codex bridge returns in jackstay 1 |
+| [`jst chat push`](#jst-chat-push) | ring the chat's native doorbells |
+| [`jst chat serve`](#jst-chat-serve) | serve the agent chat to one session over MCP |
+| [`jst hook claude`](#jst-hook-claude) | the Claude Code hook for the agent chat |
 | [`jst brief claude-hook`](#jst-brief-claude-hook) | restore a brief after Claude Code compaction |
 | [`jst brief clear`](#jst-brief-clear) | clear this worktree's brief while preserving its revision |
 | [`jst brief save`](#jst-brief-save) | save a task brief for this worktree |
@@ -725,50 +727,81 @@ example: jst review show parser-fix 2
 
 ### jst chat claude-hook
 
-Announce pending chat at a Claude Code boundary.
+The old name of jst hook claude.
 
 ```text
-usage: jst chat claude-hook --name NAME --event UserPromptSubmit|PostToolUse|PostToolBatch
+usage: jst chat claude-hook [--name NAME] [--event EVENT]
 
-Run from a Claude Code command hook at the named event. Use the same
-JACKSTAY_CHAT_SESSION_TOKEN as this session's jst chat serve MCP process.
-Enable chat.claude_code in jackstay.json. Pending messages are announced to
-Claude at the next configured boundary and remain pending until chat.ack.
+The 0.5.x name of `jst hook claude`, kept through 0.6.x; its flags are ignored, and the event is read from stdin.
 
-exit: 0 no message or notice emitted; 1 chat setup unavailable; 2 invalid arguments.
+exit: 0 always.
 
-example: jst chat claude-hook --name reviewer --event PostToolUse
+example: jst chat claude-hook
 ```
 
 ### jst chat codex-bridge
 
-Deliver pending chat to a managed Codex turn.
+Not in jackstay 0.6: the Codex bridge returns in jackstay 1.
 
 ```text
-usage: jst chat codex-bridge --socket PATH --thread ID --name NAME
+usage: jst chat codex-bridge
 
-Attach to an owner-managed Codex app-server Unix socket and one thread. Start the
-MCP server and the bridge with the same JACKSTAY_CHAT_SESSION_TOKEN. Enable
-chat.codex_bridge in jackstay.json. The bridge delivers to a running turn and
-leaves the message pending until the recipient calls chat.ack.
+The Codex bridge's push waits for jackstay 1. A Codex session reaches the chat through `jst chat serve` and reads its inbox with chat.inbox.
 
-exit: 0 stopped; 2 invalid setup or another bridge owns the session.
+exit: 2 always.
 
-example: jst chat codex-bridge --socket "$APP_SOCKET" --thread "$APP_THREAD" --name reviewer
+example: jst chat serve
+```
+
+### jst chat push
+
+Ring the chat's native doorbells.
+
+```text
+usage: jst chat push
+
+Ring the native doorbells of idle Claude Code sessions on their messaging sockets (docs/design/chat.md
+section 8.3), one process per account. The hooks and jst chat serve start it, detached, when a
+doorbell is due; it exits after ten minutes with nothing to ring.
+
+exit: 0 stopped, or another pusher runs; 2 the store or its lock is unavailable.
+
+example: jst chat push
 ```
 
 ### jst chat serve
 
-Serve repository-local agent session chat over MCP.
+Serve the agent chat to one session over MCP.
 
 ```text
-usage: jst chat serve --name NAME
+usage: jst chat serve [--name NAME]
 
-Serve a local stdio MCP session. Set JACKSTAY_CHAT_SESSION_TOKEN to a random 32+ character secret in the host launcher to resume an identity. The project must enable chat in jackstay.json. Messages are delivered when recipients poll their inbox.
+Serve the agent chat to one session over stdio MCP (docs/design/chat.md section 5). A Claude Code
+session is found through the binding its jst hook claude wrote; JACKSTAY_CHAT_SESSION_TOKEN gives
+a session of its own; without either the session is ephemeral. The project must enable chat in
+jackstay.json.
 
 exit: 0 end of input; 2 invalid configuration, arguments or transport.
 
-example: jst chat serve --name reviewer
+example: jst chat serve
+```
+
+### jst hook claude
+
+The Claude Code hook for the agent chat.
+
+```text
+usage: jst hook claude
+
+The Claude Code hook dispatcher for the agent chat (docs/design/chat.md section 8.2). Register it
+for SessionStart, UserPromptSubmit, PostToolBatch, Stop, StopFailure and SessionEnd; it reads the
+hook's JSON from stdin. It rings the chat's doorbell, holds a turn for an urgent message, and
+records the session's state. It never fails a turn: an error is reported on stderr and it exits 0.
+The project must enable chat in jackstay.json.
+
+exit: 0 always.
+
+example: jst hook claude
 ```
 
 ### jst brief claude-hook

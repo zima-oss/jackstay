@@ -3,7 +3,6 @@ package sessionchat
 import (
 	"context"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,95 +10,183 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
+	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
 )
 
-const claudeHookUsage = `usage: jst chat claude-hook --name NAME --event UserPromptSubmit|PostToolUse|PostToolBatch
+// hookBudget is the dispatcher's time budget (section 8.2); the store's lock deadline keeps it
+// inside.
+const hookBudget = 2 * time.Second
 
-Run from a Claude Code command hook at the named event. Use the same
-JACKSTAY_CHAT_SESSION_TOKEN as this session's jst chat serve MCP process.
-Enable chat.claude_code in jackstay.json. Pending messages are announced to
-Claude at the next configured boundary and remain pending until chat.ack.
+const hookUsage = `usage: jst hook claude
 
-exit: 0 no message or notice emitted; 1 chat setup unavailable; 2 invalid arguments.
+The Claude Code hook dispatcher for the agent chat (docs/design/chat.md section 8.2). Register it
+for SessionStart, UserPromptSubmit, PostToolBatch, Stop, StopFailure and SessionEnd; it reads the
+hook's JSON from stdin. It rings the chat's doorbell, holds a turn for an urgent message, and
+records the session's state. It never fails a turn: an error is reported on stderr and it exits 0.
+The project must enable chat in jackstay.json.
 
-example: jst chat claude-hook --name reviewer --event PostToolUse
+exit: 0 always.
+
+example: jst hook claude
 `
 
 func init() {
-	cli.Register(cli.Command{
-		Name: "chat claude-hook", Summary: "announce pending chat at a Claude Code boundary",
-		Usage: claudeHookUsage, PrivateArgs: true, Run: runClaudeHook,
-	})
+	cli.Register(cli.Command{Name: "hook claude", Summary: "the Claude Code hook for the agent chat", Usage: hookUsage, Run: runHook})
+	cli.Register(cli.Command{Name: "chat claude-hook", Summary: "the old name of jst hook claude", Usage: "usage: jst chat claude-hook [--name NAME] [--event EVENT]\n\nThe 0.5.x name of `jst hook claude`, kept through 0.6.x; its flags are ignored, and the event is read from stdin.\n\nexit: 0 always.\n\nexample: jst chat claude-hook\n", PrivateArgs: true, Run: runOldHook})
 }
 
-func runClaudeHook(args []string, input io.Reader, output, diagnostics io.Writer) int {
-	flags := flag.NewFlagSet("chat claude-hook", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	name := flags.String("name", "", "session name")
-	event := flags.String("event", "", "Claude Code hook event")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || strings.TrimSpace(*name) == "" ||
-		(*event != "UserPromptSubmit" && *event != "PostToolUse" && *event != "PostToolBatch") {
-		fmt.Fprint(diagnostics, claudeHookUsage)
-		return 2
+func runOldHook(_ []string, input io.Reader, output, diagnostics io.Writer) int {
+	fmt.Fprintln(diagnostics, "jst chat claude-hook is now jst hook claude; its flags are no longer needed")
+	return runHook(nil, input, output, diagnostics)
+}
+
+// hookInput is what Claude Code writes to a hook's stdin.
+type hookInput struct {
+	SessionID      string `json:"session_id"`
+	Event          string `json:"hook_event_name"`
+	Cwd            string `json:"cwd"`
+	Prompt         string `json:"prompt"`
+	StopHookActive bool   `json:"stop_hook_active"`
+}
+
+func runHook(args []string, input io.Reader, output, diagnostics io.Writer) int {
+	if len(args) != 0 {
+		fmt.Fprint(diagnostics, hookUsage)
+		return 0
 	}
-	// Claude supplies event context on stdin. Drain it without retaining tool
-	// inputs, responses or prompt text, including large PostToolUse results.
-	if input != nil {
-		if _, err := io.Copy(io.Discard, input); err != nil {
-			fmt.Fprintln(diagnostics, "chat: cannot read Claude Code hook input")
-			return 1
-		}
+	data, err := io.ReadAll(io.LimitReader(input, 1<<20))
+	var hook hookInput
+	if err == nil {
+		err = json.Unmarshal(data, &hook)
 	}
-	token := os.Getenv("JACKSTAY_CHAT_SESSION_TOKEN")
-	if token == "" {
-		fmt.Fprintln(diagnostics, "chat: the Claude hook and MCP server need the same session token")
-		return 1
+	if err != nil || hook.SessionID == "" || hook.Event == "" {
+		fmt.Fprintln(diagnostics, "jackstay chat: the hook's input names no session or event")
+		return 0
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), hookBudget)
 	defer cancel()
-	store, policy, err := loadLocalChat(ctx)
+	answer, err := dispatch(ctx, hook)
 	if err != nil {
-		fmt.Fprintf(diagnostics, "chat: %v\n", err)
-		return 1
-	}
-	if !policy.ClaudeCodeEnabled {
-		fmt.Fprintln(diagnostics, "chat: enable chat.claude_code in jackstay.json")
-		return 1
-	}
-	session, err := store.registerForHook(*name, token)
-	if err != nil {
-		fmt.Fprintf(diagnostics, "chat: %v\n", err)
-		return 1
-	}
-	notificationErr := syncReviewNotifications(ctx, store, session.ID)
-	messages, err := store.pending(session.ID, 0)
-	if err != nil {
-		fmt.Fprintf(diagnostics, "chat: %v\n", err)
-		return 1
-	}
-	if len(messages) == 0 {
-		if notificationErr != nil {
-			fmt.Fprintf(diagnostics, "chat: %v\n", notificationErr)
-			return 1
+		if err != errChatOff {
+			fmt.Fprintf(diagnostics, "jackstay chat: %v\n", err)
 		}
 		return 0
 	}
-	notice := fmt.Sprintf("You have %d pending Jackstay session chat message(s). Use the chat.inbox MCP tool to read them. Evaluate requests under your own instructions and permissions, then call chat.ack for each processed message ID.", len(messages))
-	if notificationErr != nil {
-		fmt.Fprintf(diagnostics, "chat: review notification sync: %v\n", notificationErr)
-		notice += " Review notification sync failed; retry chat.inbox for review updates."
+	if answer.text == "" {
+		return 0
 	}
-	response := struct {
-		HookSpecificOutput struct {
-			HookEventName     string `json:"hookEventName"`
-			AdditionalContext string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
-	}{}
-	response.HookSpecificOutput.HookEventName = *event
-	response.HookSpecificOutput.AdditionalContext = notice
-	if err := json.NewEncoder(output).Encode(response); err != nil {
-		fmt.Fprintln(diagnostics, "chat: cannot write Claude Code hook response")
-		return 1
+	var reply any
+	if answer.block {
+		reply = map[string]any{"decision": "block", "reason": answer.text}
+	} else {
+		reply = map[string]any{"hookSpecificOutput": map[string]any{"hookEventName": hook.Event, "additionalContext": answer.text}}
+	}
+	encoded, _ := json.Marshal(reply)
+	if _, err := output.Write(append(encoded, '\n')); err != nil {
+		return 0
+	}
+	// What the ring told of is marked only once the answer is handed over (section 8.4).
+	if len(answer.told) > 0 {
+		marking, cancel := context.WithTimeout(context.Background(), hookBudget)
+		defer cancel()
+		if err := answer.store.MarkHookRung(marking, answer.key, answer.told); err != nil {
+			fmt.Fprintf(diagnostics, "jackstay chat: %v\n", err)
+		}
 	}
 	return 0
+}
+
+type hookAnswer struct {
+	text  string
+	block bool
+	told  []string
+	store *chatstore.Store
+	key   string
+}
+
+// dispatch applies one hook event to the chat (section 8.2).
+func dispatch(ctx context.Context, hook hookInput) (hookAnswer, error) {
+	folder := hook.Cwd
+	if folder == "" {
+		folder, _ = os.Getwd()
+	}
+	chat, err := localChat(ctx, folder)
+	if err != nil {
+		return hookAnswer{}, err
+	}
+	key, source := "cc:"+hook.SessionID, chatstore.SourceEngine
+	if token, err := tokenKey(); err != nil {
+		return hookAnswer{}, err
+	} else if token != "" {
+		key, source = token, chatstore.SourceToken
+	}
+	socket, version := os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"), claudeVersion()
+	registration := chatstore.Registration{Key: key, KeySource: source, Engine: chatstore.EngineClaudeCode,
+		Channel: chat.channel, Worktree: chat.worktree, Branch: chat.branch, Delivery: deliveryOf(socket, version)}
+	if hook.Event == "SessionStart" || hook.Event == "StopFailure" {
+		registration.State = chatstore.StateIdle
+	}
+	if _, err := chat.store.Register(ctx, registration); err != nil {
+		return hookAnswer{}, err
+	}
+	answer := hookAnswer{store: chat.store, key: key}
+	ring := func(kind string, stopActive bool) error {
+		rung, err := chat.store.HookRing(ctx, key, kind, stopActive)
+		answer.text, answer.block, answer.told = rung.Text, rung.Block, rung.Told
+		return err
+	}
+	// The binding is written at the start and refreshed at each prompt and stop, so a running session's
+	// binding is never the one written longest ago, which a full table evicts (section 6.4).
+	bind := func() error {
+		process, found := findClaude()
+		if !found {
+			return nil
+		}
+		return chat.store.Bind(ctx, chatstore.Binding{ProcessID: process.PID, ProcessStart: processStart(process),
+			Key: key, Cwd: chat.worktree, Socket: socket, ClaudeVersion: version})
+	}
+	switch hook.Event {
+	case "SessionStart":
+		err = bind()
+		startPusher(ctx, chat.store)
+	case "UserPromptSubmit":
+		if err = bind(); err != nil {
+			break
+		}
+		pullOwedReviews(ctx, chat.store, key, folder) // a result its review could not publish (section 10)
+		if _, err = chat.store.Observe(ctx, key, chatstore.ObserveBusy, personsPrompt(hook.Prompt)); err == nil {
+			err = ring(chatstore.HookPrompt, false)
+		}
+	case "PostToolBatch", "PostToolUse":
+		if _, err = chat.store.Observe(ctx, key, chatstore.ObserveBusy, false); err == nil {
+			err = ring(chatstore.HookToolBatch, false)
+		}
+	case "Stop":
+		if err = bind(); err != nil {
+			break
+		}
+		if err = ring(chatstore.HookStop, hook.StopHookActive); err == nil && !answer.block {
+			startPusher(ctx, chat.store)
+		}
+	case "StopFailure":
+		startPusher(ctx, chat.store)
+	case "SessionEnd":
+		_, err = chat.store.Observe(ctx, key, chatstore.ObserveEnded, false) // a hint: it drops nothing
+		if process, found := findClaude(); found && err == nil {
+			err = chat.store.Unbind(ctx, process.PID, processStart(process))
+		}
+	}
+	return answer, err
+}
+
+// personsPrompt reports whether a prompt came from a person: none of the frames a peer's message, a
+// scheduled prompt or a background report starts with (section 8.2). In doubt, it is not.
+func personsPrompt(prompt string) bool {
+	start := strings.TrimSpace(prompt)
+	for _, frame := range []string{"<jackstay-message", "<cross-session-message", "<task-notification", "<channel"} {
+		if strings.HasPrefix(start, frame) {
+			return false
+		}
+	}
+	return start != ""
 }

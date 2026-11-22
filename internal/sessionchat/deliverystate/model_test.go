@@ -58,7 +58,7 @@ var passNames = [2]string{"pass-1", "pass-2"}
 
 // The distinct states TLC finds for the two modules (docs/design/chat-model/README.md).
 const (
-	deliveryStates = 27056
+	deliveryStates = 8505
 	sendStates     = 335
 )
 
@@ -183,13 +183,8 @@ func successors(w world, rules variant) []step {
 		}
 	}
 
-	// The native doorbell (section 8.3): a ring the engine takes or ignores changes nothing; one it
-	// refuses (the connection closed) refuses the delivery. A hook's ring changes nothing at all.
-	if w.alive && w.delivery.Route == Native {
-		if refused, ok := w.apply(Event{Kind: RingRefused, Overdue: w.overdue}, rules); ok {
-			add("the engine refuses the doorbell", refused)
-		}
-	}
+	// The doorbell (section 8.3) changes no delivery, whatever came back: a closed connection is not
+	// a refusal (W-095, as amended), so it has no step here.
 
 	// The recipient's own calls; a review mailbox makes none.
 	if w.alive && w.delivery.Route != Mailbox {
@@ -306,14 +301,8 @@ func successors(w world, rules variant) []step {
 	show("the request's notice", w.request.Notice, func(next *world) { next.request.Notice = NoticeShown },
 		func(next *world) *int { return &next.requestShows })
 
-	if w.alive {
-		ended := w
-		ended.alive = false
-		if next, err := Apply(w.delivery, Event{Kind: End}); err == nil {
-			ended.setDelivery(next)
-		}
-		add("the recipient ends", ended)
-	}
+	// There is no liveness: a recipient never ends, and a delivery it never reads expires by its own
+	// deadline (W-095's doorbell, the owner's "remove liveness altogether").
 	if !w.overdue {
 		late := w
 		late.overdue = true
@@ -338,7 +327,7 @@ func invariant(w world) string {
 	case w.isRequest && w.delivery.State == Expired && w.request.State == Closed &&
 		w.deliveryNotices+w.requestNotices != 1:
 		return "NoticeOwedOnce: a request and its delivery expired together with more than one notice"
-	case (w.delivery.State == Refused || w.delivery.State == Dropped) && w.deliveryNotices != 1,
+	case w.delivery.State == Refused && w.deliveryNotices != 1,
 		w.delivery.State == Expired && w.deliveryNotices+w.requestNotices < 1:
 		return "NoticeOwedOnce: a final delivery owes no notice"
 	case w.delivery.Notice == NoticeShown && w.deliveryShows < 1, w.request.Notice == NoticeShown && w.requestShows < 1:
@@ -359,7 +348,7 @@ func transitionProperty(from, to world) string {
 		return "FinalStable: a final state was left"
 	}
 	if from.overdue && Expirable(from.delivery.State) && to.delivery.State != from.delivery.State &&
-		to.delivery.State != Expired && to.delivery.State != Dropped {
+		to.delivery.State != Expired {
 		return "DeadlineFirst: an overdue delivery moved somewhere other than expired"
 	}
 	return ""

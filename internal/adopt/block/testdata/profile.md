@@ -49,10 +49,10 @@
 - **Share an adoption profile** with `jst profile export`; verify its digest before adopting it.
 - **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools
   to send a request, read your inbox and acknowledge messages you process.
-- **Deliver chat to managed Codex**: `jst chat codex-bridge` uses the owner's local socket, thread and session.
-  Use `chat.ack` after processing a message.
-- **Check chat at a Claude Code boundary** with the owner-configured `jst chat claude-hook`.
-  When notified, use the MCP inbox and acknowledge each processed message.
+- **Chat in Codex**: read your inbox with `chat.inbox` from `jst chat serve`; the Codex bridge's push
+  returns in jackstay 1.
+- **Chat in Claude Code**: the owner-configured `jst hook claude` rings when messages wait; read them
+  with `chat.inbox` and answer a request with `chat.respond`.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.
 

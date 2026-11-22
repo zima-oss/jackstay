@@ -24,8 +24,8 @@ through one steer. Concurrently, in every order:
 - the native doorbell refused by the recipient's engine (a ring it takes or ignores changes nothing,
   and a hook's ring changes nothing at all, so neither is a step of the model);
 - the recipient's reads (one that marks it read, one that marks nothing), acks and answers;
-- the sweep (a stale `sending`, deadlines nobody touched), the deadline itself, the recipient's end,
-  and the freeze of a mailbox, as recipient or as requester (waiting for a steer of its questions),
+- the sweep (a stale `sending`, deadlines nobody touched), the deadline itself, and the freeze of a
+  mailbox, as recipient or as requester (waiting for a steer of its questions),
   with a crash between a closure's two writes.
 
 A recipient learns a request's ID from what it was shown, a read or a steer; only then can it
@@ -50,11 +50,11 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | `NoPushStartsAfterClose` | delivery | no steer of a closed request begins |
 | `NoWriteAfterFreeze` | delivery | no pass that still owns its claim writes a question after its mailbox froze |
 | `DeadlineClosesRequest` | delivery | a step that finds the deadline passed closes an open request, whatever its delivery's state |
-| `NoticeOwedOnce` | delivery | the table owes each `refused`, `dropped` or `expired` delivery exactly one notice; a request and its delivery that expire together owe one between them |
+| `NoticeOwedOnce` | delivery | the table owes each `refused` or `expired` delivery exactly one notice; a request and its delivery that expire together owe one between them |
 | `NoticeAtLeastOnce` | delivery | a notice marked shown reached the sender at least once; a stop between the page and the mark shows it again (W-096) |
 | `RequestAgrees` | delivery | an answered request's delivery is final |
 | `FinalStable` | delivery | final states are never left (a step property) |
-| `DeadlineFirst` | delivery | an overdue `pending` delivery moves only to `expired` (or `dropped` at an end) |
+| `DeadlineFirst` | delivery | an overdue `pending` delivery moves only to `expired` |
 | `SendingResolves`, `OverdueExpires` | delivery, TLC | with a fair sweep, `sending` is always resolved and an overdue delivery always expires |
 | `AtMostOncePerKey` | send | a send and its retry are pushed at most once between them, while the key is remembered |
 | `DuplicateIsReal` | send | a retry is told `duplicate` only of a message that exists |
@@ -65,12 +65,14 @@ message (unlink, fsync, the rest), which a crash can cut apart anywhere.
 | `CommitHasFiles` | send | a commit record never stands for files that are gone |
 | `RequestAgrees` | send | the request a response answers is answered or closed once, never overwritten |
 
-TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **27,056** distinct states for a delivery (130,742
+TLC (TLC2 2.19 of the TLA+ tools, Java 17) finds **8,505** distinct states for a delivery (57,164
 generated, the temporal properties checked over the whole graph) and **335** for a send (607
-generated) with no error. The Go exploration reaches the same 27,056 and 335 states, and its tests
+generated) with no error. The Go exploration reaches the same 8,505 and 335 states, and its tests
 fail if either count changes, so the two forms cannot drift apart unnoticed. Showing a notice, with
 a stop between the page and its mark, took the delivery model from 7,104 states to 27,056
-([W-096](../../decisions/W-096-clear-limits-over-more-machinery.md)).
+([W-096](../../decisions/W-096-clear-limits-over-more-machinery.md)); a closed doorbell no longer
+refusing a delivery (W-095, as amended) took it to 26,496; taking out liveness, so that no
+recipient ends and nothing is dropped, took it to 8,505.
 Before W-095, when the native route still pushed the text, both reached 30,736 delivery states; the
 doorbell model is the same world with the native push, the engine's hold and the hooks'
 announcement taken out.

@@ -5,10 +5,10 @@
 (* hooks routes ring a doorbell and carry no text: a message's text        *)
 (* reaches the recipient's model only through its inbox read, or, on the   *)
 (* Codex bridge, through one steer. Modelled: two bridge passes that may   *)
-(* pause or crash at any step, the native doorbell and its refusal, the    *)
+(* pause or crash at any step, the native doorbell (changing nothing), the *)
 (* recipient's reads, acks and answers, the sweep, the deadline, the       *)
-(* recipient's end, a review mailbox's freeze, of the recipient or of      *)
-(* the requester, and the sender's inbox showing an owed notice.           *)
+(* review mailbox's freeze, of the recipient or of the requester, and the  *)
+(* sender's inbox showing an owed notice. No recipient ever ends.          *)
 (*                                                                         *)
 (* The transitions are the table of internal/sessionchat/deliverystate,    *)
 (* written again here operator for operator (Apply, ApplyMessage,          *)
@@ -30,8 +30,8 @@ CONSTANTS
     MarkBeforeShow          \* section 8.5 before W-096: a notice was marked shown, then its page returned
 
 Routes    == {"native", "hooks", "bridge", "mailbox", "poll"}
-States    == {"pending", "sending", "delivered", "read", "acted", "refused", "dropped", "expired"}
-Final     == {"acted", "refused", "dropped", "expired"}
+States    == {"pending", "sending", "delivered", "read", "acted", "refused", "expired"}
+Final     == {"acted", "refused", "expired"}
 Expirable == {"pending"}
 
 VARIABLES
@@ -61,7 +61,7 @@ Ev(kind, p, answer, late) == [kind |-> kind, pusher |-> p, answer |-> answer, ov
 Ok(dl) == [ok |-> TRUE, d |-> dl]
 No(dl) == [ok |-> FALSE, d |-> dl]
 
-Visible(dl) == dl.state \notin {"refused", "dropped", "expired"}
+Visible(dl) == dl.state \notin {"refused", "expired"}
 
 Expire(dl) ==
     [dl EXCEPT !.state = "expired", !.pusher = "", !.reason = "expired",
@@ -107,11 +107,6 @@ Apply(dl, ev) ==
                 ELSE No(dl)
            [] ev.kind \in {"expire", "close-request"} ->
                 IF dl.state \in Expirable THEN Ok(Expire(dl)) ELSE No(dl)
-           [] ev.kind = "end" ->
-                IF dl.state \in {"pending", "sending"}
-                THEN Ok([dl EXCEPT !.state = "dropped", !.reason = "recipient_ended", !.pusher = "",
-                                   !.notice = "owed"])
-                ELSE No(dl)
            [] ev.kind = "read-whole" ->
                 IF dl.state \in {"pending", "delivered"} THEN Ok(Confirmed(dl, "read")) ELSE No(dl)
            [] ev.kind = "peek" ->
@@ -247,14 +242,10 @@ Crash(p) ==
     /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
-(* The native doorbell (section 8.3): a ring the engine takes or ignores changes nothing; one it *)
-(* refuses (the connection closed) refuses the delivery. A hook's ring changes nothing at all.   *)
-
-DoorbellRefused ==
-    /\ alive /\ d.route = "native"
-    /\ LET r == Step(Ev("ring-refused", "", "none", overdue)) IN r.ok /\ SetMsg(r)
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
-                   pushedClosed, overdue, alive>>
+(* The doorbell (section 8.3) changes no delivery, whatever came back: a closed connection is not  *)
+(* a refusal, since a refusing engine and an exiting process look the same (W-095, as amended). So *)
+(* no step of the doorbell is modelled; the table's ring-refused event stays for an engine that    *)
+(* reports a refusal itself.                                                                       *)
 
 (* The recipient's own calls; a review mailbox makes none. *)
 
@@ -333,12 +324,8 @@ RequestingMailboxFreezes ==
     /\ UNCHANGED <<writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
                    pushedClosed, overdue, alive>>
 
-RecipientEnds ==
-    /\ alive /\ alive' = FALSE
-    /\ LET after == Apply(d, Ev("end", "", "none", FALSE)) IN
-       IF after.ok THEN SetMsg([rq |-> rq, d |-> after.d]) ELSE KeepMsg
-    /\ UNCHANGED <<frozen, writtenFrozen, isRequest, fromMailbox, engine, pass, shown, requestKnown,
-                   pushedClosed, overdue>>
+\* There is no liveness: a recipient never ends, and a delivery it never reads expires by its own
+\* deadline (the owner's "remove liveness altogether"). `alive` is only a review mailbox's freeze.
 
 DeadlinePasses ==
     /\ ~overdue /\ overdue' = TRUE
@@ -373,10 +360,9 @@ ShowsRequestNotice ==
 
 Next ==
     \/ \E p \in Passes : Claim(p) \/ WriteFails(p) \/ Steer(p) \/ Record(p) \/ RecordFailure(p) \/ Crash(p)
-    \/ DoorbellRefused
     \/ InboxReads \/ InboxPeeks \/ Acks \/ Responds
     \/ Sweep
-    \/ RecipientMailboxFreezes \/ RequestingMailboxFreezes \/ RecipientEnds \/ DeadlinePasses
+    \/ RecipientMailboxFreezes \/ RequestingMailboxFreezes \/ DeadlinePasses
     \/ ShowsDeliveryNotice \/ ShowsRequestNotice
 
 \* The sweep runs at most every 10 minutes, but it runs (section 7.4).
@@ -414,12 +400,12 @@ NoWriteAfterFreeze == ~writtenFrozen
 \* A step that finds the deadline passed closes an open request, whatever its delivery's state.
 DeadlineClosesRequest == ~lateOpen
 
-\* The table owes each refused, dropped or expired delivery exactly one notice; a request and its
+\* The table owes each refused or expired delivery exactly one notice; a request and its
 \* delivery that expire together owe one between them. Showing it is at least once (NoticeAtLeastOnce).
 NoticeOwedOnce ==
     /\ dNotices <= 1 /\ rNotices <= 1
     /\ (isRequest /\ d.state = "expired" /\ rq.state = "expired") => dNotices + rNotices = 1
-    /\ d.state \in {"refused", "dropped"} => dNotices = 1
+    /\ d.state = "refused" => dNotices = 1
     /\ d.state = "expired" => dNotices + rNotices >= 1
 
 \* Each notice marked shown reached the sender at least once; it may have reached it more than once.
@@ -433,9 +419,9 @@ RequestAgrees == rq.state = "answered" => d.state \in Final
 \* Final states are never left.
 FinalStable == [][d.state \in Final => d'.state = d.state]_vars
 
-\* The deadline is applied before a steer, a read, an ack or a refused doorbell.
+\* The deadline is applied before a steer, a read or an ack.
 DeadlineFirst ==
-    [][(overdue /\ d.state \in Expirable /\ d'.state # d.state) => d'.state \in {"expired", "dropped"}]_vars
+    [][(overdue /\ d.state \in Expirable /\ d'.state # d.state) => d'.state = "expired"]_vars
 
 \* Liveness: a `sending` record is always resolved, and an overdue delivery always expires.
 SendingResolves == d.state = "sending" ~> d.state # "sending"

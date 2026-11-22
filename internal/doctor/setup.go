@@ -414,8 +414,8 @@ func chatEngineSetupItems(lookPath func(string) (string, error)) []SetupItem {
 	engines := []struct {
 		name, identifier, capability, steps string
 	}{
-		{"codex", "chat-codex", "poll-only", "Enable chat.codex_bridge in jackstay.json. Start jst chat codex-bridge with the owner-managed app-server socket, thread ID and session name. Use the same local session token as jst chat serve. Stop the bridge or restore the host configuration to roll back."},
-		{"claude", "chat-claude", "next-boundary with hook", "Enable chat.claude_code in jackstay.json. Register jst chat serve --name NAME as a local MCP server. In Claude Code settings, add command hooks that run jst chat claude-hook --name NAME --event UserPromptSubmit and --event PostToolBatch. Export one JACKSTAY_CHAT_SESSION_TOKEN to both the MCP server and hooks. The hook announces pending messages; Claude reads them with chat.inbox and acknowledges with chat.ack. Remove the hooks to roll back."},
+		{"codex", "chat-codex", "poll-only", "Register jst chat serve as a local MCP server of Codex, with a JACKSTAY_CHAT_SESSION_TOKEN of its own; Codex reads its inbox with chat.inbox. The Codex bridge's push returns in jackstay 1. Remove the server registration to roll back."},
+		{"claude", "chat-claude", "doorbell with hooks", "Register jst chat serve as a local MCP server. In Claude Code settings, add a command hook that runs jst hook claude for SessionStart, UserPromptSubmit, PostToolBatch, Stop, StopFailure and SessionEnd. The hooks ring when messages wait and hold a turn for an urgent one; an idle session on a verified Claude Code version is rung on its messaging socket. Claude reads with chat.inbox. Remove the hooks to roll back."},
 	}
 	items := make([]SetupItem, 0, len(engines)+1)
 	for _, engine := range engines {
@@ -433,7 +433,7 @@ func chatEngineSetupItems(lookPath func(string) (string, error)) []SetupItem {
 	items = append(items, SetupItem{
 		ID: "chat-other", Status: "manual",
 		Text: "other MCP host session chat (current capability: poll-only)",
-		Fix:  "Register jst chat serve --name NAME as a local stdio server through an owner-controlled launcher. For active-turn delivery, connect a host adapter with addressed injection and an acknowledgment probe. Remove that local server registration and restore the saved host configuration to roll back.",
+		Fix:  "Register jst chat serve as a local stdio server through an owner-controlled launcher, with a JACKSTAY_CHAT_SESSION_TOKEN of its own; the session reads its inbox with chat.inbox. Remove that local server registration and restore the saved host configuration to roll back.",
 	})
 	return items
 }

@@ -1,0 +1,11 @@
+{
+  "version": "2.1.328",
+  "captured": "2026-11-20",
+  "how": "throwaway headless receivers in throwaway repositories; a plain process wrote one line to the receiver's socket under each inbound policy; identities redacted in memory; every socket restored",
+  "writer_line": {"msgV": 1, "msg_id": "<uuid>", "type": "user", "message": {"role": "user", "content": "<text>"}, "priority": "next"},
+  "answers": {
+    "default": {"written_back": "nothing", "connection": "stays open", "model": "receives the line"},
+    "hold": {"written_back": "nothing", "connection": "stays open", "model": "the receiving person is asked"},
+    "refuse": {"written_back": "nothing", "connection": "closed by the receiver"}
+  }
+}

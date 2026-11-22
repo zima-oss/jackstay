@@ -46,6 +46,10 @@ func TestProbeRequiresRestrictedCLI(t *testing.T) {
 	}
 }
 
+// fixtureBound is the deadline of a fixture run that is not about the deadline: a printf script ends at
+// once, so the bound only has to outlast a loaded machine, never to be reached (#81).
+const fixtureBound = 2 * time.Minute
+
 func TestUnusableClaudeCodeResults(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -67,7 +71,7 @@ func TestUnusableClaudeCodeResults(t *testing.T) {
 			path := executable(t, "cat >/dev/null\n"+test.script)
 			released := false
 			result := Run(context.Background(), runner.Request{Command: path, Tree: folder, Folder: folder,
-				SchemaPath: schema, Timeout: 5 * time.Second, Prompt: []byte("review this patch"),
+				SchemaPath: schema, Timeout: fixtureBound, Prompt: []byte("review this patch"),
 				Environ: []string{"PATH=/bin:/usr/bin"}, Answered: func() { released = true }})
 			if result.Outcome != test.want || strings.Contains(result.Reason, "made-up-key") {
 				t.Fatalf("unexpected run result: %+v", result)

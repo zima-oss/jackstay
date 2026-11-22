@@ -48,9 +48,10 @@ const (
 
 // Live states (section 3.3).
 const (
-	StateBusy    = "busy"
-	StateIdle    = "idle"
-	StateGone    = "gone"
+	StateBusy = "busy"
+	StateIdle = "idle"
+	// StateEnded is SessionEnd's hint, shown and nothing more: a session never ends (no liveness).
+	StateEnded   = "ended"
 	StateUnknown = "unknown"
 )
 
@@ -75,14 +76,16 @@ type SessionNotice struct {
 
 // Session is a session record (section 6.1).
 type Session struct {
-	V              int           `json:"v"`
-	Key            string        `json:"key"`
-	Ref            string        `json:"ref"`
-	Name           string        `json:"name"`
-	Engine         string        `json:"engine"`
-	KeySource      string        `json:"key_source"`
-	ChannelID      string        `json:"channel_id"`
-	Mailbox        bool          `json:"mailbox,omitempty"`
+	V         int    `json:"v"`
+	Key       string `json:"key"`
+	Ref       string `json:"ref"`
+	Name      string `json:"name"`
+	Engine    string `json:"engine"`
+	KeySource string `json:"key_source"`
+	ChannelID string `json:"channel_id"`
+	Mailbox   bool   `json:"mailbox,omitempty"`
+	// Frozen is a review mailbox's freeze (section 9.1), set by the round that owns it.
+	Frozen         bool          `json:"frozen,omitempty"`
 	Worktree       string        `json:"worktree,omitempty"`
 	Parent         string        `json:"parent,omitempty"`
 	State          string        `json:"state"`
@@ -97,7 +100,12 @@ type Session struct {
 	IdleAt     string          `json:"idle_at,omitempty"`
 	Notices    []SessionNotice `json:"notices,omitempty"`
 	StopBlocks int             `json:"stop_blocks,omitempty"`
-	Exchange   map[string]int  `json:"exchange,omitempty"`
+	// NoticesRungAt is the newest owed notice a socket's doorbell told of; RingFailures and RingNext
+	// pace the doorbell after confirmed failures (section 8.3).
+	NoticesRungAt string         `json:"notices_rung_at,omitempty"`
+	RingFailures  int            `json:"ring_failures,omitempty"`
+	RingNext      string         `json:"ring_next,omitempty"`
+	Exchange      map[string]int `json:"exchange,omitempty"`
 }
 
 // channelRecord is a channel's identity and name (section 7.1). Its subscribers are the sessions
@@ -176,6 +184,10 @@ type Delivery struct {
 	NextAttempt string `json:"next_attempt,omitempty"`
 	Notice      string `json:"notice,omitempty"`
 	Note        string `json:"note,omitempty"`
+	// Rung is set once the socket's doorbell told the recipient of the delivery, HookRung once a
+	// hook did (sections 8.3 and 8.4); neither changes a receipt.
+	Rung     bool `json:"rung,omitempty"`
+	HookRung bool `json:"hook_rung,omitempty"`
 }
 
 // Commit is a message's commit record (section 6.3).

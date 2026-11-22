@@ -75,7 +75,7 @@ func (store *Store) Ack(ctx context.Context, key, reference, state, note string)
 		}
 		result = AckResult{MessageID: id, State: updated.State, Changed: updated.State != before && reached}
 		switch updated.State {
-		case string(deliverystate.Refused), string(deliverystate.Dropped), string(deliverystate.Expired):
+		case string(deliverystate.Refused), string(deliverystate.Expired):
 			result.Detail = "this delivery is " + updated.State + "; the ack changes nothing"
 		}
 		return nil

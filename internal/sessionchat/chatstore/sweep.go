@@ -15,12 +15,11 @@ import (
 
 // Retention and the sweep (section 7.4).
 const (
-	sweepEvery       = 10 * time.Minute
-	staleSending     = 60 * time.Second
-	keepDone         = 7 * 24 * time.Hour
-	keepDoneEvent    = 24 * time.Hour
-	keepAfterExpiry  = 7 * 24 * time.Hour
-	keepGoneSessions = 7 * 24 * time.Hour
+	sweepEvery      = 10 * time.Minute
+	staleSending    = 60 * time.Second
+	keepDone        = 7 * 24 * time.Hour
+	keepDoneEvent   = 24 * time.Hour
+	keepAfterExpiry = 7 * 24 * time.Hour
 )
 
 // Sweep runs the sweep now, whenever it last ran.
@@ -81,13 +80,6 @@ func (transaction *transaction) sweep() error {
 		return err
 	}
 	for _, session := range sessions {
-		since, ok := parseStamp(session.Since)
-		if session.State == StateGone && ok && transaction.now.Sub(since) >= keepGoneSessions {
-			if err := transaction.removeSession(session); err != nil {
-				return err
-			}
-			continue
-		}
 		if _, err := transaction.reconcileWatchers(hashKey(session.Key)); err != nil {
 			return err
 		}
@@ -169,7 +161,7 @@ func (transaction *transaction) sweepMessage(found message) error {
 }
 
 // heldByMailbox reports whether a message sent to or from a review mailbox must stay until that
-// mailbox is frozen (section 7.4): a mailbox not yet gone holds it.
+// mailbox is frozen (section 7.4): a mailbox not yet frozen holds it.
 func (transaction *transaction) heldByMailbox(envelope Envelope) bool {
 	keys := append([]string{hashKey(envelope.From)}, envelope.Recipients...)
 	for _, hash := range keys {
@@ -178,7 +170,7 @@ func (transaction *transaction) heldByMailbox(envelope Envelope) bool {
 		case errors.Is(err, os.ErrNotExist):
 		case err != nil:
 			return true // a record it cannot read may be an open mailbox's: keep the message
-		case session.Mailbox && session.State != StateGone:
+		case session.Mailbox && !session.Frozen:
 			return true
 		}
 	}
@@ -291,13 +283,11 @@ func absent(path string) bool {
 	return errors.Is(err, os.ErrNotExist)
 }
 
-// removeSession removes a session gone for 7 days, with its inbox markers.
-func (transaction *transaction) removeSession(session Session) error {
-	hash := hashKey(session.Key)
-	if err := os.RemoveAll(transaction.place.inbox(hash)); err != nil {
-		return err
-	}
-	if err := os.Remove(transaction.place.session(hash)); err != nil && !errors.Is(err, os.ErrNotExist) {
+// evictSession removes the record of the session the session cap evicts (section 6.4), and only
+// that: its inbox markers and deliveries stay, under its key, so the same conversation finds its
+// unread messages again when it registers anew; what nobody reads expires by its own deadline.
+func (transaction *transaction) evictSession(session Session) error {
+	if err := os.Remove(transaction.place.session(hashKey(session.Key))); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return nil

@@ -269,7 +269,7 @@ func (transaction *transaction) recipientsOf(sender Session, destination target,
 	}
 	var recipients []Session
 	for _, session := range sessions {
-		if session.Key == sender.Key || !addressable(session) || !slices.Contains(session.Subscriptions, destination.channel.ID) {
+		if session.Key == sender.Key || !slices.Contains(session.Subscriptions, destination.channel.ID) {
 			continue
 		}
 		full, err := transaction.queueFull(hashKey(session.Key))
@@ -292,8 +292,8 @@ func (transaction *transaction) recipientsOf(sender Session, destination target,
 type planned struct {
 	sender         Session
 	recipients     []Session
-	gone           map[string]bool // recipient hashes whose delivery starts dropped (a response to a requester gone)
 	kind           string
+	event          string // an event's kind (section 10)
 	body           string
 	summary        string
 	priority       string
@@ -343,14 +343,12 @@ func (transaction *transaction) checkLimits(plan planned, direct bool) error {
 		return nil
 	}
 	recipient := plan.recipients[0]
-	if !plan.gone[hashKey(recipient.Key)] {
-		full, err := transaction.queueFull(hashKey(recipient.Key))
-		if err != nil {
-			return err
-		}
-		if full {
-			return refuse(ReasonRecipientFull, "%s has %d messages waiting; wait for it to read them", fullAddress(recipient), queuePerRecipient)
-		}
+	full, err := transaction.queueFull(hashKey(recipient.Key))
+	if err != nil {
+		return err
+	}
+	if full {
+		return refuse(ReasonRecipientFull, "%s has %d messages waiting; wait for it to read them", fullAddress(recipient), queuePerRecipient)
 	}
 	if exchangeCount(plan.sender, recipient) >= exchangeLimit {
 		return refuse(ReasonLoop, "you and %s exchanged %d messages with no prompt from a person; ask your person before going on", fullAddress(recipient), exchangeLimit)
@@ -455,7 +453,7 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 		ExpiresAt: stamp(transaction.now.Add(time.Duration(plan.expiry) * time.Second)),
 		BodyBytes: len(plan.body), BodySHA256: hex.EncodeToString(bodyHash[:]),
 		Recipients: recipientHashes(plan.recipients), Response: plan.response, Attachments: plan.attachments,
-		Meta: plan.meta, IdempotencyKey: plan.idempotencyKey,
+		Meta: plan.meta, IdempotencyKey: plan.idempotencyKey, Event: plan.event,
 	}
 	if plan.request != nil {
 		request := *plan.request
@@ -473,8 +471,7 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 	}
 	deliveries := make([]Delivery, len(plan.recipients))
 	for index, recipient := range plan.recipients {
-		hash := envelope.Recipients[index]
-		state := deliverystate.New(routeOf(recipient), plan.request != nil, plan.gone[hash])
+		state := deliverystate.New(routeOf(recipient), plan.request != nil)
 		delivery := Delivery{V: 1, ID: id, Key: recipient.Key, At: moment}.withTable(state, moment)
 		delivery.At = moment
 		deliveries[index] = delivery

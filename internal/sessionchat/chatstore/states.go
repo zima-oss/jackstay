@@ -14,21 +14,22 @@ import (
 const (
 	ObserveBusy = "busy" // UserPromptSubmit, PostToolBatch, a Codex turn started
 	ObserveIdle = "idle" // a Stop that lets the turn end, StopFailure, SessionStart, a Codex turn completed
-	ObserveGone = "gone" // SessionEnd, a dead process, a bridge that ended
+	// ObserveEnded is SessionEnd: a hint for listings and status, which changes nothing else. There
+	// is no liveness: what waits for an ended session stays, and a resumed conversation reads it.
+	ObserveEnded = "ended"
 )
 
 // Kinds of a session's notices (section 6.1).
 const (
 	NoticeIdle                = "idle"
-	NoticeEnded               = "ended"
 	NoticeNotDelivered        = "not_delivered"
 	NoticeSubscriptionExpired = "subscription_expired"
 	idleNoticeKeep            = 24 * time.Hour
 )
 
 // Observe records a session's state. A person's prompt (person true, with ObserveBusy) resets the
-// session's loop counts (section 4.8). Idle fires the armed idle subscriptions on the session;
-// gone fires them all and drops the deliveries still waiting for it (section 3.3).
+// session's loop counts (section 4.8). Idle fires the armed idle subscriptions on the session
+// (section 3.3); an end is only shown.
 func (store *Store) Observe(ctx context.Context, key, observed string, person bool) (Session, error) {
 	var result Session
 	err := store.update(ctx, func(transaction *transaction) error {
@@ -70,23 +71,23 @@ func (transaction *transaction) observe(session Session, observed string, person
 		session.IdleGeneration++
 		session.IdleAt = moment
 		session.StopBlocks = 0
-	case ObserveGone:
-		if session.State != StateGone {
-			session.State, session.Since = StateGone, moment
+	case ObserveEnded:
+		if session.State != StateEnded {
+			session.State, session.Since = StateEnded, moment
 		}
 	default:
 		return session, refuse(ReasonInvalid, "unknown observation %q", observed)
 	}
-	if observed == ObserveBusy {
-		// Busy fires nothing: a plain write.
+	if observed != ObserveIdle {
+		// Busy and an end fire nothing: a plain write.
 		if err := transaction.writeSession(session); err != nil {
 			return session, err
 		}
 		return transaction.reconcileWatchers(hashKey(session.Key))
 	}
-	// An idle or an end is journalled with the work it triggers (the subscriptions it fires, the
-	// deliveries an end drops), so a crash between the state and that work is finished by the next
-	// recovery, before any later observation can overwrite the state.
+	// An idle is journalled with the work it triggers (the subscriptions it fires), so a crash
+	// between the state and that work is finished by the next recovery, before any later
+	// observation can overwrite the state.
 	entry := journalEntry{Op: opObserve, ID: "observe-" + hashKey(session.Key)[:32],
 		Observed: &observation{Session: hashKey(session.Key), State: session.State, Since: session.Since,
 			Generation: session.IdleGeneration, IdleAt: session.IdleAt}}
@@ -103,7 +104,7 @@ func (transaction *transaction) observe(session Session, observed string, person
 	return result, transaction.removeJournal(entry.ID)
 }
 
-// observation is an idle or an end in progress (an opObserve journal entry).
+// observation is an idle in progress (an opObserve journal entry).
 type observation struct {
 	Session    string `json:"session"`
 	State      string `json:"state"`
@@ -112,9 +113,8 @@ type observation struct {
 	IdleAt     string `json:"idle_at,omitempty"`
 }
 
-// applyObservation finishes an idle or an end: the state is on the session's record (a replay that
-// finds an older one writes it), an end's waiting deliveries are dropped, and the subscriptions are
-// reconciled. Every part is idempotent.
+// applyObservation finishes an idle: the state is on the session's record (a replay that finds an
+// older one writes it), and the subscriptions are reconciled. Every part is idempotent.
 func (transaction *transaction) applyObservation(observed observation) (Session, error) {
 	session, err := transaction.readSession(observed.Session)
 	if errors.Is(err, os.ErrNotExist) {
@@ -123,64 +123,33 @@ func (transaction *transaction) applyObservation(observed observation) (Session,
 	if err != nil {
 		return session, err
 	}
-	if session.IdleGeneration < observed.Generation || (observed.State == StateGone && session.State != StateGone) {
+	if session.IdleGeneration < observed.Generation {
 		session.State, session.Since = observed.State, observed.Since
 		if observed.Generation > session.IdleGeneration {
 			session.IdleAt = observed.IdleAt
+			session.StopBlocks = 0 // an idle ends the turn the Stop count belongs to
 		}
 		session.IdleGeneration = max(session.IdleGeneration, observed.Generation)
 		if err := transaction.writeSession(session); err != nil {
 			return session, err
 		}
 	}
-	if observed.State == StateGone {
-		// What waited is dropped as of the end itself, also when recovery finishes it later, so a
-		// replay decides each subscription as the end would have.
-		if ended, ok := parseStamp(observed.Since); ok && ended.Before(transaction.now) {
-			clock := transaction.now
-			transaction.now = ended
-			err := transaction.dropWaiting(session)
-			transaction.now = clock
-			if err != nil {
-				return session, err
-			}
-		} else if err := transaction.dropWaiting(session); err != nil {
-			return session, err
-		}
-	}
 	return transaction.reconcileWatchers(observed.Session)
-}
-
-// dropWaiting moves the deliveries to a session that ended from pending or sending to
-// dropped (recipient_ended), each owing its sender one notice (section 4.2).
-func (transaction *transaction) dropWaiting(session Session) error {
-	hash := hashKey(session.Key)
-	names, err := listNames(transaction.place.inbox(hash))
-	if err != nil {
-		return err
-	}
-	for _, id := range names {
-		_, err := transaction.step(id, hash, deliverystate.Event{Kind: deliverystate.End})
-		switch {
-		case err == nil, errors.Is(err, errNoDelivery), errors.Is(err, deliverystate.ErrNotAllowed):
-			// delivered, read or final already: an end leaves it as it is
-		default:
-			return err
-		}
-	}
-	return nil
 }
 
 // reconcileWatchers brings the idle subscriptions on a session in line with what the store holds
 // (section 4.9), and is the only place they move (W-019). A subscription written with a message
 // arms once that message's delivery shows it arrived (delivered without unconfirmed, read, acted) and
 // ends with a not_delivered notice once it shows it did not (held, refused, dropped, expired,
-// unconfirmed); only an armed one, or a standalone one, then fires: on the session's end, on an idle
-// past its generation, or at its `until`. Each notice is written first under a name fixed for its
+// unconfirmed); only an armed one, or a standalone one, then fires: on an idle past its generation,
+// or at its `until`. Each notice is written first under a name fixed for its
 // subscription, and the subscription removed after, so a crash between them, or a second call,
 // fires nothing twice.
 func (transaction *transaction) reconcileWatchers(hash string) (Session, error) {
 	session, err := transaction.readSession(hash)
+	if errors.Is(err, os.ErrNotExist) {
+		return Session{}, nil // an evicted session holds no subscriptions
+	}
 	if err != nil || len(session.IdleWatchers) == 0 {
 		return session, err
 	}
@@ -190,8 +159,7 @@ func (transaction *transaction) reconcileWatchers(hash string) (Session, error) 
 	for index, watcher := range session.IdleWatchers {
 		until, ok := parseStamp(watcher.Until)
 		// Each outcome is judged by when its own event happened, never by when this runs: the idle
-		// that advanced the generation (idle_at), the end (since, while gone), the delivery's final
-		// state (its at). An event at or after until counts for nothing: the subscription expired.
+		// that advanced the generation (idle_at), the delivery's final state (its at). An event at or after until counts for nothing: the subscription expired.
 		before := func(moment time.Time, known bool) bool { return ok && known && moment.Before(until) }
 		kind := ""
 		if !watcher.Armed && watcher.MessageID != "" {
@@ -211,14 +179,11 @@ func (transaction *transaction) reconcileWatchers(hash string) (Session, error) 
 		}
 		armed := watcher.Armed || watcher.MessageID == ""
 		idleAt, idleKnown := parseStamp(session.IdleAt)
-		endedAt, endedKnown := parseStamp(session.Since)
 		switch {
 		case kind != "":
-		case armed && session.State == StateGone && before(endedAt, endedKnown):
-			kind = NoticeEnded
 		case armed && session.IdleGeneration > watcher.ArmedGeneration && before(idleAt, idleKnown):
 			kind = NoticeIdle
-		case !ok || !transaction.now.Before(until) || session.State == StateGone:
+		case !ok || !transaction.now.Before(until):
 			kind = NoticeSubscriptionExpired
 		}
 		if kind != "" {
@@ -299,9 +264,8 @@ const (
 	notArrived
 )
 
-// arrival reads what the watched message's delivery says, and when it came to say it. A recipient
-// that ended with the message still waiting has not received it, as of its end. A record that cannot
-// be read is an error, never an outcome.
+// arrival reads what the watched message's delivery says, and when it came to say it. A record that
+// cannot be read is an error, never an outcome.
 func (transaction *transaction) arrival(id, hash string, session Session) (int, time.Time, error) {
 	var delivery Delivery
 	err := readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery)
@@ -327,9 +291,6 @@ func (transaction *transaction) arrival(id, hash string, session Session) (int, 
 		return arrived, eventAt, nil
 	case deliverystate.Final(state):
 		return notArrived, eventAt, nil
-	case session.State == StateGone:
-		ended, _ := parseStamp(session.Since)
-		return notArrived, ended, nil
 	}
 	return waiting, time.Time{}, nil
 }

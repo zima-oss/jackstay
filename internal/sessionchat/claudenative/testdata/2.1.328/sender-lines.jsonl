@@ -1,0 +1,2 @@
+{"type": "auth", "token": "<token>"}
+{"msgV": 1, "msg_id": "00000000-0000-0000-0000-000000000000", "type": "user", "message": {"role": "user", "content": "<cross-session-message from=\"uds:/redacted/path\" from-name=\"sender\" from-mode=\"prompting\">\ncapture probe from the sender\n</cross-session-message>"}, "priority": "next", "from": "uds:/redacted/path"}

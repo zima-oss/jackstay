@@ -65,11 +65,6 @@ func (store *Store) Register(ctx context.Context, registration Registration) (Se
 		case err != nil:
 			return err
 		default:
-			if session.State == StateGone && registration.State != "" && registration.State != StateGone {
-				if err := transaction.admitLive(); err != nil {
-					return err
-				}
-			}
 			if registration.Name != "" {
 				session.Name = registration.Name
 			}
@@ -123,7 +118,7 @@ func checkRegistration(registration Registration) error {
 		return refuse(ReasonInvalid, "unknown key source %q", registration.KeySource)
 	}
 	switch registration.State {
-	case "", StateBusy, StateIdle, StateGone, StateUnknown:
+	case "", StateBusy, StateIdle, StateEnded, StateUnknown:
 	default:
 		return refuse(ReasonInvalid, "unknown state %q", registration.State)
 	}
@@ -142,16 +137,34 @@ func (transaction *transaction) newSession(registration Registration, hash, mome
 	if err != nil {
 		return Session{}, err
 	}
-	live := 0
+	// There is no liveness: the table of sessions is bounded instead, and a new session past the
+	// bound evicts the one seen least recently (section 6.4), one holding nothing owed first: a record
+	// with idle subscriptions on it or idle notices owed to it is evicted only when every one has some.
+	watching := map[string]bool{} // the watchers of pending subscriptions: their notices go to them
+	for _, other := range sessions {
+		for _, watcher := range other.IdleWatchers {
+			watching[watcher.Key] = true
+		}
+	}
+	for len(sessions) >= transaction.store.liveLimit {
+		oldest := -1
+		for index, other := range sessions {
+			if !other.Mailbox && (oldest < 0 || evictsBefore(other, sessions[oldest], watching)) {
+				oldest = index
+			}
+		}
+		if oldest < 0 {
+			return Session{}, refuse(ReasonCapacity, "the account has %d chat sessions, all of them review mailboxes", transaction.store.liveLimit)
+		}
+		if err := transaction.evictSession(sessions[oldest]); err != nil {
+			return Session{}, err
+		}
+		transaction.store.log("session-evicted", sessions[oldest].Ref)
+		sessions = slices.Delete(sessions, oldest, oldest+1)
+	}
 	hashes := make([]string, 0, len(sessions))
 	for _, other := range sessions {
 		hashes = append(hashes, hashKey(other.Key))
-		if other.State != StateGone {
-			live++
-		}
-	}
-	if live >= transaction.store.liveLimit {
-		return Session{}, refuse(ReasonCapacity, "the account has %d live chat sessions; wait for one to end", transaction.store.liveLimit)
 	}
 	if fits, err := transaction.admit(deliverystate.SessionCharge, transaction.store.writeLimit); err != nil || !fits {
 		if err != nil {
@@ -180,24 +193,6 @@ func (transaction *transaction) newSession(registration Registration, hash, mome
 		session.Subscriptions = []string{registration.Channel.ID}
 	}
 	return session, nil
-}
-
-// admitLive refuses one more live session past the account's bound (section 6.4).
-func (transaction *transaction) admitLive() error {
-	sessions, err := transaction.listSessions()
-	if err != nil {
-		return err
-	}
-	live := 0
-	for _, other := range sessions {
-		if other.State != StateGone {
-			live++
-		}
-	}
-	if live >= transaction.store.liveLimit {
-		return refuse(ReasonCapacity, "the account has %d live chat sessions; wait for one to end", transaction.store.liveLimit)
-	}
-	return nil
 }
 
 // Rename gives a session a new name (chat.whoami with `name`).
@@ -389,7 +384,7 @@ func sessionAddress(session Session, sessions []Session) string {
 		return fullAddress(session) // bare `main` addresses the parent (section 3.2)
 	}
 	for _, other := range sessions {
-		if other.Key != session.Key && other.Name == session.Name && other.State != StateGone {
+		if other.Key != session.Key && other.Name == session.Name {
 			return session.Name + " [" + session.Ref + "]"
 		}
 	}
@@ -399,9 +394,6 @@ func sessionAddress(session Session, sessions []Session) string {
 // fullAddress is a session's address with its ref, which stays unambiguous when another session
 // takes the same name later; stored in envelopes.
 func fullAddress(session Session) string { return session.Name + " [" + session.Ref + "]" }
-
-// addressable reports whether a session can be sent to (section 3.2).
-func addressable(session Session) bool { return session.State != StateGone }
 
 // target is what an address resolved to: one session, or a channel's subscribers.
 type target struct {
@@ -449,20 +441,17 @@ func resolveTarget(text string, sender Session, sessions []Session, channels []C
 			}
 		}
 	}
-	live := slices.DeleteFunc(slices.Clone(matches), func(session Session) bool { return !addressable(session) })
 	switch {
 	case len(matches) == 0:
 		return target{}, refuse(ReasonUnknownRecipient, "no session %q; chat.sessions lists who can be addressed", text)
-	case len(live) == 0:
-		return target{}, refuse(ReasonRecipientGone, "%s has ended; the message would never be read", text)
-	case len(live) > 1:
+	case len(matches) > 1:
 		var addresses []string
-		for _, session := range live {
+		for _, session := range matches {
 			addresses = append(addresses, fullAddress(session))
 		}
 		return target{}, refuse(ReasonAmbiguousRecipient, "several sessions answer to %q: %s", text, strings.Join(addresses, ", "))
 	}
-	return target{session: &live[0]}, nil
+	return target{session: &matches[0]}, nil
 }
 
 // Scope is what a session's repository allows it to send to (section 2): Restricted is false
@@ -518,4 +507,28 @@ func CheckRelated(related []string, channels []Channel) []string {
 		}
 	}
 	return problems
+}
+
+// evictsBefore reports whether one session is evicted before another: one holding nothing owed
+// first, then the one seen least recently.
+func evictsBefore(one, other Session, watching map[string]bool) bool {
+	if holdsOwed(one, watching) != holdsOwed(other, watching) {
+		return !holdsOwed(one, watching)
+	}
+	return one.LastSeen < other.LastSeen
+}
+
+// holdsOwed reports whether a session's record holds what eviction would lose: idle subscriptions on
+// it, a subscription it watches on another (its notice comes to this record), or idle notices owed
+// to it.
+func holdsOwed(session Session, watching map[string]bool) bool {
+	if len(session.IdleWatchers) > 0 || watching[session.Key] {
+		return true
+	}
+	for _, notice := range session.Notices {
+		if notice.State == string(deliverystate.NoticeOwed) {
+			return true
+		}
+	}
+	return false
 }
