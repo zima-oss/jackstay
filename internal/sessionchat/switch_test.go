@@ -14,6 +14,7 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/cli"
+	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
 )
 
@@ -47,11 +48,13 @@ func chatRepository(t *testing.T) (string, *clock) {
 	}
 	moment := &clock{now: time.Date(2026, 11, 22, 10, 0, 0, 0, time.UTC)}
 	folder := filepath.Join(os.Getenv("JACKSTAY_HOME"), "store")
-	previous := openStore
+	previousStore, previousClaude, previousLaunch := openStore, findClaude, launchPusher
 	openStore = func() (*chatstore.Store, error) {
 		return chatstore.Open(folder, chatstore.Options{Now: moment.read}), nil
 	}
-	t.Cleanup(func() { openStore = previous })
+	findClaude = func() (procs.Process, bool) { return procs.Process{}, false }
+	launchPusher = func(...string) error { return nil }
+	t.Cleanup(func() { openStore, findClaude, launchPusher = previousStore, previousClaude, previousLaunch })
 	return root, moment
 }
 
@@ -62,7 +65,7 @@ func tokenServer(t *testing.T, root, name, token string) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{chat: chat, name: name, fixed: "tk:" + token, source: chatstore.SourceToken}
+	return &Server{chat: chat, name: name, token: "tk:" + token}
 }
 
 // call runs one tool through a whole MCP exchange and returns its structured result.
@@ -112,10 +115,9 @@ func TestTwoSessionsTalkThroughServe(t *testing.T) {
 	if again["outcome"] != "duplicate" || again["message_id"] != sent["message_id"] {
 		t.Fatalf("a retry is a duplicate: %+v", again)
 	}
-	inbox := call(t, bob, "chat.inbox", nil)
-	messages, _ := inbox["messages"].([]any)
-	if len(messages) != 1 || !strings.Contains(messages[0].(map[string]any)["message"].(string), "hello bob") {
-		t.Fatalf("inbox: %+v", inbox)
+	inbox := bob.call(json.RawMessage(`{"name":"chat.inbox","arguments":{}}`)).(map[string]any)
+	if text := inbox["content"].([]map[string]any)[0]["text"].(string); !strings.Contains(text, "hello bob") {
+		t.Fatalf("inbox: %s", text)
 	}
 	// The 0.5.x names (section 5.5).
 	reply := call(t, bob, "chat.reply", map[string]any{"message_id": sent["message_id"], "body": "hello alice"})
@@ -135,10 +137,17 @@ func TestTwoSessionsTalkThroughServe(t *testing.T) {
 	}
 }
 
-// failingWriter refuses every write, as a client gone before the response.
-type failingWriter struct{}
+// failingWriter takes the first write (the initialization's answer) and refuses the rest, as a client
+// gone before the inbox's response.
+type failingWriter struct{ writes int }
 
-func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("the client is gone") }
+func (writer *failingWriter) Write(data []byte) (int, error) {
+	writer.writes++
+	if writer.writes > 1 {
+		return 0, errors.New("the client is gone")
+	}
+	return len(data), nil
+}
 
 // A notice is marked shown only once the response carrying it is written (section 8.5).
 func TestServeMarksNoticesOnlyAfterTheResponseIsWritten(t *testing.T) {
@@ -155,7 +164,7 @@ func TestServeMarksNoticesOnlyAfterTheResponseIsWritten(t *testing.T) {
 		return &input
 	}
 	var diagnostics bytes.Buffer
-	if code := alice.Serve(request(), failingWriter{}, &diagnostics); code != 2 {
+	if code := alice.Serve(request(), &failingWriter{}, &diagnostics); code != 2 {
 		t.Fatalf("a failed write ends the connection: %d", code)
 	}
 	if notices, _ := call(t, alice, "chat.inbox", nil)["notices"].([]any); len(notices) != 1 {
@@ -249,14 +258,14 @@ func TestAnEventReachesItsRecipientsOnce(t *testing.T) {
 	event := chatevent.Event{Kind: "review.finished", Worktree: root, Summary: "review clear", Body: "round 2",
 		Recipients: []string{"tk:" + strings.Repeat("b", 64), "tk:unknown"}, Key: "review/task/2"}
 	for range 2 {
-		if err := (publisher{}).Publish(context.Background(), event); err != nil {
-			t.Fatal(err)
+		if err := (publisher{}).Publish(context.Background(), event); !errors.Is(err, chatstore.ErrNotRegistered) {
+			t.Fatalf("the unknown recipient keeps it owed: %v", err)
 		}
 	}
-	messages, _ := call(t, bob, "chat.inbox", nil)["messages"].([]any)
-	if len(messages) != 1 || messages[0].(map[string]any)["kind"] != "event" ||
-		!strings.Contains(messages[0].(map[string]any)["message"].(string), "review clear") {
-		t.Fatalf("one event, once: %+v", messages)
+	store, _ := openStore()
+	page, err := store.Inbox(context.Background(), "tk:"+strings.Repeat("b", 64), chatstore.InboxInput{UnreadOnly: true, Limit: 5})
+	if err != nil || len(page.Messages) != 1 || page.Messages[0].Kind != "event" || !strings.Contains(page.Messages[0].Message, "review clear") {
+		t.Fatalf("one event, once: %+v %v", page.Messages, err)
 	}
 }
 

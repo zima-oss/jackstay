@@ -1255,7 +1255,7 @@ Claude Code process to get a Claude Code sender's answers (W-095).
 **The doorbell.** One short line, with no message text, sender, summary or ID in it:
 
 ```text
-jackstay chat: 2 new messages (1 urgent). Read them with chat.inbox (or `jst chat inbox`).
+jackstay chat: 2 new messages (1 urgent). Read them with chat.inbox.
 ```
 
 The count is of the session's `pending` deliveries on the `native` route, `now` ones named as
@@ -1627,7 +1627,16 @@ section 8.3, and jackstay's events to the sessions they name (section 10). These
   goes to the sessions in `Recipients`;
 - events to a whole channel, such as `land.merged` (section 10);
 - the configuration key `related` (sections 2 and 11): every session may write to every channel;
-- the review round's mailbox (section 9.1) and `jst setup --chat` (section 12).
+- the review round's mailbox (section 9.1) and `jst setup --chat` (section 12);
+- `jst chat inbox`, the shell's inbox (section 5.2): a session reads through `jst chat serve`, and
+  the doorbell names only `chat.inbox`;
+- ending a token session: a token names a session its launcher keeps, so jackstay never ends one;
+  an abandoned token session stays among the 256 live sessions until it is marked gone. Reuse a
+  token for the same session.
+
+In 0.6.0 an ephemeral session ends when its connection closes, and a Claude Code session whose
+process is gone without its `SessionEnd` is ended, with its binding, by the next hook, server or
+pusher that looks (section 7.4).
 
 The 0.5.x store is removed in 0.6.0; its state under `session-chat/` is neither read nor imported.
 

@@ -137,12 +137,13 @@ func dispatch(ctx context.Context, hook hookInput) (hookAnswer, error) {
 	}
 	switch hook.Event {
 	case "SessionStart":
-		if process, found := claudeProcess(); found {
+		if process, found := findClaude(); found {
 			err = chat.store.Bind(ctx, chatstore.Binding{ProcessID: process.PID, ProcessStart: processStart(process),
 				Key: key, Cwd: chat.worktree, Socket: socket, ClaudeVersion: version})
 		}
 		startPusher(ctx, chat.store)
 	case "UserPromptSubmit":
+		pullOwedReviews(ctx, chat.store, key, folder) // a result its review could not publish (section 10)
 		if _, err = chat.store.Observe(ctx, key, chatstore.ObserveBusy, personsPrompt(hook.Prompt)); err == nil {
 			err = ring(chatstore.HookPrompt, false)
 		}
@@ -158,7 +159,7 @@ func dispatch(ctx context.Context, hook hookInput) (hookAnswer, error) {
 		startPusher(ctx, chat.store)
 	case "SessionEnd":
 		_, err = chat.store.Observe(ctx, key, chatstore.ObserveGone, false)
-		if process, found := claudeProcess(); found && err == nil {
+		if process, found := findClaude(); found && err == nil {
 			err = chat.store.Unbind(ctx, process.PID, processStart(process))
 		}
 	}

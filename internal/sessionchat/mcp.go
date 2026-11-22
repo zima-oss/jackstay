@@ -44,8 +44,14 @@ type Server struct {
 	chat local
 	// name is the --name a launcher gave; "" keeps the session's own.
 	name string
-	// fixed is the key of a token or ephemeral session; "" when the key comes from the binding.
-	fixed, source string
+	// token is the key a session token gives, "" without one; it overrides the binding's key.
+	token string
+	// claude says this server runs under a Claude Code process, whose hooks bind its session.
+	claude bool
+	// ephemeral is the key this connection speaks as while no binding names its session; waited
+	// says the first call already waited for one.
+	ephemeral string
+	waited    bool
 	// afterWrite runs once a response is written: what a tool marks only after its handoff.
 	afterWrite func()
 }
@@ -90,20 +96,25 @@ func Run(args []string, input io.Reader, output, diagnostics io.Writer) int {
 		return 2
 	}
 	server := &Server{chat: chat, name: name}
-	key, err := tokenKey()
-	if err != nil {
+	if server.token, err = tokenKey(); err != nil {
 		fmt.Fprintf(diagnostics, "chat: %v\n", err)
 		return 2
 	}
-	switch {
-	case key != "":
-		server.fixed, server.source = key, chatstore.SourceToken
-	default:
-		if _, found := claudeProcess(); !found {
-			server.fixed, server.source = ephemeralKey(), chatstore.SourceEphemeral
-		}
+	_, server.claude = findClaude()
+	startPusher(ctx, chat.store) // bindings of processes gone since are reaped there
+	code := server.Serve(input, output, diagnostics)
+	server.end()
+	return code
+}
+
+// end marks an ephemeral session gone when its connection closes: nothing can read its inbox again.
+func (server *Server) end() {
+	if server.ephemeral == "" {
+		return
 	}
-	return server.Serve(input, output, diagnostics)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = server.chat.store.Observe(ctx, server.ephemeral, chatstore.ObserveGone, false)
 }
 
 // Serve handles newline-delimited JSON-RPC messages on one stdio connection.
@@ -139,6 +150,7 @@ func (server *Server) Serve(input io.Reader, output, diagnostics io.Writer) int 
 			continue
 		}
 		response := rpcResponse{JSONRPC: "2.0", ID: request.ID}
+		server.afterWrite = nil
 		switch request.Method {
 		case "initialize":
 			var params struct {
@@ -168,6 +180,7 @@ func (server *Server) Serve(input io.Reader, output, diagnostics io.Writer) int 
 			response.Error = &rpcError{-32601, "Method not found"}
 		}
 		if !writeResponse(output, response) {
+			server.afterWrite = nil // never handed over: nothing it carried is marked
 			return 2
 		}
 		if server.afterWrite != nil {
@@ -198,18 +211,32 @@ func writeResponse(output io.Writer, response rpcResponse) bool {
 }
 
 // session is the session this call speaks as: registered (or refreshed) in the repository's
-// channel. A Claude Code session's key comes from its binding, read on every call so a /clear moves
-// the server to the new key; without a binding after the wait the server is ephemeral.
+// channel (section 3.1). A token names it. Under Claude Code, the binding its hooks wrote names it,
+// read on every call so a /clear or a late SessionStart moves the server to the right key; the
+// first call waits for the binding, later ones do not. Meanwhile, and outside Claude Code, the
+// connection speaks as an ephemeral session. A Claude Code session's route is the hooks' to set, so
+// the server leaves it as it is.
 func (server *Server) session(ctx context.Context) (chatstore.Session, error) {
-	key, source, engine, delivery := server.fixed, server.source, chatstore.EngineOther, chatstore.DeliveryPoll
-	if key == "" {
-		bound, found := boundKey(ctx, server.chat.store, bindingWait)
-		if found {
-			key, source, engine, delivery = bound, chatstore.SourceEngine, chatstore.EngineClaudeCode, ""
-		} else {
-			server.fixed, server.source = ephemeralKey(), chatstore.SourceEphemeral
-			key, source = server.fixed, server.source
+	engine, delivery := chatstore.EngineOther, chatstore.DeliveryPoll
+	if server.claude {
+		engine, delivery = chatstore.EngineClaudeCode, ""
+	}
+	key, source := server.token, chatstore.SourceToken
+	if key == "" && server.claude {
+		wait := bindingWait
+		if server.waited {
+			wait = 0
 		}
+		server.waited = true
+		if bound, found := boundKey(ctx, server.chat.store, wait); found {
+			key, source = bound, chatstore.SourceEngine
+		}
+	}
+	if key == "" {
+		if server.ephemeral == "" {
+			server.ephemeral = ephemeralKey()
+		}
+		key, source, engine, delivery = server.ephemeral, chatstore.SourceEphemeral, chatstore.EngineOther, chatstore.DeliveryPoll
 	}
 	registration := chatstore.Registration{Key: key, KeySource: source, Engine: engine, Name: server.name,
 		Channel: server.chat.channel, Worktree: server.chat.worktree, Branch: server.chat.branch, Delivery: delivery}

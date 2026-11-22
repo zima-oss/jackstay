@@ -174,7 +174,50 @@ func (server *Server) call(raw json.RawMessage) any {
 	if err != nil {
 		return refusalResult(err)
 	}
+	switch known.name {
+	case "chat.send", "chat.reply", "chat.respond":
+		// A delivery to an idle native session is rung on its socket (section 8.3).
+		startPusher(ctx, server.chat.store)
+	case "chat.inbox":
+		page := result.(chatstore.InboxResult)
+		return framedResult(page.Messages, page.Notices, map[string]any{"notices_more": page.NoticesMore,
+			"more": page.More, "next_cursor": page.NextCursor})
+	case "chat.thread":
+		page := result.(chatstore.ThreadResult)
+		return framedResult(page.Messages, nil, map[string]any{"next_cursor": page.NextCursor})
+	}
 	return toolResult(result)
+}
+
+// framedResult is a result that carries other sessions' text (section 5.3): each message in its
+// frame, once, in the text the model reads; the structured content holds the same messages without
+// their bodies, and the paging.
+func framedResult(messages []chatstore.MessageView, notices []string, paging map[string]any) map[string]any {
+	var text strings.Builder
+	listed := make([]chatstore.MessageView, 0, len(messages))
+	for _, view := range messages {
+		frame, _ := chatstore.Frame(view, view.ID, view.Message, 0)
+		text.WriteString(frame + "\n")
+		view.Message = ""
+		listed = append(listed, view)
+	}
+	if len(messages) == 0 {
+		text.WriteString("No messages.\n")
+	}
+	for _, notice := range notices {
+		text.WriteString("notice: " + notice + "\n")
+	}
+	structured := map[string]any{"messages": listed, "notices": notices}
+	for name, value := range paging {
+		structured[name] = value
+	}
+	if encoded, err := json.Marshal(paging); err == nil {
+		text.WriteString("paging: " + string(encoded) + "\n")
+	}
+	if text.Len() > maxResponseBytes/2 {
+		return toolFailure("the result exceeds its size limit; ask for fewer")
+	}
+	return map[string]any{"content": []map[string]any{{"type": "text", "text": text.String()}}, "structuredContent": structured}
 }
 
 func (server *Server) run(ctx context.Context, name string, session chatstore.Session, input arguments) (any, error) {
@@ -212,7 +255,9 @@ func (server *Server) run(ctx context.Context, name string, session chatstore.Se
 		if limit == 0 {
 			limit = 20
 		}
-		pullOwedReviews(ctx, store, key)
+		if here, err := os.Getwd(); err == nil {
+			pullOwedReviews(ctx, store, key, here)
+		}
 		result, err := store.Inbox(ctx, key, chatstore.InboxInput{IDs: input.IDs, UnreadOnly: defaultTrue(input.UnreadOnly),
 			Limit: limit, Cursor: input.Cursor, MarkRead: defaultTrue(input.MarkRead)})
 		if err != nil {
@@ -311,15 +356,11 @@ func sessionsOf(ctx context.Context, store *chatstore.Store, self chatstore.Sess
 		if err != nil {
 			return nil, err
 		}
-		channelID = ""
-		for _, channel := range channels {
-			if "#"+channel.Name == input.Channel || channel.Name == input.Channel || channel.ID == input.Channel {
-				channelID = channel.ID
-			}
+		channel, err := chatstore.ResolveChannel(input.Channel, channels)
+		if err != nil {
+			return nil, err
 		}
-		if channelID == "" {
-			return nil, &chatstore.Refusal{Reason: chatstore.ReasonUnknownRecipient, Detail: "no channel " + input.Channel}
-		}
+		channelID = channel.ID
 	}
 	limit := input.Limit
 	if limit == 0 {
@@ -365,7 +406,7 @@ func channelsOf(ctx context.Context, store *chatstore.Store, self chatstore.Sess
 		for _, subscription := range self.Subscriptions {
 			subscribed = subscribed || subscription == channel.ID
 		}
-		rows = append(rows, map[string]any{"channel": "#" + channel.Name, "subscribers": subscribers,
+		rows = append(rows, map[string]any{"channel": chatstore.ChannelAddress(channel, channels), "subscribers": subscribers,
 			"subscribed": subscribed, "writable": true})
 	}
 	return map[string]any{"channels": rows}, nil

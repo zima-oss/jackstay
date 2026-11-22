@@ -92,6 +92,9 @@ func ephemeralKey() string {
 
 // claudeProcess is the Claude Code process this one runs under: the one CLAUDE_PID names when it is
 // an ancestor, else the nearest ancestor that may be a session's own (section 3.1).
+// findClaude finds the Claude Code process this one runs under; a test replaces it.
+var findClaude = claudeProcess
+
 func claudeProcess() (procs.Process, bool) {
 	table, err := procs.ReadTable()
 	if err != nil {
@@ -146,7 +149,7 @@ func deliveryOf(socket, version string) string {
 // boundKey is the key of the Claude Code session this process runs under, from its binding; it
 // waits up to wait for SessionStart to write one (section 3.1).
 func boundKey(ctx context.Context, store *chatstore.Store, wait time.Duration) (string, bool) {
-	process, found := claudeProcess()
+	process, found := findClaude()
 	if !found {
 		return "", false
 	}

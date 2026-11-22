@@ -3,7 +3,6 @@ package sessionchat
 import (
 	"context"
 	"errors"
-	"os"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/review"
@@ -54,12 +53,8 @@ func identify(ctx context.Context, worktree string) (string, error) {
 // pullOwedReviews publishes the review results still owed to the session: a result whose
 // publication failed when its review ended is pulled when the session next reads (section 10). A
 // failure here never fails the read; the result stays owed.
-func pullOwedReviews(ctx context.Context, store *chatstore.Store, key string) {
-	here, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	background, err := review.BackgroundAt(here, "")
+func pullOwedReviews(ctx context.Context, store *chatstore.Store, key, folder string) {
+	background, err := review.BackgroundAt(folder, "")
 	if err != nil {
 		return // no review here, so nothing is owed here
 	}

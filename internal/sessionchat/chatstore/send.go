@@ -294,6 +294,7 @@ type planned struct {
 	recipients     []Session
 	gone           map[string]bool // recipient hashes whose delivery starts dropped (a response to a requester gone)
 	kind           string
+	event          string // an event's kind (section 10)
 	body           string
 	summary        string
 	priority       string
@@ -455,7 +456,7 @@ func (transaction *transaction) commitMessage(plan planned) (SendResult, error) 
 		ExpiresAt: stamp(transaction.now.Add(time.Duration(plan.expiry) * time.Second)),
 		BodyBytes: len(plan.body), BodySHA256: hex.EncodeToString(bodyHash[:]),
 		Recipients: recipientHashes(plan.recipients), Response: plan.response, Attachments: plan.attachments,
-		Meta: plan.meta, IdempotencyKey: plan.idempotencyKey,
+		Meta: plan.meta, IdempotencyKey: plan.idempotencyKey, Event: plan.event,
 	}
 	if plan.request != nil {
 		request := *plan.request

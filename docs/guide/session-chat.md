@@ -98,6 +98,9 @@ recipient next reads its inbox. See [Run a review in the background](review.md#r
 - Telling which session ran a command through the process tree, for events about it.
 - Events to a whole channel, such as a merged branch.
 - A list of related repositories that limits whom a session may write to.
+- `jst chat inbox` for a session that reads from a shell.
+- Ending a session that has its own token: jackstay never ends one, so reuse a token for the same
+  session rather than making a new one each time.
 
 State written by jackstay 0.5.x under `~/.jackstay/.all/session-chat/` is not read by 0.6.0 and is
 not imported.
