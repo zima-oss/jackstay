@@ -105,18 +105,18 @@ var items = []item{
 	}, text: fixed(
 		"- **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools\n" +
 			"  to send a request, read your inbox and acknowledge messages you process.")},
-	{id: "chat-codex", commands: []string{"chat codex-bridge"}, wanted: func(config map[string]any) bool {
+	{id: "chat-codex", commands: []string{"chat serve"}, wanted: func(config map[string]any) bool {
 		chat := section(config, "chat")
 		return chat["enabled"] == true && section(chat, "codex_bridge")["enabled"] == true
 	}, text: fixed(
-		"- **Deliver chat to managed Codex**: `jst chat codex-bridge` uses the owner's local socket, thread and session.\n" +
-			"  Use `chat.ack` after processing a message.")},
-	{id: "chat-claude", commands: []string{"chat claude-hook"}, wanted: func(config map[string]any) bool {
+		"- **Chat in Codex**: read your inbox with `chat.inbox` from `jst chat serve`; the Codex bridge's push\n" +
+			"  returns in jackstay 1.")},
+	{id: "chat-claude", commands: []string{"hook claude"}, wanted: func(config map[string]any) bool {
 		chat := section(config, "chat")
 		return chat["enabled"] == true && section(chat, "claude_code")["enabled"] == true
 	}, text: fixed(
-		"- **Check chat at a Claude Code boundary** with the owner-configured `jst chat claude-hook`.\n" +
-			"  When notified, use the MCP inbox and acknowledge each processed message.")},
+		"- **Chat in Claude Code**: the owner-configured `jst hook claude` rings when messages wait; read them\n" +
+			"  with `chat.inbox` and answer a request with `chat.respond`.")},
 	{id: "doctor", commands: []string{"doctor", "check", "adopt", "setup"}, wanted: always, text: fixed(
 		"- **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is\n" +
 			"  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.")},

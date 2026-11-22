@@ -35,25 +35,10 @@ func (transaction *transaction) overdue(envelope Envelope) bool {
 	return !ok || !transaction.now.Before(deadline)
 }
 
-// step applies one event to one delivery of a committed message under the store's lock, as the table
-// orders (deliverystate.ApplyMessage: the deadline and a closed request first), and writes what
-// changed: the request's commit record first, the delivery second (section 4.4). It settles the
+// stepLoaded applies one event to one delivery of a committed message under the store's lock, as
+// the table orders (deliverystate.ApplyMessage: the deadline and a closed request first), and writes
+// what changed: the request's commit record first, the delivery second (section 4.4). It settles the
 // sender's idle subscription that waited on this delivery (section 4.9). The error is the table's.
-func (transaction *transaction) step(id, hash string, event deliverystate.Event) (Delivery, error) {
-	found, err := transaction.message(id)
-	if err != nil {
-		return Delivery{}, err
-	}
-	var delivery Delivery
-	if err := readRecord(transaction.place.delivery(id, hash), deliveryBound, &delivery); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Delivery{}, errNoDelivery
-		}
-		return Delivery{}, err
-	}
-	return transaction.stepLoaded(found, hash, delivery, event)
-}
-
 func (transaction *transaction) stepLoaded(found message, hash string, delivery Delivery, event deliverystate.Event) (Delivery, error) {
 	isRequest := found.envelope.Request != nil
 	event.Overdue = event.Overdue || transaction.overdue(found.envelope)

@@ -45,3 +45,26 @@ taken ring: what it told of is marked rung, and nothing is refused. The `engine_
 the table's refusal event stay, for an engine that reports a refusal itself; the native pass never
 applies them. Recording a ring then only marks, and a pass stopped part way leaves nothing to undo.
 The delivery model loses the doorbell's refusal step (27,056 states to 26,496).
+
+## Amendment (2026-11-22): no session liveness at all
+
+**Context.** The chat tried to know whether a session still lived: a session ended by `SessionEnd`,
+a dead process, or a closed connection became `gone`, its waiting deliveries were dropped, and a
+reaper ended the sessions whose process had disappeared. Each attempt to make that safe (a reaper,
+an ephemeral session bound to its server's process, an end on disconnect) opened the next race: a
+session resumed under its key could be ended by a stale view, and a result it had not read could be
+dropped.
+
+**Decision.** There is no liveness. jackstay checks no process, ends nothing on a closed
+connection, and reaps nothing. A message nobody reads expires by its own deadline, and its sender
+gets the usual expiry notice. `SessionEnd` sets `ended`, a hint for listings and status that drops,
+refuses and fires nothing; a resumed conversation reads what waited. The table of sessions is
+bounded instead: past its bound, a new session evicts the one seen least recently, sparing a record
+that holds, watches or is owed an idle subscription or notice, and an evicted session's inbox stays
+under its key. Bindings remain only as the doorbell's socket addresses, bounded the same way; a ring
+to the socket of a process that is gone is harmless.
+
+**Consequences.** The delivery table loses the end event and the `dropped` state, and the
+`recipient_gone` and `recipient_ended` reasons go. Idle subscriptions fire on an idle or expire at
+their `until`. The delivery model loses the recipient's end (26,496 states to 8,505). See
+[the chat design](../design/chat.md), sections 3.3, 4.2, 6.4 and 7.5.

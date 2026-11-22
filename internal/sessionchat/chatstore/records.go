@@ -48,9 +48,10 @@ const (
 
 // Live states (section 3.3).
 const (
-	StateBusy    = "busy"
-	StateIdle    = "idle"
-	StateGone    = "gone"
+	StateBusy = "busy"
+	StateIdle = "idle"
+	// StateEnded is SessionEnd's hint, shown and nothing more: a session never ends (no liveness).
+	StateEnded   = "ended"
 	StateUnknown = "unknown"
 )
 
@@ -75,14 +76,16 @@ type SessionNotice struct {
 
 // Session is a session record (section 6.1).
 type Session struct {
-	V              int           `json:"v"`
-	Key            string        `json:"key"`
-	Ref            string        `json:"ref"`
-	Name           string        `json:"name"`
-	Engine         string        `json:"engine"`
-	KeySource      string        `json:"key_source"`
-	ChannelID      string        `json:"channel_id"`
-	Mailbox        bool          `json:"mailbox,omitempty"`
+	V         int    `json:"v"`
+	Key       string `json:"key"`
+	Ref       string `json:"ref"`
+	Name      string `json:"name"`
+	Engine    string `json:"engine"`
+	KeySource string `json:"key_source"`
+	ChannelID string `json:"channel_id"`
+	Mailbox   bool   `json:"mailbox,omitempty"`
+	// Frozen is a review mailbox's freeze (section 9.1), set by the round that owns it.
+	Frozen         bool          `json:"frozen,omitempty"`
 	Worktree       string        `json:"worktree,omitempty"`
 	Parent         string        `json:"parent,omitempty"`
 	State          string        `json:"state"`

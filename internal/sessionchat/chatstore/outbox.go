@@ -192,7 +192,7 @@ func (transaction *transaction) recipientRows(found *message, byHash map[string]
 			return nil, err
 		}
 		row := RecipientRow{State: delivery.State, At: delivery.At, Route: delivery.Route, Reason: delivery.Reason,
-			Note: delivery.Note, LiveState: StateGone}
+			Note: delivery.Note, LiveState: StateUnknown}
 		if recipient, ok := byHash[hash]; ok {
 			row.Session = SessionRef{Address: sessionAddress(recipient, sessions), Name: recipient.Name, Ref: recipient.Ref, Engine: recipient.Engine}
 			for _, channel := range channels {

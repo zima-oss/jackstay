@@ -57,7 +57,7 @@ func (store *Store) Respond(ctx context.Context, responderKey string, input Resp
 		if err != nil {
 			return err
 		}
-		requester := Session{Key: envelope.From, Name: envelope.FromName, ChannelID: envelope.FromChannelID, State: StateGone}
+		requester := Session{Key: envelope.From, Name: envelope.FromName, ChannelID: envelope.FromChannelID, State: StateUnknown}
 		requesterHash := hashKey(envelope.From)
 		for _, session := range sessions {
 			if session.Key == envelope.From {
@@ -72,7 +72,7 @@ func (store *Store) Respond(ctx context.Context, responderKey string, input Resp
 			summary = summaryOf("", input.Decision+": "+input.Reason)
 		}
 		plan := planned{
-			sender: responder, recipients: []Session{requester}, gone: map[string]bool{requesterHash: requester.State == StateGone},
+			sender: responder, recipients: []Session{requester},
 			kind: "response", body: input.Message, summary: trimmed(summary), priority: PriorityNext,
 			expiry: DefaultExpirySeconds, threadID: envelope.ThreadID, replyTo: envelope.ID, to: fullAddress(requester),
 			response:    &Response{RequestID: input.RequestID, Decision: input.Decision, Choice: input.Choice, Reason: input.Reason},

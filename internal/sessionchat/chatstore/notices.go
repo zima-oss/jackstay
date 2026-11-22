@@ -91,8 +91,6 @@ func receiptWords(delivery Delivery) string {
 	switch deliverystate.Reason(delivery.Reason) {
 	case deliverystate.EngineRefused:
 		return "refused: the recipient's engine refused its doorbell"
-	case deliverystate.RecipientEnded:
-		return "dropped: the recipient ended before reading it"
 	case deliverystate.ExpiredReason:
 		return "expired unread"
 	}
@@ -103,8 +101,6 @@ func sessionNoticeWords(notice SessionNotice) string {
 	switch notice.Kind {
 	case NoticeIdle:
 		return notice.About + " is idle (from its Stop hook, or its engine's own report)"
-	case NoticeEnded:
-		return notice.About + " ended"
 	case NoticeNotDelivered:
 		return notice.MessageID + " to " + notice.About + ": not confirmed delivered, so no idle notice will follow"
 	case NoticeSubscriptionExpired:

@@ -4,6 +4,7 @@
 package status
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/cards"
 	"github.com/zima-oss/jackstay/internal/config"
@@ -182,11 +184,9 @@ func readChat(common string, loaded config.Config) ChatStatus {
 	if !policy.Enabled {
 		return ChatStatus{Status: stateDisabled}
 	}
-	store, err := sessionchat.StoreFor(common, policy)
-	if err != nil {
-		return ChatStatus{Status: stateUnknown, Error: err.Error()}
-	}
-	overview, err := store.ReadOverview()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	overview, err := sessionchat.OverviewOf(ctx, common)
 	if err != nil {
 		return ChatStatus{Status: stateUnknown, Error: err.Error()}
 	}

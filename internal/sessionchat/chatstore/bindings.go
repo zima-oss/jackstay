@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -47,15 +48,31 @@ func (store *Store) Bind(ctx context.Context, binding Binding) error {
 	return store.update(ctx, func(transaction *transaction) error {
 		path := transaction.place.binding(binding.ProcessID, binding.ProcessStart)
 		if !exists(path) {
-			names, err := listNames(transaction.place.bindings())
+			// Bindings are only the ring's socket addresses, bounded like the sessions: a new one past
+			// the bound evicts the one written longest ago (a process that ended without its
+			// SessionEnd leaves its binding until then; a ring to its socket is harmless).
+			bindings, err := transaction.listBindings()
 			if err != nil {
 				return err
+			}
+			for len(bindings) >= maxBindings {
+				oldest := 0
+				for index := range bindings {
+					if bindings[index].Written < bindings[oldest].Written {
+						oldest = index
+					}
+				}
+				evicted := bindings[oldest]
+				if err := os.Remove(transaction.place.binding(evicted.ProcessID, evicted.ProcessStart)); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return err
+				}
+				bindings = slices.Delete(bindings, oldest, oldest+1)
 			}
 			fits, err := transaction.admit(deliverystate.BindingCharge, transaction.store.writeLimit)
 			if err != nil {
 				return err
 			}
-			if len(names) >= maxBindings || !fits {
+			if !fits {
 				return refuse(ReasonCapacity, "the chat store holds no room for another binding")
 			}
 		}

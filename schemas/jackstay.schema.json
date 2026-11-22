@@ -258,7 +258,7 @@
           "description": "Configures the Claude Code hook that announces pending chat messages at the next boundary.",
           "properties": {
             "enabled": {
-              "description": "Lets `jst chat claude-hook` announce pending messages to Claude Code; it needs `chat.enabled`.",
+              "description": "Lists the Claude Code chat item in the AGENTS block; `jst hook claude` itself needs only `chat.enabled`.",
               "type": "boolean"
             }
           },
@@ -269,7 +269,7 @@
           "description": "Configures the bridge that delivers chat messages into a managed Codex turn.",
           "properties": {
             "enabled": {
-              "description": "Lets `jst chat codex-bridge` deliver messages to a running Codex turn; it needs `chat.enabled`.",
+              "description": "Lists the Codex chat item in the AGENTS block; the Codex bridge's push returns in jackstay 1.",
               "type": "boolean"
             }
           },

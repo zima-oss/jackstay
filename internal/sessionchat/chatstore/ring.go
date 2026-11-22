@@ -47,7 +47,7 @@ func DoorbellLine(messages, urgent, notices int) string {
 	case notices > 1:
 		parts = append(parts, fmt.Sprintf("%d notices", notices))
 	}
-	return "jackstay chat: " + strings.Join(parts, " and ") + ". Read them with chat.inbox (or `jst chat inbox`)."
+	return "jackstay chat: " + strings.Join(parts, " and ") + ". Read them with chat.inbox."
 }
 
 // Ring is what a hook returns to Claude Code: the doorbell line, and whether a Stop holds the turn.
