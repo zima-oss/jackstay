@@ -245,7 +245,8 @@ main() {
     say "no terminal here, so machine setup does not start: run \`jst setup\` in a terminal for it"
   else
     say "a terminal is here, so machine setup starts now: it shows what it would change on this"
-    say "machine and asks before each change; Ctrl-C stops it and leaves the installation as it is"
+    say "machine and asks before each change, then asks who merges a project's changes and which"
+    say "reviewer runs, the recommended answer first; Ctrl-C stops it and leaves the installation as it is"
     if ! JACKSTAY_TELEMETRY=off "$prefix/bin/jst" setup --prefix "$prefix"; then
       say "machine setup stopped; the installation is ready"
     fi
