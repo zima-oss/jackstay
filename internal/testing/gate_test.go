@@ -277,6 +277,47 @@ func TestAMarkStandsOnlyOnTheMarksOfItsDepsItPassedAfter(t *testing.T) {
 	w.expectCounters("x-a x-b x-c x-other", 1, 2, 3, 1)
 }
 
+// Every run of a node takes its mark away first, also one that can write none (Make's
+// .DELETE_ON_ERROR): a rebuild on a dirty tree, stopped before the test after it, leaves no pass
+// of the build, so once the edit is undone --resume runs the build and the test again.
+func TestARunOnADirtyTreeTakesTheNodesMarkAway(t *testing.T) {
+	section := map[string]any{"judge": "exit", "scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-build", "x-stop", "x-test")},
+		"x-build": map[string]any{"run": counted("x-build", "true")},
+		"x-stop":  map[string]any{"run": counted("x-stop", `test ! -f "$SIDE/x-stop-fails"`)},
+		"x-test":  map[string]any{"run": counted("x-test", "true"), "deps": argv("x-build")},
+	}}
+	w := newWorld(t, section, nil)
+	w.repo.Commit("source", map[string]string{"src/a.txt": "a\n"})
+	w.expectStatus(w.jst("gate"), 0)
+	source := filepath.Join(w.repo.Root, "src", "a.txt")
+	if err := os.WriteFile(source, []byte("edited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The dirty run stops after the build: x-test does not run.
+	w.flag("x-stop-fails", true)
+	w.expectStatus(w.jst("gate"), 1)
+	w.expectCounters("x-build x-stop x-test", 2, 2, 1)
+	if err := os.WriteFile(source, []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.flag("x-stop-fails", false)
+	w.expectStatus(w.jst("gate", "--resume"), 0)
+	w.expectCounters("x-build x-stop x-test", 3, 3, 2)
+	w.expectLast("outcome=passed", "x-build=exited-0", "x-test=exited-0")
+	// A node run on its own on a dirty tree also takes its mark away.
+	if err := os.WriteFile(source, []byte("edited\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.expectStatus(w.jst("x-build"), 0)
+	if err := os.WriteFile(source, []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.expectStatus(w.jst("gate", "--resume"), 0)
+	w.expectCounters("x-build x-stop x-test", 5, 3, 3)
+	w.expectLast("x-build=exited-0", "x-stop=resumed", "x-test=exited-0")
+}
+
 // A dep rebuilt in this run writes a mark with a new ID: the node after it runs too.
 func TestANodeAfterADepRebuiltInThisRunIsNotResumed(t *testing.T) {
 	section := map[string]any{"judge": "exit", "scopes": map[string]any{

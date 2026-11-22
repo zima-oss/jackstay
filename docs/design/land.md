@@ -345,7 +345,9 @@ run and in `jst test plan` alike, before the walk.
       a dep that ran stands on the new mark it wrote; a dep that wrote none (`"resume": false`, a
       dirty tree, a bar) stands on none, and the nodes after it run. So a dep that ran again
       makes every node after it run, transitively, also when the run that rebuilt it was stopped
-      before they ran.
+      before they ran. A node has one current mark per checkout, which holds its key (a read
+      with another key finds none), and every run of a node removes it first, also a run that can
+      write none (a dirty tree, `"resume": false`) or that is stopped.
    5. Otherwise it **runs**.
 5. **After a failure.** A node that did not pass (anything but `passed`, `exited-0`, `resumed` or
    `skipped`) is a failure. Without `--keep-going`, the first failure ends the run and every
@@ -663,8 +665,9 @@ The cache of section 7.3 was to replace the marks, bars, `--resume`, `resumed`, 
   do not depend on a failure and nothing else changed; `requires` checked before every mark is
   read, a failing check making the node `not-started` with no mark read; under `--resume` a node
   resumed from its mark only when its deps stand on the marks it recorded, also through a composite:
-  a dep rebuilt in this run, a dep whose mark was rewritten by a run stopped after it, and a
-  rerun at the start of a chain of three each make the nodes after it run,
+  a dep rebuilt in this run, a dep whose mark was rewritten by a run stopped after it, a
+  rebuild on a dirty tree stopped before its test with the edit undone after, and a rerun at the
+  start of a chain of three each make the nodes after it run,
   `requires` or another run setting on a schema-3 composite refused, naming the scope; a schema-2
   list's `requires` run once before any node when the list is in the graph, a failing one making
   the run `not-started` (2) with nothing run, and not run when a scope whose graph lacks the list is

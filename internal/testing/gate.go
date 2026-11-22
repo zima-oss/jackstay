@@ -311,8 +311,11 @@ type mark struct {
 	Counted        int      `json:"counted,omitempty"`
 }
 
-func (proj *project) markPath(key string) string {
-	return filepath.Join(proj.stateFolder("gate-marks"), key+".json")
+// markPath is the one file of a node's current mark in this checkout: a node has one mark per
+// checkout, whatever its key, and the key is checked inside it (readMark).
+func (proj *project) markPath(node string) string {
+	digest := sha256.Sum256([]byte(proj.root + "\x00" + node))
+	return filepath.Join(proj.stateFolder("gate-marks"), hex.EncodeToString(digest[:])+".json")
 }
 
 // writeMark files a step's pass, after the marks of its deps; its new ID, or "" when it wrote
@@ -338,7 +341,7 @@ func (proj *project) writeMark(key, step string, ended result, head string, adap
 			err = os.MkdirAll(folder, 0o700)
 		}
 		if err == nil {
-			err = durable.WriteAtomic(proj.markPath(key), data, 0o600, 0)
+			err = durable.WriteAtomic(proj.markPath(step), data, 0o600, 0)
 		}
 	}
 	if err != nil {
@@ -349,19 +352,19 @@ func (proj *project) writeMark(key, step string, ended result, head string, adap
 	return id
 }
 
-// removeMark takes a key's mark away: a run of the step on it ended with no verdict, or runs now.
-// removeMark takes a key's mark away; an error when one stays (a missing mark is none).
-func (proj *project) removeMark(key string) error {
-	err := receipts.RemoveFile(proj.markPath(key))
+// removeMark takes a node's mark away, before every run of it; an error when one stays (a
+// missing mark is none).
+func (proj *project) removeMark(node string) error {
+	err := receipts.RemoveFile(proj.markPath(node))
 	if err == nil || errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	return fmt.Errorf("the mark %s cannot be removed (%v): a failure of this run could not undo it; run it outside the sandbox", proj.markPath(key), err)
+	return fmt.Errorf("the mark %s cannot be removed (%v): a failure of this run could not undo it; run it outside the sandbox", proj.markPath(node), err)
 }
 
-// readMark is a mark usable now for the key, or why not.
+// readMark is the node's mark when it is usable now for the key, or why not.
 func (proj *project) readMark(key, step, head string, adapterVersion int) (*mark, string) {
-	data, err := os.ReadFile(proj.markPath(key))
+	data, err := os.ReadFile(proj.markPath(step))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, "no mark"
 	}
@@ -700,14 +703,12 @@ func (proj *project) gateStep(name, kind string, entry map[string]any, gateID st
 	}
 	proj.say("step %s: %s", name, shellWords(found.argv))
 	var ended result
-	if key != "" {
-		// The step runs again: its old pass no longer speaks for this tree, also if this run is
-		// stopped before it can say anything. A pass writes a new mark. A mark that cannot be
-		// removed could not be undone by a failure: the step does not start, and the gate records
-		// that like any other outcome.
-		if err := proj.removeMark(key); err != nil {
-			ended = proj.notStarted(err.Error())
-		}
+	// The step runs again: its old pass no longer speaks for this checkout, also if this run can
+	// write no new mark (a dirty tree, "resume": false) or is stopped before it can say anything. A
+	// pass on a clean tree writes a new mark. A mark that cannot be removed could not be undone by
+	// a failure: the step does not start, and the gate records that like any other outcome.
+	if err := proj.removeMark(name); err != nil {
+		ended = proj.notStarted(err.Error())
 	}
 	if ended.outcome == "" {
 		ended = proj.runLeaf(chosen, proj.argumentsOf(name), gateID, true)
@@ -722,7 +723,7 @@ func (proj *project) gateStep(name, kind string, entry map[string]any, gateID st
 	case key != "" && ended.outcome == receipts.OutcomeFailed:
 		proj.writeBar(key, name, ended)
 	case key != "":
-		_ = proj.removeMark(key) // removed before the step ran; nothing new to undo
+		_ = proj.removeMark(name) // removed before the step ran; nothing new to undo
 	}
 	return step{"step": name, "outcome": ended.outcome, "seconds": ended.seconds, "run_id": nullableText(ended.runID),
 		"status": ended.status}, markID, nil
