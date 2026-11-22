@@ -231,9 +231,9 @@ jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; c
   whose job they do not require.
 - jackstay schedules each scope once but cannot see inside a command: scopes CI runs on one system
   must test disjoint sets, or a test runs twice.
-- Not built yet: the cache by input hash (`inputs`, `cache`), which will skip a scope whose inputs
-  already passed ([land.md](../design/land.md) section 7.3), and the CI workflow `jst adopt`
-  writes for these jobs. Until then `--resume` and its marks work as above.
+- Not in 0.6.0: the cache by input hash, planned for a later version ([land.md](../design/land.md)
+  section 7.3); `--resume` and its marks work as above, per node. Not built yet: the CI workflow
+  `jst adopt` writes for these jobs.
 
 ## Structured test reports
 
