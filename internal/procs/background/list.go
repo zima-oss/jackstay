@@ -404,6 +404,15 @@ func (look *looker) askSupervisor(entry Entry) stopAnswer {
 		}
 		if look.host.supervisorGone(look.host.table(), entry) {
 			_ = look.place.removeStop(entry.ID)
+			// A supervisor answers by stopping its group and ending, having removed its entry, or
+			// kept it marked cleanup-incomplete: one that did so after the look at the entry above
+			// has answered, not died (#63).
+			if !look.place.listed(entry.ID) {
+				return stopConfirmed
+			}
+			if latest, ok := look.place.read(entry.ID); ok && latest.Status == stateCleanupIncomplete {
+				return stopIncomplete
+			}
 			return stopSupervisorGone
 		}
 		if !look.host.clock.Now().Before(until) {
