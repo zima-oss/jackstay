@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/zima-oss/jackstay/internal/adopt"
+	"github.com/zima-oss/jackstay/internal/choices"
 	"github.com/zima-oss/jackstay/internal/config"
 )
 
@@ -437,5 +438,30 @@ func TestAnUnattendedSetupAsksNothing(t *testing.T) {
 	}
 	if saved, err := adopt.MachineAutonomy(); saved != "" || err != nil {
 		t.Fatalf("kept %q, %v", saved, err)
+	}
+}
+
+func TestSetupKeepsThisMachinesReviewerBesideTheAutonomy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	var output, diagnostics bytes.Buffer
+	if status := RunSetup([]string{"--autonomy", "prepare"}, nil, &output, &diagnostics); status != 0 {
+		t.Fatalf("autonomy: exit %d: %s", status, &diagnostics)
+	}
+	if status := RunSetup([]string{"--reviewer", "claude-code"}, nil, &output, &diagnostics); status != 0 ||
+		!strings.Contains(output.String(), "offers review.use claude-code first") {
+		t.Fatalf("reviewer: exit %d: %s%s", status, &output, &diagnostics)
+	}
+	stored, err := os.ReadFile(filepath.Join(home, ".all", "setup.json"))
+	if err != nil || !strings.Contains(string(stored), `"reviewer": "claude-code"`) || !strings.Contains(string(stored), `"land_autonomy": "prepare"`) {
+		t.Fatalf("setup.json: %s %v", stored, err)
+	}
+	if item := reviewerItem(choices.MachineAnswers()); item.Status != "done" || !strings.Contains(item.Text, "claude-code") {
+		t.Fatalf("item %+v", item)
+	}
+	for _, args := range [][]string{{"--reviewer", "gpt"}, {"--reviewer", ""}, {"--reviewer", "codex", "--plan"}} {
+		if status := RunSetup(args, nil, &output, &diagnostics); status != 2 {
+			t.Errorf("%v: exit %d", args, status)
+		}
 	}
 }

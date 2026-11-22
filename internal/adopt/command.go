@@ -10,13 +10,14 @@ import (
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/adopt/block"
+	"github.com/zima-oss/jackstay/internal/choices"
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/version"
 )
 
 const usage = `usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--autonomy MODE] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--autonomy MODE] [--reviewer WHO] [--chat on|off] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Works on the project around DIR (default: here) and changes nothing else; what it must not decide
@@ -30,6 +31,12 @@ is a conflict.
                    --apply again on the merged base
   --autonomy MODE  merge-when-green or prepare: who merges, for a new land section (at a
                    terminal --apply asks; without one it needs this flag); an existing one is kept
+  --reviewer WHO   codex (recommended), claude-code, or codex,claude-code: who runs jst review
+                   (review.use); written over the project's value
+  --chat on|off    the agent chat here (chat.enabled, once jackstay.json is schema 3; off
+                   recommended); written over the project's value. Without these, --apply at a terminal asks what jackstay.json does not
+                   answer, offering this machine's answer from jst setup; without a terminal it
+                   writes none and the plan's choices say what applies
   --profile PATH   an organisation's profile; --apply records it in jackstay.json
   --profile-sha256 DIGEST  the exact bundle bytes to accept; recorded by --apply
   --json           the plan as one JSON object
@@ -66,18 +73,42 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		// The machine's answer only orders the offer; a failure to read it offers the recommended one.
 		options.Offered, _ = MachineAutonomy()
 	}
+	// The same for the reviewer and chat questions, asked during planning; Make may plan twice, so
+	// each question is asked once.
+	options.Defaults, _ = choices.MachineAnswers()
+	// One reader for every question, so none takes the line meant for the next.
+	reader := bufio.NewReader(stdin)
 	plan, err := Make(options)
 	if err != nil {
 		fmt.Fprintf(stderr, "jst adopt: %v\n", err)
 		return 2
 	}
-	if mode == "apply" && plan.AsksAutonomy() {
+	// The questions are asked only of a plan that would be written: with conflicts left nothing is,
+	// and the answers would be lost. Make may plan twice, so each question is asked once.
+	if mode == "apply" && plan.asksChoices && len(plan.Conflicts) == 0 && atTerminal(stdin, stdout) {
+		asked := map[string]string{}
+		options.Ask = func(question choices.Question, offered string) (string, error) {
+			if answer, known := asked[question.ID]; known {
+				return answer, nil
+			}
+			answer, err := choices.TerminalAsker{In: reader, Out: stdout}.Ask(question, offered)
+			if err == nil {
+				asked[question.ID] = answer
+			}
+			return answer, err
+		}
+		if plan, err = Make(options); err != nil {
+			fmt.Fprintf(stderr, "jst adopt: %v\n", err)
+			return 2
+		}
+	}
+	if mode == "apply" && plan.AsksAutonomy() && len(plan.Conflicts) == 0 {
 		if !atTerminal(stdin, stdout) {
 			fmt.Fprintf(stderr, "jst adopt: this apply writes a `land` section, and who merges is a person's choice: "+
 				"give --autonomy %s or --autonomy %s (there is no terminal to ask at)\n", config.AutonomyMergeWhenGreen, config.AutonomyPrepare)
 			return 2
 		}
-		if options.Autonomy, err = AskAutonomy(bufio.NewReader(stdin), stdout, options.Offered); err != nil {
+		if options.Autonomy, err = AskAutonomy(reader, stdout, options.Offered); err != nil {
 			fmt.Fprintf(stderr, "jst adopt: %v\n", err)
 			return 2
 		}
@@ -90,6 +121,10 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err := plan.Apply(); err != nil {
 			if errors.Is(err, ErrConflicts) {
 				writeText(stdout, plan)
+				// Answers given at the terminal are not lost: they can be passed again as flags.
+				if flags := askedFlags(plan); flags != "" {
+					fmt.Fprintf(stderr, "jst adopt: the answers given: %s\n", flags)
+				}
 				fmt.Fprintf(stderr, "jst adopt: %d conflict(s) left: nothing written\n", len(plan.Conflicts))
 				return 1
 			}
@@ -144,6 +179,22 @@ func parseArgs(args []string) (Options, string, bool, error) {
 			options.Pin = true
 		case "--settings-only":
 			options.SettingsOnly = true
+		case "--reviewer", "--chat":
+			chosen, err := value()
+			if err != nil {
+				return options, "", false, err
+			}
+			question := choices.Reviewer
+			if argument == "--chat" {
+				question = choices.Chat
+			}
+			if err := question.Check(chosen); err != nil {
+				return options, "", false, err
+			}
+			if options.Answers == nil {
+				options.Answers = map[string]string{}
+			}
+			options.Answers[question.ID] = chosen
 		case "--autonomy":
 			chosen, err := value()
 			if err != nil {
@@ -281,6 +332,10 @@ func writeText(out io.Writer, plan *Plan) {
 			fmt.Fprintf(&text, "  %s\n", blocker)
 		}
 	}
+	fmt.Fprintf(&text, "choices (%d):\n", len(plan.Choices))
+	for _, choice := range plan.Choices {
+		fmt.Fprintf(&text, "  %-28s %s = %s: %s\n", choice.ID, choice.Key, choice.Value, choice.From)
+	}
 	fmt.Fprintf(&text, "notes (%d):\n", len(plan.Notes))
 	for _, note := range plan.Notes {
 		fmt.Fprintf(&text, "  %s\n", note)
@@ -352,4 +407,15 @@ func writeApplied(out io.Writer, plan *Plan, settingsOnly bool) {
 	default:
 		fmt.Fprintf(out, "jst adopt: %d change(s) written; `jst adopt --plan` should now find nothing\n", len(plan.Changes))
 	}
+}
+
+// askedFlags are the answers asked at the terminal, as the flags that give them again.
+func askedFlags(plan *Plan) string {
+	var flags []string
+	for _, choice := range plan.Choices {
+		if choice.From == "asked" {
+			flags = append(flags, "--"+choice.ID+" "+choice.Value)
+		}
+	}
+	return strings.Join(flags, " ")
 }

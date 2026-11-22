@@ -80,6 +80,29 @@ finds a hand edit by its hash and stops with the conflict `agents:edited`. To ch
 change `jackstay.json` or the profile: a profile adds lines (`agents.rules`) or leaves items out
 (`agents.leave_out`).
 
+## The questions
+
+Some of how jackstay behaves in a project is the project's choice, so adopt asks rather than
+assumes. With `--apply` on a terminal it asks each question `jackstay.json` does not answer yet,
+recommended answer first, and offers this machine's answer from `jst setup` when there is one:
+
+| Question | Answers, recommended first | Written to |
+|---|---|---|
+| `reviewer`: who runs `jst review` | `codex`, `claude-code`, `codex,claude-code` | `review.use` |
+| `chat`: the agent chat in this repository | `off`, `on` | `chat.enabled` (asked once `jackstay.json` is schema 3) |
+
+A value the project already sets is never asked again (an empty `review.use` counts: each run then
+names its reviewer). Without a terminal adopt writes no answer, and the plan's `choices` say what
+applies and how to choose. `--reviewer` and `--chat` answer without a question and are written over
+the project's value:
+
+```sh
+jst adopt --apply --reviewer codex,claude-code --chat off
+```
+
+Who merges (`land.autonomy`) is asked the same way, with `--autonomy`. Which test scopes CI runs is
+not asked yet.
+
 ## Conflicts
 
 A conflict is a difference `jst adopt` must not decide. With any conflict left, `--apply` writes

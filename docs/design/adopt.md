@@ -41,7 +41,7 @@ Flags: `jst adopt --help`. The contract of each mode:
   without a terminal it exits 2 naming the flag. `--plan` never asks: it shows the offered answer
   and says the apply will ask.
 - `--json` prints the plan as one object `{"project", "profile", "changes": [...], "conflicts": [...],
-  "exceptions": [...], "notes": [...]}`; each change `{"id", "path", "what"}`, each conflict
+  "exceptions": [...], "notes": [...], "choices": [...]}`; each change `{"id", "path", "what"}`, each conflict
   `{"id", "path", "what", "settle"}`.
 
 Exit status:
@@ -62,6 +62,18 @@ with the phase and outcome of the latest attempt. After a stop, rerun the same `
 A new plan resumes the previous operation when all inputs and remaining outputs still match
 and the recorded completed effects are visible. If the state has changed, adoption plans a new
 operation and applies its usual conflict checks.
+
+**The questions** (W-090). Besides who merges (`land.autonomy`, land.md section 5), adopt asks two
+of the project's choices rather than assume them (`internal/choices`): the reviewer (`review.use`;
+`codex` recommended) and the agent chat (`chat.enabled`; `off` recommended, written either way so
+it is asked once; asked only of a file that is schema 3 already, so never during the upgrade). With `--apply` on
+a terminal it asks each one the original file does not answer, offering the reviewer `jst setup`
+kept in `<home>/.all/setup.json` first; `--reviewer` and `--chat` answer without asking and are
+written over the project's value; without a terminal nothing is written. Answers are settled before
+the pin, and asked only of a plan with no conflicts (the answers of a refused apply are printed as
+flags). The plan's `choices` give each question's key, value, where it came from (a flag, asked,
+the project's file, the profile's defaults) and whether it was written. Limits: these two
+questions only; each scope's CI split is asked once a scope's `ci` is read.
 
 ## 3. What `jst adopt` owns
 

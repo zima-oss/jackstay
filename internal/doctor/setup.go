@@ -16,9 +16,10 @@ import (
 	"syscall"
 
 	"github.com/zima-oss/jackstay/internal/adopt"
+	"github.com/zima-oss/jackstay/internal/choices"
 )
 
-const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE"
+const setupUsage = "usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE | jst setup --reviewer WHO"
 
 const setupHelp = setupUsage + `
 
@@ -34,10 +35,11 @@ stays read-only to the sandbox; jst test and jst review run outside it.
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
   --autonomy MODE keep merge-when-green or prepare as this machine's answer to who merges
+  --reviewer WHO  keep codex, claude-code or codex,claude-code as this machine's reviewer
 
-Once per machine, a terminal is also asked who merges a project's changes: the agent when the
-required checks pass, or a person. ` + "`jst adopt`" + ` offers that answer first when it writes a project's
-land section; the project's jackstay.json decides.
+Once per machine, a terminal is also asked who merges a project's changes (the agent when the
+required checks pass, or a person) and which reviewer runs jst review (Codex recommended).
+` + "`jst adopt`" + ` offers these answers first; the project's jackstay.json decides.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
@@ -219,7 +221,8 @@ func planSandbox(report Report, finding Finding) SetupItem {
 
 // RunSetup is jst setup. Mutations require an interactive choice or --yes with a selected ID.
 func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	planOnly, asJSON, yes, chat, prefix, autonomy := false, false, false, false, "", ""
+	planOnly, asJSON, yes, chat, prefix, autonomy, reviewer := false, false, false, false, "", "", ""
+	reviewerGiven := false
 	selected := map[string]bool{}
 	for index := 0; index < len(args); index++ {
 		switch args[index] {
@@ -231,7 +234,7 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			yes = true
 		case "--chat":
 			chat = true
-		case "--select", "--prefix", "--autonomy":
+		case "--select", "--prefix", "--autonomy", "--reviewer":
 			option, rest := args[index], args[index+1:]
 			if len(rest) == 0 {
 				fmt.Fprintln(stderr, setupUsage)
@@ -244,6 +247,8 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 				selected[value] = true
 			case "--prefix":
 				prefix = value
+			case "--reviewer":
+				reviewer, reviewerGiven = value, true
 			default:
 				autonomy = value
 			}
@@ -255,6 +260,22 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if (yes && len(selected) == 0) || (!yes && len(selected) != 0) || (planOnly && yes) || (chat && yes) {
 		fmt.Fprintln(stderr, setupUsage)
 		return 2
+	}
+	if reviewerGiven {
+		if len(args) != 2 {
+			fmt.Fprintln(stderr, setupUsage)
+			return 2
+		}
+		if err := choices.Reviewer.Check(reviewer); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 2
+		}
+		if err := choices.SaveMachineAnswers(choices.Defaults{choices.Reviewer.ID: reviewer}); err != nil {
+			fmt.Fprintf(stderr, "jst setup: %v\n", err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers review.use %s first on this machine\n", reviewer)
+		return 0
 	}
 	if autonomy != "" {
 		if len(args) != 2 {
@@ -285,7 +306,7 @@ func RunSetup(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	inputs := RealInputs(prefix)
 	// Settings lives under ~/.claude; the profile belongs directly under account home.
 	plan := planSetup(Diagnose(inputs), filepath.Dir(filepath.Dir(inputs.Settings)), os.Getenv("SHELL"))
-	plan.Items = append(plan.Items, autonomyItem(adopt.MachineAutonomy()))
+	plan.Items = append(plan.Items, autonomyItem(adopt.MachineAutonomy()), reviewerItem(choices.MachineAnswers()))
 	if chat {
 		plan.Items = append(plan.Items, chatEngineSetupItems(exec.LookPath)...)
 	}
@@ -311,6 +332,10 @@ func applySetup(plan SetupPlan, yes, chat bool, selected map[string]bool, stdin 
 			fmt.Fprintf(stderr, "jst setup: autonomy: %v\n", err)
 			return 1
 		}
+		if err := askMachineReviewer(plan, reader, stdout); err != nil {
+			fmt.Fprintf(stderr, "jst setup: reviewer: %v\n", err)
+			return 1
+		}
 	}
 	if chat {
 		promptChatEngineSetup(plan, reader, stdout)
@@ -320,6 +345,39 @@ func applySetup(plan SetupPlan, yes, chat bool, selected map[string]bool, stdin 
 
 // autonomyItem is this machine's answer to who merges (docs/design/land.md section 5): asked once,
 // then offered first by `jst adopt`.
+// reviewerItem is this machine's reviewer (W-090): asked once, offered first by `jst adopt`.
+func reviewerItem(saved choices.Defaults, err error) SetupItem {
+	item := SetupItem{ID: "reviewer", Status: "ask", Text: "which reviewer runs `jst review`, offered first by `jst adopt`: not answered on this machine",
+		Fix: "answer the question at a terminal (`jst setup`), or `jst setup --reviewer codex|claude-code|codex,claude-code`"}
+	switch {
+	case err != nil:
+		item.Status, item.Text = "manual", "this machine's reviewer cannot be read: "+err.Error()
+		item.Fix = "fix or remove the file named, then `jst setup --reviewer codex|claude-code|codex,claude-code`"
+	case saved[choices.Reviewer.ID] != "":
+		item.Status, item.Text = "done", "`jst adopt` offers review.use "+saved[choices.Reviewer.ID]+" first on this machine"
+		item.Fix = "`jst setup --reviewer codex|claude-code|codex,claude-code` changes it; a project's jackstay.json decides"
+	}
+	return item
+}
+
+// askMachineReviewer asks the reviewer question when the plan says it is not answered, and keeps it.
+func askMachineReviewer(plan SetupPlan, reader *bufio.Reader, stdout io.Writer) error {
+	for _, item := range plan.Items {
+		if item.ID != "reviewer" || item.Status != "ask" {
+			continue
+		}
+		answer, err := choices.TerminalAsker{In: reader, Out: stdout}.Ask(choices.Reviewer, choices.Reviewer.Recommended())
+		if err != nil {
+			return err
+		}
+		if err := choices.SaveMachineAnswers(choices.Defaults{choices.Reviewer.ID: answer}); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "jst setup: jst adopt offers review.use %s first on this machine\n", answer)
+	}
+	return nil
+}
+
 func autonomyItem(saved string, err error) SetupItem {
 	item := SetupItem{ID: "autonomy", Status: "ask", Text: "who merges a project's changes, offered first by `jst adopt`: not answered on this machine",
 		Fix: "answer the question at a terminal (`jst setup`), or `jst setup --autonomy merge-when-green|prepare`"}
