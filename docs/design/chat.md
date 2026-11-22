@@ -953,7 +953,7 @@ are keys). Each is checked before a write, so the store never reaches a state it
 | a commit record as encoded | 1 KiB | read whole, with a limit |
 | a session as encoded | 64 KiB | every field at its bound in plain text is about 36 KiB (worktree 4 KiB, `exchange` 10 KiB, `idle_watchers` 9 KiB, `notices` 6 KiB); the rest covers non-ASCII paths |
 | recipients of one message | 256 | the session cap |
-| sessions | 256 per account; past it, a new session evicts the one seen least recently, one holding no idle subscription or owed idle notice first; the evicted record goes, its inbox stays under its key (no liveness, section 3.3) | well above a machine's real parallelism |
+| sessions | 256 per account; past it, a new session evicts the one seen least recently, one holding, watching or owed no idle subscription or notice first; the evicted record goes, its inbox stays under its key (no liveness, section 3.3) | well above a machine's real parallelism |
 | live messages | 4,096 per account; events only below 90% (3,686) | 16 per session |
 | deliveries `pending` or `sending` per recipient | 50 | Claude Code's receiver queue |
 | sends per sender | 30 per 60 s | jackstay's own number; Claude Code throttles bursts without publishing one |
@@ -1177,7 +1177,7 @@ Not promised:
   that will never read it waits until its deadline and then owes its sender an expiry notice; an
   ended session is still listed and addressed; the session table and the bindings are bounded, and an
   evicted session that comes back registers afresh, with a new ref, and finds its unread messages
-  under its key. Eviction spares a record holding idle subscriptions or owed idle notices while any
+  under its key. Eviction spares a record holding idle subscriptions, watching one, or owed idle notices while any
   other can go; only when every one holds some are they lost with the one seen least recently. A ring to the socket of a process
   that is gone is harmless (section 8.3).
 - **A retry across a disk error.** An idle observation that a read error stops is not retried: the

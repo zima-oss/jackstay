@@ -147,6 +147,9 @@ func (transaction *transaction) applyObservation(observed observation) (Session,
 // fires nothing twice.
 func (transaction *transaction) reconcileWatchers(hash string) (Session, error) {
 	session, err := transaction.readSession(hash)
+	if errors.Is(err, os.ErrNotExist) {
+		return Session{}, nil // an evicted session holds no subscriptions
+	}
 	if err != nil || len(session.IdleWatchers) == 0 {
 		return session, err
 	}

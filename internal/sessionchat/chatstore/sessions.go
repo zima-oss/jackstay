@@ -140,10 +140,16 @@ func (transaction *transaction) newSession(registration Registration, hash, mome
 	// There is no liveness: the table of sessions is bounded instead, and a new session past the
 	// bound evicts the one seen least recently (section 6.4), one holding nothing owed first: a record
 	// with idle subscriptions on it or idle notices owed to it is evicted only when every one has some.
+	watching := map[string]bool{} // the watchers of pending subscriptions: their notices go to them
+	for _, other := range sessions {
+		for _, watcher := range other.IdleWatchers {
+			watching[watcher.Key] = true
+		}
+	}
 	for len(sessions) >= transaction.store.liveLimit {
 		oldest := -1
 		for index, other := range sessions {
-			if !other.Mailbox && (oldest < 0 || evictsBefore(other, sessions[oldest])) {
+			if !other.Mailbox && (oldest < 0 || evictsBefore(other, sessions[oldest], watching)) {
 				oldest = index
 			}
 		}
@@ -505,17 +511,18 @@ func CheckRelated(related []string, channels []Channel) []string {
 
 // evictsBefore reports whether one session is evicted before another: one holding nothing owed
 // first, then the one seen least recently.
-func evictsBefore(one, other Session) bool {
-	if holdsOwed(one) != holdsOwed(other) {
-		return !holdsOwed(one)
+func evictsBefore(one, other Session, watching map[string]bool) bool {
+	if holdsOwed(one, watching) != holdsOwed(other, watching) {
+		return !holdsOwed(one, watching)
 	}
 	return one.LastSeen < other.LastSeen
 }
 
 // holdsOwed reports whether a session's record holds what eviction would lose: idle subscriptions on
-// it, or idle notices owed to it.
-func holdsOwed(session Session) bool {
-	if len(session.IdleWatchers) > 0 {
+// it, a subscription it watches on another (its notice comes to this record), or idle notices owed
+// to it.
+func holdsOwed(session Session, watching map[string]bool) bool {
+	if len(session.IdleWatchers) > 0 || watching[session.Key] {
 		return true
 	}
 	for _, notice := range session.Notices {

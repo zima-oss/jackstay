@@ -1143,3 +1143,46 @@ func TestEvictionSparesASessionThatHoldsSomethingOwed(t *testing.T) {
 		t.Fatalf("the session holding a subscription stays: %v", err)
 	}
 }
+
+// The watcher of a pending subscription is spared too: the subscription's notice comes to its record
+// (review round 5).
+func TestEvictionSparesTheWatcherOfAPendingSubscription(t *testing.T) {
+	f := newFixture(t)
+	f.store.liveLimit = 3
+	f.session("cc:watcher", "watcher", alpha, StateIdle)
+	f.clock.advance(time.Minute)
+	f.session("cc:watched", "watched", alpha, StateBusy)
+	f.send("cc:watcher", SendInput{To: "watched", NotifyWhenIdle: true})
+	f.clock.advance(time.Minute)
+	f.session("cc:plain", "plain", alpha, StateIdle)
+	f.clock.advance(time.Minute)
+	f.session("cc:new", "new", alpha, StateIdle)
+	if _, err := f.store.Observe(f.ctx, "cc:watched", ObserveIdle, false); err != nil {
+		t.Fatal(err)
+	}
+	if notices := f.record("cc:watcher").Notices; len(notices) != 1 || notices[0].Kind != NoticeIdle {
+		t.Fatalf("the watcher stayed and got its notice: %+v", notices)
+	}
+}
+
+// A delivery to an evicted session expires without failing the call that ran the sweep (review
+// round 5).
+func TestADeliveryToAnEvictedSessionExpiresQuietly(t *testing.T) {
+	f := newFixture(t)
+	f.store.liveLimit = 2
+	f.session("cc:a", "a", alpha, StateIdle)
+	f.session("cc:old", "old", alpha, StateIdle)
+	f.send("cc:a", SendInput{To: "old", Message: "short-lived", ExpiresInSeconds: 60})
+	f.clock.advance(time.Minute)
+	if _, err := f.store.Observe(f.ctx, "cc:a", ObserveBusy, false); err != nil {
+		t.Fatal(err)
+	}
+	f.session("cc:new", "new", alpha, StateIdle) // evicts cc:old
+	f.clock.advance(20 * time.Minute)
+	if err := f.store.Sweep(f.ctx); err != nil {
+		t.Fatalf("the sweep expires it: %v", err)
+	}
+	if _, err := f.store.Observe(f.ctx, "cc:a", ObserveBusy, false); err != nil {
+		t.Fatalf("an unrelated call runs: %v", err)
+	}
+}
