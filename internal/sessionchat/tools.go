@@ -198,7 +198,7 @@ func framedResult(messages []chatstore.MessageView, notices []string, paging map
 	for _, view := range messages {
 		frame, _ := chatstore.Frame(view, view.ID, view.Message, 0)
 		text.WriteString(frame + "\n")
-		view.Message, view.Summary = "", ""
+		view.Message, view.Summary, view.Attachments, view.Response = "", "", nil, nil
 		fields = append(fields, view)
 	}
 	if len(messages) == 0 {

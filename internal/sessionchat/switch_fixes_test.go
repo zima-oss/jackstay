@@ -3,12 +3,14 @@ package sessionchat
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
+	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/review"
 	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
@@ -103,6 +105,15 @@ func TestAnEventWaitsForItsRecipientAndCarriesItsKind(t *testing.T) {
 	store, _ := openStore()
 	page, err := store.Inbox(context.Background(), bobKey, chatstore.InboxInput{UnreadOnly: true, Limit: 5})
 	if err != nil || len(page.Messages) != 1 || page.Messages[0].Event != "review.finished" || page.Messages[0].Priority != chatstore.PriorityNow {
+		t.Fatalf("%+v %v", page.Messages, err)
+	}
+	// A review still blocking at its round limit is the owner's to decide, and as urgent.
+	event.Key, event.Meta = "review/t/2", map[string]string{"verdict": review.OutcomeWord(review.ExitOwner)}
+	if err := (publisher{}).Publish(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	page, err = store.Inbox(context.Background(), bobKey, chatstore.InboxInput{UnreadOnly: true, Limit: 5})
+	if err != nil || len(page.Messages) != 2 || page.Messages[0].Priority != chatstore.PriorityNow || page.Messages[1].Priority != chatstore.PriorityNow {
 		t.Fatalf("%+v %v", page.Messages, err)
 	}
 }
@@ -214,5 +225,39 @@ func TestAPusherAlreadyReparentedDoesNotWait(t *testing.T) {
 	}
 	if orphaned(os.Getppid(), 0) {
 		t.Fatal("while the intermediary is the parent, the pusher waits")
+	}
+}
+
+// A pusher leaving with a doorbell due hands it on to a new one, once its lock is released; while the
+// lock is held, a second pusher leaves at once (review round 3).
+func TestAPusherLeavingWithWorkDueHandsItOn(t *testing.T) {
+	root, _ := chatRepository(t)
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", filepath.Join(t.TempDir(), "s.sock"))
+	t.Setenv("CLAUDE_CODE_EXECPATH", "/apps/claude-code/2.1.328/claude")
+	hook(t, map[string]any{"session_id": "sleeper", "hook_event_name": "SessionStart", "cwd": root})
+	alice := tokenServer(t, root, "alice", strings.Repeat("a", 64))
+	store, _ := openStore()
+	sessions, _ := store.Sessions(context.Background())
+	launched := 0
+	launchPusher = func(...string) error { launched++; return nil }
+	call(t, alice, "chat.send", map[string]any{"to": sessions[0].Name, "message": "queued in the last wait"})
+	launched = 0
+	folder, err := pusherFolder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err := flock.TryFile(filepath.Join(folder, "pusher.lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := runPush(nil, nil, nil, io.Discard); code != 0 || launched != 0 {
+		t.Fatalf("a second pusher leaves while the lock is held: %d %d", code, launched)
+	}
+	held.Release()
+	previousIdle := pushIdle
+	pushIdle = 0 // the pusher's quiet time is over before it starts: it leaves at once
+	t.Cleanup(func() { pushIdle = previousIdle })
+	if code := runPush(nil, nil, nil, io.Discard); code != 0 || launched != 1 {
+		t.Fatalf("the leaving pusher hands the due doorbell on: %d %d", code, launched)
 	}
 }

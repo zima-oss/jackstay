@@ -18,7 +18,7 @@ const eventExpirySeconds = 24 * 60 * 60
 
 // blocking are the review outcomes a review.finished event is urgent for: the words the review
 // producer writes in its `verdict` (review.OutcomeWord).
-var blocking = map[string]bool{"blocks": true, "redesign due": true}
+var blocking = map[string]bool{"blocks": true, "redesign due": true, "the owner decides": true}
 
 // ErrNotRegistered is a recipient the store does not know yet, or one that is gone: the event stays
 // owed to it, to be published again once it is registered and live.
