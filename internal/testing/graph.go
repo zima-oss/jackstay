@@ -67,7 +67,7 @@ func (nodes *graph) eligible(name string) bool {
 	// A cycle (refused by `jst check`) reads as not eligible rather than recursing for ever.
 	nodes.settled[name] = false
 	_, entry := find(nodes.section, name)
-	value := entry != nil && runsOn(entry, nodes.system) && !(nodes.withoutBase && needsBase(entry))
+	value := entry != nil && runsOn(entry, nodes.system) && (!nodes.withoutBase || !needsBase(entry))
 	if value {
 		composite := isComposite(entry)
 		value = !composite
