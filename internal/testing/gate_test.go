@@ -3,6 +3,7 @@ package scopes
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -217,9 +218,84 @@ func TestANodeAfterADepThatRanIsNotResumed(t *testing.T) {
 	w := newWorld(t, section, nil)
 	w.expectStatus(w.jst("gate"), 0)
 	w.expectStatus(w.jst("gate", "--resume"), 0)
-	w.expectSaid("step x-test: runs (its dep x-lib ran in this run)")
+	w.expectSaid("step x-test: runs (its deps' marks are not the ones it passed after")
 	w.expectCounters("x-build x-test x-other", 2, 2, 1)
 	w.expectLast("outcome=passed", "x-test=exited-0", "x-other=resumed")
+}
+
+// newMarkID gives the mark of a step a new ID, as a run of the step that wrote its mark and was
+// stopped before the steps after it ran leaves it.
+func (w *world) newMarkID(step string) {
+	w.t.Helper()
+	marks, _ := receipts.StateFolder("demo", "gate-marks")
+	entries, _ := os.ReadDir(marks)
+	for _, entry := range entries {
+		place := filepath.Join(marks, entry.Name())
+		data, err := os.ReadFile(place)
+		var found map[string]any
+		if err != nil || json.Unmarshal(data, &found) != nil || found["step"] != step {
+			continue
+		}
+		found["id"] = "a-later-mark-of-" + step
+		data, _ = json.Marshal(found)
+		if err := os.WriteFile(place, data, 0o600); err != nil {
+			w.t.Fatal(err)
+		}
+		return
+	}
+	w.t.Fatalf("no mark of %s in %s", step, marks)
+}
+
+// A mark records the marks of its deps it passed after; a dep that ran again since has a new mark,
+// so every node after it runs, through a composite and transitively: also when the run that
+// rebuilt the dep was stopped before them.
+func TestAMarkStandsOnlyOnTheMarksOfItsDepsItPassedAfter(t *testing.T) {
+	section := map[string]any{"judge": "exit", "scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-c", "x-other")},
+		"x-a":     map[string]any{"run": counted("x-a", "true")},
+		"x-b":     map[string]any{"run": counted("x-b", "true"), "deps": argv("x-a")},
+		"x-lib":   map[string]any{"deps": argv("x-b")},
+		"x-c":     map[string]any{"run": counted("x-c", "true"), "deps": argv("x-lib")},
+		"x-other": map[string]any{"run": counted("x-other", "true")},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectStatus(w.jst("gate", "--resume"), 0)
+	w.expectCounters("x-a x-b x-c x-other", 1, 1, 1, 1)
+	w.expectLast("outcome=resumed")
+	// A rebuild of x-a that wrote its mark and was stopped there: x-b and x-c run, x-other resumes.
+	w.newMarkID("x-a")
+	w.expectStatus(w.jst("gate", "--resume"), 0)
+	w.expectCounters("x-a x-b x-c x-other", 1, 2, 2, 1)
+	w.expectLast("x-a=resumed", "x-b=exited-0", "x-c=exited-0", "x-other=resumed")
+	// Their new marks stand on x-a's: the next --resume runs nothing.
+	w.expectStatus(w.jst("gate", "--resume"), 0)
+	w.expectCounters("x-a x-b x-c x-other", 1, 2, 2, 1)
+	// The same in the middle of the chain: only what comes after x-b runs.
+	w.newMarkID("x-b")
+	w.expectStatus(w.jst("gate", "--resume"), 0)
+	w.expectCounters("x-a x-b x-c x-other", 1, 2, 3, 1)
+}
+
+// A dep rebuilt in this run writes a mark with a new ID: the node after it runs too.
+func TestANodeAfterADepRebuiltInThisRunIsNotResumed(t *testing.T) {
+	section := map[string]any{"judge": "exit", "scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-test")},
+		"x-build": map[string]any{"run": counted("x-build", "true")},
+		"x-test":  map[string]any{"run": counted("x-test", "true"), "deps": argv("x-build")},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("gate"), 0)
+	marks, _ := receipts.StateFolder("demo", "gate-marks")
+	entries, _ := os.ReadDir(marks)
+	for _, entry := range entries {
+		if data, _ := os.ReadFile(filepath.Join(marks, entry.Name())); strings.Contains(string(data), `"step":"x-build"`) {
+			_ = os.Remove(filepath.Join(marks, entry.Name()))
+		}
+	}
+	w.expectStatus(w.jst("gate", "--resume"), 0)
+	w.expectCounters("x-build x-test", 2, 2)
+	w.expectLast("x-build=exited-0", "x-test=exited-0")
 }
 
 func TestCompositeStepsExpandIntoLeaves(t *testing.T) {

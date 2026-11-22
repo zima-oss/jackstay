@@ -229,7 +229,8 @@ A slow class is skipped from `quick`, never excused from `full` (W-013).
 How several scopes run together is [land.md](land.md) section 7: each scope once, after its
 `deps`, in a stable order; a failure stops the run unless `--keep-going`. A `steps` list is read as
 `deps`, so 0.5.x gates keep their order. Under `--resume` a node whose mark is on this same tree is
-not run and is `resumed`, but only when none of its deps ran in this run; a bar makes it `refused`.
+not run and is `resumed`, but only when its deps stand on the marks it recorded when it passed
+(marks are chained through deps, land.md section 7.2); a bar makes it `refused`.
 The cache by input hash that was to replace the marks and bars is not in 0.6.0 (section 7.3
 there); what 0.6.0 keeps from 0.5.x is listed in its section 7.7.
 

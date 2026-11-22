@@ -337,9 +337,14 @@ given none. A scope with deps that takes none, or a composite, refuses test argu
    3. **`requires`**: its checks run, every time, before a mark is looked at. One that fails makes
       the node `not-started`, and no mark is read for it.
    4. **`--resume`** (section 7.7), on a clean checkout: a bar of its key makes it `refused`; a mark
-      of its key makes it `resumed`, and it does not run, but only when none of its deps ran in
-      this run (a composite dep ran when one of its own deps did). A node after a dep that ran is
-      run: its mark speaks of what the dep left before, not of what it left now.
+      of its key makes it `resumed`, and it does not run, but only when its deps still stand on the
+      marks it passed after. Marks are chained through deps: each mark written has a new ID and
+      records the IDs of the marks its deps stood on when it passed, a composite dep giving those
+      of its own eligible deps. In a run, a dep that resumed stands on the mark it resumed from;
+      a dep that ran stands on the new mark it wrote; a dep that wrote none (`"resume": false`, a
+      dirty tree, a bar) stands on none, and the nodes after it run. So a dep that ran again
+      makes every node after it run, transitively, also when the run that rebuilt it was stopped
+      before they ran.
    5. Otherwise it **runs**.
 5. **After a failure.** A node that did not pass (anything but `passed`, `exited-0`, `resumed` or
    `skipped`) is a failure. Without `--keep-going`, the first failure ends the run and every
@@ -422,6 +427,8 @@ A node with `run` has a **hash**: SHA-256 over
   `receipts.merge_bases` and the command's `merge_bases`, and, for a `{base}` in its words, the
   base's tip and its merge base with HEAD;
 - the hash of each dep, in declared order. A composite dep contributes the hashes of its own deps.
+  This is the chain the marks of `--resume` already use (section 7.2, step 4.4), with the hash in
+  place of the mark's ID.
 
 HEAD's commit is not in the hash: two commits whose inputs are the same share an entry, so a scope
 that passed on a branch is cached on the merge commit with the same tree.
@@ -621,7 +628,7 @@ release workflow runs the same job before publishing; a failure stops the releas
 | 0.5.x | 0.6.0 |
 |---|---|
 | `steps`: a list run in order, expanded into its leaves, a shared step run each time it appears | read as `deps`; each node once |
-| `jst test gate --resume` and the step mark of a leaf (`gate-marks/`) | kept, per node of the graph; a node resumes only when none of its deps ran in this run (section 7.2, step 4.4) |
+| `jst test gate --resume` and the step mark of a leaf (`gate-marks/`) | kept, per node of the graph; a mark records the marks of its deps it passed after, and a node resumes only when its deps stand on the same marks (section 7.2, step 4.4) |
 | bars (`gate-bars/`) and the `refused` outcome | kept, per node |
 | the gate's `resumed` outcome | kept: a node's, and the run's when every node with `run` resumed |
 | the `resume` key | kept |
@@ -653,7 +660,9 @@ The cache of section 7.3 was to replace the marks, bars, `--resume`, `resumed`, 
   `systems` neither stopping the run nor failing a composite; `--keep-going` running the nodes that
   do not depend on a failure and nothing else changed; `requires` checked before every mark is
   read, a failing check making the node `not-started` with no mark read; under `--resume` a node
-  resumed from its mark only when none of its deps ran in this run, also through a composite,
+  resumed from its mark only when its deps stand on the marks it recorded, also through a composite:
+  a dep rebuilt in this run, a dep whose mark was rewritten by a run stopped after it, and a
+  rerun at the start of a chain of three each make the nodes after it run,
   `requires` or another run setting on a schema-3 composite refused, naming the scope; a schema-2
   list's `requires` run once before any node when the list is in the graph, a failing one making
   the run `not-started` (2) with nothing run, and not run when a scope whose graph lacks the list is
