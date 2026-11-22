@@ -22,16 +22,18 @@ that rings Claude Code, and puts what is going on in one `jst status`. Upgrading
   reached through an adapter, GitHub first. [#88](https://github.com/zima-oss/jackstay/pull/88)
 - `jst checks wait`, `status` and `run-wait` wait on a change request's checks and a workflow's
   runs. [#88](https://github.com/zima-oss/jackstay/pull/88)
-- `jst adopt` and `jst setup` ask who merges, who reviews (Codex recommended) and whether the agent
-  chat is on; `--autonomy`, `--reviewer` and `--chat` answer without a terminal, and the plan shows
-  where each value came from. [#104](https://github.com/zima-oss/jackstay/pull/104),
+- `jst setup` asks once per machine who merges and who reviews (Codex recommended); `--autonomy`
+  and `--reviewer` answer without a terminal. `jst adopt` offers those answers and also asks whether
+  the agent chat is on; its `--autonomy`, `--reviewer` and `--chat on|off` answer without a
+  terminal, and its plan shows where each value came from. [#104](https://github.com/zima-oss/jackstay/pull/104),
   [#112](https://github.com/zima-oss/jackstay/pull/112)
 
 **Tests**
 - Scopes run as a task graph: a scope's `deps` run first, each node once. `ci` and `systems` say
   where a scope runs: `jst test ci` is the CI job of a system, `jst test uncovered` runs on a clean
-  copy what CI does not cover, `jst test changed` picks the scopes for the changed paths, and
-  `jst install` refuses a commit without its uncovered pass.
+  copy what CI does not cover, and `jst test changed` picks the scopes for the changed paths. When a
+  project's committed configuration leaves a scope to CI, `jst install` from its checkout needs a
+  passed `jst test uncovered` for that commit.
   [#108](https://github.com/zima-oss/jackstay/pull/108),
   [#117](https://github.com/zima-oss/jackstay/pull/117)
 - Structured judges for Go JSON, JUnit XML (Vitest, Maven Surefire), Jest JSON, VSTest TRX and
@@ -52,8 +54,11 @@ that rings Claude Code, and puts what is going on in one `jst status`. Upgrading
   `review.max_concurrent` rounds run at a time. [#94](https://github.com/zima-oss/jackstay/pull/94)
 - After an interrupted round, only the reviewers whose answer is missing run again.
   [#95](https://github.com/zima-oss/jackstay/pull/95)
-- One access profile for both reviewers: they read the whole tree, cannot read credential paths
-  (the other reviewer's login included), and write only their temporary folder.
+- One access profile for both reviewers: they read the whole tree, cannot read the known credential
+  paths (the other reviewer's login included), and write only their temporary folder. On macOS they
+  also cannot read `.env` files; on Linux Codex still can
+  ([#101](https://github.com/zima-oss/jackstay/issues/101)), so keep secrets out of a `.env` in the
+  tree you review there.
   [#96](https://github.com/zima-oss/jackstay/pull/96)
 - A finding carries `ordinary_path`: an `unusual` and `severe` finding blocks only when it names
   the ordinary-work path that leads to it, and one that only asks to cover more exotic cases never
@@ -160,7 +165,8 @@ difference in what is found may matter more than on this fixture.
 
 ### Upgrading from 0.5.x
 
-0.6.0 reads a 0.5.x `jackstay.json` as it is. Install it on the machine, run `jst setup --plan`
+0.6.0 reads a 0.5.x `jackstay.json` as it is, except a `resume` key under `test.scopes` or
+`test.steps`: `jst check` names it, and you delete it. Install it on the machine, run `jst setup --plan`
 and `jst doctor`, then move each project in three pull requests that `jst adopt --plan` plans: the
 pin (`jst adopt --apply --pin --settings-only`), the files, then config schema 3 with the `land`
 section. The [upgrading guide](docs/guide/upgrading.md) has the steps.
@@ -170,8 +176,11 @@ section. The [upgrading guide](docs/guide/upgrading.md) has the steps.
 | `jst gh pr-land` | `jst land` (`--pr` is `--change`, `--dry-run` is `--plan`, `--no-merge` is `--prepare`) |
 | `jst gh pr-status`, `jst gh pr-find` | `jst land status`, `jst land find` |
 | `jst gh ci-wait`, `ci-status`, `run-wait` | `jst checks wait`, `status`, `run-wait`, same flags |
-| `jst test gate --resume`, the `resume` key | removed; `jst check` names the key to delete |
+| `jst test gate --resume`, the `resume` key in `test.scopes` and `test.steps` | removed; `jst check` names the key to delete |
 | `"jackstay_schema": 2` | 3 for the new keys; 0.5.10 and 0.5.11 refuse a schema-3 file |
 | chat tools `chat.self`, `chat.reply`, `chat.ack` | `chat.whoami`, `chat.send` with `reply_to`, `chat.ack` marks `acted`; the old names keep working through 0.6.x |
 
 A removed command runs nothing, and its error names the replacement.
+
+The agent chat has a new store: 0.6.0 neither reads nor imports the 0.5.x chat's messages. Answer
+pending requests and read pending messages before you switch a machine to 0.6.0.
