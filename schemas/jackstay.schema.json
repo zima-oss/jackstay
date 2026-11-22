@@ -258,7 +258,7 @@
           "description": "Configures the Claude Code hook that announces pending chat messages at the next boundary.",
           "properties": {
             "enabled": {
-              "description": "Lets `jst chat claude-hook` announce pending messages to Claude Code; it needs `chat.enabled`.",
+              "description": "Lists the Claude Code chat item in the AGENTS block; `jst hook claude` itself needs only `chat.enabled`.",
               "type": "boolean"
             }
           },
@@ -269,7 +269,7 @@
           "description": "Configures the bridge that delivers chat messages into a managed Codex turn.",
           "properties": {
             "enabled": {
-              "description": "Lets `jst chat codex-bridge` deliver messages to a running Codex turn; it needs `chat.enabled`.",
+              "description": "Lists the Codex chat item in the AGENTS block; the Codex bridge's push returns in jackstay 1.",
               "type": "boolean"
             }
           },
@@ -729,7 +729,7 @@
           "type": "array"
         },
         "toolchain": {
-          "description": "Adds what each of these commands prints (`[[\"go\", \"version\"]]`) to the key; reuse and scope steps need it written out, even empty.",
+          "description": "Adds what each of these commands prints (`[[\"go\", \"version\"]]`) to the key; reuse needs it written out, even empty.",
           "items": {
             "items": {
               "pattern": "\\S",
@@ -877,18 +877,6 @@
           "description": "Lets this project's reviews hold at most this many reviewer runs at once on the machine (default 4).",
           "type": "integer"
         },
-        "pool": {
-          "additionalProperties": false,
-          "description": "Configures this repository's requests to the machine's reviewer queue (`jst review pool`).",
-          "properties": {
-            "accepting": {
-              "default": true,
-              "description": "Accepts new review jobs from this repository (default true); existing jobs can still be queried, retried and processed. Accept new review jobs from this repository. Existing jobs remain available for processing and retry.",
-              "type": "boolean"
-            }
-          },
-          "type": "object"
-        },
         "queue_minutes": {
           "description": "Waits at most this many minutes for a source view, reviewer slots and the start lock, 1 to 120 (default 15).",
           "type": "integer"
@@ -908,7 +896,7 @@
         "reviewers": {
           "additionalProperties": {
             "additionalProperties": false,
-            "description": "Overrides one built-in reviewer's command, model, effort, deadline and isolation flags.",
+            "description": "Overrides one built-in reviewer's command, model, effort, deadline, isolation flags and MCP servers.",
             "properties": {
               "command": {
                 "description": "Runs the reviewer as this program, a name on `PATH` or an absolute path (default `codex` for Codex, `claude` for Claude Code).",
@@ -926,6 +914,30 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "mcp_servers": {
+                "additionalProperties": {
+                  "additionalProperties": false,
+                  "description": "One MCP server given back to the reviewer.",
+                  "properties": {
+                    "args": {
+                      "description": "Passes these arguments to the MCP server.",
+                      "items": {
+                        "pattern": "\\S",
+                        "type": "string"
+                      },
+                      "type": "array"
+                    },
+                    "command": {
+                      "description": "Runs the MCP server as this program.",
+                      "pattern": "\\S",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                },
+                "description": "Gives these MCP servers back to the reviewer, by name: `command` and `args` (needs `\"jackstay_schema\": 3`); the user's own stay closed.",
+                "type": "object"
               },
               "model": {
                 "description": "Passes this model to the reviewer; empty keeps the CLI's own default.",
@@ -978,10 +990,10 @@
     },
     "status": {
       "additionalProperties": false,
-      "description": "Sets the defaults of the workspace overview, `jst workspace board`.",
+      "description": "Sets the defaults of `jst status`.",
       "properties": {
         "repos": {
-          "description": "Lists the repositories the overview reads when none are named: paths relative to this file's folder, or absolute. Repositories the overview reads when none are named: paths relative to this file's folder, or absolute.",
+          "description": "Lists the repositories `jst status` reads when none are named: paths relative to this file's folder, or absolute.",
           "items": {
             "pattern": "\\S",
             "type": "string"
@@ -1071,10 +1083,30 @@
                 "pattern": "\\S",
                 "type": "string"
               },
+              "ci": {
+                "description": "Lists the systems (`linux`, `darwin`) whose CI job, `jst test ci (SYSTEM)`, runs this scope and what it depends on; CI is the gate for them.",
+                "items": {
+                  "enum": [
+                    "linux",
+                    "darwin"
+                  ],
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "cwd": {
                 "description": "Runs the command in this folder of the checkout instead of its root.",
                 "pattern": "\\S",
                 "type": "string"
+              },
+              "deps": {
+                "description": "Names the scopes or steps that must pass before this one, in this order; each runs once per run of `jst test`.",
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
               },
               "durations": {
                 "description": "Records each test class's seconds for `{slow}` (default on for `full` and `display` under `swift-test`).",
@@ -1169,10 +1201,6 @@
                 },
                 "type": "array"
               },
-              "resume": {
-                "description": "Lets `jst test gate --resume` skip this step after a pass on the same tree; false always runs it (default true).",
-                "type": "boolean"
-              },
               "run": {
                 "description": "Runs these words, with placeholders such as `{tests}`, `{base}`, `{slow}` and `{report}` filled in.",
                 "items": {
@@ -1208,8 +1236,20 @@
                 "type": "object"
               },
               "steps": {
-                "description": "Runs these steps or scopes in order instead of `run`, stopping at the first that does not pass.",
+                "description": "Names steps or scopes instead of `run`, read as `deps`: each runs once, in this order, stopping at the first that does not pass.",
                 "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "systems": {
+                "description": "Lists the systems (`linux`, `darwin`) the scope runs on at all; elsewhere it is `skipped` (default any).",
+                "items": {
+                  "enum": [
+                    "linux",
+                    "darwin"
+                  ],
                   "pattern": "\\S",
                   "type": "string"
                 },
@@ -1292,6 +1332,13 @@
                 "pattern": "\\S",
                 "type": "string"
               },
+              "deps": {
+                "items": {
+                  "pattern": "\\S",
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "durations": {
                 "type": "boolean"
               },
@@ -1371,9 +1418,6 @@
                   "type": "object"
                 },
                 "type": "array"
-              },
-              "resume": {
-                "type": "boolean"
               },
               "run": {
                 "items": {

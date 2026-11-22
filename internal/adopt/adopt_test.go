@@ -546,10 +546,11 @@ func TestThePinMovesOnlyWithPin(t *testing.T) {
 	}
 	newer.Accept = nil
 	newer.Pin = true
-	applyTwice(t, newer)
+	apply(t, newer)
 	if !strings.Contains(read(t, root, ".github/workflows/release.yml"), `JACKSTAY_VERSION: "v0.6.0"`) {
 		t.Fatal("--pin did not move the pin")
 	}
+	landsLast(t, newer)
 }
 
 func TestTheProfilesRulesBecomeConflicts(t *testing.T) {
@@ -689,7 +690,8 @@ func TestAPinMoveLandsSettingsFirst(t *testing.T) {
 		t.Fatalf("after the settings: changes %v, conflicts %v", changeIDs(made.Changes), made.Conflicts)
 	}
 	after.Accept = []string{"workflow:release:edited"}
-	applyTwice(t, after)
+	apply(t, after)
+	landsLast(t, after)
 	if text := read(t, root, ".github/workflows/release.yml"); strings.Contains(text, "# edit") || !strings.Contains(text, `JACKSTAY_VERSION: "v0.6.0"`) {
 		t.Fatal("the files did not follow the settings")
 	}

@@ -6,14 +6,15 @@ package review
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/access"
 	"github.com/zima-oss/jackstay/internal/review/claude"
 	"github.com/zima-oss/jackstay/internal/review/runner"
 )
@@ -26,11 +27,12 @@ type ReviewerSettings struct {
 	Effort         string
 	TimeoutMinutes int
 	Isolation      []string
+	// MCPServers are the MCP servers given back to this reviewer (`mcp_servers`); none by default.
+	MCPServers map[string]access.MCPServer
 }
 
 // Settings are a project's `review` section with every default filled in.
 type Settings struct {
-	Pool             PoolSettings
 	Reviewers        map[string]ReviewerSettings
 	Use              []string
 	Brief            string
@@ -48,46 +50,19 @@ type Settings struct {
 	KeepDays         int
 }
 
-// The reviewer queue's limits for a repository's requests.
-const (
-	PoolHistoryDays         = 30
-	PoolMaxPending          = 32
-	PoolMaxAttempts         = 5
-	PoolRetryInitialSeconds = 30
-	PoolRetryCapSeconds     = 900
-)
-
-// PoolSettings bounds a repository's optional reviewer queue requests: `review.pool.accepting`,
-// and the limits that are constants.
-type PoolSettings struct {
-	Accepting           bool
-	HistoryDays         int
-	MaxPending          int
-	MaxAttempts         int
-	RetryInitialSeconds int
-	RetryCapSeconds     int
-}
-
 // DefaultIsolation is the default set of isolation flags (docs/design/review.md section 1).
 var DefaultIsolation = []string{
 	"--ephemeral", "--ignore-user-config", "--ignore-rules", "--skip-git-repo-check",
-	"-c", "mcp_servers={}", "-c", "features.apps=false", "-c", "shell_environment_policy.inherit=none",
+	"-c", "mcp_servers={}", "-c", "features.apps=false",
 }
 
 // KnownReviewers are the reviewers jackstay knows how to run.
 var KnownReviewers = []string{"codex", claude.Name}
 
-// PoolPolicyIDVariable carries the queued job's policy into the review child.
-const PoolPolicyIDVariable = "JACKSTAY_REVIEW_POOL_POLICY_ID"
-
-// PoolPolicyStaleMarker identifies a child refusal after the worker's last
-// policy check, so the worker can preserve the stale classification.
-const PoolPolicyStaleMarker = "jst review: queued review policy changed before reviewer launch"
-
-// ErrPoolPolicyStale means the selected review policy changed after enqueue.
-var ErrPoolPolicyStale = errors.New("review policy changed since enqueue; submit a new request")
-
 var efforts = []string{"minimal", "low", "medium", "high", "xhigh"}
+
+// mcpName is the name of an MCP server given back to a reviewer: one word in both CLIs' syntax.
+var mcpName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // ownedWords are argv words jackstay sets itself and refuses in `isolation`.
 var ownedWords = []string{
@@ -117,8 +92,6 @@ func Defaults() Settings {
 		reviewers[name] = defaultReviewer(name)
 	}
 	return Settings{
-		Pool: PoolSettings{Accepting: true, HistoryDays: PoolHistoryDays, MaxPending: PoolMaxPending,
-			MaxAttempts: PoolMaxAttempts, RetryInitialSeconds: PoolRetryInitialSeconds, RetryCapSeconds: PoolRetryCapSeconds},
 		Use:              []string{DefaultReviewer},
 		Reviewers:        reviewers,
 		Severities:       []string{"blocker", "major", "minor"},
@@ -166,6 +139,14 @@ func SettingsOf(loaded config.Config) (Settings, []string) {
 			}
 			if value, ok := entry["isolation"]; ok {
 				reviewer.Isolation = textsOf(value)
+			}
+			if servers, ok := entry["mcp_servers"].(map[string]any); ok {
+				reviewer.MCPServers = map[string]access.MCPServer{}
+				for server, value := range servers {
+					definition, _ := value.(map[string]any)
+					command, _ := definition["command"].(string)
+					reviewer.MCPServers[server] = access.MCPServer{Command: command, Args: textsOf(definition["args"])}
+				}
 			}
 			settings.Reviewers[name] = reviewer
 		}
@@ -221,11 +202,6 @@ func SettingsOf(loaded config.Config) (Settings, []string) {
 	if value, ok := section["store"].(string); ok {
 		settings.Store = value
 	}
-	if pool, ok := section["pool"].(map[string]any); ok {
-		if accepting, ok := pool["accepting"].(bool); ok {
-			settings.Pool.Accepting = accepting
-		}
-	}
 	problems = append(problems, settings.problems()...)
 	return settings, problems
 }
@@ -250,6 +226,14 @@ func (settings Settings) problems() []string {
 		}
 		if reviewer.TimeoutMinutes < 1 || reviewer.TimeoutMinutes > 120 {
 			problem("`review.reviewers.%s.timeout_minutes` is %d: 1–120", name, reviewer.TimeoutMinutes)
+		}
+		for server, definition := range reviewer.MCPServers {
+			if !mcpName.MatchString(server) {
+				problem("`review.reviewers.%s.mcp_servers` names %q: letters, digits, `_` and `-`, at most 64", name, server)
+			}
+			if strings.TrimSpace(definition.Command) == "" {
+				problem("`review.reviewers.%s.mcp_servers.%s.command` is empty", name, server)
+			}
 		}
 		if name == claude.Name {
 			if len(reviewer.Isolation) > 0 {
@@ -353,26 +337,6 @@ func (settings Settings) policyID() string {
 	return fmt.Sprintf("v1:%x", sha256.Sum256(data))
 }
 
-// PoolPolicyID identifies the effective policy for a queued review. It includes
-// the verdict rules and the selected providers' execution settings. Pool
-// scheduling, default reviewer choice, and retention do not affect a review
-// submitted with an explicit provider set.
-func (settings Settings) PoolPolicyID(names []string, storeRoot string) string {
-	reviewers := make([]ReviewerSettings, 0, len(names))
-	for _, name := range names {
-		reviewers = append(reviewers, settings.Reviewers[name])
-	}
-	policy := struct {
-		Verdict       string
-		Reviewers     []ReviewerSettings
-		MaxConcurrent int
-		QueueMinutes  int
-		StoreRoot     string
-	}{settings.policyID(), reviewers, settings.MaxConcurrent, settings.QueueMinutes, storeRoot}
-	data, _ := json.Marshal(policy)
-	return fmt.Sprintf("v1:%x", sha256.Sum256(data))
-}
-
 func completedReviewers(runs []ReviewerRun) map[string]bool {
 	completed := make(map[string]bool, len(runs))
 	for _, run := range runs {
@@ -397,16 +361,17 @@ func sameReviewers(runs []ReviewerRun, names []string) bool {
 }
 
 // Blocks is the one predicate of section 4: whether a finding blocks a round while it is open.
-func (settings Settings) Blocks(severity, likelihood, consequence string) bool {
+func (settings Settings) Blocks(severity, likelihood, consequence, ordinaryPath string) bool {
 	if !slices.Contains(settings.Blocking, severity) {
 		return false
 	}
-	return !settings.Triage || !IsRare(likelihood, consequence)
+	return !settings.Triage || !IsRare(likelihood, consequence, ordinaryPath)
 }
 
-// IsRare is W-048's rare: unlikely in ordinary work and mild.
-func IsRare(likelihood, consequence string) bool {
-	return likelihood == "unusual" && consequence == "mild"
+// IsRare is W-048's rare, as W-094 amends it: unlikely in ordinary work, and either mild or severe
+// with no ordinary-work path named by which its setup arises by accident.
+func IsRare(likelihood, consequence, ordinaryPath string) bool {
+	return likelihood == "unusual" && (consequence == "mild" || strings.TrimSpace(ordinaryPath) == "")
 }
 
 // LongestTimeout is the longest timeout of the reviewers named, in minutes.

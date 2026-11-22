@@ -2,7 +2,7 @@
 jst adopt: bring jackstay.json, the AGENTS block, the guard hook and workflows to jackstay's reference
 
 usage: jst adopt [--plan] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [--json] [DIR]
-       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
+       jst adopt --apply [--accept ID]... [--pin] [--settings-only] [--autonomy MODE] [--reviewer WHO] [--chat on|off] [--profile PATH] [--profile-sha256 DIGEST] [DIR]
        jst adopt --block [--profile PATH] [--profile-sha256 DIGEST] [DIR]
 
 Works on the project around DIR (default: here) and changes nothing else; what it must not decide
@@ -14,13 +14,22 @@ is a conflict.
   --pin            with --apply: set adopt.pin, the jst release the workflows download, to this one
   --settings-only  plan or write jackstay.json alone; land it in its own pull request, then
                    --apply again on the merged base
+  --autonomy MODE  merge-when-green or prepare: who merges, for a new land section (at a
+                   terminal --apply asks; without one it needs this flag); an existing one is kept
+  --reviewer WHO   codex (recommended), claude-code, or codex,claude-code: who runs jst review
+                   (review.use); written over the project's value
+  --chat on|off    the agent chat here (chat.enabled, once jackstay.json is schema 3; off
+                   recommended); written over the project's value. Without these, --apply at a terminal asks what jackstay.json does not
+                   answer, offering this machine's answer from jst setup; without a terminal it
+                   writes none and the plan's choices say what applies
   --profile PATH   an organisation's profile; --apply records it in jackstay.json
   --profile-sha256 DIGEST  the exact bundle bytes to accept; recorded by --apply
   --json           the plan as one JSON object
   --block          print the AGENTS block this project gets; writes nothing
 
 exit: 0 adopted (--plan: nothing to change, no conflict; --apply: written); 1 conflicts left;
-2 usage, or jackstay.json or the profile cannot be read; 3 (--plan) changes pending, no conflict.
+2 usage, or jackstay.json or the profile cannot be read, or --apply needs --autonomy; 3 (--plan)
+changes or an upgrade's blockers pending, no conflict.
 
 example: jst adopt --plan --json
 
@@ -228,51 +237,62 @@ example: jst changes view --version 1.4.0
 ==> jst chat --help
 jst chat: these commands (each answers --help)
 
-  jst chat claude-hook   announce pending chat at a Claude Code boundary
-  jst chat codex-bridge  deliver pending chat to a managed Codex turn
-  jst chat serve         serve repository-local agent session chat over MCP
+  jst chat claude-hook   the old name of jst hook claude
+  jst chat codex-bridge  not in jackstay 0.6: the Codex bridge returns in jackstay 1
+  jst chat push          ring the chat's native doorbells
+  jst chat serve         serve the agent chat to one session over MCP
 
 exit: 0 this list; 2 `jst chat` alone, or with a word that is no command under it (nothing
 is run); each command's --help names its own.
 
 ==> jst chat claude-hook --help
-jst chat claude-hook: announce pending chat at a Claude Code boundary
+jst chat claude-hook: the old name of jst hook claude
 
-usage: jst chat claude-hook --name NAME --event UserPromptSubmit|PostToolUse|PostToolBatch
+usage: jst chat claude-hook [--name NAME] [--event EVENT]
 
-Run from a Claude Code command hook at the named event. Use the same
-JACKSTAY_CHAT_SESSION_TOKEN as this session's jst chat serve MCP process.
-Enable chat.claude_code in jackstay.json. Pending messages are announced to
-Claude at the next configured boundary and remain pending until chat.ack.
+The 0.5.x name of `jst hook claude`, kept through 0.6.x; its flags are ignored, and the event is read from stdin.
 
-exit: 0 no message or notice emitted; 1 chat setup unavailable; 2 invalid arguments.
+exit: 0 always.
 
-example: jst chat claude-hook --name reviewer --event PostToolUse
+example: jst chat claude-hook
 
 ==> jst chat codex-bridge --help
-jst chat codex-bridge: deliver pending chat to a managed Codex turn
+jst chat codex-bridge: not in jackstay 0.6: the Codex bridge returns in jackstay 1
 
-usage: jst chat codex-bridge --socket PATH --thread ID --name NAME
+usage: jst chat codex-bridge
 
-Attach to an owner-managed Codex app-server Unix socket and one thread. Start the
-MCP server and the bridge with the same JACKSTAY_CHAT_SESSION_TOKEN. Enable
-chat.codex_bridge in jackstay.json. The bridge delivers to a running turn and
-leaves the message pending until the recipient calls chat.ack.
+The Codex bridge's push waits for jackstay 1. A Codex session reaches the chat through `jst chat serve` and reads its inbox with chat.inbox.
 
-exit: 0 stopped; 2 invalid setup or another bridge owns the session.
+exit: 2 always.
 
-example: jst chat codex-bridge --socket "$APP_SOCKET" --thread "$APP_THREAD" --name reviewer
+example: jst chat serve
+
+==> jst chat push --help
+jst chat push: ring the chat's native doorbells
+
+usage: jst chat push
+
+Ring the native doorbells of idle Claude Code sessions on their messaging sockets (docs/design/chat.md
+section 8.3), one process per account. The hooks and jst chat serve start it, detached, when a
+doorbell is due; it exits after ten minutes with nothing to ring.
+
+exit: 0 stopped, or another pusher runs; 2 the store or its lock is unavailable.
+
+example: jst chat push
 
 ==> jst chat serve --help
-jst chat serve: serve repository-local agent session chat over MCP
+jst chat serve: serve the agent chat to one session over MCP
 
-usage: jst chat serve --name NAME
+usage: jst chat serve [--name NAME]
 
-Serve a local stdio MCP session. Set JACKSTAY_CHAT_SESSION_TOKEN to a random 32+ character secret in the host launcher to resume an identity. The project must enable chat in jackstay.json. Messages are delivered when recipients poll their inbox.
+Serve the agent chat to one session over stdio MCP (docs/design/chat.md section 5). A Claude Code
+session is found through the binding its jst hook claude wrote; JACKSTAY_CHAT_SESSION_TOKEN gives
+a session of its own; without either the session is ephemeral. The project must enable chat in
+jackstay.json.
 
 exit: 0 end of input; 2 invalid configuration, arguments or transport.
 
-example: jst chat serve --name reviewer
+example: jst chat serve
 
 ==> jst check --help
 jst check: is this project's jackstay.json usable?
@@ -334,7 +354,12 @@ jst doctor: is jackstay alive on this machine: the layout, the guard, its calls,
 usage: jst doctor [--json] [--prefix DIR] | jst doctor --expect NAME | jst doctor --forget NAME
 
 Checks the installed layout, the jst on PATH, the guard refusing, its logs of the last 7 days, the
-projects heard from and expected, Claude Code's sandbox settings and the lock.
+projects heard from and expected, Claude Code's sandbox settings and the lock; in a project, its
+adoption and, with a land section, its landing policy against the host's branch rules (the
+account, the required checks, the merge method). It reports a missing lint workflow and a base
+whose rules require no `card-line` check, or no `jst test ci (SYSTEM)` job for a system some
+scope's `ci` names; whether rule D0 is enforced is the person's to confirm.
+Only the landing part asks the host.
   --json          the report as one JSON object
   --prefix DIR    the install prefix to inspect (default: this binary's own)
   --expect NAME   add project NAME to the projects whose guard is expected to be heard from
@@ -375,6 +400,29 @@ error).
 
 example: jst help test last
 
+==> jst hook --help
+jst hook: these commands (each answers --help)
+
+  jst hook claude  the Claude Code hook for the agent chat
+
+exit: 0 this list; 2 `jst hook` alone, or with a word that is no command under it (nothing
+is run); each command's --help names its own.
+
+==> jst hook claude --help
+jst hook claude: the Claude Code hook for the agent chat
+
+usage: jst hook claude
+
+The Claude Code hook dispatcher for the agent chat (docs/design/chat.md section 8.2). Register it
+for SessionStart, UserPromptSubmit, PostToolBatch, Stop, StopFailure and SessionEnd; it reads the
+hook's JSON from stdin. It rings the chat's doorbell, holds a turn for an urgent message, and
+records the session's state. It never fails a turn: an error is reported on stderr and it exits 0.
+The project must enable chat in jackstay.json.
+
+exit: 0 always.
+
+example: jst hook claude
+
 ==> jst id --help
 jst id: hand out numbers from one counter per project on this machine
 
@@ -413,19 +461,6 @@ exit: 0 installed; 1 a step failed half-way (the message says what is left); 2 r
 was changed.
 
 example: jst install --checkout ~/repositories/jackstay
-
-==> jst inventory --help
-jst inventory: local Git worktrees and observed runner sessions as JSON
-
-usage: jst inventory [--since DURATION]
-
-Print the local repository, its linked worktrees, and recent session observations as JSON.
-  --since DURATION  look back at most this long (default 24h, maximum 720h)
-
-Runner and guard coverage are reported from recorded evidence. Missing evidence is unknown.
-exit: 0 report written; 1 journal incomplete; 2 bad request or repository unavailable.
-
-example: jst inventory --since 48h
 
 ==> jst land --help
 jst land: push and open a change request, wait for its required checks, merge when the policy allows
@@ -876,6 +911,8 @@ jst review: a cold review of a commit or a range, in rounds
 
 usage: jst review [REV | BASE..REV] [--task NAME] [--reviewer NAME,...] [--brief FILE] [--focus TEXT]
                  [--fresh] [--model M] [--effort E] [--timeout MIN] [--past-limit] [--json]
+       jst review [REV | BASE..REV] --background [--task NAME] [--reviewer NAME,...] [--focus TEXT]
+                 [--fresh] [--past-limit]
 
 REV alone is reviewed against its first parent (default HEAD). An empty review.use needs
 --reviewer. Give a revision named like a subcommand after --.
@@ -889,10 +926,15 @@ REV alone is reviewed against its first parent (default HEAD). An empty review.u
   --timeout MIN       minutes per run, for this call
   --past-limit        a round past review.round_limit, after the owner's word
   --json              the result as one JSON object instead of the summary
+  --background        start the round under jst bg (pinned to the commits now) and return; the
+                      result comes to this session as a review.finished chat event when chat is
+                      on, else read it with jst review last. An equal review already running is
+                      joined; a different one of the same task is refused until it ends
 
 exit: 0 the round does not block; 1 it blocks; 2 usage or configuration; 3 a place is due for
 redesign; 4 the round limit is reached, the owner decides; 5 a reviewer gave no usable answer;
-6 the environment refuses (a sandbox, no login, reviewer unavailable).
+6 the environment refuses (a sandbox, no login, reviewer unavailable). With --background: 0 started
+or joined; 2 refused.
 
 example: jst review origin/main..HEAD --task parser-fix --reviewer codex
 
@@ -900,7 +942,6 @@ commands under it (each answers --help):
   jst review check  is this change reviewed and clear?
   jst review last   the newest round's report, or the newest attempt's failure
   jst review list   the reviews kept
-  jst review pool   queue, inspect and maintain local reviews across sessions
   jst review prune  remove tasks past review.keep_days, now
   jst review show   one round's report
 
@@ -941,34 +982,6 @@ exit: 0 the list; 2 the request or configuration, or the index cannot be read or
 
 example: jst review list --task parser-fix
 
-==> jst review pool --help
-jst review pool: queue, inspect and maintain local reviews across sessions
-
-usage: jst review pool add --repo ABSOLUTE_PATH --base REF --head REF --task NAME --reviewer NAMES
-       jst review pool list [--json]
-       jst review pool inspect [--json]
-       jst review pool prune [--apply] [--json]
-       jst review pool migrate [--apply] [--json]
-       jst review pool subscribers JOB_ID [--json]
-       jst review pool unsubscribe JOB_ID SESSION_ID --generation TOKEN [--apply] [--json]
-       jst review pool next
-       jst review pool retry JOB_ID
-
-A local, persistent, opt-in queue shared by agent sessions. add pins both Git revisions now;
-NAMES is codex, claude-code, or both separated by a comma. next runs one queued review in
-the foreground from its saved repository. It starts no background daemon. retry requeues a
-failed attempt without changing its commits. list reads local jobs; inspect reports queue
-health and notification handoffs without repository or session details. prune previews
-expired terminal history; migrate previews a queue schema upgrade. Both require --apply
-to write. prune retains active work and terminal outcomes awaiting chat delivery.
-subscribers shows recipient IDs and the job generation. unsubscribe previews closing
-one subscription, and requires --apply and that generation to make the change.
-
-exit: 0 request or maintenance succeeded, or no pending job; 1, 3, 4 a completed review verdict;
-2 invalid request or queue state; 5, 6 review failed; 2 when another worker holds the pool.
-
-example: jst review pool add --repo /path/to/repo --base main --head HEAD --task parser --reviewer codex
-
 ==> jst review prune --help
 jst review prune: remove tasks past review.keep_days, now
 
@@ -992,22 +1005,32 @@ example: jst review show parser-fix 2
 ==> jst setup --help
 jst setup: plan and apply selected machine setup repairs
 
-usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR]
+usage: jst setup [--plan] [--json] [--chat] [--prefix DIR] | jst setup --yes --select path|sandbox [--prefix DIR] | jst setup --autonomy MODE | jst setup --reviewer WHO
 
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
-POSIX shell profile and allow jackstay's state folder in Claude Code's enabled sandbox.
+POSIX shell profile, and let Claude Code's enabled sandbox write only the folders of the jackstay
+home jst writes from it (the journal, the lock, chat, jobs, the brief, ids, the trash), replacing
+an entry that names the whole home. Evidence (receipts, gate marks, review rounds, the run log)
+stays read-only to the sandbox; jst test and jst review run outside it.
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
   --prefix DIR    inspect an install under DIR (default: this binary's own prefix)
   --chat          show session chat and agent-engine setup steps
   --yes           apply only explicitly selected repair IDs; requires --select
   --select ID     select path or sandbox; repeat to select both
+  --autonomy MODE keep merge-when-green or prepare as this machine's answer to who merges
+  --reviewer WHO  keep codex, claude-code or codex,claude-code as this machine's reviewer
+
+Once per machine, a terminal is also asked who merges a project's changes (the agent when the
+required checks pass, or a person) and which reviewer runs jst review (Codex recommended).
+`jst adopt` offers these answers first; the project's jackstay.json decides.
 
 Mail steps report detected engines and their current integration limits. They are guidance only;
 setup does not install an unverified bridge or claim active-turn delivery. Without options, a
 terminal offers apply, show and skip. An existing profile is copied to a
-unique backup beside it before replacement. Unsupported shells and conflicting profiles are
-left for the owner. Open a new shell after applying a PATH repair.
+unique backup beside it before replacement; the settings file keeps its keys in order. A profile
+or settings file that is a symbolic link is named and left for the owner, as are unsupported
+shells and conflicting profiles. Open a new shell after applying a PATH repair.
 
 exit: 0 planned or applied; 1 an applicable repair failed; 2 the request is wrong.
 
@@ -1055,6 +1078,33 @@ exit: 0 an answer; 1 no journal could be read; 2 the request is wrong.
 
 example: jst stats refusals --by project --since 7d
 
+==> jst status --help
+jst status: this repository's sessions, events, chat, brief and jobs; or one row per repository
+
+usage: jst status [--json] [--since DURATION] [--limit N] [REPO...]
+
+What is going on locally, read without writing anything and without contacting a remote service.
+
+With no REPO it covers this repository, in detail: its worktrees, the agent sessions and delivery
+events (pull requests, tests, reviews, background jobs) the journal recorded in the window, chat
+counts, the brief, background jobs, the last gate and stored receipt (and whether they are for
+HEAD) and active cards. When this project's jackstay.json lists repositories in status.repos, no
+REPO means those instead.
+
+With one REPO it is that repository in detail; with several, one row per repository (at most 32).
+No message, receipt, card or brief text is shown, and events carry no arguments or prompts.
+
+  --json            one versioned JSON envelope (schema, kind "repository" or "board", the
+                    window, partial, and the repositories)
+  --since DURATION  the window for sessions and events, back from now (default 24h, maximum 720h)
+  --limit N         keep at most the N newest events (default 20, maximum 1000)
+
+exit: 0 every source read; 1 at least one source unknown or partial (the report still printed); 2 the
+request is wrong (an option, a path, more than 32 repositories, or an unusable status.repos).
+
+example: jst status --since 4h
+         jst status --json ~/src/app ~/src/service
+
 ==> jst sync --help
 jst sync: bring this branch up to date with the default branch
 
@@ -1074,36 +1124,55 @@ example: jst sync --push
 jst test: run a test scope or command, judged, recorded and keyed by the tree
 
 usage: jst test SCOPE [ARGS...] [--no-reuse] [--wait S] [--base REF] [--lock | --no-lock]
-                [--resume] [--keep-going] [--commit REV]
+                [--keep-going] [--commit REV]
        jst test [--no-reuse] [--lock | --no-lock] [--project NAME] [--wait SECONDS] -- COMMAND [ARG ...]
 
 Runs a scope (`jst test list`) or, after --, any command. Only the outcome passed is a pass: read
-the last `jst test:` line. With test.selection, `jst test changed [BASE..REV]` picks the scope from
-the changed paths.
+the last `jst test:` line. A scope with deps runs them first, each once, in declared order. With
+test.selection, `jst test changed [BASE..REV]` picks the scope from the changed paths; when a scope
+has `ci` or `systems`, it runs only what CI does not cover and this machine can run.
+`jst test uncovered` and `jst test ci`: their own --help. The cache keys `inputs` and `cache` are
+not built yet.
   --no-reuse      run even when a receipt of this tree could be reused
   --wait S        give up waiting for the machine-wide lock after S seconds
   --lock          take the machine-wide lock; --no-lock: do not (default: the scope's lock)
   --project NAME  the project's name in the record (default jackstay.json's)
   --base REF      the scope's {base} or the base for automatic selection
-  --resume        a gate: skip the steps that passed on this same tree
-  --keep-going    a gate: run the remaining steps after one fails
+  --keep-going    a scope with deps: after a failure, run the steps that do not depend on it
   --commit REV    run on a clean copy of REV that jackstay makes and then removes
 
-A scope with steps needs receipts.toolchain in jackstay.json: the commands that print your tools'
-versions (`[["go", "version"]]`), or [] for none.
+A scope with deps runs every node each time: --resume was removed in 0.6.0, and reuse of passes
+comes with the cache of jackstay 1.
 
 exit: 0 passed (or exited 0 uncounted); 1 failed; 2 not started or refused, nothing ran;
 75 gave up waiting for the lock; 76 no test ran; 77 unjudged (output not read to its end, or
 leftovers that cannot be attributed); 78 passed only on retry (not a clean pass); 124 timed out;
+79 the scope cannot run on this system (its systems); 80 a test of the change needs another system;
 127 the command cannot start. A command that ran and failed passes its own status on, so 2 or 77
 may be its own: the last jst test: line names the outcome.
 
 example: jst test gate --commit HEAD
 
 commands under it (each answers --help):
-  jst test last  the last run of this project: outcome, what went wrong, where its output is
-  jst test list  the project's test scopes: what each runs, and when the project runs it
-  jst test plan  the words a scope would run, step by step; nothing is run
+  jst test ci         every scope CI covers on this system, once, in graph order (the CI job)
+  jst test last       the last run of this project: outcome, what went wrong, where its output is
+  jst test list       the project's test scopes: what each runs, and when the project runs it
+  jst test plan       the words a scope would run, step by step; nothing is run
+  jst test uncovered  what CI does not cover on this system, on a clean copy of the commit
+
+==> jst test ci --help
+jst test ci: every scope CI covers on this system, once, in graph order (the CI job)
+
+usage: jst test ci [--keep-going] [--project NAME] [--lock | --no-lock]
+
+Runs every scope whose `ci` names this system, with its deps, each once in graph order: the one
+command of the CI job `jst test ci (SYSTEM)`, which the base's rules require.
+  --keep-going     after a failure, run the nodes that do not depend on it
+
+exit: 0 passed; 2 not started, or no scope names this system in its ci; otherwise the first
+failure's own status, as `jst test SCOPE`.
+
+example: jst test ci
 
 ==> jst test last --help
 jst test last: the last run of this project: outcome, what went wrong, where its output is
@@ -1150,6 +1219,24 @@ scope of the project, or the request or jackstay.json's test section cannot be u
 
 example: jst test plan auto --base origin/main
 
+==> jst test uncovered --help
+jst test uncovered: what CI does not cover on this system, on a clean copy of the commit
+
+usage: jst test uncovered [--commit REV] [--keep-going] [--project NAME] [--lock | --no-lock]
+
+Runs, on a clean copy of REV (default HEAD), every scope that needs no test names and that CI does
+not cover on this system, with its deps. The last line names three groups: here (what ran), ci
+(covered by CI) and elsewhere (runs only on another system, listed, never holding the run). Its
+passed or left-to-ci line is the record `jst install` from a checkout needs when the commit's
+jackstay.json gives some scope a `ci`.
+  --commit REV     the commit to test (default HEAD)
+  --keep-going     after a failure, run the nodes that do not depend on it
+
+exit: 0 passed, or left-to-ci (nothing to run here); 2 not started; otherwise the first failure's
+own status, as `jst test SCOPE`.
+
+example: jst test uncovered
+
 ==> jst tidy --help
 jst tidy: report, or remove, the branches and worktrees whose work is done
 
@@ -1167,20 +1254,6 @@ exit: 0 nothing finished is left; 1 something finished is listed and not removed
 failed or was called off; 2 the request is wrong.
 
 example: jst tidy --fix --branch fix-parser
-
-==> jst timeline --help
-jst timeline: local PR, test, review and background stages as JSON
-
-usage: jst timeline [--since DURATION] [--until RFC3339] [--limit N]
-
-Print local delivery stages for this Git repository as versioned JSON.
-  --since DURATION  window before --until (default 24h, maximum 720h from now)
-  --until RFC3339   exclusive end of the window (default now)
-  --limit N         keep at most N of the newest rows (default 100, maximum 1000)
-
-exit: 0 report written; 1 incomplete journal or ancestry scan; 2 bad request or repository unavailable.
-
-example: jst timeline --since 4h --limit 50
 
 ==> jst trash --help
 jst trash: move files and folders into jackstay's trash, undoably; list, restore, prune
@@ -1267,27 +1340,4 @@ exit: 0 it happened; 1 it cannot happen any more, or the log ended the wait in f
 2 the request is wrong; 3 the deadline came first.
 
 example: jst wait --line 'listening on' --in server.log --fail 'error' --timeout 60
-
-==> jst workspace --help
-jst workspace: these commands (each answers --help)
-
-  jst workspace board  read local status across named repositories
-
-exit: 0 this list; 2 `jst workspace` alone, or with a word that is no command under it (nothing
-is run); each command's --help names its own.
-
-==> jst workspace board --help
-jst workspace board: read local status across named repositories
-
-usage: jst workspace board [--json] [REPO...]
-
-Read a summary of each explicitly supplied Git checkout. Linked worktrees share chat
-state; gate and receipt summaries are for the named checkout. No remote service is contacted.
-No message bodies, receipt contents, or card bodies are printed.
-At most 32 repositories may be supplied in one call. With none named, the repositories are the
-current project's status.repos in jackstay.json (relative to its folder).
-
-exit: 0 every requested source read; 1 at least one source is unknown or partial; 2 invalid use.
-
-example: jst workspace board --json ~/src/app ~/src/service
 

@@ -128,7 +128,7 @@ every other character is `%XX` of its UTF-8 bytes; an empty name is `unknown`.
     <project>/receipts/<key>.failed.<when>-<process>   a failure of that key, one file each
     <project>/outputs/<run_id>.log          the output of the newest runs (section 9)
     <project>/durations.jsonl               per-class durations (testing.md section 4)
-    <project>/gate-marks/, gate-bars/       the gate's step marks and bars (testing.md section 5)
+    <project>/cache/                        scope cache entries and their failure notes (land.md section 7.3)
     <project>/clean-copies/                 copies `--commit` makes (discard-and-clean-gate.md)
     <project>/guard-seen                    touched by every hook call from a session (guard.md)
     <project>/ids/<series>.jsonl            the number counters (`jst id`)
@@ -136,9 +136,17 @@ every other character is `%XX` of its UTF-8 bytes; an empty name is `unknown`.
     <project>/telemetry/                    the project's journal (observability.md)
 
 A log line is one JSON object appended in one write, so processes never mix lines; a log that
-cannot be written never fails its tool. A sandboxed session records only when `~/.jackstay` is in
-`sandbox.filesystem.allowWrite` (`jst doctor` checks). Every session of the account may write here,
-so receipts, marks and the run record can be forged: a known limit, not a boundary (guard.md).
+cannot be written never fails its tool, except `jst test`, which checks its evidence first.
+`jst setup` lets Claude Code's sandbox write only what jst writes from a sandboxed command
+(`doctor.SandboxGrants`: the journals, the heavy-suite lock with its queue and holder note,
+`procs`, `chat`, `session-chat`, `context-brief`, each project's `ids`, the trash). Evidence (receipts and
+failure notes, review rounds, the run log, the delivery record, the expected
+projects) stays read-only there, so a sandboxed agent cannot forge a pass (#59): `jst test` and
+`jst review` run outside it. Before running, `jst test` appends-opens the run log, makes and removes
+a file in the project's receipts (`receipts.UnwritableEvidence`) and removes
+the receipt it replaces; when one fails it runs nothing. Outside the sandbox every session
+of the account may write here, so receipts and the run record can be forged: a known limit,
+not a boundary (guard.md).
 
 ### 3.2 The project file: `jackstay.json`
 
@@ -653,7 +661,8 @@ approving, the maintainer has run `just gate` on a Mac on the tagged commit
 
 1. Refuse a tag that is not annotated, not the commit checked out, not on main, or not
    `v` + `internal/version`'s `Version`.
-2. `just gate` on the tagged tree.
+2. The Linux CI job `jst test ci (linux)` on the tagged commit, like any other CI run, with its
+   cache ([land.md](land.md) sections 7.4 and 7.6).
 3. GoReleaser builds, signs and notarises with that tag (`GORELEASER_CURRENT_TAG`,
    `--skip=publish,announce`).
 4. `actions/attest` signs build provenance for each archive, bound to the repository, workflow and
@@ -827,8 +836,9 @@ The prefix is `--prefix`, else the running binary's install, else `~/.local`. Ev
 function of `doctor.Inputs`, so tests use fixtures and a fixed clock. A finding has a **kind**;
 problems make exit 1 and each names its **fix** ([W-078](../decisions/W-078-setup-after-install.md);
 `TestEveryProblemNamesItsFix`): a broken install's is the one-liner with `JACKSTAY_PREFIX='P'`
-(never an uninstall); `sandbox-blocks-state`'s an `allowWrite` entry, a narrower `denyWrite` or
-another `JACKSTAY_HOME`, never removing a deny.
+(never an uninstall); `sandbox-blocks-state`'s `jst setup`, a narrower `denyWrite` or another
+`JACKSTAY_HOME`, never removing a deny; `sandbox-writes-evidence`'s `jst setup` for an entry naming
+the home itself, else narrowing the entry by hand.
 
 | check | finding |
 |-------|---------|
@@ -841,14 +851,17 @@ another `JACKSTAY_HOME`, never removing a deny.
 | on macOS: the signing setting, the identity, the live signature (section 7.4) | `codesign-setting-unreadable`, `codesign-identity-invalid`, `codesign-uninspected`, `binary-not-signed` |
 | the guard's spans of the last 7 days in every project's journal | `failed-open`, `config-error` per project; ignored tools as a fact |
 | each project's `guard-seen` mark and the expected list | note `guard-quiet` (quiet over 3 days); `expected-never-called`; `guard-never-called` (no mark, nothing expected); `expected-unreadable` |
-| `~/.claude/settings.json`'s sandbox enabled and `~/.jackstay` not writable by it | `sandbox-blocks-state` |
-| the lock's folder can be made and written | `lock-unwritable` |
+| `~/.claude/settings.json`'s sandbox enabled and a grant (for each project folder and expected project) not writable by it | `sandbox-blocks-state` |
+| an `allowWrite` entry covering or reaching into an evidence path no `denyWrite` covers | `sandbox-writes-evidence` |
+| the lock and its queue, or else the lock's folder, can be written | `lock-unwritable` |
 | the project around the working folder is adopted (`adopt.Check`, [adopt.md](adopt.md) section 10) | `adoption` |
 
 `--json` prints `{"facts": {…}, "problems": [{"kind", "text", "fix"}], "notes": [{"kind", "text"}]}`;
 as text each problem is followed by `  fix: …`. The sandbox check reads only the account's
 `~/.claude/settings.json`; a pattern's part before its first `*?[` is resolved as a real path and
-the rest matched per element (`**` any number); a `denyWrite` covering `~/.jackstay` wins.
+the rest matched per element (`**` any number); a `denyWrite` covering a grant wins. Setup removes
+only `allowWrite` entries naming the home itself, makes each grant before naming it, and writes
+the settings through the ordered model adopt uses, with a backup beside them.
 
 **`--expect NAME` / `--forget NAME`** change `~/.jackstay/.all/expected-projects` (sorted marker
 names) under `flock` on `expected-projects.lock` (up to 30 s), written atomically; `--forget` also
@@ -1076,7 +1089,8 @@ The contract behind it:
 
 - `passed` only when the command ran now, ended 0, its output was read to its end, its tests were
   **counted** above zero and no veto line was seen. Nothing else is `passed`, and only `passed`
-  stores a receipt.
+  stores a receipt. The one exception is a scope's cached pass: a pass counted before for the same
+  inputs ([land.md](land.md) section 7.3).
 - `exited-0`: ended 0 with nothing to count its tests (no `evidence` pattern, or the `exit` judge);
   the line reads `outcome=exited-0 (no test count: not proof that tests ran)`. Never a pass in any
   count.
@@ -1087,7 +1101,9 @@ The contract behind it:
 - `stopped` / `stopped-waiting`: asked to stop after the start, or while waiting for the lock
   (nothing ran); it ends by that signal. `gave-up` (75) and `not-started` (2) ran nothing; a
   command that cannot start is 127. `timed-out` (124) is a scope's (testing.md section 3);
-  `resumed` and `refused` are the gate's (testing.md section 5).
+  `skipped`, `not-run`, `left-to-ci` and `needs-other-system` are a graph's, and a scope served
+  from the cache keeps its stored `passed` marked `cached` ([land.md](land.md) sections 7.2 and
+  7.4).
 
 A command's own 2, 75–78 shows as `failed`, so the line, not the status, is read. An unwritable
 record line adds a `WARNING` just before it and never turns a pass into a failure.
@@ -1230,6 +1246,10 @@ credentials not kept, a 30-minute limit, a pull request's older run cancelled. `
 The Vitest producer check runs separately. There is no macOS job
 ([W-083](../decisions/W-083-no-macos-job-in-ci.md)): `*_darwin.go` is checked by the maintainers'
 `just gate` on a Mac before an install and a release.
+
+This recipe set, the `just gate` workflow and the separate `go` and `integration` runs are the state
+before the migration to the scope graph; the 0.6.0 target (one Go scope with the integration tests,
+one `jst test ci (linux)` job) is [land.md](land.md) section 7.6.
 
 **Practices:**
 - The commit is injected at build (`-X …/internal/version.Commit`), else the build info's

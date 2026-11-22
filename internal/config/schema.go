@@ -65,13 +65,8 @@ func schemaNode(wanted *schemaType) map[string]any {
 
 func setSchemaHints(root map[string]any) {
 	properties := root["properties"].(map[string]any)
-	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
-	pool["accepting"].(map[string]any)["default"] = true
-	pool["accepting"].(map[string]any)["description"] = "Accept new review jobs from this repository. Existing jobs remain available for processing and retry."
 	brief := properties["brief"].(map[string]any)["properties"].(map[string]any)["max_age_hours"].(map[string]any)
 	brief["description"] = "Hours a saved brief stays fresh when jst brief save is given no --max-age."
-	repos := properties["status"].(map[string]any)["properties"].(map[string]any)["repos"].(map[string]any)
-	repos["description"] = "Repositories the overview reads when none are named: paths relative to this file's folder, or absolute."
 	properties["adopt"].(map[string]any)["properties"].(map[string]any)["profile_sha256"].(map[string]any)["pattern"] = "^[0-9a-fA-F]{64}$"
 	properties["jackstay_schema"].(map[string]any)["enum"] = []int{1, 2, Schema}
 	properties["land"].(map[string]any)["required"] = []string{"autonomy"}
@@ -101,6 +96,8 @@ func setSchemaHints(root map[string]any) {
 		"test.scopes.*.judge":        testJudges,
 		"test.steps.*.judge":         testJudges,
 		"test.scopes.*.selector":     {"go-test", "jest-test"},
+		"test.scopes.*.ci.[]":        {"linux", "darwin"},
+		"test.scopes.*.systems.[]":   {"linux", "darwin"},
 		"receipts.commands.[].judge": {"go-json", "junit", "jest-json", "trx", "xcresult-json"},
 	} {
 		node := root

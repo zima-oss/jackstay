@@ -303,7 +303,7 @@ var groups = []group{
 	{"Tests and processes", []string{"test", "receipts", "baseline", "lock", "bg", "procs", "wait"}},
 	{"Branches and landing", []string{"start", "sync", "tidy", "discard", "trash", "land", "checks"}},
 	{"Review", []string{"review"}},
-	{"Chat and agents", []string{"chat", "brief", "guard", "inventory", "timeline", "workspace", "owner", "log", "stats"}},
+	{"Chat and agents", []string{"chat", "hook", "brief", "guard", "status", "owner", "log", "stats"}},
 	{"Setup and health", []string{"install", "uninstall", "setup", "doctor", "adopt", "check", "profile", "patterns", "version", "help"}},
 	{"Maintenance", []string{"changes", "release", "cards", "lint", "id", "new", "view"}},
 }

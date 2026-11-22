@@ -47,9 +47,8 @@ func TestJSONSchemaDescribesRuntimeStructure(t *testing.T) {
 	if properties["test"].(map[string]any)["properties"].(map[string]any)["scopes"].(map[string]any)["additionalProperties"] == nil {
 		t.Fatal("dynamic test scope names must be accepted")
 	}
-	pool := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"].(map[string]any)["properties"].(map[string]any)
-	if accepting := pool["accepting"].(map[string]any); accepting["type"] != "boolean" || accepting["default"] != true {
-		t.Fatalf("review pool admission schema: %+v", accepting)
+	if _, found := properties["review"].(map[string]any)["properties"].(map[string]any)["pool"]; found {
+		t.Fatal("review.pool is gone with the reviewer pool (folded into jst review)")
 	}
 	brief := properties["brief"].(map[string]any)["properties"].(map[string]any)["max_age_hours"].(map[string]any)
 	if brief["minimum"] != float64(BriefMaxAgeHoursMinimum) || brief["maximum"] != float64(BriefMaxAgeHoursMaximum) ||
@@ -124,9 +123,11 @@ func TestNewerKeysNeedSchema3AndAnOlderSchemaSaysSo(t *testing.T) {
 		`{"jackstay_schema":2,"chat":{"enabled":false}}`,
 		`{"jackstay_schema":2,"brief":{"max_age_hours":24}}`,
 		`{"jackstay_schema":2,"status":{"repos":["."]}}`,
-		`{"jackstay_schema":2,"review":{"pool":{"accepting":true}}}`,
 		`{"jackstay_schema":2,"test":{"selection":{"order":[]}}}`,
 		`{"jackstay_schema":2,"test":{"scopes":{"unit":{"run":["x"],"report":"r.xml"}}}}`,
+		`{"jackstay_schema":2,"test":{"scopes":{"x-go":{"run":["x"],"ci":["linux"]}}}}`,
+		`{"jackstay_schema":2,"test":{"scopes":{"x-ios":{"run":["x"],"systems":["darwin"]}}}}`,
+		`{"jackstay_schema":2,"test":{"scopes":{"gate":{"deps":["x-go"]},"x-go":{"run":["x"]}}}}`,
 		`{"jackstay_schema":2,"receipts":{"commands":[{"argv":["x"],"judge":"go-json"}]}}`,
 		`{"jackstay_schema":1,"land":{"autonomy":"prepare"}}`,
 		`{"jackstay_schema":2,"land":{"autonomy":"merge-when-green"}}`,
@@ -153,6 +154,34 @@ func TestNewerKeysNeedSchema3AndAnOlderSchemaSaysSo(t *testing.T) {
 	}
 }
 
+func TestOnlyAScopeSaysWhereItRunsAndASchema3CompositeChecksNothing(t *testing.T) {
+	problemsOf := func(text string) []string {
+		parsed, err := Parse([]byte(text))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return SectionProblems(parsed).Of("test")
+	}
+	if found := problemsOf(`{"jackstay_schema":3,"receipts":{"toolchain":[]},"test":{"scopes":{"x-go":{"run":["x"],"ci":["linux"],"systems":["linux","darwin"]},` +
+		`"gate":{"deps":["x-go"]}},"steps":{"build":{"run":["y"],"deps":["x-go"]}}}}`); len(found) != 0 {
+		t.Fatalf("a scope with ci, systems and deps, a step with deps: %v", found)
+	}
+	if found := problemsOf(`{"jackstay_schema":3,"test":{"steps":{"build":{"run":["x"],"ci":["linux"]}}}}`); len(found) == 0 {
+		t.Fatal("a step with ci was accepted")
+	}
+	if found := strings.Join(problemsOf(`{"jackstay_schema":3,"receipts":{"toolchain":[]},"test":{"scopes":{"x-go":{"run":["x"]},`+
+		`"gate":{"deps":["x-go"],"requires":[{"run":["y"],"why":"z"}]}}}}`), "; "); !strings.Contains(found, "test.scopes.gate.requires") {
+		t.Fatalf("requires on a schema-3 composite: %s", found)
+	}
+	if found := problemsOf(`{"jackstay_schema":2,"receipts":{"toolchain":[]},"test":{"scopes":{"x-go":{"run":["x"]},` +
+		`"gate":{"steps":["x-go"],"requires":[{"run":["y"],"why":"z"}]}}}}`); len(found) != 0 {
+		t.Fatalf("a schema-2 list keeps its requires: %v", found)
+	}
+	if found := problemsOf(`{"jackstay_schema":3,"test":{"scopes":{"x-go":{"run":["x"]},"gate":{"deps":["x-go"]}}}}`); len(found) != 0 {
+		t.Fatalf("deps without receipts.toolchain: %v", found)
+	}
+}
+
 func TestBriefExpiryAndOverviewRepositories(t *testing.T) {
 	if BriefMaxAge(nil) != BriefMaxAgeHours*time.Hour || BriefMaxAge(map[string]any{"max_age_hours": json.Number("24")}) != 24*time.Hour {
 		t.Fatal("brief expiry")
@@ -160,5 +189,28 @@ func TestBriefExpiryAndOverviewRepositories(t *testing.T) {
 	repositories := StatusRepositories(map[string]any{"repos": []any{"../service", "/abs/app", ""}}, "/work/project")
 	if strings.Join(repositories, ",") != "/work/service,/abs/app" {
 		t.Fatalf("repositories %v", repositories)
+	}
+}
+
+// The `resume` key went with `jst test --resume` in 0.6.0: it is refused, in both schemas, by a
+// line that says so, not as an unknown key.
+func TestTheRemovedResumeKeyIsRefusedByName(t *testing.T) {
+	for _, schema := range []string{"2", "3"} {
+		parsed, err := Parse([]byte(`{"jackstay_schema": ` + schema + `, "test": {"scopes": {
+			"full": {"run": ["true"], "resume": false},
+			"gate": {"steps": ["cheap"]}},
+			"steps": {"cheap": {"run": ["true"], "resume": true}}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		problems := strings.Join(SectionProblems(parsed).Of("test"), "\n")
+		for _, where := range []string{"test.scopes.full.resume", "test.steps.cheap.resume"} {
+			if !strings.Contains(problems, "`"+where+"` was removed: it went with `jst test --resume` in jackstay 0.6.0") {
+				t.Errorf("schema %s, %s: %s", schema, where, problems)
+			}
+		}
+		if strings.Contains(problems, "unknown key") {
+			t.Errorf("schema %s: %s", schema, problems)
+		}
 	}
 }

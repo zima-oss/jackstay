@@ -230,17 +230,19 @@ case "$arguments" in
   *--restricted*--safe-mode*--no-session-persistence*--json-schema*--permission-mode*dontAsk*--tools*Read,Glob,Grep*--disallowedTools*mcp__*) ;;
   *) exit 21 ;;
 esac
-case "$arguments" in *dangerously*|*Bash*|*--add-dir*) exit 22 ;; esac
+case "$arguments" in *dangerously*|*Bash*|*Edit*|*Write*) exit 22 ;; esac
+case "$arguments" in *"--add-dir / --settings"*'Read(//**/.env)'*) ;; *) exit 25 ;; esac
+case "$TMPDIR" in */claude-code/tmp) [ -d "$TMPDIR" ] ;; *) exit 26 ;; esac
 [ "$(cat head/reviewed.txt)" = pinned-after ]
 [ "$(cat base/reviewed.txt)" = before ]
 [ ! -e .git ] && [ ! -e head/.git ] && [ ! -e base/.git ]
-[ -z "${CLAUDECODE:-}" ] && [ -z "${UNRELATED_FIXTURE_MARKER:-}" ]
+[ -z "${CLAUDECODE:-}" ] && [ -z "${UNRELATED_FIXTURE_TOKEN:-}" ] && [ "${FORWARDED_FIXTURE_MARKER:-}" = kept ]
 prompt=$(cat)
 case "$prompt" in *'changes/base.patch'*) ;; *) exit 23 ;; esac
 case "$prompt" in *uncommitted*|*pinned-after*|*'diff --git'*) exit 24 ;; esac
 grep -q -- '^-before' changes/base.patch
 grep -q -- '^+pinned-after' changes/base.patch
-printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"verdict":"approve","summary":"pinned diff inspected","findings":[],"prior":[]},"usage":{"input_tokens":12,"output_tokens":4}}'
+printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured_output":{"verdict":"approve","summary":"pinned diff inspected","findings":[],"prior":[]},"usage":{"input_tokens":12,"output_tokens":4},"total_cost_usd":0.25,"modelUsage":{"claude-model-b":{},"claude-model-a":{}}}'
 `
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -248,7 +250,9 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured
 	t.Setenv("JACKSTAY_HOME", t.TempDir())
 	t.Setenv("CODEX_HOME", filepath.Join(t.TempDir(), "absent"))
 	t.Setenv("CLAUDECODE", "nested")
-	t.Setenv("UNRELATED_FIXTURE_MARKER", "not-forwarded")
+	t.Setenv("UNRELATED_FIXTURE_TOKEN", "not-forwarded")
+	t.Setenv("FORWARDED_FIXTURE_MARKER", "kept")
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
 
 	settings := Defaults()
 	settings.Use = []string{"claude-code"}
@@ -269,5 +273,9 @@ printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"structured
 	}
 	if outcomes, _ := CheckReasons(settings, round.Store, "claude-test", base, revision); len(outcomes) != 0 {
 		t.Fatalf("recorded review cannot be checked: %v", outcomes)
+	}
+	usage, err := os.ReadFile(filepath.Join(result.Folder, "claude-code", "usage.json"))
+	if err != nil || !strings.Contains(string(usage), `"models":["claude-model-a","claude-model-b"]`) || !strings.Contains(string(usage), `"cost_usd":0.25`) {
+		t.Fatalf("the resolved models and cost are not kept: %s, %v", usage, err)
 	}
 }

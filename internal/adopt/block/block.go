@@ -5,10 +5,13 @@
 package block
 
 import (
+	"encoding/json"
+	"maps"
 	"slices"
 	"strings"
 
 	"github.com/zima-oss/jackstay/internal/adopt/templates"
+	scopes "github.com/zima-oss/jackstay/internal/testing"
 )
 
 // Inputs are what the block is printed from.
@@ -47,6 +50,9 @@ func hasSection(name string) func(map[string]any) bool {
 
 var items = []item{
 	{id: "test", commands: []string{"test", "test list", "test last"}, wanted: always, first: true, text: testText},
+	{id: "test-split", commands: []string{"test", "test uncovered"}, wanted: func(config map[string]any) bool {
+		return len(coveredScopes(config)) > 0
+	}, first: true, text: splitText},
 	{id: "checks", commands: []string{"checks"}, wanted: func(config map[string]any) bool {
 		account, _ := section(config, "github")["account"].(string)
 		return account != ""
@@ -76,12 +82,11 @@ var items = []item{
 	{id: "land", commands: []string{"land"}, wanted: hasSection("land"), text: landText},
 	// Advertise review where the project declares a review section.
 	{id: "review", commands: []string{"review", "review check"}, wanted: hasSection("review"), text: fixed(
-		"- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`\n" +
-			"  or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.")},
-	{id: "review-pool", commands: []string{"review pool"}, wanted: hasSection("review"), text: fixed(
-		"- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.\n" +
-			"  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.\n" +
-			"  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.")},
+		"- **Review**, outside the agent sandbox (it records the round): `jst review BASE..REV --task NAME`\n" +
+			"  (the project's reviewers; `--reviewer claude-code` or `codex,claude-code` for others);\n" +
+			"  `--background` returns at once and the result comes as a chat\n" +
+			"  event; `jst review check BASE..REV --task NAME` says if it is clear.\n" +
+			"  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.")},
 	{id: "cards", commands: []string{"lint range", "cards"}, wanted: hasSection("cards"), text: cardsText},
 	{id: "ids", commands: []string{"id"}, wanted: hasSection("ids"), text: idsText},
 	{id: "changes", commands: []string{"changes new", "changes check"}, wanted: hasSection("changes"), text: fixed(
@@ -92,12 +97,9 @@ var items = []item{
 	{id: "log", commands: []string{"log", "stats"}, wanted: always, text: fixed(
 		"- **After a surprising failure**, read `jst log --session ID` (or `--trace ID`) and\n" +
 			"  `jst stats REPORT` before asking.")},
-	{id: "timeline", commands: []string{"timeline"}, wanted: always, text: fixed(
-		"- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.")},
-	{id: "inventory", commands: []string{"inventory"}, wanted: always, text: fixed(
-		"- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.")},
-	{id: "workspace-board", commands: []string{"workspace board"}, wanted: always, text: fixed(
-		"- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.")},
+	{id: "status", commands: []string{"status"}, wanted: always, text: fixed(
+		"- **What is going on here**: `jst status` shows worktrees, agent sessions, recent events, chat,\n" +
+			"  the brief and background jobs; `jst status PATH…` gives one row per repository.")},
 	{id: "context-brief", commands: []string{"brief save", "brief show"}, wanted: always, text: fixed(
 		"- **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.")},
 	{id: "owner", commands: []string{"owner"}, wanted: always, text: fixed(
@@ -109,18 +111,18 @@ var items = []item{
 	}, text: fixed(
 		"- **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools\n" +
 			"  to send a request, read your inbox and acknowledge messages you process.")},
-	{id: "chat-codex", commands: []string{"chat codex-bridge"}, wanted: func(config map[string]any) bool {
+	{id: "chat-codex", commands: []string{"chat serve"}, wanted: func(config map[string]any) bool {
 		chat := section(config, "chat")
 		return chat["enabled"] == true && section(chat, "codex_bridge")["enabled"] == true
 	}, text: fixed(
-		"- **Deliver chat to managed Codex**: `jst chat codex-bridge` uses the owner's local socket, thread and session.\n" +
-			"  Use `chat.ack` after processing a message.")},
-	{id: "chat-claude", commands: []string{"chat claude-hook"}, wanted: func(config map[string]any) bool {
+		"- **Chat in Codex**: read your inbox with `chat.inbox` from `jst chat serve`; the Codex bridge's push\n" +
+			"  returns in jackstay 1.")},
+	{id: "chat-claude", commands: []string{"hook claude"}, wanted: func(config map[string]any) bool {
 		chat := section(config, "chat")
 		return chat["enabled"] == true && section(chat, "claude_code")["enabled"] == true
 	}, text: fixed(
-		"- **Check chat at a Claude Code boundary** with the owner-configured `jst chat claude-hook`.\n" +
-			"  When notified, use the MCP inbox and acknowledge each processed message.")},
+		"- **Chat in Claude Code**: the owner-configured `jst hook claude` rings when messages wait; read them\n" +
+			"  with `chat.inbox` and answer a request with `chat.respond`.")},
 	{id: "doctor", commands: []string{"doctor", "check", "adopt", "setup"}, wanted: always, text: fixed(
 		"- **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is\n" +
 			"  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.")},
@@ -134,19 +136,106 @@ func testText(config map[string]any) string {
 	scopes := section(section(config, "test"), "scopes")
 	if len(scopes) == 0 {
 		return "- **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test -- COMMAND`.\n" +
-			"  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`."
+			"  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`\n" +
+			"  (a run not logged names its output file).\n" + evidenceText
 	}
 	text := "- **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`\n" +
 		"  (`jst test list` names them and when each is due). Only `passed` is a pass: read the last\n" +
-		"  `jst test:` line. After a failure, `jst test last`, not a rerun."
-	if _, gate := scopes["gate"]; gate {
+		"  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its\n" +
+		"  output file)."
+	if _, gate := scopes["gate"]; gate && !splitsChanges(config) {
 		text += "\n  Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit)."
 	}
 	if section(section(config, "test"), "selection") != nil {
 		text += "\n  Preview path-based selection with `jst test plan changed --base REF`."
 	}
-	return text + " No scope fits: `jst test -- COMMAND`."
+	return text + " No scope fits: `jst test -- COMMAND`.\n" + evidenceText
 }
+
+// systemNames are the systems a scope's `ci` names, as people call them.
+var systemNames = map[string]string{"linux": "Linux", "darwin": "macOS"}
+
+// coveredScopes are the nodes with `run` that CI covers, through their own `ci` or as a dep of a
+// scope that has one, each with the systems it is covered on (docs/design/land.md section 7.4).
+func coveredScopes(config map[string]any) map[string][]string {
+	// The graph reads the section as encoding/json gives it; a Go literal is brought to that form.
+	var test map[string]any
+	if data, err := json.Marshal(section(config, "test")); err != nil || json.Unmarshal(data, &test) != nil {
+		return nil
+	}
+	return scopes.CoveredSystems(test)
+}
+
+// splitsChanges says whether `jst test changed` can split a change between here and CI: some
+// scope is covered and the project selects scopes by path (`test.selection`).
+func splitsChanges(config map[string]any) bool {
+	return len(coveredScopes(config)) > 0 && section(section(config, "test"), "selection") != nil
+}
+
+// splitText states where tests run (docs/design/land.md section 7.4): what CI runs, on which
+// systems, and what an agent runs before a pull request (when the project selects by path) and
+// before an install or a tag.
+func splitText(config map[string]any) string {
+	covered := coveredScopes(config)
+	var order []string
+	groups := map[string][]string{}
+	for _, name := range slices.Sorted(maps.Keys(covered)) {
+		var words []string
+		for _, system := range covered[name] {
+			word, known := systemNames[system]
+			if !known {
+				word = system
+			}
+			words = append(words, word)
+		}
+		where := strings.Join(words, " and ")
+		if _, seen := groups[where]; !seen {
+			order = append(order, where)
+		}
+		groups[where] = append(groups[where], name)
+	}
+	parts := make([]string, 0, len(order))
+	for _, where := range order {
+		parts = append(parts, strings.Join(groups[where], ", ")+" on "+where)
+	}
+	text := "- **Where tests run**: CI runs " + strings.Join(parts, "; ") + " and is the gate. "
+	// Without `test.selection`, `jst test changed` cannot split a change: the test item's gate line
+	// says what to run before a pull request.
+	if splitsChanges(config) {
+		text += "Before a pull request: `jst test changed`. "
+	}
+	return wrap(text + "Before an install or a tag: `jst test uncovered`.")
+}
+
+// wrap breaks an item's text at spaces outside code spans into lines of at most 100 characters,
+// the later ones indented by two spaces.
+func wrap(text string) string {
+	var words []string
+	for _, field := range strings.Fields(text) {
+		if last := len(words) - 1; last >= 0 && strings.Count(words[last], "`")%2 == 1 {
+			words[last] += " " + field
+			continue
+		}
+		words = append(words, field)
+	}
+	var lines []string
+	line := ""
+	for _, word := range words {
+		switch {
+		case line == "":
+			line = word
+		case len(line)+1+len(word) > 100:
+			lines = append(lines, line)
+			line = "  " + word
+		default:
+			line += " " + word
+		}
+	}
+	return strings.Join(append(lines, line), "\n")
+}
+
+// evidenceText says where the commands that record evidence run (#59).
+const evidenceText = "  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox."
 
 func guardText(config map[string]any) string {
 	text := "- **When the guard refuses** a command, run what it names instead, never a workaround. Read a\n" +

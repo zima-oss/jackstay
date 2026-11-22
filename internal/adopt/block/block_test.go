@@ -31,12 +31,28 @@ var everySection = map[string]any{
 		"selection": map[string]any{"order": []string{"quick", "gate"}}},
 }
 
+// splitScopes are scopes CI covers on Linux and macOS, x-build through x-go's deps.
+func splitScopes() map[string]any {
+	return map[string]any{
+		"x-build": map[string]any{"run": []any{"just", "build"}},
+		"x-go":    map[string]any{"run": []any{"just", "go"}, "deps": []any{"x-build"}, "ci": []any{"linux"}},
+		"x-docs":  map[string]any{"run": []any{"just", "docs"}, "ci": []any{"linux"}},
+		"x-ui":    map[string]any{"run": []any{"just", "ui"}, "ci": []any{"darwin", "linux"}},
+		"x-ios":   map[string]any{"run": []any{"just", "ios"}, "deps": []any{"x-build"}, "systems": []any{"darwin"}},
+		"gate":    map[string]any{"deps": []any{"x-docs", "x-go", "x-ui", "x-ios"}}}
+}
+
 func TestTheBlockGolden(t *testing.T) {
 	cases := map[string]Inputs{
 		"every-section": {Config: everySection, Has: everyCommand},
 		"land-prepare": {Config: map[string]any{"jackstay_schema": 3, "github": map[string]any{"account": "someone"},
 			"land": map[string]any{"autonomy": "prepare"}}, Has: everyCommand},
 		"no-section": {Config: map[string]any{"jackstay_schema": 1, "project": "bare"}, Has: everyCommand},
+		// CI covers x-build as x-go's dep; `jst test changed` is named only with a selection.
+		"test-split": {Config: map[string]any{"jackstay_schema": 3, "test": map[string]any{"scopes": splitScopes(),
+			"selection": map[string]any{"order": []any{"gate"}}}}, Has: everyCommand},
+		"test-split-no-selection": {Config: map[string]any{"jackstay_schema": 3, "test": map[string]any{"scopes": splitScopes()}},
+			Has: everyCommand},
 		"scopes-no-gate": {Config: map[string]any{"test": map[string]any{"scopes": map[string]any{"quick": map[string]any{}}}},
 			Has: everyCommand},
 		"profile": {Config: everySection, Has: everyCommand,
@@ -76,8 +92,8 @@ func TestEveryItemIsPrintedForSomeConfig(t *testing.T) {
 	text := Render(Inputs{Config: everySection, Has: everyCommand})
 	for _, word := range []string{"jst test gate", "jst wait", "jst bg", "jst lock", "jst start", "jst discard", "the guard refuses",
 		"jst land --title", "jst checks run-wait", "jst review", "origin/trunk..HEAD", "jst id next", "jst new", "jst changes new", "jst release prepare",
-		"jst log", "jst timeline", "jst inventory", "jst workspace board", "jst brief save", "jst review pool", "jst receipts export", "jst profile export", "jst owner", "jst adopt --plan",
-		"jst setup --plan", "jst setup --chat", "jst chat codex-bridge", "jst chat claude-hook", "jst test plan changed"} {
+		"jst log", "jst status", "jst brief save", "jst receipts export", "jst profile export", "jst owner", "jst adopt --plan",
+		"jst setup --plan", "jst setup --chat", "returns in jackstay 1", "jst hook claude", "jst test plan changed"} {
 		if !strings.Contains(text, word) {
 			t.Errorf("the block lacks %q", word)
 		}

@@ -75,35 +75,43 @@ refuses: [The guard](guard.md).
 
 ## The sandbox
 
-If you use Claude Code's sandbox, let it write `~/.jackstay`, where jackstay keeps its state: run
-records, receipts, the trash, the journal, background process entries, counters. Until then, runs
-inside sandboxed sessions are not recorded, and `jst lock` fails. Add the folder to the sandbox's
-`filesystem.allowWrite` list, in `~/.claude/settings.json` or the project's settings:
+Claude Code's Bash sandbox writes only the folders its settings allow. jackstay keeps two kinds of
+things in `~/.jackstay`. Some it writes while an agent's command runs in the sandbox; the rest is
+evidence it later trusts (receipts, review rounds, the run log), which the sandbox may
+only read, so an agent cannot record a pass it did not run. `jst test` and `jst review` record
+that evidence, so they run outside the sandbox: inside it, `jst test` runs nothing and says so.
+`jst setup` adds the rest to `sandbox.filesystem.allowWrite` in `~/.claude/settings.json`, one
+set per project it knows:
 
-```json
-{
-  "sandbox": {
-    "enabled": true,
-    "filesystem": {"allowWrite": ["~/.jackstay"]}
-  }
-}
-```
+| Path under `~/.jackstay` | Why jst writes it from a sandboxed command |
+|---|---|
+| `.all/telemetry`, `<project>/telemetry` | the journal |
+| `.all/heavy-suite.lock`, its `.queue` and `.holder` | `jst lock` |
+| `.all/procs` | `jst bg` and `jst procs` |
+| `.all/chat`, `.all/session-chat` | chat commands |
+| `.all/context-brief` | `jst brief save` |
+| `<project>/ids` | `jst id next` |
+| `.trash` | `jst discard` |
 
-`jst doctor` reads `~/.claude/settings.json` and reports `sandbox-blocks-state` when the sandbox is
-on and `~/.jackstay` is not writable. Some commands must still run outside the sandbox:
+`jst doctor` reports `sandbox-blocks-state` when one of them is not writable (a new project, say:
+run `jst setup` again) and `sandbox-writes-evidence` when an entry lets the sandbox write evidence,
+such as the whole `~/.jackstay` an earlier setup added; `jst setup` replaces that entry, keeping a
+backup of the settings. What else runs outside the sandbox:
 
 | Command | Inside the sandbox |
 |---|---|
 | `jst review` with Codex | refused, exit 6: Codex must be able to write its login (`~/.codex`) |
 | `jst tidy --fix` | keeps every worktree: the sandbox hides other processes, so it cannot prove a worktree unused |
 | `jst procs stop`, a stop of something the sandbox did not start | refused by the system; jackstay names what to run outside |
-| `jst lock`, `jst test` with the lock | exit 2 when `~/.jackstay` is not writable |
+| `jst lock` | exit 2 when the lock is not writable: run `jst setup` |
+| `jst test`, any form that runs something | runs nothing: it records evidence the sandbox may only read |
+| `jst review` | its rounds are evidence too: run it outside the sandbox |
 
 ## Claude Code as the reviewer
 
 Install Claude Code 2.1.248 or newer. Check your login with `claude auth status`, or provide
 `ANTHROPIC_API_KEY` through the environment. With a desktop login on macOS, run `jst review`
-or `jst review pool next` from a context that can access the system credential store. Check
+from a context that can access the system credential store. Check
 `claude auth status` in that same context if the adapter reports an authentication failure.
 [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
 
@@ -122,7 +130,9 @@ in `review.use`. Rounds, verdicts and the `review` section: [Reviews](review.md)
 |---|---|
 | A hook error on every Bash call, and commands run unchecked | `jst-guard` is not at the path the settings name (127). Install, or fix the path. |
 | `jst doctor`: `guard-never-called` / `expected-never-called` | No session has called the hook: the project's settings are not loaded (trust dialog), or the path is wrong. |
-| `jst doctor`: `sandbox-blocks-state` | Runs inside sessions are not recorded; allow `~/.jackstay`. |
+| `jst doctor`: `sandbox-blocks-state` | jst cannot keep its logs, locks, chat or jobs in sandboxed sessions; run `jst setup`, which adds only the folders listed above. |
+| `jst doctor`: `sandbox-writes-evidence` | the sandbox may write receipts; run `jst setup` to replace a whole-home entry, or narrow a broader one yourself. |
+| `jst test`: `Run it outside the sandbox.` | the run records evidence the sandbox may only read; run that command outside it. |
 | The guard says `config-unusable` on every call | `jackstay.json` is broken; the built-in rules still apply. Run `jst check`. |
 
 The design: [the hook contract](../design/guard.md#the-hook-contract), [the hook's answers](../design/guard.md#7-the-hook).

@@ -7,9 +7,11 @@
 
 - **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test SCOPE`
   (`jst test list` names them and when each is due). Only `passed` is a pass: read the last
-  `jst test:` line. After a failure, `jst test last`, not a rerun.
+  `jst test:` line. After a failure, `jst test last`, not a rerun (a run not logged names its
+  output file).
   Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit).
   Preview path-based selection with `jst test plan changed --base REF`. No scope fits: `jst test -- COMMAND`.
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Instead of `gh pr checks --watch` or `gh run watch`**, run `jst checks wait` or
   `jst checks run-wait`; `jst checks status` reads them once. jackstay acts as `github.account`.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a
@@ -32,11 +34,11 @@
   checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,
   `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
   (`gh pr merge` is refused), never run `--confirm`.
-- **Review**: `jst review BASE..REV --task NAME` (the project's reviewers; `--reviewer claude-code`
-  or `codex,claude-code` for others); `jst review check BASE..REV --task NAME` says if it is clear.
-- **Queue optional reviews across local repositories** with `jst review pool`. An explicit worker runs one pinned request.
-  Use `jst review pool inspect` to check health and `jst review pool prune` to preview history cleanup.
-  Use `jst review pool subscribers JOB_ID` to inspect notification subscriptions.
+- **Review**, outside the agent sandbox (it records the round): `jst review BASE..REV --task NAME`
+  (the project's reviewers; `--reviewer claude-code` or `codex,claude-code` for others);
+  `--background` returns at once and the result comes as a chat
+  event; `jst review check BASE..REV --task NAME` says if it is clear.
+  Before calling a finding a blocker, check its rating: an unusual one blocks only with an ordinary-work path.
 - **Commits to the default branch** carry `Card: <ID>` or `Card: none (why)`; check with
   `jst lint range origin/trunk..HEAD` before pushing; `jst cards ID` shows what landed per card.
 - **Numbers** come from `jst id next SERIES`, never by hand; `jst new SERIES --slug S` makes a
@@ -46,17 +48,16 @@
   `jst release prepare` shows the next one.
 - **After a surprising failure**, read `jst log --session ID` (or `--trace ID`) and
   `jst stats REPORT` before asking.
-- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
-- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
-- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
+- **What is going on here**: `jst status` shows worktrees, agent sessions, recent events, chat,
+  the brief and background jobs; `jst status PATH…` gives one row per repository.
 - **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Share an adoption profile** with `jst profile export`; verify its digest before adopting it.
 - **Coordinate with other sessions**: `jst setup --chat` shows the MCP host setup. Use chat tools
   to send a request, read your inbox and acknowledge messages you process.
-- **Deliver chat to managed Codex**: `jst chat codex-bridge` uses the owner's local socket, thread and session.
-  Use `chat.ack` after processing a message.
-- **Check chat at a Claude Code boundary** with the owner-configured `jst chat claude-hook`.
-  When notified, use the MCP inbox and acknowledge each processed message.
+- **Chat in Codex**: read your inbox with `chat.inbox` from `jst chat serve`; the Codex bridge's push
+  returns in jackstay 1.
+- **Chat in Claude Code**: the owner-configured `jst hook claude` rings when messages wait; read them
+  with `chat.inbox` and answer a request with `chat.respond`.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is
   this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.

@@ -2,48 +2,68 @@ package sessionchat
 
 import (
 	"context"
-	"crypto/sha256"
-	"fmt"
+	"errors"
 
-	"github.com/zima-oss/jackstay/internal/reviewpool"
+	"github.com/zima-oss/jackstay/internal/chatevent"
+	"github.com/zima-oss/jackstay/internal/review"
+	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
 )
 
-type reviewNotificationSyncError struct{ cause error }
-
-func (failure reviewNotificationSyncError) Error() string {
-	return "review notification sync: " + failure.cause.Error()
+func init() {
+	chatevent.Register(publisher{})
+	chatevent.RegisterIdentifier(identify)
 }
-func (failure reviewNotificationSyncError) Unwrap() error { return failure.cause }
 
-// syncReviewNotifications moves durable queue events into the recipient's chat
-// inbox. The queue marks each event only after chat accepts it; repeating after
-// an interrupted write uses the same chat idempotency key.
-func syncReviewNotifications(ctx context.Context, store Store, sessionID string) error {
-	if store.commonDirectory == "" {
+// publisher stores jackstay's events in the account's chat store (section 10).
+type publisher struct{}
+
+func (publisher) Publish(ctx context.Context, event chatevent.Event) error {
+	if len(event.Recipients) == 0 {
 		return nil
 	}
-	pool, err := reviewpool.Default()
+	store, err := openStore()
 	if err != nil {
 		return err
 	}
-	events, err := pool.Undelivered(ctx, sessionID, store.commonDirectory)
+	return store.Publish(ctx, event)
+}
+
+// identify is the chat session of this process in worktree, so a command it runs (a review) can
+// send its result there: the session its token names, else the Claude Code session it runs under.
+// It is "" when the project does not enable chat, or no session can be told.
+func identify(ctx context.Context, worktree string) (string, error) {
+	chat, err := localChat(ctx, worktree)
+	if errors.Is(err, errChatOff) {
+		return "", nil
+	}
 	if err != nil {
-		return err
+		return "", nil // no chat here: no session to tell
 	}
-	for _, event := range events {
-		body := fmt.Sprintf("Review %s attempt %d %s (exit %d). Call review.status for details, then chat.ack.",
-			event.JobID, event.Attempt, event.Status, event.Exit)
-		key := fmt.Sprintf("review-pool/%s/%d/%s/%s", event.JobID, event.Attempt, event.Status, sessionID)
-		if event.Generation != "" {
-			digest := sha256.Sum256([]byte(key + "/" + event.Generation))
-			key = fmt.Sprintf("review-pool/v2/%x", digest)
-		}
-		if _, _, err := store.notifyReview(sessionID, body, key); err != nil {
-			return err
-		}
-		if err := pool.MarkDelivered(ctx, event, sessionID); err != nil {
-			return err
-		}
+	key, err := tokenKey()
+	if err != nil || key != "" {
+		return key, err
 	}
-	return nil
+	bound, found := boundKey(ctx, chat.store, 0)
+	if !found {
+		return "", nil
+	}
+	return bound, nil
+}
+
+// pullOwedReviews publishes the review results still owed to the session: a result whose
+// publication failed when its review ended is pulled when the session next reads (section 10). A
+// failure here never fails the read; the result stays owed.
+func pullOwedReviews(ctx context.Context, store *chatstore.Store, key, folder string) {
+	background, err := review.BackgroundAt(folder, "")
+	if err != nil {
+		return // no review here, so nothing is owed here
+	}
+	_ = background.DeliverOwed(ctx, key, storePublisher{store})
+}
+
+// storePublisher publishes into an already opened store.
+type storePublisher struct{ store *chatstore.Store }
+
+func (target storePublisher) Publish(ctx context.Context, event chatevent.Event) error {
+	return target.store.Publish(ctx, event)
 }

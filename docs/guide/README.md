@@ -36,12 +36,9 @@ Several sessions in one repository, or several repositories at once.
 
 - [Session chat](session-chat.md): parallel local agents talking through MCP.
 - [Compaction briefs](context-brief.md): a task note restored after a compaction.
-- [Workspace board](workspace-board.md): local work across named repositories.
+- [`jst status`](status.md): what is going on in this repository, or one row per repository.
 - [Claude Code](claude-code.md): the guard hook, the sandbox and the reviewer.
 - [Codex](codex.md): the reviewer and the guard hook.
-
-Chat between sessions and the status overview are being reworked for 0.6.0; their pages here
-change with them.
 
 ## Configuration
 

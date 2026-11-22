@@ -25,3 +25,31 @@ scope of the project, or the request or jackstay.json's test section cannot be u
 
 example: jst test plan auto --base origin/main
 `
+
+const uncoveredHelp = `usage: jst test uncovered [--commit REV] [--keep-going] [--project NAME] [--lock | --no-lock]
+
+Runs, on a clean copy of REV (default HEAD), every scope that needs no test names and that CI does
+not cover on this system, with its deps. The last line names three groups: here (what ran), ci
+(covered by CI) and elsewhere (runs only on another system, listed, never holding the run). Its
+passed or left-to-ci line is the record ` + "`jst install`" + ` from a checkout needs when the commit's
+jackstay.json gives some scope a ` + "`ci`" + `.
+  --commit REV     the commit to test (default HEAD)
+  --keep-going     after a failure, run the nodes that do not depend on it
+
+exit: 0 passed, or left-to-ci (nothing to run here); 2 not started; otherwise the first failure's
+own status, as ` + "`jst test SCOPE`" + `.
+
+example: jst test uncovered
+`
+
+const ciHelp = `usage: jst test ci [--keep-going] [--project NAME] [--lock | --no-lock]
+
+Runs every scope whose ` + "`ci`" + ` names this system, with its deps, each once in graph order: the one
+command of the CI job ` + "`jst test ci (SYSTEM)`" + `, which the base's rules require.
+  --keep-going     after a failure, run the nodes that do not depend on it
+
+exit: 0 passed; 2 not started, or no scope names this system in its ci; otherwise the first
+failure's own status, as ` + "`jst test SCOPE`" + `.
+
+example: jst test ci
+`

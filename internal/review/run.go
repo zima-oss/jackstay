@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/flock"
+	"github.com/zima-oss/jackstay/internal/homedir"
+	"github.com/zima-oss/jackstay/internal/review/access"
 	"github.com/zima-oss/jackstay/internal/review/claude"
 	"github.com/zima-oss/jackstay/internal/review/codex"
 	"github.com/zima-oss/jackstay/internal/review/runner"
@@ -41,17 +43,16 @@ const MaxSlots = 16
 
 // Options are one call's words (section 7).
 type Options struct {
-	Revision    string // REV or BASE..REV; "" is HEAD
-	PoolAttempt string // internal correlation for a queued review
-	Task        string
-	Reviewers   []string
-	BriefFile   string
-	Focus       string
-	Fresh       bool
-	PastLimit   bool
-	Model       string
-	Effort      string
-	Timeout     int // minutes; 0 keeps the configuration
+	Revision  string // REV or BASE..REV; "" is HEAD
+	Task      string
+	Reviewers []string
+	BriefFile string
+	Focus     string
+	Fresh     bool
+	PastLimit bool
+	Model     string
+	Effort    string
+	Timeout   int // minutes; 0 keeps the configuration
 }
 
 // Machine is what a round needs of the machine; Real gives the real one, tests their own.
@@ -109,7 +110,12 @@ func RealMachine(shared func(parts ...string) (string, error)) (Machine, error) 
 				}
 			}
 			if usesCodex {
-				return codex.CheckEnvironment(codex.Home(os.Environ()), marker)
+				if reason := codex.CheckEnvironment(codex.Home(os.Environ()), marker); reason != "" {
+					return reason
+				}
+			}
+			if slices.ContainsFunc(reviewers, func(reviewer ReviewerSettings) bool { return reviewer.Name == claude.Name }) {
+				return claude.CheckEnvironment(claude.ConfigFile(os.Environ(), homedir.AccountHome()))
 			}
 			return ""
 		},
@@ -131,6 +137,7 @@ type Round struct {
 	Machine        Machine
 	Out            io.Writer // the three lines, and the budget first
 	Errors         io.Writer // warnings and waiting
+	Request        string    // the background request this run serves (background.go), "" in the foreground
 }
 
 // Result of a call: the exit status, the folder written, and the record when it became a round.
@@ -214,6 +221,11 @@ func (round Round) Run(ctx context.Context, options Options) Result {
 		return usage("the task's lock: %v", err)
 	}
 	defer releaseTask()
+	if round.Request != "" {
+		if err := round.Store.markRunning(ctx, task, round.Request); err != nil {
+			return usage("the background request: %v", err)
+		}
+	}
 	if err := round.Store.removeAbandonedSources(task); err != nil {
 		return Result{Status: ExitReviewer, Next: fmt.Sprintf("removing an abandoned source view: %v", err)}
 	}
@@ -238,6 +250,9 @@ type plan struct {
 	follows                      int
 	ledger                       []LedgerFinding
 	streaks                      map[string]int
+	// limitCleared: the newest round reached the limit and nothing of it blocks by today's rule,
+	// so the rounds after it need no owner's word.
+	limitCleared bool
 }
 
 func (round Round) plan(ctx context.Context, task, commit, givenBase string, settings Settings, options Options) (plan, *Result) {
@@ -260,7 +275,12 @@ func (round Round) plan(ctx context.Context, task, commit, givenBase string, set
 		planned.number = record.Round + 1
 		planned.chain = record.Chain
 	}
-	if newest != nil && newest.Round >= round.Settings.RoundLimit && newest.Outcome.Blocks && !options.PastLimit {
+	// Whether the newest round still blocks is read from its ledger by today's predicate, not from
+	// the flag it saved: a rule that changed since (W-094) applies to it as `jst review check` does.
+	if newest != nil && newest.Round >= round.Settings.RoundLimit && !ledgerBlocks(round.Settings, newest.Outcome.Ledger) {
+		planned.limitCleared = true
+	}
+	if newest != nil && newest.Round >= round.Settings.RoundLimit && ledgerBlocks(round.Settings, newest.Outcome.Ledger) && !options.PastLimit {
 		result := Result{Status: ExitOwner, Next: fmt.Sprintf(
 			"round %d reached the limit of %d and still blocks: the owner decides; a further round needs --past-limit after the owner's word",
 			newest.Round, round.Settings.RoundLimit)}
@@ -326,7 +346,7 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	ctx, span := startAttempt(ctx, planned, folder)
 	defer func() { endAttempt(span, result.Record, result.Next, result.Status, result.Folder) }()
 	if err := writeJSON(filepath.Join(folder, AttemptName), AttemptRecord{Task: planned.task, Attempt: planned.attempt,
-		Commit: planned.commit, Base: planned.base, PoolAttempt: options.PoolAttempt}); err != nil {
+		Commit: planned.commit, Base: planned.base, Request: round.Request}); err != nil {
 		return usage("the attempt's folder: %v", err)
 	}
 	data, brief, refusal := round.promptData(ctx, settings, planned, options, folder)
@@ -340,9 +360,24 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 	if err := writeFileWhole(filepath.Join(folder, "prompt.md"), prompt); err != nil {
 		return usage("the attempt's folder: %v", err)
 	}
+	binding := bindingOf(planned, settings, names, prompt, Schema(settings.Severities), brief)
+	if err := writeJSON(filepath.Join(folder, AttemptName), AttemptRecord{Task: planned.task, Attempt: planned.attempt,
+		Commit: planned.commit, Base: planned.base, Request: round.Request, Binding: binding}); err != nil {
+		return usage("the attempt's folder: %v", err)
+	}
+	reusable := round.reusableAnswers(planned, settings, binding, names)
+	for _, name := range names {
+		if saved, ok := reusable[name]; ok {
+			fmt.Fprintf(round.Errors, "jst review: %s answered this question in %s; its answer is reused, not paid for again\n", name, saved.from)
+		}
+	}
+	if len(reusable) == len(names) {
+		return round.finish(settings, planned, names, options, folder, reusable, make([]ReviewerRun, len(names)), make([]Answer, len(names)))
+	}
 
 	queueContext, cancelQueue := context.WithTimeout(ctx, time.Duration(settings.QueueMinutes)*time.Minute)
 	defer cancelQueue()
+	preparing := round.Machine.Now()
 	sourceSlot, err := round.takeSourceSlot(queueContext, settings.MaxConcurrent)
 	if err != nil {
 		return round.sourceFailure(planned, folder, fmt.Sprintf("waiting for a source view slot: %v", err))
@@ -370,11 +405,15 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 			return round.sourceFailure(planned, folder, fmt.Sprintf("writing the open findings to the source view: %v", err))
 		}
 	}
+	prepareSeconds := round.Machine.Now().Sub(preparing).Seconds()
 
 	runs := make([]ReviewerRun, len(names))
 	answers := make([]Answer, len(names))
 	var reviewersDone sync.WaitGroup
 	for position, name := range names {
+		if _, ok := reusable[name]; ok {
+			continue
+		}
 		reviewersDone.Add(1)
 		go func() {
 			defer reviewersDone.Done()
@@ -386,8 +425,30 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		return round.sourceFailure(planned, folder, fmt.Sprintf("removing the temporary source view: %v", err))
 	}
 	tree = ""
+	finished := round.finish(settings, planned, names, options, folder, reusable, runs, answers)
+	if finished.Record != nil {
+		finished.Record.PrepareSeconds = prepareSeconds
+		_ = writeJSON(filepath.Join(finished.Folder, RecordName), *finished.Record)
+	}
+	return finished
+}
 
-	record := RoundRecord{Task: planned.task, PoolAttempt: options.PoolAttempt, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
+// finish turns an attempt's runs, those made now and those reused, into its outcome: a round when
+// every reviewer answered.
+func (round Round) finish(settings Settings, planned plan, names []string, options Options, folder string,
+	reusable map[string]reused, runs []ReviewerRun, answers []Answer) Result {
+	for position, name := range names {
+		saved, ok := reusable[name]
+		if !ok {
+			continue
+		}
+		run, err := saved.adopt(filepath.Join(folder, name))
+		if err != nil {
+			run.Outcome, run.Reason = runner.OutcomeFailed, "the reused answer could not be copied: "+err.Error()
+		}
+		runs[position], answers[position] = run, saved.answer
+	}
+	record := RoundRecord{Task: planned.task, Request: round.Request, Round: planned.number, Attempt: planned.attempt, Chain: planned.chain,
 		Base: planned.base, Commit: planned.commit, Follows: planned.follows, Focus: options.Focus, Policy: settings.policyID(), ContentPolicy: planned.contentPolicy,
 		PastLimit: options.PastLimit, Made: round.Machine.Now().Format(time.RFC3339), Runs: runs,
 		Summaries: map[string]string{}}
@@ -418,11 +479,8 @@ func (round Round) attempt(ctx context.Context, settings Settings, planned plan,
 		record.Summaries[name] = answers[position].Summary
 	}
 	record.Outcome = Advance(settings, planned.ledger, planned.streaks, answered, planned.number, planned.commit)
-	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit
+	record.OverLimit = planned.number > settings.RoundLimit && !options.PastLimit && !planned.limitCleared
 	status, next := Disposition(settings, record)
-	if options.PoolAttempt != "" {
-		record.PoolExit = &status
-	}
 	if err := writeJSON(filepath.Join(folder, RecordName), record); err != nil {
 		return Result{Status: ExitReviewer, Folder: folder, Next: "the round's record could not be written: " + err.Error()}
 	}
@@ -439,7 +497,7 @@ func (round Round) sourceFailure(planned plan, folder, reason string) Result {
 	ended := round.Machine.Now().Format(time.RFC3339)
 	run := ReviewerRun{Reviewer: "source-view", Exit: -1, Started: ended, Ended: ended,
 		Outcome: runner.OutcomeFailed, Reason: reason}
-	_ = writeJSON(filepath.Join(folder, "source-view", "run.json"), run)
+	_ = writeRun(filepath.Join(folder, "source-view", "run.json"), run)
 	_ = writeFileWhole(filepath.Join(folder, "report.md"), []byte(FailureReport(planned.task, planned.attempt, []ReviewerRun{run})))
 	_ = round.Store.AppendIndex(failedLines(planned, []ReviewerRun{run}, folder))
 	return Result{Status: ExitReviewer, Folder: folder, Next: reason + "; read the report, then rerun"}
@@ -447,13 +505,17 @@ func (round Round) sourceFailure(planned plan, folder, reason string) Result {
 
 // Disposition is a round's exit status and next step (section 7: redesign before the owner).
 func Disposition(settings Settings, record RoundRecord) (int, string) {
+	recheck := ""
+	if settings.Triage {
+		recheck = "re-check each blocking rating (an unusual and severe finding blocks only with an ordinary-work path, W-094), "
+	}
 	switch {
 	case len(record.Outcome.RedesignDue) > 0:
 		return ExitRedesign, "redesign, do not patch (W-019): " + strings.Join(record.Outcome.RedesignDue, "; ")
 	case record.Round >= settings.RoundLimit && record.Outcome.Blocks:
-		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: ask the owner", record.Round, settings.RoundLimit)
+		return ExitOwner, fmt.Sprintf("round %d of a limit of %d still blocks: %sthen ask the owner", record.Round, settings.RoundLimit, recheck)
 	case record.Outcome.Blocks:
-		return ExitBlocks, "fix the open blocking findings, then run the next round"
+		return ExitBlocks, recheck + "fix the blocking findings that stand, then run the next round"
 	}
 	return ExitClear, "nothing blocks"
 }
@@ -519,7 +581,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		if run.Ended == "" {
 			run.Ended = round.Machine.Now().Format(time.RFC3339)
 		}
-		_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
+		_ = writeRun(filepath.Join(reviewerFolder, "run.json"), run)
 		return run, Answer{}
 	}
 	if err := os.MkdirAll(reviewerFolder, 0o700); err != nil {
@@ -535,6 +597,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		return finish(runner.OutcomeFailed, err.Error())
 	}
 
+	waiting := round.Machine.Now()
 	slot, err := round.takeSlot(queueContext, settings.MaxConcurrent)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
@@ -555,15 +618,16 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		startLock.Release()
 		return finish(OutcomeNoSlot, "the queue time elapsed before the reviewer could start")
 	}
+	run.WaitSeconds = round.Machine.Now().Sub(waiting).Seconds()
 	agentCtx, agent := startAgent(ctx, name)
 	defer func() { endAgent(agent, run, reviewerFolder) }()
 	result := round.Machine.RunReviewer(agentCtx, runner.Request{
 		Reviewer: name, Command: reviewer.Command, Model: reviewer.Model, Effort: reviewer.Effort,
-		Timeout: time.Duration(reviewer.TimeoutMinutes) * time.Minute, Isolation: reviewer.Isolation,
+		Timeout: time.Duration(reviewer.TimeoutMinutes) * time.Minute, Isolation: reviewer.Isolation, MCPServers: reviewer.MCPServers,
 		Tree: tree, PinnedSource: true, RepositoryRoot: round.RepositoryRoot, Folder: reviewerFolder, Prompt: prompt, SchemaPath: schemaPath, Answered: startLock.Release,
 	})
 	startLock.Release()
-	run.Argv, run.Exit = result.Argv, result.Exit
+	run.Argv, run.Exit = redactedArgv(result.Argv), result.Exit // round.json keeps the runs too
 	run.Started, run.Ended = result.Started.Format(time.RFC3339), result.Ended.Format(time.RFC3339)
 	run.Seconds = result.Ended.Sub(result.Started).Seconds()
 	if result.Outcome != runner.OutcomeDone {
@@ -580,7 +644,7 @@ func (round Round) review(ctx, queueContext context.Context, settings Settings, 
 		return finish(OutcomeIncomplete, strings.TrimSpace(answer.Summary))
 	}
 	run.Outcome = runner.OutcomeDone
-	_ = writeJSON(filepath.Join(reviewerFolder, "run.json"), run)
+	_ = writeRun(filepath.Join(reviewerFolder, "run.json"), run)
 	return run, answer
 }
 
@@ -646,7 +710,7 @@ func failedLines(planned plan, runs []ReviewerRun, folder string) []IndexLine {
 	lines := make([]IndexLine, 0, len(runs))
 	for _, run := range runs {
 		lines = append(lines, IndexLine{At: run.Ended, Task: planned.task, Attempt: planned.attempt, Reviewer: run.Reviewer,
-			Commit: planned.commit, Base: planned.base, Outcome: run.Outcome, Seconds: run.Seconds, Path: folder})
+			Commit: planned.commit, Base: planned.base, Outcome: run.Outcome, Seconds: run.Seconds, Path: folder, Reused: run.Reused})
 	}
 	return lines
 }
@@ -693,3 +757,12 @@ const (
 	OutcomeIncomplete   = "incomplete"
 	OutcomeNoSlot       = "no-slot"
 )
+
+// redactedArgv is argv as kept in run.json and round.json (access.RedactedArgv).
+func redactedArgv(argv []string) []string { return access.RedactedArgv(argv) }
+
+// writeRun writes a run's record, its argv redacted (redactedArgv): the one way run.json is written.
+func writeRun(path string, run ReviewerRun) error {
+	run.Argv = redactedArgv(run.Argv)
+	return writeJSON(path, run)
+}

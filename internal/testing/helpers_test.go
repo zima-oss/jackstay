@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -100,7 +101,9 @@ type world struct {
 	firstStop  func(*supervise.Signals) (syscall.Signal, time.Time, bool)
 	git        func(ctx context.Context, dir string, args ...string) ([]byte, error)
 	unreadable bool
-	mutex      sync.Mutex
+	// system is the machine's system the tester sees ("": this one's).
+	system string
+	mutex  sync.Mutex
 	// launcher and machineClock replace the exec launch and the fake clock (integration tests).
 	launcher     func(*supervise.Signals, launch) (launched, error)
 	machineClock supervise.Clock
@@ -204,6 +207,10 @@ func (w *world) tester() *tester {
 	if w.unreadable {
 		base.system = unreadableSystem()
 	}
+	base.operatingSystem = runtime.GOOS
+	if w.system != "" {
+		base.operatingSystem = w.system
+	}
 	return base
 }
 
@@ -268,6 +275,8 @@ func (w *world) jst(args ...string) int {
 		return runner.list(args[1:])
 	case len(args) > 0 && args[0] == "plan":
 		return runner.plan(args[1:])
+	case len(args) > 0 && args[0] == uncoveredCommand:
+		return runner.uncovered(args[1:])
 	}
 	return runner.scope(args)
 }

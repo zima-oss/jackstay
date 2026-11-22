@@ -100,8 +100,12 @@ The install changes nothing outside its prefix. These steps are yours:
 
 `jst setup --plan` turns `jst doctor` findings into a setup list. `--json` gives the same list as
 data. Setup can put the installed prefix's `bin` first on `PATH` in zsh, bash, sh, dash or ksh's
-profile. It can also add jackstay's state folder to Claude Code's
-`sandbox.filesystem.allowWrite` when the sandbox is enabled and no deny rule covers the folder.
+profile. When Claude Code's sandbox is enabled, it can let the sandbox write the folders of the
+jackstay home jst writes from it (logs, locks, chat, jobs, the brief, ids, the trash), each in
+`sandbox.filesystem.allowWrite`, and replace an entry naming the whole home, so evidence (receipts,
+review rounds, the run log) stays read-only there. No deny rule may cover a folder it
+adds. The plan shows the entries removed and added; the settings file keeps its order and gets a
+backup beside it.
 Other findings carry doctor's manual fix. Fish and other shells need their own configuration,
 so setup only reports their PATH repair.
 
@@ -113,13 +117,25 @@ jst setup --yes --select sandbox
 
 The first command reads files only. The other commands apply **only** the selected repair.
 Running `jst setup` in a terminal offers apply, show and skip; with piped input it only prints
-the plan. The quick installer runs that interactive setup after a successful install when both
-input and output are terminals. Before changing an existing shell profile or Claude Code settings,
+the plan. The quick installer runs that interactive setup after a successful install only when both
+input and output are terminals. Before it starts, it says that setup first asks who merges and which
+reviewer runs (once per machine), then shows each change and asks before making it. Without a
+terminal it says that setup did not start and that `jst setup` runs it once `jst` is on your PATH. A
+release without `jst setup` is told apart, with `jst doctor` named instead. Before changing an existing shell profile or Claude Code settings,
 setup shows the change and saves the original content in a
 unique `*.jackstay-backup-*` file beside it and shows that path. It refuses a symlink, an
 unusual file, a profile with a different jackstay PATH entry, malformed settings, or a sandbox
 deny rule that needs an owner's decision. A second run does not append the same entry again.
 Open a new shell or Claude Code session after a change, then run `jst doctor` again.
+
+Before the repairs, setup on a terminal asks, once per machine, who merges a project's changes and
+which reviewer runs `jst review` (Codex recommended), and keeps the answers in
+`~/.jackstay/.all/setup.json`; `jst adopt` offers them first, and a project's `jackstay.json` still
+decides. The plan lists the current answers. To set one without being asked:
+
+```sh
+jst setup --reviewer codex,claude-code
+```
 
 `jst setup --chat` shows local session chat integration routes. The terminal can show steps for
 Codex, Claude Code and other MCP hosts. Use `jst setup --chat --plan --json` for the same

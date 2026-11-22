@@ -13,9 +13,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/layout"
 	"github.com/zima-oss/jackstay/internal/prove"
+	"github.com/zima-oss/jackstay/internal/receipts"
 	"github.com/zima-oss/jackstay/internal/supervise"
 	"github.com/zima-oss/jackstay/internal/testrepo"
 	"github.com/zima-oss/jackstay/internal/version"
@@ -797,4 +799,33 @@ func TestALiveBinaryWithTheEarlierIdentifierIsSignedAgain(t *testing.T) {
 		t.Fatal("the live binary was not replaced")
 	}
 	launchersRun(t, prefix)
+}
+
+// fixedClock is one moment.
+type fixedClock struct{}
+
+func (fixedClock) Now() time.Time { return time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC) }
+
+func TestTheUncoveredReceiptOfTheCommitLetsACheckoutBeInstalled(t *testing.T) {
+	repo := testrepo.New(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "demo", "test": {"scopes": {` +
+		`"gate": {"run": ["true"], "ci": ["linux"]}, "x-ui": {"run": ["true"]}}}}`})
+	commit := repo.Git("rev-parse", "HEAD")
+	short := repo.Git("rev-parse", "--short=7", "HEAD")
+	run := Options{Prefix: AccountPrefix()}
+	err := run.uncoveredPassed(repo.Root, short)
+	if err == nil || !strings.Contains(err.Error(), "jst test uncovered") {
+		t.Fatalf("installed without the receipt: %v", err)
+	}
+	path, err := receipts.RunLogPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := receipts.RunLog{Path: path, Project: "demo", Where: receipts.Where{Head: commit}, Clock: fixedClock{}}
+	if !log.Write(receipts.EventGate, "", map[string]any{"scope": "uncovered", "outcome": receipts.OutcomePassed,
+		"pinned_candidate": commit, "system": runtime.GOOS}) {
+		t.Fatal("the run log could not be written")
+	}
+	if err := run.uncoveredPassed(repo.Root, short); err != nil {
+		t.Fatalf("refused with the receipt: %v", err)
+	}
 }

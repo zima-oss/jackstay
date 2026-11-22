@@ -81,9 +81,9 @@ Turns on session chat between agent sessions of this repository.
 | Key | Type | What it does |
 |---|---|---|
 | `claude_code` | object | Configures the Claude Code hook that announces pending chat messages at the next boundary. |
-| `claude_code.enabled` | boolean | Lets `jst chat claude-hook` announce pending messages to Claude Code; it needs `chat.enabled`. |
+| `claude_code.enabled` | boolean | Lists the Claude Code chat item in the AGENTS block; `jst hook claude` itself needs only `chat.enabled`. |
 | `codex_bridge` | object | Configures the bridge that delivers chat messages into a managed Codex turn. |
-| `codex_bridge.enabled` | boolean | Lets `jst chat codex-bridge` deliver messages to a running Codex turn; it needs `chat.enabled`. |
+| `codex_bridge.enabled` | boolean | Lists the Codex chat item in the AGENTS block; the Codex bridge's push returns in jackstay 1. |
 | `enabled` | boolean | Turns session chat on for this repository; chat commands refuse to run without it. |
 
 ## `github`
@@ -190,7 +190,7 @@ Says what goes into a tree's key and which commands may reuse a receipt of a pas
 | `merge_bases` | list of strings | Adds the merge base of HEAD with each of these refs to every command's key. |
 | `no_reuse_branches` | list of strings | Always runs the command on these branches and on the commits they point at (default `main` and `master`). |
 | `refs` | list of strings | Adds the commit each of these refs names to every command's key. |
-| `toolchain` | list of list of strings | Adds what each of these commands prints (`[["go", "version"]]`) to the key; reuse and scope steps need it written out, even empty. |
+| `toolchain` | list of list of strings | Adds what each of these commands prints (`[["go", "version"]]`) to the key; reuse needs it written out, even empty. |
 
 ## `records`
 
@@ -233,16 +233,18 @@ Configures `jst review`: the reviewers, what they are told, and how findings dec
 | `cite` | list of strings | Lists files and folders (trailing `/`) the reviewer is told to read as the measure; each must exist in the reviewed tree (default `AGENTS.md` when it exists). |
 | `keep_days` | integer | Removes a task whose newest round is older than this many days, 1 to 3650 (default 30). |
 | `max_concurrent` | integer | Lets this project's reviews hold at most this many reviewer runs at once on the machine (default 4). |
-| `pool` | object | Configures this repository's requests to the machine's reviewer queue (`jst review pool`). |
-| `pool.accepting` | boolean | Accepts new review jobs from this repository (default true); existing jobs can still be queried, retried and processed. Default `true`. |
 | `queue_minutes` | integer | Waits at most this many minutes for a source view, reviewer slots and the start lock, 1 to 120 (default 15). |
 | `repeat_rounds` | integer | Says a place is to be redesigned once it draws a finding this many rounds running, at least 2 (default 2). |
 | `repeat_severities` | list of strings | Lists the severities that count as repeats for redesign (default every severity but the last). |
 | `reviewers` | map of objects | Overrides the built-in reviewers' settings, by name: `codex` or `claude-code`. |
-| `reviewers.*` | object | Overrides one built-in reviewer's command, model, effort, deadline and isolation flags. |
+| `reviewers.*` | object | Overrides one built-in reviewer's command, model, effort, deadline, isolation flags and MCP servers. |
 | `reviewers.*.command` | string | Runs the reviewer as this program, a name on `PATH` or an absolute path (default `codex` for Codex, `claude` for Claude Code). |
 | `reviewers.*.effort` | string | Sets the reviewer's reasoning effort; empty passes none (default `medium` for Codex, the CLI's own for Claude Code). |
 | `reviewers.*.isolation` | list of strings | Replaces Codex's default isolation flags with these words; words jackstay owns are refused, and Claude Code takes none. |
+| `reviewers.*.mcp_servers` | map of objects | Gives these MCP servers back to the reviewer, by name: `command` and `args` (needs `"jackstay_schema": 3`); the user's own stay closed. |
+| `reviewers.*.mcp_servers.*` | object | One MCP server given back to the reviewer. |
+| `reviewers.*.mcp_servers.*.args` | list of strings | Passes these arguments to the MCP server. |
+| `reviewers.*.mcp_servers.*.command` | string | Runs the MCP server as this program. |
 | `reviewers.*.model` | string | Passes this model to the reviewer; empty keeps the CLI's own default. |
 | `reviewers.*.timeout_minutes` | integer | Stops one reviewer run after this many minutes, 1 to 120 (default 20). |
 | `round_limit` | integer | Stops after this round and asks the owner, at least 2 (default 6). |
@@ -254,11 +256,11 @@ Configures `jst review`: the reviewers, what they are told, and how findings dec
 
 ## `status`
 
-Sets the defaults of the workspace overview, `jst workspace board`.
+Sets the defaults of `jst status`.
 
 | Key | Type | What it does |
 |---|---|---|
-| `repos` | list of strings | Lists the repositories the overview reads when none are named: paths relative to this file's folder, or absolute. |
+| `repos` | list of strings | Lists the repositories `jst status` reads when none are named: paths relative to this file's folder, or absolute. |
 
 ## `telemetry`
 
@@ -284,7 +286,9 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 | `scopes` | map of objects | Declares the scopes `jst test <scope>` runs: `focused`, `changed`, `quick`, `full`, `display`, `gate`, or `x-` extras. |
 | `scopes.*` | object | Defines one scope: the command it runs or the steps it lists, how it is judged, and when the project runs it. |
 | `scopes.*.base` | string | Gives the ref that `{base}` in the words stands for; `--base REF` overrides it. |
+| `scopes.*.ci` | list of strings | Lists the systems (`linux`, `darwin`) whose CI job, `jst test ci (SYSTEM)`, runs this scope and what it depends on; CI is the gate for them. |
 | `scopes.*.cwd` | string | Runs the command in this folder of the checkout instead of its root. |
+| `scopes.*.deps` | list of strings | Names the scopes or steps that must pass before this one, in this order; each runs once per run of `jst test`. |
 | `scopes.*.durations` | boolean | Records each test class's seconds for `{slow}` (default on for `full` and `display` under `swift-test`). |
 | `scopes.*.empty_exit` | integer | Reads this exit status (1 to 125) as no tests collected when the JUnit report confirms zero cases (`junit` only). |
 | `scopes.*.env` | map of strings | Sets these environment variables for the run; they are recorded. |
@@ -299,13 +303,13 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 | `scopes.*.requires[].run` | list of strings | Runs these words as the check. |
 | `scopes.*.requires[].timeout` | number | Stops the check after this many seconds (default 60). |
 | `scopes.*.requires[].why` | string | Says what the run reports when the check fails. |
-| `scopes.*.resume` | boolean | Lets `jst test gate --resume` skip this step after a pass on the same tree; false always runs it (default true). |
 | `scopes.*.run` | list of strings | Runs these words, with placeholders such as `{tests}`, `{base}`, `{slow}` and `{report}` filled in. |
 | `scopes.*.selector` | string | Expands one test ID into the runner's filter: `go-test` or `jest-test`, for a `focused` or `x-` scope. |
 | `scopes.*.slow` | object | Defines which test classes `{slow}` skips, from their recorded durations. |
 | `scopes.*.slow.case_seconds` | number | Skips a class whose median slowest case takes at least this many seconds. |
 | `scopes.*.slow.class_seconds` | number | Skips a class whose median total takes at least this many seconds. |
-| `scopes.*.steps` | list of strings | Runs these steps or scopes in order instead of `run`, stopping at the first that does not pass. |
+| `scopes.*.steps` | list of strings | Names steps or scopes instead of `run`, read as `deps`: each runs once, in this order, stopping at the first that does not pass. |
+| `scopes.*.systems` | list of strings | Lists the systems (`linux`, `darwin`) the scope runs on at all; elsewhere it is `skipped` (default any). |
 | `scopes.*.timeout` | number | Stops the whole process tree after this many seconds of the command's run (default `test.timeout`). |
 | `scopes.*.veto` | regex | Fails a run when a line of its output matches this pattern (RE2), whatever its status. |
 | `scopes.*.when` | string | Says when the project runs this scope, one line that `jst test list` prints. |

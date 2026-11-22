@@ -120,7 +120,7 @@ read from the copy.
    else the nearest `jackstay.json` at REV from the matching subfolder. It is written to the copy's
    `.git/jackstay-project` (`config.CopyMarker`, read first by `config.ProjectName`), so nested
    commands share it. The scope's settings are validated in the committed tree.
-3. The scope runs with the copy as its checkout (the same subfolder), so receipts, marks, bars,
+3. The scope runs with the copy as its checkout (the same subfolder), so receipts,
    durations and the lock are the project's own; its run lines' `worktree` is the copy and `head`
    the commit.
 4. The copy folder is removed on every way out: after the last line, on a timeout, and on a stop
@@ -129,7 +129,7 @@ read from the copy.
    whose `owner` is gone (an unreadable owner counts as alive).
 
 Every command runs afresh, even with a matching receipt. `--commit` is exit 2 (`not-started`) with
-`--resume`, an invalid commit, or a copy that cannot be made (Git's words included). The copy has no
+an invalid commit, or a copy that cannot be made (Git's words included). The copy has no
 submodules and no ignored files: a step that needs them builds them. `internal/cleancopy` makes and
 removes it; `internal/pinned` holds what it shares with review's pinned trees (owner words,
 liveness, the random name).
@@ -157,8 +157,7 @@ The AGENTS block ([adopt.md](adopt.md) section 8) names `jst discard` for droppi
 - `internal/testing`: `--commit` sees no checkout edit; resolves `origin/main`, local `main` and
   the commit as the checkout does; keeps the project's name (with and without `project`, a linked
   worktree, `--project`, a nested run); checks out a commit no ref holds; removes the copy after a
-  pass, a failure, a timeout and a stop; sweeps a dead owner's copy and keeps a live one; refuses
-  `--resume`; leaves nothing in `TMPDIR`.
+  pass, a failure, a timeout and a stop; sweeps a dead owner's copy and keeps a live one; leaves nothing in `TMPDIR`.
 
 ## 7. Not done here
 

@@ -6,7 +6,9 @@
 ### Instead of a hand-written command
 
 - **Instead of `go test`, `pytest`, `npm test` or another runner**, run `jst test -- COMMAND`.
-  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`.
+  Only `passed` is a pass: read the last `jst test:` line. After a failure, `jst test last`
+  (a run not logged names its output file).
+  `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a
   log line matches.
 - **Instead of `git worktree add` or `remove`**, run `jst start NAME` and, once it is merged,
@@ -22,9 +24,8 @@
   `jst guard let this command run, with a warning` line before going on.
 - **After a surprising failure**, read `jst log --session ID` (or `--trace ID`) and
   `jst stats REPORT` before asking.
-- **Follow work across tools** with `jst timeline`, the local PR, test, review and background history.
-- **Which agents are here**: `jst inventory` reports this repository's worktrees and observed sessions.
-- **Inspect local work across repositories** with `jst workspace board PATH…`. Read source status and freshness before acting.
+- **What is going on here**: `jst status` shows worktrees, agent sessions, recent events, chat,
+  the brief and background jobs; `jst status PATH…` gives one row per repository.
 - **Carry task context through compaction** with `jst brief save` and `jst brief show`. Keep the brief short and free of secrets.
 - **The owner's words**: `jst owner --grep RE` to find a ruling to quote.
 - **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is

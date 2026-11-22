@@ -1,6 +1,6 @@
 // Package scopes is `jst test <scope>`: one vocabulary of test scopes declared in the `test`
 // section of a project's jackstay.json, a judge (internal/judge), a timeout that ends the whole run, per
-// class durations and the `quick` scope's `{slow}`, a gate of steps with resume, marks and bars,
+// class durations and the `quick` scope's `{slow}`, a gate of steps,
 // and declared leftovers (docs/design/testing.md, "Details of the behaviour"; docs/design/implementation.md
 // sections 5.2 and 9). Nothing here names a project.
 //
@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,13 +47,11 @@ const (
 	statusRefused  = 2
 
 	outcomeTimedOut = "timed-out"
-	outcomeResumed  = "resumed"
-	outcomeRefused  = "refused"
 )
 
 // Usage is how `jst test <scope>` and its siblings are called.
-const Usage = "usage: jst test <scope> [ARGS…] [--no-reuse] [--wait S] [--base REF] [--lock|--no-lock] [--resume] [--keep-going] [--commit REV]\n" +
-	"       jst test changed [BASE..REV] | jst test auto [--base REF] | jst test list | jst test plan <scope> [ARGS…] | jst test last [--scope S] | jst test -- COMMAND …"
+const Usage = "usage: jst test <scope> [ARGS…] [--no-reuse] [--wait S] [--base REF] [--lock|--no-lock] [--keep-going] [--commit REV]\n" +
+	"       jst test changed [BASE..REV] | jst test auto [--base REF] | jst test uncovered [--commit REV] | jst test ci | jst test list | jst test plan <scope> [ARGS…] | jst test last [--scope S] | jst test -- COMMAND …"
 
 // unreadableVariable makes jackstay act as though the process table could not be read (tests only).
 const unreadableVariable = "JACKSTAY_PROC_UNREADABLE"
@@ -62,6 +61,8 @@ func init() {
 	cli.Register(
 		cli.Command{Name: "test list", Summary: "the project's test scopes: what each runs, and when the project runs it", Usage: listHelp, Run: ListCommand},
 		cli.Command{Name: "test plan", Summary: "the words a scope would run, step by step; nothing is run", Usage: planHelp, Run: PlanCommand},
+		cli.Command{Name: "test uncovered", Summary: "what CI does not cover on this system, on a clean copy of the commit", Usage: uncoveredHelp, Run: UncoveredCommand},
+		cli.Command{Name: "test ci", Summary: "every scope CI covers on this system, once, in graph order (the CI job)", Usage: ciHelp, Run: CICommand},
 	)
 }
 
@@ -69,7 +70,6 @@ func init() {
 type options struct {
 	noReuse   bool
 	lock      *bool
-	resume    bool
 	keepGoing bool
 	project   string
 	base      string
@@ -84,6 +84,9 @@ type refusal struct{ words string }
 func (problem *refusal) Error() string { return problem.words }
 
 func refused(words string) error { return &refusal{words: words} }
+
+// resumeRemoved is what `--resume` gets: it went in 0.6.0, with the gate's marks and bars.
+const resumeRemoved = "--resume was removed in jackstay 0.6.0: a gate runs every node each time; reuse of passes comes with the cache of jackstay 1"
 
 var secondsWord = regexp.MustCompile(`^\d+(\.\d+)?$`)
 
@@ -101,7 +104,7 @@ func parse(args []string) (scope string, rest []string, chosen options, err erro
 			locked := word == "--lock"
 			chosen.lock = &locked
 		case word == "--resume":
-			chosen.resume = true
+			return "", nil, chosen, refused(resumeRemoved)
 		case word == "--keep-going":
 			chosen.keepGoing = true
 		case (word == "--project" || word == "--base" || word == "--wait" || word == "--commit") && index+1 < len(args):
@@ -155,6 +158,8 @@ type tester struct {
 	logPaths func() []string
 	// system is the process table and signals a run's stop uses (nil: the machine's).
 	system *proctree.System
+	// operatingSystem is this machine's, as Go names it (runtime.GOOS), for `ci` and `systems`.
+	operatingSystem string
 }
 
 // lockedWriter writes one call at a time: the command's lines, supervise's words and jackstay's own
@@ -185,7 +190,7 @@ func newTester(stdout, stderr io.Writer) (*tester, error) {
 	base := &tester{stdout: stdout, stderr: stderr, clock: supervise.RealClock(), getenv: os.Getenv, environ: os.Environ(),
 		here: here, pid: os.Getpid(), tmpdir: os.Getenv("TMPDIR"), launch: superviseLaunch,
 		listen: supervise.Listen, acquire: flock.Acquire, endBy: supervise.EndBy, firstStop: (*supervise.Signals).First, git: runGit, alive: processAlive,
-		logPaths: receipts.RunLogPaths}
+		logPaths: receipts.RunLogPaths, operatingSystem: runtime.GOOS}
 	if base.tmpdir == "" {
 		base.tmpdir = os.TempDir()
 	}
@@ -223,6 +228,19 @@ type project struct {
 	options  options
 	signals  *supervise.Signals
 	runLog   receipts.RunLog
+	// argumentsFor is the scope asked for by name, the one node of its run given the command
+	// line's test arguments; a dep is given none.
+	argumentsFor string
+	arguments    []string
+}
+
+// argumentsOf are the command line's test arguments for a node of the run: the scope asked for
+// gets them, its deps none.
+func (proj *project) argumentsOf(name string) []string {
+	if name == proj.argumentsFor {
+		return proj.arguments
+	}
+	return nil
 }
 
 // needs are the sections a scope reads.
@@ -302,9 +320,6 @@ func (base *tester) scope(args []string) int {
 	if err == nil && name == "" {
 		err = refused("which scope? " + Usage)
 	}
-	if err == nil && chosen.commit != "" && chosen.resume {
-		err = refused("--commit is a whole run on a clean copy of the commit: it takes no --resume")
-	}
 	var signals *supervise.Signals
 	if err == nil && chosen.commit != "" {
 		chosen.noReuse = true
@@ -342,6 +357,7 @@ func (base *tester) scope(args []string) int {
 			rest = []string{rangeArgument}
 		}
 	}
+	split := false
 	if err == nil && (name == "auto" || selectChanged) {
 		if len(rest) > 0 {
 			err = refused("`auto` takes no test names")
@@ -353,7 +369,30 @@ func (base *tester) scope(args []string) int {
 				chosen.base = choice.base
 				proj.options = chosen
 				proj.printSelection(choice)
+				// A project that says where its scopes run splits what `changed` selects between
+				// here, CI and other systems (docs/design/land.md section 7.4); `auto` runs the
+				// selected scope.
+				split = selectChanged && declaresWhere(proj.section)
 			}
+		}
+	}
+	if err == nil && name == ciCommand && base.pin == nil {
+		if len(rest) > 0 {
+			err = refused("`jst test ci` takes no test names")
+		} else if len(ciScopes(proj.section, base.operatingSystem)) == 0 {
+			err = refused("no scope of " + proj.name + " names " + base.operatingSystem + " in its `ci`: `jst test ci` has nothing to run here")
+		}
+	}
+	if err == nil && (split || name == uncoveredCommand && base.pin != nil || name == ciCommand) {
+		proj.listenUnless(signals)
+		defer proj.signals.Close()
+		switch {
+		case split:
+			return proj.runSplit("changed", []string{name})
+		case name == uncoveredCommand:
+			return proj.runSplit(uncoveredCommand, proj.uncoveredSelection())
+		default:
+			return proj.gate(ciCommand, ciScopes(proj.section, proj.operatingSystem), nil)
 		}
 	}
 	var entry map[string]any
@@ -364,12 +403,12 @@ func (base *tester) scope(args []string) int {
 		case entry == nil:
 			err = refused("`" + name + "` is not a scope of " + proj.name + "; its scopes: " + joinComma(sortedKeys(scopes)) +
 				" (`jst test list`)")
-		case base.pin != nil && !has(entry, "steps"):
+		case base.pin != nil && !isComposite(entry):
 			err = refused("the pinned gate must list its steps")
-		case has(entry, "steps") && len(rest) > 0:
-			err = refused("`" + name + "` is a list of steps and takes no names; given: " + joinSpace(rest))
-		case !has(entry, "steps") && (chosen.resume || chosen.keepGoing):
-			err = refused("--resume and --keep-going are for a scope that lists steps")
+		case len(depsOf(entry)) > 0 && namesRefusal(name, entry, rest) != nil:
+			err = namesRefusal(name, entry, rest)
+		case len(depsOf(entry)) == 0 && chosen.keepGoing:
+			err = refused("--keep-going is for a scope with deps (or that lists steps)")
 		}
 	}
 	if err != nil {
@@ -377,14 +416,32 @@ func (base *tester) scope(args []string) int {
 		base.say("outcome=not-started (nothing was run)")
 		return statusRefused
 	}
-	if signals != nil {
-		proj.signals = signals
-	} else {
-		proj.signals = base.listen(proj.ctx, base.clock)
-		defer proj.signals.Close()
-	}
-	if has(entry, "steps") {
-		return proj.gate(name)
+	proj.listenUnless(signals)
+	defer proj.signals.Close()
+	if len(depsOf(entry)) > 0 || !runsOn(entry, proj.operatingSystem) {
+		proj.argumentsFor, proj.arguments = name, rest
+		return proj.gate(name, []string{name}, nil)
 	}
 	return proj.runLeaf(resolve(proj.section, name, kindScope, entry), rest, "", false).status
+}
+
+// namesRefusal is why a scope refuses the test names given, or nil: a composite takes none, nor
+// does a scope whose words need none. `jst test` and `jst test plan` both check it before the walk.
+func namesRefusal(name string, entry map[string]any, rest []string) error {
+	switch {
+	case len(rest) == 0 || !isComposite(entry) && needsTestArguments(entry):
+		return nil
+	case len(depsOf(entry)) > 0:
+		return refused("`" + name + "` has deps (or lists steps) and takes no names; given: " + joinSpace(rest))
+	default:
+		return refused("`" + name + "` takes no names (its words hold no {tests}); given: " + joinSpace(rest))
+	}
+}
+
+// listenUnless listens for requests to stop, unless the clean copy's listener already does.
+func (proj *project) listenUnless(signals *supervise.Signals) {
+	proj.signals = signals
+	if signals == nil {
+		proj.signals = proj.listen(proj.ctx, proj.clock)
+	}
 }

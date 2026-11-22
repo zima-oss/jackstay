@@ -33,7 +33,8 @@ on the command line is the exception (a file outside the tree, copied into the r
 | `reviewers.codex.model` | passed as `-m`; empty means Codex's own default (with `--ignore-user-config` that is Codex's built-in one, not the user's `config.toml`) | empty |
 | `reviewers.codex.effort` | reasoning effort, passed as `-c model_reasoning_effort="…"`; one of `minimal`, `low`, `medium`, `high`, `xhigh`; empty passes nothing | `medium` |
 | `reviewers.codex.timeout_minutes` | the hard deadline of one run (section 3.4); 1–120 | 20 |
-| `reviewers.codex.isolation` | the isolation flags, a list of argv words that **replaces** the default list whole. Words jackstay owns are refused here (below) | `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--skip-git-repo-check`, and `-c` `mcp_servers={}`, `features.apps=false`, `shell_environment_policy.inherit=none` |
+| `reviewers.codex.isolation` | the isolation flags, a list of argv words that **replaces** the default list whole. Words jackstay owns are refused here (below) | `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, `--skip-git-repo-check`, and `-c` `mcp_servers={}`, `features.apps=false` |
+| `reviewers.<name>.mcp_servers` | MCP servers given back to that reviewer, by name: `{"command": "…", "args": […]}`; the user's own stay closed (section 3.4). Needs `"jackstay_schema": 3` | none |
 | `use` | the built-in reviewers a round runs when `--reviewer` is absent, and the reviewers required by `review check`; names must be unique | `["codex"]` |
 | `brief` | the project's standing brief: what a reviewer of this project must know (its threat model, what to ignore). Put at the top of every prompt | none |
 | `template` | a whole prompt template (Go `text/template`, section 3.2) replacing jackstay's own; for a project whose reviews differ in kind. Its output must still ask for the verdict form, which jackstay appends itself whatever the template says | jackstay's embedded template |
@@ -74,9 +75,12 @@ command `claude`, the CLI's model and effort, a 20-minute timeout. Efforts: `low
 
 Jackstay verifies `claude --version` locally and requires 2.1.248 or newer before the run. It
 starts the CLI in the pinned source view with `--print --restricted --safe-mode
---no-session-persistence`. The built-in tool allowlist is `Read,Glob,Grep`, the permission mode is
-`dontAsk`, and MCPs are disabled by a strict empty configuration and a tool denial. The child
-receives the environment variables needed for local CLI use and its chosen authentication. The
+--no-session-persistence --add-dir /`. The built-in tool allowlist is `Read,Glob,Grep,WebFetch,WebSearch`, the permission mode is
+`dontAsk`, and MCPs are disabled by a strict empty configuration and a tool denial; section 3.4
+gives the whole access profile it shares with Codex. Like Codex, it runs outside an agent's
+sandbox, and jackstay checks that first: when Claude Code's state file (`$CLAUDE_CONFIG_DIR/.claude.json`,
+else `~/.claude.json`) exists and cannot be opened for writing, the round stops with exit 6 before
+anything starts ("run `jst review` outside the sandbox"). The
 CLI consumes the prompt through stdin and uses existing CLI credentials. Managed policies and
 managed hooks still apply on machines where administrators configure them.
 [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference)
@@ -187,15 +191,60 @@ round's report merges their findings by `place`.
 
 ### 3.4 The run
 
-- **argv**: as in section 1 (Codex CLI 0.169.0 or newer). The pinned permission profile allows
-  read-only shell navigation in the view (`grep`, `cat`) and minimal runtime reads (the CLI's own
-  folder), no shell network, and `-a never`.
+- **The reviewer's access profile** ([W-090](../decisions/W-090-review-of-0-6-0.md)), the same for Codex and Claude Code (`internal/review/access`).
+  The reviewer's task is to read and report, so it is given everything it may need to read, and
+  denied only what it clearly does not need:
+  - **reads everywhere**, read-only. Codex: a permission profile `":root"="read"`. Claude Code:
+    `--add-dir /` with the tools `Read`, `Glob`, `Grep`, `WebFetch`, `WebSearch` only (no tool
+    that writes or runs a command).
+  - **writes only its own temporary folder**, `<attempt>/<reviewer>/tmp`, which is its `TMPDIR`
+    (Codex: the one `"write"` entry of the profile; Claude Code has no writing tool).
+  - **the network is open** (Codex: `network.enabled=true`; Claude Code: its web tools).
+  - **the environment** is the caller's whole one — the user's full `PATH`, locale, proxy
+    variables (with any credentials in their URL), CA bundles, provider settings — less: the calling
+    session's and jackstay's own variables (`CLAUDE*`, `JACKSTAY_*`, `OMC_*`, `GIT_*`,
+    `SSH_AUTH_SOCK`, `SANDBOX_*`), and every variable whose name looks like a credential
+    (`TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY`, `CREDENTIAL`, `COOKIE`, `AUTH`…)
+    except the reviewer's own provider's login: `OPENAI_*`, `AZURE_OPENAI_*`, `CODEX_API_KEY` for
+    Codex; `ANTHROPIC_*`, `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR` and the Bedrock or Vertex
+    credentials when that is its provider, for Claude Code. Codex's shell inherits it
+    (`shell_environment_policy.inherit="all"`, with Codex's own default exclusion of key-like
+    names kept); jackstay sets it before the project's isolation flags, so a project's own
+    `shell_environment_policy` wins.
+  - **secrets are not read**: `~/.ssh`, `~/.aws`, `~/.azure`, `~/.gnupg`, `~/.kube`,
+    `~/.docker/config.json`, `~/.netrc`, `~/.npmrc`, `~/.pypirc`, `~/.config/gh`, `~/.config/gcloud`,
+    `~/.config/hub`, `~/.config/op`, `~/.git-credentials`, `~/.password-store`, `~/.vault-token`,
+    `~/.terraform.d/credentials.tfrc.json`, `~/.cargo/credentials.toml`, the keychain
+    (`~/Library/Keychains`) or keyring (`~/.local/share/keyrings`); **the other reviewer's login and
+    state** (Claude Code is denied `$CODEX_HOME`, else `~/.codex`; Codex is denied `~/.claude`,
+    `~/.claude.json` and `$CLAUDE_CONFIG_DIR`); and `.env` / `.env.*` files. Their contents are
+    also left out of the generated patches (`changes/*.patch`); the change index still names them.
+    Claude Code: `Read`, `Glob` and `Grep` deny rules for each path and for `//**/.env` and
+    `//**/.env.*` (anchored at the filesystem's root, not at its working folder), through
+    `--settings`. Codex on macOS: each path `"none"` in the profile, and the globs `"/**/.env"` and
+    `"/**/.env.*"` `"none"`, checked at every read, links included. **Codex on Linux denies no
+    `.env` file**: its sandbox expands a glob before the run, takes regular files only, refuses one
+    rooted at `/` and stops every sandboxed command when its scan meets a folder it cannot read
+    (Codex 0.169.0's Linux sandbox source), three designs were tried and none could be verified
+    here; so on Linux the reviewer keeps the read-only profile and the credential-path denials,
+    and `.env` files stay readable to it (the redesign is an issue of its own). Not run on Linux.
+  - **the user's MCP servers, hooks and rules are off**: Codex `--ignore-user-config`,
+    `--ignore-rules`, `mcp_servers={}`; Claude Code `--restricted --safe-mode` (no user, project or
+    local settings, no hooks, no plugins), `--strict-mcp-config` with an empty `--mcp-config`,
+    `disableAllHooks`. `review.reviewers.<name>.mcp_servers` gives chosen servers back, and their
+    tools only. Their definitions may hold a credential, so `run.json` and `round.json` keep every
+    MCP setting of the argv — jackstay's, or a project's in its isolation flags, whole table or one
+    key — by key only (a reused run's record too), and so does the argv kept in telemetry.
+  Checked against Codex 0.169.0 and Claude Code 2.1.328 on macOS (2026-11-20): both were denied
+  `~/.ssh`, the untracked `.env` of the checkout and of a checkout beside it, and the other
+  reviewer's login, listed `/usr/share`, and fetched a public web page; Codex's shell had the user's full `PATH` and no `GH_TOKEN` set in the
+  caller, and wrote nothing outside its folder.
+- **argv** (Codex): as in section 1, then the access profile as `-c` permission settings,
+  `-a never`, `--strict-config` and `project_doc_max_bytes=0` (repository instructions are read
+  from the pinned view on demand). Codex CLI 0.169.0 or newer is required.
   [Inside the Codex sandbox](https://openai.com/index/inside-the-codex-sandbox/)
 - **stdin**: the prompt is written to Codex's standard input from memory, which is then closed;
   the argv's last word is `-`. No run ever has an open terminal or an inherited stdin.
-- **environment**: built, not inherited — `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`,
-  `TMPDIR` and `CODEX_HOME` from jackstay's own, where set; nothing else (no `CLAUDE*`, `JACKSTAY_*`, `OMC_*`,
-  `GIT_*`, `OPENAI_*`, no session variables).
 - **working folder**: the tree (`-C` and the process's own).
 - **outputs**: `-o attempt-<k>/<reviewer>/answer.json` (the last message alone); standard output (the
   `--json` events) to `events.jsonl` and standard error to `stderr.txt`, both in that folder,
@@ -223,6 +272,7 @@ embedded one with this project's severity words), so its last message is one JSO
       "consequence": "severe",
       "title": "one line",
       "detail": "what, where, why, and the smallest fix",
+      "ordinary_path": "",
       "repeats": ["r2-codex-F3"]
     }
   ],
@@ -232,9 +282,15 @@ embedded one with this project's severity words), so its last message is one JSO
 
 `verdict` is `approve`, `changes` (a new or still-open finding) or `incomplete` (the reason in
 `summary`, the ledger unchanged). `severity` is one of `severities`; W-048's axes are `likelihood`
-`ordinary` (happens by accident) or `unusual` (needs a deliberate setup), and `consequence`
+`ordinary` (happens by accident) or `unusual` (needs a hand-built setup or deliberate misuse), and `consequence`
 `severe` (lost work or data, an unnoticed wrong decision) or `mild`. `repeats` names ledger
-findings this one continues; `prior` answers every open finding, `fixed` or `open`. The schema
+findings this one continues; `ordinary_path` names, for an `unusual` finding, the ordinary work by
+which its setup arises by accident (empty when none does, and for an `ordinary` finding); `prior`
+answers every open finding, `fixed` or `open`. A transient local disk error in an ordinary call is
+rare (the error need only reach the caller); a process killed between two writes is `ordinary`, a
+finding when recovery leaves the state wrong or a message lost or doubled (W-094). A finding that
+only asks to cover more exotic cases (`unusual`, with an empty `ordinary_path`) never takes a
+blocking severity (W-096). The schema
 sets `additionalProperties: false` and every member required (`[]` where empty).
 
 jackstay reads `answer.json` with `internal/strictjson` (one value, no member twice, no unknown member, 1
@@ -256,7 +312,8 @@ a disagreement is recorded in the report.
 | `unparsable` | `answer.json` is not one JSON object of the schema (the strict reader's error kept) | 5 |
 | `inconsistent` | read, but a check above fails (which one kept) | 5 |
 
-A run that ends in anything but `done` is not retried, and takes no round number (section 4).
+A run that ends in anything but `done` is not retried, and takes no round number; the next run
+of the task reuses N and the answers the other reviewers gave (section 4).
 
 ## 4. Rounds, triage and W-019
 
@@ -277,6 +334,19 @@ old lock.
 a killed run leaves a failed attempt and the next run still takes N. An attempt where some reviewers
 failed is not a round (exit 5); its successful answers stay readable.
 
+**Only the missing answers are paid for again** ([W-090](../decisions/W-090-review-of-0-6-0.md)). `attempt.json` records the attempt's
+**binding**: a digest of the round number, the task, the commits (base, head, previous), the review
+policy and content policy, each selected reviewer's settings (command, model, effort, isolation; not its deadline),
+and the digests of the prompt, the verdict schema and the `--brief` file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
+starting reviewers, a run looks through the task's earlier attempts (never rounds), newest first,
+for one with its own binding; a reviewer's `answer.json` there is reused when it reads and checks as a
+fresh answer would (section 3.5), is not `incomplete`, and was given with the same model and
+effort, its `run.json` saying `done` — or missing, when jackstay was killed after the answer was
+written. The answer is copied into the new attempt, its run marked `reused` with the attempt it
+came from (the report says so), and only the other reviewers run. When every answer is found, no
+source view is built and no reviewer starts. Anything else that changed (a new commit, a round
+taken meanwhile, a new focus, model or policy) is another binding, and every reviewer runs.
+
 **Chains and the ledger.** A task's rounds form chains: round 1 starts one, `--fresh` starts
 another (a full review with an empty ledger), every other round continues the previous one's chain
 from the same base (3.1). So a chain at commit C has reviewed every change from its base to C: the
@@ -296,11 +366,17 @@ names any other is `inconsistent`. A finding enters the ledger in the round that
   later rounds. Found again later, it is a new finding of that round.
 
 **Triage and blocking** (W-048). With `triage` on, a finding is **realistic** when `likelihood` is
-`ordinary` or `consequence` is `severe`, **rare** when it is `unusual` and `mild`. One predicate
+`ordinary` or `consequence` is `severe` with an `ordinary_path`, **rare** when it is `unusual` and
+either `mild` or without an `ordinary_path`. One predicate
 says whether a finding blocks: its severity is in `blocking` and, with `triage` on, it is realistic
 (with `triage` off, the severity alone). A round **blocks** when any *open* finding of its ledger
 blocks after the round, found or answered `open` alike. Rare findings never block; the report lists
-them with a ready row for the project's later-findings card. The session checks the ratings.
+them with a ready row for the project's later-findings card. An `unusual` finding is realistic only
+when its `ordinary_path` names the ordinary work by which that setup arises by accident
+([W-094](../decisions/W-094-unusual-severe-findings-need-an-ordinary-path.md)): with it empty, a
+`severe` one is rare too, deferred and never blocking. The session checks the ratings, the path
+included, before it calls a finding a blocker or asks for a round past the limit; the next step
+`jst review` prints for a blocking round says so.
 
 **Places.** A place is the finding's `place` string, trimmed, with runs of spaces made one and
 compared without regard to case. The prompt lists prior places and asks for the exact string again
@@ -333,6 +409,9 @@ next round is ordinary, usually with `--focus` on the redesigned place.
     attempt-2/ …                          an attempt that did not become a round
       source/                            temporary pinned view while a review runs
   .trees/                                 legacy locked worktrees, if any
+  .requests/<task hash>.json              the task's review running in the background (section 6)
+  .requests/<task hash>-<id>.log          its output
+  .ends/<task hash>-<id>.json             how a background request ended, and which sessions were told
 ```
 
 `attempt.json` is written first, so a failed attempt keeps what it was for (task, attempt, commit,
@@ -381,6 +460,36 @@ start lock (section 2) are not both held within `queue_minutes`, it ends `failed
 Codex never starts. An error opening a lock fails at once. A round's reviewers run concurrently,
 each returning a result value; none outlives the call.
 
+**In the background** (W-090; the 0.5.x reviewer pool,
+its store, worker and nine subcommands, folded into `jst review`). `jst review … --background`, and
+the chat's `review.submit`, resolve the commits now and, under the lock of the task's request file
+`<store>/.requests/<task hash>.json`, write the request (id, task, worktree, repository, commits,
+reviewers, `--fresh`, `--past-limit`, `--focus`, the chat sessions to tell); then start, detached in
+a session of its own, `jst bg --for <budget + 1> --name review-<task> -- jst review --task T
+--reviewer R --request ID -- BASE..REV`, and wait at most 10 s for it to take the task's lock, so
+`jst bg` finds its session among its parents. The `jst bg` entry is the pending run's record
+(`jst procs`). There is no worker: reviews of different tasks run at once, bounded by the slots.
+- **One request per task.** While its process lives (id and start in the process table; without a
+  table, until its deadline), an equal submission (same repository, worktree, task, commits,
+  reviewers, flags) joins it (at most 32 sessions) and a different one is refused (exit 2, task
+  busy).
+- **One end per request.** A request ends exactly once, in `<store>/.ends/<task hash>-<id>.json`,
+  written under the request's lock before the request is removed: the request with its sessions,
+  the outcome (status, word, next step cut to 2 KiB, round, report folder) or *lost*, and which
+  sessions have been told. It ends when its run finishes; when its launch fails (sessions that
+  joined meanwhile included); or, lost, when its process is found gone (by a new submission, by
+  `review.status`, or when any session's chat looks for what it is owed). A request with an end is
+  over: it cannot be joined, and a crash between the end and the removal tells the saved outcome.
+- **Telling the sessions.** Each session's `review.finished` event is made from the end, keyed by
+  request and session, and given to the chat's publisher (`internal/chatevent`,
+  [chat.md](chat.md) section 10); each one stored is recorded in the end, the rest pulled at that
+  session's next inbox read or hook. It names a round and report only while the folder still holds
+  that request's attempt. Older fully told ends of the same repository are removed.
+- **Status.** `review.status` answers for the asking repository (Git common folder and its inode)
+  only: its running request and how its latest ended. It reads nothing of the rounds kept by
+  project, which clones of one project share. The chat checks that the review's repository is the
+  one its session registered in.
+
 ## 7. Commands
 
 `jst review [REV | BASE..REV]` runs a round; `last` prints the newest round's report or the newest
@@ -401,7 +510,7 @@ path, and the next step.
 | 3 | done, and a place is due for redesign (W-019) |
 | 4 | done, the round limit is reached and still blocks — or a round past it refused — the owner decides |
 | 5 | a reviewer did not give a usable answer (timeout, failure, no answer, unparsable, inconsistent, no slot) |
-| 6 | the environment refuses: inside a sandbox, no `auth.json`, the login failed earlier and was not renewed, Codex not installed |
+| 6 | the environment refuses: inside a sandbox (Codex's `auth.json` or Claude Code's state file not writable), no `auth.json`, the login failed earlier and was not renewed, a reviewer not installed |
 
 The gate never runs `jst review`: it costs money, needs the network and answers differently each
 time (W-013).
@@ -417,7 +526,8 @@ nothing is inferred: exit 0 only when all hold, else exit 1 with each reason tha
   repetition, round limit; not scheduling, storage or per-run overrides) and every reviewer of
   `review.use` finished (with `review.use` explicitly empty, any one completed reviewer);
 - after it, no open finding of the ledger blocks;
-- it is not redesign-due, and not past `round_limit` without `--past-limit` having been given.
+- it is not redesign-due, and not a round past `round_limit` that followed a limit round still
+  blocking by today's rule without `--past-limit` having been given.
 No other field promises anything; `blocks: false` on a record is not "reviewed". A single commit
 is checked as `REV^..REV`.
 
@@ -427,6 +537,7 @@ is checked as `REV^..REV`.
 |---|---|
 | `internal/review` | the settings and their validator; the prompt (embedded template and schema); rounds, chains, triage, places and W-019; the store, index and pruning; the commands (`cli.Register`) |
 | `internal/review/codex` | the Codex runner (it knows no rounds or locks: the caller's start lock is released through a callback at Codex's first answer): argv, environment, stdin, deadline and process group, the event stream (first-answer signal, auth failure), outputs, outcomes |
+| `internal/chatevent` | the event a producer publishes into the chat and the `Publisher` the chat registers ([chat.md](chat.md) section 10); without a chat, publishing answers "unavailable" and the event stays owed |
 
 It reuses `internal/config`, `internal/project`, `internal/strictjson`, `internal/gitcli`,
 `internal/homedir` and `internal/cli`. `internal/review` declares `Reviewer` (`Review(ctx, Request)
@@ -447,6 +558,10 @@ fake `codex` built into `t.TempDir()` that checks its argv, environment and clos
 scripts events, deadlines, failures and auth errors. Cross-process tests cover the locks and slots;
 an unwritable `auth.json` gives exit 6; integration tests (real git) cover the pinned tree. A real
 Codex round is run by hand, outside the gate.
+
+The measurement of the wrapper against direct calls, outside the gate too: seeded defects over
+three ranges, recall, precision, time per stage, model and cost (`just review-bench`,
+[bench/review](../../bench/review/README.md); the runs before 0.6.0 are in its `results/`).
 
 ## 9. What it cannot see, and limits
 

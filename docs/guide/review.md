@@ -51,6 +51,22 @@ jst review last --task parser
 for a slot, 20 for the run, 2 to spare); give `jst bg --for` at least that. Up to
 `review.max_concurrent` (4) runs share the machine.
 
+Or let `jst review` do it and return at once:
+
+```sh
+jst review origin/main..HEAD --task parser --reviewer codex,claude-code --background
+```
+
+It pins both commits now and starts the round under `jst bg` (`jst procs` lists it as
+`review-<task>`). The same review submitted again while it runs joins it; a different review of
+the same task is refused until the first ends. `--brief`, `--model`, `--effort` and `--timeout`
+belong to a round in the foreground. When the round ends, each session that submitted it gets a
+`review.finished` chat message (with chat enabled and a chat identity): outcome, round, report and
+next step. Without chat, once `jst procs` no longer lists it, the end of its log (the path
+`--background` printed) says this request's outcome and report; `jst review last` alone could show
+an older round when the run ended before it made an attempt.
+If the run dies first, its sessions are told it was lost; submit it again.
+
 Run Codex reviews outside an agent sandbox: Codex must be able to save its login
 ([Codex](codex.md#codex-as-the-reviewer-jst-review)).
 
@@ -62,10 +78,15 @@ round, inspect `previous/`. The `changes/` directory holds changed-path indexes 
 on demand. The first prompt holds instructions and references; the provider receives source
 excerpts when the reviewer reads them during the session.
 
-Source is limited to tracked Git objects at the selected revisions: files from your working
-checkout and submodule contents are left out, and a symlink appears as a plain file holding its
-target. Claude Code uses its `Read`, `Glob` and `Grep` tools; Codex can use read-only shell
-navigation and search. Managed Claude Code policies, managed hooks included, still apply.
+The snapshot holds tracked Git objects at the selected revisions: submodule contents are left
+out, and a symlink appears as a plain file holding its target. Beyond it, a reviewer may read the
+rest of the machine, read-only, and use the network, your full `PATH`, your proxy and CA settings
+and its own provider's login. It cannot write outside its own temporary folder, read `~/.ssh`,
+`~/.aws`, `~/.config/gh` and the other credential folders, the keychain, the other reviewer's login
+or `.env` files (on Linux, Codex can read `.env` files: that part waits for a redesign), or see token-like environment variables other than its
+provider's. Claude Code uses `Read`, `Glob`, `Grep`, `WebFetch` and `WebSearch`; Codex has
+read-only shell navigation and search. Managed Claude Code policies, managed hooks included, still
+apply. The [design](../design/review.md#34-the-run) lists the profile whole.
 
 jackstay keeps each round under `~/.jackstay/<project>/reviews/`. If Git reports missing objects in
 a partial clone, fetch the history and objects needed before retrying. A projection error or an
@@ -121,98 +142,28 @@ any `review` section. Add the section to choose the default reviewers and tune t
 - `repeat_rounds` (2): how many rounds running a place must draw a finding before it is due for
   redesign.
 - `keep_days`: how long rounds are kept; `jst review prune` removes older tasks now.
+- `reviewers.<name>.mcp_servers`: MCP servers you give back to a reviewer, for example a
+  documentation server: `{"docs": {"command": "docs-mcp", "args": ["--stdio"]}}`. Your own servers,
+  hooks and rules stay off.
 
 `jst check` validates the section. Paths are read from the reviewed commit's tree.
 
-## Share a review queue
-
-Use the optional local pool when several repositories submit review work.
-
-```text
-jst review pool add --repo "$PWD" --base main --head HEAD --task parse-change --reviewer codex
-jst review pool list --json
-jst review pool inspect --json
-jst review pool next
-jst review pool retry JOB_ID
-jst review pool prune
-jst review pool migrate
-```
-
-The pool pins both commits and the effective review policy when a job is added. If verdict
-rules, selected reviewer settings, budgets, or the resolved review store change before launch,
-the job fails with `stale-policy`. Submit again to pin the new policy, or restore the original
-policy before retrying. Older pending
-jobs without a policy pin also require resubmission. An already recorded round can still be
-reconciled when its original store remains available. One foreground worker runs an eligible
-job at a time across the machine. If the worker loses its state update after the review
-saved a completed round, the next worker can recover its exact verdict from that round.
-
-Set admission with `review.pool.accepting` in `jackstay.json` (default `true`; it needs
-`"jackstay_schema": 3`). With `false`, the repository accepts no new job identities; existing
-jobs can still be queried, retried, and processed. The pool's limits are fixed:
-
-| Limit | Value |
-| --- | ---: |
-| Jobs pending or running for one repository (the machine-wide cap is 256) | 32 |
-| Launches for one pinned job, including recovery after interruption | 5 |
-| Initial delay when explicitly retrying a retryable failure | 30 s |
-| Upper bound of the exponential retry delay | 900 s |
-| Days a terminal job is kept after its last update (saved when the job is added) | 30 |
-
-JSON status exposes when delayed work becomes eligible. Configuration errors and other
-operator failures need attention before retry. See the [reviewer pool specification](../roadmap/reviewer-pool.md)
-for the recovery guarantees and current limits.
-
-### Inspect and clean up the pool
-
-`jst review pool inspect` shows aggregate queue counts and eligibility without exposing repository
-paths, task names, or job identifiers. Add `--json` for machine-readable output. `list --json`
-still exposes individual local jobs for an operator who needs them.
-
-`jst review pool prune` previews expired `complete` and `failed` jobs. Add `--json` for a
-machine-readable preview, then run `jst review pool prune --apply` to remove the eligible jobs
-and their pool subscriptions and events. Pending and running jobs remain. A terminal job remains
-while any subscriber's result has yet to reach chat. Once chat has durably accepted the result,
-the recipient can read and acknowledge it through `chat.inbox` and `chat.ack` even if the pool
-job has been pruned. The review round reports have their own retention setting,
-`review.keep_days`. Submitting the same request after pruning starts a new job
-generation, and an older acknowledgment does not hide its result.
-
-If a session has permanently left a job, use `jst review pool subscribers JOB_ID` to find its
-opaque recipient ID and the job generation. Preview with
-`jst review pool unsubscribe JOB_ID SESSION_ID --generation TOKEN`; add `--apply` to close
-that recipient's subscription. Closed subscriptions stop blocking history cleanup and cannot
-be reopened for that generation. Other recipients remain subscribed. Chat messages already
-accepted or in flight can still arrive and be acknowledged normally.
-
-`jst review pool migrate` previews the state-file upgrade. Use
-`jst review pool migrate --apply` to perform it explicitly. Versions 1 and 2 can be read without a
-write. The first queue write also upgrades the file atomically to version 3, which adds policy
-pins and subscription closure. Jobs without a saved history period use the 30-day default.
-An unknown version or damaged state is refused. Back up the local pool state file before its
-first write when you may need to run an older jackstay. Older binaries cannot read version 3.
-Before restoring a backup for a downgrade, stop pool writers and account for newer jobs. No worker or cleanup timer runs automatically.
-
 ### Submit and track a review from an agent
 
-Enable `chat.enabled` and connect the repository's `jst chat serve` MCP server. Use
-`review.submit` with `base`, `head`, `task`, and an explicit `reviewers` list containing
-`codex`, `claude-code`, or both. Keep the returned `job.id` and pass it as `job_id` to
-`review.status` to see the pinned commits, state, attempts, and exit code. Submitting the
-same pinned request again returns the same job. Linked worktrees share an MCP job when commits,
-task, reviewers, effective policy, and resolved review store agree. The first submission's
-checkout still runs the review. The operator still runs `jst review pool next`
-to process eligible work.
-
-The requesting session receives a chat message when an attempt settles. Read the result
-with `review.status`, then acknowledge the message with `chat.ack` and its `message_id`.
-Use `chat.inbox` to recover unacknowledged messages. The Codex bridge can deliver to an
-active turn. Claude Code can receive pending messages at its next configured prompt or tool
-boundary. Keep the same chat session token when reconnecting.
+With `chat.enabled` and the repository's `jst chat serve` MCP server, `review.submit` takes `base`,
+`head`, `task` and a `reviewers` list (`codex`, `claude-code` or both) and starts the same
+background round. `review.status` with a `task` shows this repository's review running in the
+background, if any, and how its latest one ended: outcome, round and report. The result arrives as
+a `review.finished` message from `jackstay`; read it with `chat.inbox` and acknowledge it with
+`chat.ack`. A result the chat could not take is delivered the next time the session reads its inbox
+or reaches a configured hook.
 
 ## What can go wrong
 
 - **Exit 6 running Codex in the Claude Code sandbox**: run the command outside that sandbox.
+- **Exit 5, one reviewer failed or the run was killed**: run the same command again. A reviewer
+  that already answered this exact question is not run again: its answer is reused, and the
+  report says from which attempt.
 - **Exit 5, `no slot`**: other reviews held every slot past `queue_minutes`. Rerun later. An
   inaccessible lock instead fails immediately and names the underlying error.
 - **Exit 2, task busy**: another run of the same task is under way; wait for it.
