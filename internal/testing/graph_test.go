@@ -258,6 +258,24 @@ func TestChangedSplitsBetweenHereCIAndElsewhere(t *testing.T) {
 	linux.expectLast("outcome=failed (changed failed at x-lint")
 }
 
+// A selected composite that cannot run here still leads to its tests: one that only another
+// system runs, and no CI covers, needs another machine; it is never left to CI.
+func TestChangedFindsWhatOnlyAnotherSystemRunsBehindACompositeThatCannotRunHere(t *testing.T) {
+	section := with(whereSection(), "scopes", "x-mobile", map[string]any{"deps": argv("x-ios"), "systems": argv("darwin")})
+	section["selection"] = map[string]any{"order": argv("x-mobile", "x-docs", "gate"),
+		"rules": []any{map[string]any{"glob": "ios/**", "scope": "x-mobile"}, map[string]any{"glob": "docs/**", "scope": "x-docs"}}}
+	linux := newWorld(t, section, nil)
+	linux.system = "linux"
+	linux.repo.Commit("change", map[string]string{"ios/a.swift": "let a = 1\n"})
+	linux.expectStatus(linux.jst("changed", "--base", "main"), statusNeedsOtherSystem)
+	linux.expectLast("outcome=needs-other-system (darwin: x-ios; changed, ", "here: none; ci: none")
+	linux.expectCounters("x-build x-ios", 0, 0)
+	linux.expectStatus(linux.jst("plan", "changed", "--base", "main"), 0)
+	if plan := linux.stdout.String(); !strings.Contains(plan, "here: none\nleft to CI: none\nelsewhere: darwin: x-ios\n") {
+		t.Fatalf("the plan:\n%s", plan)
+	}
+}
+
 func TestUncoveredRunsWhatCIDoesNotCoverOnThisSystemOnACleanCopy(t *testing.T) {
 	// The focused scope needs test names: it is left out.
 	section := with(whereSection(), "scopes", "focused", map[string]any{"run": argv("sh", "-c", "echo {tests}")})

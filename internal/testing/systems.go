@@ -28,7 +28,9 @@ func CIJobName(system string) string { return "jst test ci (" + system + ")" }
 
 // partitionOf puts every node with `run` that the walk from the selected scopes reaches on this
 // system in one group, the first that fits: here (eligible here and not covered, in the command's
-// sense), ci (covered on some system), elsewhere (neither).
+// sense), ci (covered on some system), elsewhere (neither). The same walk on each other system
+// adds to elsewhere the nodes with `run` it reaches that are eligible there, not here, and covered
+// on no system: a selected scope that cannot run here still leaves its tests to another machine.
 func (proj *project) partitionOf(command string, selected []string) partition {
 	nodes := newGraph(proj.section, proj.operatingSystem)
 	nodes.withoutBase = command == uncoveredCommand
@@ -52,15 +54,35 @@ func (proj *project) partitionOf(command string, selected []string) partition {
 		case anywhere:
 			split.ci = append(split.ci, name)
 		default:
-			split.elsewhere = append(split.elsewhere, name)
-			for _, system := range operatingSystems {
-				if newGraph(proj.section, system).eligible(name) {
-					split.where[name] = append(split.where[name], system)
-				}
+			split.addElsewhere(proj.section, name)
+		}
+	}
+	for _, system := range operatingSystems {
+		if system == proj.operatingSystem {
+			continue
+		}
+		other := newGraph(proj.section, system)
+		other.withoutBase = nodes.withoutBase
+		for _, name := range other.walk(selected) {
+			_, entry := find(proj.section, name)
+			if isComposite(entry) || !other.eligible(name) || nodes.eligible(name) || slices.Contains(split.elsewhere, name) ||
+				slices.ContainsFunc(operatingSystems, func(system string) bool { return covered[system][name] }) {
+				continue
 			}
+			split.addElsewhere(proj.section, name)
 		}
 	}
 	return split
+}
+
+// addElsewhere puts a node in elsewhere, with the systems it can run on.
+func (split *partition) addElsewhere(section map[string]any, name string) {
+	split.elsewhere = append(split.elsewhere, name)
+	for _, system := range operatingSystems {
+		if newGraph(section, system).eligible(name) {
+			split.where[name] = append(split.where[name], system)
+		}
+	}
 }
 
 // runSplit runs the nodes a split puts here, with their deps from any group, and says the groups.

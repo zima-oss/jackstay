@@ -501,6 +501,11 @@ leads to its deps:
 2. **ci**: it is covered on some system;
 3. **elsewhere**: neither; it is not covered, and it is not eligible on this system.
 
+The same walk from the selected scopes on each other system adds to **elsewhere** every node with
+`run` it reaches that is eligible there, not eligible on this system and covered on no system. So
+a selected scope that cannot run here (a composite over a `darwin`-only test, changed on Linux)
+still leads to its tests: `needs-other-system`, never `left-to-ci`, when no CI covers them.
+
 | command | selected scopes | not covered, for **here**, means |
 |---|---|---|
 | `jst test changed` | the scopes matched by the changed paths | covered on no system |
