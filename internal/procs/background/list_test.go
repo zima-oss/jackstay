@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/zima-oss/jackstay/internal/procs"
 )
 
 type lookHarness struct {
@@ -528,5 +530,57 @@ func TestAgeReadsAsPeopleWriteIt(t *testing.T) {
 	}
 	if cutRunes("ééé", 2) != "éé" {
 		t.Fatal("cut inside a character")
+	}
+}
+
+// A supervisor that answers between the stop's look at its entry and its look at the process table
+// has stopped the group, removed its entry and ended: that is a stop, not a group that "had ended
+// already" (#63, #20).
+func TestASupervisorThatAnswersBetweenTwoLooksIsAStop(t *testing.T) {
+	h := newLookHarness(t, "")
+	entry := h.supervised(t, 700, 701, "server", "", 0)
+	read := h.look.host.read
+	h.look.host.read = func() (map[int]procs.Process, error) {
+		if h.place.stopAsked(entry.ID) && h.place.listed(entry.ID) {
+			// The supervisor's whole answer lands here: group stopped, entry removed, supervisor ended.
+			h.world.remove(entry.Group)
+			h.place.remove(entry.ID)
+			h.world.remove(entry.Supervisor)
+		}
+		return read()
+	}
+	if code := h.look.stop([]string{entry.ID}, false); code != 0 {
+		t.Fatalf("exit %d: %s", code, h.stderr.String())
+	}
+	if h.stdout.String() != "jst procs: 1800000000-700 (server) stopped\n" || len(h.world.signalsSent()) != 0 {
+		t.Fatalf("%q %v", h.stdout.String(), h.world.signalsSent())
+	}
+}
+
+// The other answer a supervisor gives, an incomplete cleanup, landing between the same two looks is
+// reported as such and its entry kept, never removed as a group that "had ended already".
+func TestASupervisorThatLeavesCleanupIncompleteBetweenTwoLooksKeepsItsEntry(t *testing.T) {
+	h := newLookHarness(t, "")
+	entry := h.supervised(t, 700, 701, "server", "", 0)
+	read := h.look.host.read
+	h.look.host.read = func() (map[int]procs.Process, error) {
+		if h.place.stopAsked(entry.ID) {
+			if latest, ok := h.place.read(entry.ID); ok && latest.Status != stateCleanupIncomplete {
+				h.world.remove(entry.Group)
+				latest.Status = stateCleanupIncomplete
+				if !h.place.write(latest) {
+					t.Fatal("could not record incomplete cleanup")
+				}
+				h.world.remove(entry.Supervisor)
+			}
+		}
+		return read()
+	}
+	if code := h.look.stop([]string{entry.ID}, false); code != 1 || !strings.Contains(h.stderr.String(), "cleanup incomplete") ||
+		strings.Contains(h.stdout.String(), "had ended already") {
+		t.Fatalf("exit %d: stdout %q, stderr %q", code, h.stdout.String(), h.stderr.String())
+	}
+	if !h.place.listed(entry.ID) {
+		t.Fatal("the incomplete cleanup's entry was removed")
 	}
 }
