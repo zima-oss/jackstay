@@ -503,7 +503,7 @@ leads to its deps:
 | command | selected scopes | not covered, for **here**, means |
 |---|---|---|
 | `jst test changed` | the scopes matched by the changed paths | covered on no system |
-| `jst test uncovered` | every scope that needs no test arguments | not covered on this system |
+| `jst test uncovered` | every scope that needs no test arguments and no `--base`; a node that needs a `--base` is not eligible for it, also as a dep | not covered on this system |
 
 The **here** nodes run now through the graph (section 7.2), each with its deps from any group. The
 last line names the three groups:

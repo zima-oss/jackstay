@@ -37,10 +37,18 @@ func needsTestArguments(entry map[string]any) bool {
 	return has(entry, "selector") || slices.Contains(used, "tests") || slices.Contains(used, "test_args")
 }
 
+// needsBase says whether a node's words need a --base that its own `base` key does not give.
+func needsBase(entry map[string]any) bool {
+	return !has(entry, "base") && slices.Contains(placeholdersOf(textsOf(entry["run"])), "base")
+}
+
 // graph is the nodes of a `test` section seen from one system.
 type graph struct {
 	section map[string]any
 	system  string
+	// withoutBase leaves out every node that needs a --base, as `jst test uncovered`, which takes
+	// none, does: such a node is not eligible, so neither is a node with `run` over it.
+	withoutBase bool
 	// settled is each node's eligibility on the system, once known.
 	settled map[string]bool
 }
@@ -59,7 +67,7 @@ func (nodes *graph) eligible(name string) bool {
 	// A cycle (refused by `jst check`) reads as not eligible rather than recursing for ever.
 	nodes.settled[name] = false
 	_, entry := find(nodes.section, name)
-	value := entry != nil && runsOn(entry, nodes.system)
+	value := entry != nil && runsOn(entry, nodes.system) && !(nodes.withoutBase && needsBase(entry))
 	if value {
 		composite := isComposite(entry)
 		value = !composite

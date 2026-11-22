@@ -450,6 +450,7 @@ func (state *gateState) fail(outcome string, status int, stepName string) {
 // at a time; the first failure ends the run unless --keep-going. label names the run in its line.
 func (proj *project) gate(label string, asked []string, split *partition) int {
 	nodes := newGraph(proj.section, proj.operatingSystem)
+	nodes.withoutBase = label == uncoveredCommand
 	order := nodes.walk(asked)
 	gateID := receipts.RunID(proj.clock.Now(), proj.pid)
 	began := proj.clock.Now()

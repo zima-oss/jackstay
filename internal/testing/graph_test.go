@@ -278,6 +278,20 @@ func TestUncoveredRunsWhatCIDoesNotCoverOnThisSystemOnACleanCopy(t *testing.T) {
 	}
 }
 
+// A node that needs a --base, which `jst test uncovered` takes none of, is left out also when a
+// selected composite reaches it as a dep, and so is a node with `run` over it.
+func TestUncoveredLeavesOutADepThatNeedsABase(t *testing.T) {
+	section := with(whereSection(), "scopes", "x-based", map[string]any{"run": counted("x-based", "echo {base}"), "judge": "exit"})
+	section = with(section, "scopes", "x-after", map[string]any{"run": counted("x-after", "true"), "judge": "exit",
+		"deps": argv("x-based")})
+	section = with(section, "scopes", "gate", map[string]any{"deps": argv("x-docs", "x-go", "x-ios", "x-based", "x-after")})
+	w := newWorld(t, section, nil)
+	w.system = "darwin"
+	w.expectStatus(w.jst(uncoveredCommand), 0)
+	w.expectLast("outcome=passed (uncovered, ", "here: x-docs=passed, x-build=exited-0, x-go=passed, x-ios=passed; ci: none")
+	w.expectCounters("x-based x-after", 0, 0)
+}
+
 func TestCIRunsEveryScopeCoveredOnThisSystemOnceInGraphOrder(t *testing.T) {
 	w := newWhereWorld(t, "linux")
 	w.expectStatus(w.jst(ciCommand), 0)

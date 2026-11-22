@@ -31,13 +31,14 @@ func CIJobName(system string) string { return "jst test ci (" + system + ")" }
 // sense), ci (covered on some system), elsewhere (neither).
 func (proj *project) partitionOf(command string, selected []string) partition {
 	nodes := newGraph(proj.section, proj.operatingSystem)
+	nodes.withoutBase = command == uncoveredCommand
 	covered := map[string]map[string]bool{}
 	for _, system := range operatingSystems {
 		covered[system] = coveredOn(proj.section, system)
 	}
 	split := partition{command: command, where: map[string][]string{}}
 	for _, name := range nodes.walk(selected) {
-		if _, entry := find(proj.section, name); isComposite(entry) {
+		if _, entry := find(proj.section, name); isComposite(entry) || nodes.withoutBase && needsBase(entry) {
 			continue
 		}
 		anywhere := slices.ContainsFunc(operatingSystems, func(system string) bool { return covered[system][name] })
@@ -75,8 +76,7 @@ func (proj *project) uncoveredSelection() []string {
 	var selected []string
 	for _, name := range orderedScopes(scopes) {
 		entry := objectOf(scopes[name])
-		needsBase := !has(entry, "base") && slices.Contains(placeholdersOf(textsOf(entry["run"])), "base")
-		if name != "focused" && !needsTestArguments(entry) && !needsBase {
+		if name != "focused" && !needsTestArguments(entry) && !needsBase(entry) {
 			selected = append(selected, name)
 		}
 	}
