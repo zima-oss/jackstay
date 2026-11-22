@@ -258,6 +258,18 @@ func TestChangedSplitsBetweenHereCIAndElsewhere(t *testing.T) {
 	linux.expectLast("outcome=failed (changed failed at x-lint")
 }
 
+// Only `changed` splits: `auto` runs the scope it selects, also one that CI covers.
+func TestAutoRunsTheSelectedScopeWithoutTheSplit(t *testing.T) {
+	w := newWhereWorld(t, "linux")
+	w.repo.Commit("change", map[string]string{"docs/a.md": "a\n"})
+	w.expectStatus(w.jst("auto", "--base", "main"), 0)
+	w.expectLast("outcome=passed")
+	w.expectCounters("x-docs", 1)
+	if last := w.lastLine(); strings.Contains(last, "left-to-ci") {
+		t.Fatalf("auto split: %s", last)
+	}
+}
+
 // A selected composite that cannot run here still leads to its tests: one that only another
 // system runs, and no CI covers, needs another machine; it is never left to CI.
 func TestChangedFindsWhatOnlyAnotherSystemRunsBehindACompositeThatCannotRunHere(t *testing.T) {

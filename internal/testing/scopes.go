@@ -359,9 +359,10 @@ func (base *tester) scope(args []string) int {
 				chosen.base = choice.base
 				proj.options = chosen
 				proj.printSelection(choice)
-				// A project that says where its scopes run splits the selection between here, CI
-				// and other systems (docs/design/land.md section 7.4).
-				split = declaresWhere(proj.section)
+				// A project that says where its scopes run splits what `changed` selects between
+				// here, CI and other systems (docs/design/land.md section 7.4); `auto` runs the
+				// selected scope.
+				split = selectChanged && declaresWhere(proj.section)
 			}
 		}
 	}

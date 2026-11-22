@@ -214,7 +214,8 @@ jst test ci                           # the CI job, one per system: `jst test ci
 
 `jst test changed` (with `test.selection`) and `jst test uncovered` put every step they reach in
 one group: **here** (it runs on this machine and is not covered), **ci** (covered), **elsewhere**
-(neither). The here steps run, with their deps from any group:
+(neither); `jst test auto` does not split, and runs the chosen scope. The here steps run, with
+their deps from any group:
 
 ```text
 jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; ci: x-docs, x-go; elsewhere: none)

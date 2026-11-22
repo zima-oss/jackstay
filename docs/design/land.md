@@ -505,6 +505,7 @@ The same walk from the selected scopes on each other system adds to **elsewhere*
 `run` it reaches that is eligible there, not eligible on this system and covered on no system. So
 a selected scope that cannot run here (a composite over a `darwin`-only test, changed on Linux)
 still leads to its tests: `needs-other-system`, never `left-to-ci`, when no CI covers them.
+`jst test auto` does not split: it runs the scope it selects, as before.
 
 | command | selected scopes | not covered, for **here**, means |
 |---|---|---|
