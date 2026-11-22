@@ -113,8 +113,8 @@ type Inputs struct {
 	// Adoption is jst adopt's check of the project around the current folder (adopt.Check;
 	// docs/design/adopt.md section 10); nil, or inProject false, skips it.
 	Adoption func() (inProject bool, problems, notes []string)
-	// Land is the project around the current folder when it has a `land` section (false: none);
-	// nil skips the land checks. Its Connect is the only network question doctor asks.
+	// Land is the project around the current folder when it has a `land` section or a scope whose
+	// `ci` names a system (false: none); nil skips the land checks. Its Connect is the only network question doctor asks.
 	Land func() (LandProject, bool)
 }
 

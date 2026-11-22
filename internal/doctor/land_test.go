@@ -3,6 +3,8 @@ package doctor
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -115,6 +117,33 @@ func TestDoctorReportsACIJobTheRulesDoNotRequire(t *testing.T) {
 	}
 	if report := landReport(t, file, hosting.Rules{Unread: "refused"}, nil); strings.Contains(kinds(report.Problems), "ci-job") {
 		t.Fatalf("unread rules: %+v", report.Problems)
+	}
+}
+
+// A project whose scopes CI covers needs the jobs required also when it has no land section.
+func TestDoctorReportsACIJobTheRulesDoNotRequireWithoutLand(t *testing.T) {
+	file := `{"jackstay_schema":3,"test":{"scopes":{"x-go":{"run":["go","test"],"ci":["linux"]}}}}`
+	report := landReport(t, file, hosting.Rules{ChecksRead: true, Required: []hosting.RequiredCheck{{Name: "build"}}}, nil)
+	if kinds(report.Problems) != "land-ci-job-not-required" || kinds(report.Notes) != "" {
+		t.Fatalf("problems %+v, notes %+v", report.Problems, report.Notes)
+	}
+	report = landReport(t, file, hosting.Rules{}, errors.New("no token"))
+	if len(report.Problems) != 0 || kinds(report.Notes) != "ci-jobs-unchecked" {
+		t.Fatalf("no account: problems %+v, notes %+v", report.Problems, report.Notes)
+	}
+	// The project around the folder is read for its `ci` scopes alone.
+	folder := t.TempDir()
+	if err := os.WriteFile(filepath.Join(folder, config.Name), []byte(file), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(folder)
+	if _, found := realLandProject(); !found {
+		t.Fatal("a project with ci scopes and no land section was not read")
+	}
+	// Without a land section and with no `ci`, the host is not asked.
+	report = landReport(t, `{"jackstay_schema":3,"test":{"scopes":{"x-go":{"run":["go","test"]}}}}`, hosting.Rules{}, errors.New("asked"))
+	if len(report.Problems)+len(report.Notes) != 0 {
+		t.Fatalf("no ci: %+v", report)
 	}
 }
 
