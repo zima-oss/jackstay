@@ -2,141 +2,73 @@ package sessionchat
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"os"
-	"slices"
-	"strings"
-	"unicode/utf8"
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/review"
+	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
 )
-
-// systemSender is the sender of jackstay's own events; no client session can have it as an ID.
-const systemSender = "jackstay"
-
-// legacySystemSender sent review results before 0.6.0 (a development build's reviewer pool); its
-// unacknowledged messages are kept as jackstay's own are.
-const legacySystemSender = "review-pool"
 
 func init() {
 	chatevent.Register(publisher{})
 	chatevent.RegisterIdentifier(identify)
 }
 
-// publisher stores jackstay's events in the chat of the event's repository, one message per
-// recipient, keyed by the event's key so a repeat stores nothing new.
+// publisher stores jackstay's events in the account's chat store (section 10).
 type publisher struct{}
 
 func (publisher) Publish(ctx context.Context, event chatevent.Event) error {
 	if len(event.Recipients) == 0 {
 		return nil
 	}
-	store, _, err := loadChatAt(ctx, event.Worktree)
+	store, err := openStore()
 	if err != nil {
 		return err
 	}
-	return store.publish(event)
+	return store.Publish(ctx, event)
 }
 
-func (store Store) publish(event chatevent.Event) error {
-	lines := []string{event.Summary}
-	if event.Body != "" {
-		lines = append(lines, event.Body)
-	}
-	for _, attachment := range event.Attachments {
-		lines = append(lines, "attached: "+attachment.URI)
-	}
-	ending := "event: " + event.Kind + "; call chat.ack once read."
-	body := boundMessage(lines, ending, store.policy.MaxMessageBytes)
-	var failures []error
-	for _, recipient := range event.Recipients {
-		key := event.Key
-		if len(event.Recipients) > 1 || len(key) > 128 {
-			digest := sha256.Sum256([]byte(event.Key + "\x00" + recipient))
-			key = "event/" + hex.EncodeToString(digest[:24])
-		}
-		if _, _, err := store.send(systemSender, recipient, "message", body, key, "", true); err != nil {
-			failures = append(failures, err)
-		}
-	}
-	return errors.Join(failures...)
-}
-
-// identify is the chat session of this process in worktree: the one its session token names, once
-// that session has registered (through `jst chat serve` or the Claude Code hook).
+// identify is the chat session of this process in worktree, so a command it runs (a review) can
+// send its result there: the session its token names, else the Claude Code session it runs under.
+// It is "" when the project does not enable chat, or no session can be told.
 func identify(ctx context.Context, worktree string) (string, error) {
-	token := os.Getenv("JACKSTAY_CHAT_SESSION_TOKEN")
-	if token == "" {
+	chat, err := localChat(ctx, worktree)
+	if errors.Is(err, errChatOff) {
 		return "", nil
 	}
-	store, _, err := loadChatAt(ctx, worktree)
 	if err != nil {
-		return "", nil // chat is not enabled here: no session to tell
+		return "", nil // no chat here: no session to tell
 	}
-	identity, err := store.tokenID(token)
-	if err != nil {
-		return "", err
+	key, err := tokenKey()
+	if err != nil || key != "" {
+		return key, err
 	}
-	sessions, err := store.Sessions()
-	if err != nil {
-		return "", err
+	bound, found := boundKey(ctx, chat.store, 0)
+	if !found {
+		return "", nil
 	}
-	if !slices.ContainsFunc(sessions, func(session Session) bool { return session.ID == identity }) {
-		return "", errors.New("this session's chat identity has not registered yet")
-	}
-	return identity, nil
+	return bound, nil
 }
 
-// syncReviewNotifications publishes the review results still owed to the session: a result whose
-// publication failed when its review ended is pulled here, when the session next looks.
-func syncReviewNotifications(ctx context.Context, store Store, sessionID string) error {
+// pullOwedReviews publishes the review results still owed to the session: a result whose
+// publication failed when its review ended is pulled when the session next reads (section 10). A
+// failure here never fails the read; the result stays owed.
+func pullOwedReviews(ctx context.Context, store *chatstore.Store, key string) {
 	here, err := os.Getwd()
 	if err != nil {
-		return err
+		return
 	}
 	background, err := review.BackgroundAt(here, "")
 	if err != nil {
-		return nil // no review here, so nothing is owed here
+		return // no review here, so nothing is owed here
 	}
-	return background.DeliverOwed(ctx, sessionID, chatStore{store})
+	_ = background.DeliverOwed(ctx, key, storePublisher{store})
 }
 
-// chatStore publishes into an already opened store.
-type chatStore struct{ store Store }
+// storePublisher publishes into an already opened store.
+type storePublisher struct{ store *chatstore.Store }
 
-func (target chatStore) Publish(_ context.Context, event chatevent.Event) error {
-	return target.store.publish(event)
-}
-
-// reviewNotificationSyncError is a failure to publish owed review results, apart from the chat's
-// own delivery: the Codex bridge retries it without treating the chat as broken.
-type reviewNotificationSyncError struct{ cause error }
-
-func (failure reviewNotificationSyncError) Error() string {
-	return "review notification sync: " + failure.cause.Error()
-}
-func (failure reviewNotificationSyncError) Unwrap() error { return failure.cause }
-
-// boundMessage joins lines and the ending into at most limit bytes: the first line (the summary)
-// and the ending always, the rest cut at a UTF-8 boundary, so an event is never refused for its
-// size every time it is retried.
-func boundMessage(lines []string, ending string, limit int) string {
-	whole := strings.Join(append(slices.Clone(lines), ending), "\n")
-	if limit <= 0 || len(whole) <= limit {
-		return whole
-	}
-	const marker = "\n…\n"
-	room := limit - len(ending) - len(marker)
-	head := strings.Join(lines, "\n")
-	if room <= 0 {
-		return strings.ToValidUTF8(whole[:limit], "")
-	}
-	cut := head[:min(room, len(head))]
-	for len(cut) > 0 && !utf8.ValidString(cut) {
-		cut = cut[:len(cut)-1]
-	}
-	return cut + marker + ending
+func (target storePublisher) Publish(ctx context.Context, event chatevent.Event) error {
+	return target.store.Publish(ctx, event)
 }

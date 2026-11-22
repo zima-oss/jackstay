@@ -14,9 +14,8 @@ import (
 	"time"
 
 	"github.com/zima-oss/jackstay/internal/cli"
-	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/gitcli"
-	"github.com/zima-oss/jackstay/internal/sessionchat"
+	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
 )
 
 func repository(t *testing.T, parent, name string) string {
@@ -87,13 +86,7 @@ func TestBoardKeepsRepositoriesSeparateAndDoesNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := sessionchat.StoreFor(common, config.ChatSettings(map[string]any{"enabled": true}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Register("private agent", ""); err != nil {
-		t.Fatal(err)
-	}
+	registerChatSession(t, common)
 	board = readBoard(first, second)
 	if board.Repositories[0].Chat.Sessions != 1 || board.Repositories[1].Chat.Sessions != 0 {
 		t.Fatalf("chat leaked across independent repositories: %+v", board.Repositories)
@@ -124,13 +117,7 @@ func TestBoardSharesChatAcrossLinkedWorktreesAndKeepsEvidencePerCheckout(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := sessionchat.StoreFor(common, config.ChatSettings(map[string]any{"enabled": true}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.Register("private agent", ""); err != nil {
-		t.Fatal(err)
-	}
+	registerChatSession(t, common)
 	head, err := (gitcli.Git{Dir: root}).Line(context.Background(), "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
@@ -260,5 +247,23 @@ func TestBoardRejectsFIFOInputsWithoutWaitingForWriter(t *testing.T) {
 	if !board.Partial || board.Repositories[0].Cards.Status != "unknown" ||
 		board.Repositories[0].Gate.Status != "unknown" || board.Repositories[0].Receipt.Status != "unknown" {
 		t.Fatalf("FIFO sources: %+v", board)
+	}
+}
+
+// registerChatSession registers one session in the chat channel of the repository whose Git common
+// directory is common.
+func registerChatSession(t *testing.T, common string) {
+	t.Helper()
+	store, err := chatstore.Default()
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel, err := chatstore.RepositoryChannel(common, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Register(context.Background(), chatstore.Registration{Key: "tk:" + strings.Repeat("a", 64),
+		KeySource: chatstore.SourceToken, Engine: chatstore.EngineOther, Channel: channel, State: chatstore.StateIdle}); err != nil {
+		t.Fatal(err)
 	}
 }

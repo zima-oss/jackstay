@@ -40,8 +40,6 @@ Several sessions in one repository, or several repositories at once.
 - [Claude Code](claude-code.md): the guard hook, the sandbox and the reviewer.
 - [Codex](codex.md): the reviewer and the guard hook.
 
-Chat between sessions is being reworked for 0.6.0; its page here changes with it.
-
 ## Configuration
 
 [Configuration](configuration.md): `jackstay.json`, its sections, and profiles for many projects.

@@ -1270,7 +1270,7 @@ detached pusher is never such a writer, so the recipient's default and explicit 
 both apply. Any `jst chat serve` or hook that writes a native delivery or a notice, or changes a
 session's state (a `Stop` making it idle), starts the pusher if it is not running and there is
 **pusher work**: a session with a doorbell due (a lock file `pusher.lock` keeps it single). It runs a
-**pass** at each store change and every 15 seconds, and exits only after 10 minutes without pusher
+**pass** every 3 seconds, and exits only after 10 minutes without pusher
 work. A session's doorbell is **due** when it is `idle` (a busy session hears its hooks' doorbell,
 section 8.4), its binding names a socket and a verified version, and it has a `pending` native
 delivery, or an owed notice, that its socket has not told it of yet (`rung` on the delivery; for
@@ -1304,7 +1304,9 @@ A ring is never retried for the same deliveries once taken, but ringing again is
 recipient that ignored a doorbell is told again by its hooks, and by the next doorbell once a newer
 message arrives.
 
-**The verified range.** A session's `delivery` is `native` only for a Claude Code version in the
+**The verified range.** Claude Code exports no version to its hooks; the hook reads it from the path
+of its executable (`CLAUDE_CODE_EXECPATH`, whose folders name the version), and a version it cannot
+read is outside the range. A session's `delivery` is `native` only for a Claude Code version in the
 verified range, recorded with the redacted golden files of the capture in
 `internal/sessionchat/claudenative/testdata/`. The range is **2.1.328**; a later capture widens it.
 Every other version is `hooks`, and so is a session whose binding names no socket. Nothing switches
@@ -1612,6 +1614,24 @@ confirmation (`--apply` without asking; `--plan` only shows):
   reaches whatever model provider the recipient's engine uses, like anything else in that session.
 
 ## 14. Deferred after 0.6.0
+
+**Jackstay 1.** 0.6.0 ships the store, the doorbell and a minimal switch-over: `jst chat serve` with
+the tools of section 5, `jst hook claude` for the chat events of section 8.2, the native ring of
+section 8.3, and jackstay's events to the sessions they name (section 10). These wait for jackstay
+1:
+
+- the Codex bridge's push into a running turn (section 9.2): a Codex session reads its inbox through
+  `jst chat serve`, and `jst chat codex-bridge` says so and exits;
+- the brief's part of the dispatcher (section 8.2): `jst brief claude-hook` keeps that;
+- finding the session that ran a command through the process tree (`Origin`, section 10): an event
+  goes to the sessions in `Recipients`;
+- events to a whole channel, such as `land.merged` (section 10);
+- the configuration key `related` (sections 2 and 11): every session may write to every channel;
+- the review round's mailbox (section 9.1) and `jst setup --chat` (section 12).
+
+The 0.5.x store is removed in 0.6.0; its state under `session-chat/` is neither read nor imported.
+
+Later:
 
 - A live dialogue with a reviewer during its round (steering a running Codex review turn).
 - Waking an idle session without the socket (an `asyncRewake` hook), after 0.6.0 and only if the

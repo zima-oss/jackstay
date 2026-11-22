@@ -81,9 +81,9 @@ Turns on session chat between agent sessions of this repository.
 | Key | Type | What it does |
 |---|---|---|
 | `claude_code` | object | Configures the Claude Code hook that announces pending chat messages at the next boundary. |
-| `claude_code.enabled` | boolean | Lets `jst chat claude-hook` announce pending messages to Claude Code; it needs `chat.enabled`. |
+| `claude_code.enabled` | boolean | Lists the Claude Code chat item in the AGENTS block; `jst hook claude` itself needs only `chat.enabled`. |
 | `codex_bridge` | object | Configures the bridge that delivers chat messages into a managed Codex turn. |
-| `codex_bridge.enabled` | boolean | Lets `jst chat codex-bridge` deliver messages to a running Codex turn; it needs `chat.enabled`. |
+| `codex_bridge.enabled` | boolean | Lists the Codex chat item in the AGENTS block; the Codex bridge's push returns in jackstay 1. |
 | `enabled` | boolean | Turns session chat on for this repository; chat commands refuse to run without it. |
 
 ## `github`
