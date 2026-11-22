@@ -1,4 +1,4 @@
-# jackstay-adopt: card-line sha256:41e2d923c2e6 — written by `jst adopt`; change jackstay.json or the profile, not this file
+# jackstay-adopt: card-line sha256:6705281cfba7 — written by `jst adopt`; change jackstay.json or the profile, not this file
 name: card-line
 
 # jackstay's Card line, changelog entry and tree rules on every pull request event (`jst lint pr`;
@@ -18,7 +18,7 @@ permissions:
   pull-requests: read
 
 env:
-  JACKSTAY_VERSION: "v0.5.11"
+  JACKSTAY_VERSION: "v0.6.0"
 
 jobs:
   card-line:
