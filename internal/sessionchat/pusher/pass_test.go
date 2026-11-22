@@ -91,6 +91,10 @@ func TestAPassRingsOnlyAVerifiedVersion(t *testing.T) {
 	if _, err := pass.Run(ctx); err != nil || len(ringer.sockets) != 0 {
 		t.Fatalf("an unverified version is not rung: %v %+v", err, ringer)
 	}
+	moment = moment.Add(time.Minute) // past the failed ring's wait, so the ring is due again
+	if due, err := store.DueRings(ctx); err != nil || len(due) != 1 {
+		t.Fatalf("the ring is due again: %+v %v", due, err)
+	}
 	pass.Verified = nil
 	if _, err := pass.Run(ctx); err != nil || len(ringer.sockets) != 0 {
 		t.Fatalf("without a verifier nothing is rung: %v %+v", err, ringer)

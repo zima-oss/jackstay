@@ -235,7 +235,7 @@ pushes the text, once.
 | `delivered` | steered by the bridge: the app-server accepted it, or, with the reason `unconfirmed`, a steer was made but its answer never came |
 | `read` | the recipient received the whole body from `chat.inbox` in one response, or acknowledged it as read; or a review mailbox froze with it unread (section 9.1) |
 | `acted` | the recipient said it handled it (`chat.ack` with `acted`), or answered it with `chat.respond` |
-| `refused` | the recipient's engine refused the native doorbell (it closed the connection, section 8.3) |
+| `refused` | the recipient's engine reported refusing the doorbell; a closed connection is not one (section 8.3), so no route sets it today |
 | `dropped` | it can no longer reach the recipient: the recipient ended, or its review mailbox closed |
 | `expired` | its `expires_at` passed while it was `pending` |
 
@@ -249,7 +249,7 @@ else (the table is the package `internal/sessionchat/deliverystate`, checked by 
 | `pending` | `sending` | the bridge, before it steers (section 9.2) |
 | `sending` | `delivered` | the app-server's acceptance of a steer; or, with the reason `unconfirmed`, a steer whose answer never came, or a `sending` record older than 60 s (its pass died) |
 | `sending` | `pending` | a confirmed failure: nothing reached the app-server (section 9.2); for a request already closed (its mailbox froze), `expired` instead, so a closed question is never steered |
-| `pending` | `refused` | the recipient's engine closing the connection on the native doorbell (section 8.3) |
+| `pending` | `refused` | the recipient's engine reporting a refusal itself; a closed connection on the native doorbell is not one and leaves the delivery `pending` (section 8.3) |
 | `pending`, `sending` | `dropped` | `SessionEnd`, a dead process, or a closed mailbox (`recipient_ended`); from `sending` the bridge's later outcome is then dropped (compare-and-set) |
 | `pending` | `expired` | the deadline, found by the sweep or by any step of section 4.10; the closing of its request (section 4.4) |
 | `pending`, `delivered` | `read` | `chat.inbox` emitting the whole body in one response, while the body is visible (section 4.10); `chat.ack` with `read` |
@@ -314,7 +314,7 @@ A request is a direct message (never to a channel) with a `request` object:
 - an open request whose `expires_at` passes becomes `expired`, and the requester is owed one notice
   (section 8.5), on the request's commit record, whatever its delivery's state. The request and its
   delivery share `expires_at` and expire **in one step**: whichever check finds the deadline (the
-  sweep, the bridge's claim, a refused doorbell, a read, an ack, a response, section 4.10) closes the
+  sweep, the bridge's claim, a reported refusal, a read, an ack, a response, section 4.10) closes the
   request and, when the delivery is `pending`, expires the delivery in the same locked step, without a
   notice of its own. So the requester is owed one notice, never two and never none (shown at least
   once, section 8.5). The request's
@@ -445,8 +445,8 @@ bridge's steer. A body is **visible to its recipient** while its delivery is not
 or `expired`, on every route. No route shows a body anywhere but there: the native and hooks routes
 ring a doorbell with no text in it (section 8), so the recipient's engine never holds or refuses a
 body jackstay could later show, and nothing a message carries (its ID in another message's `thread`
-or `reply_to`) needs to be treated as evidence (W-095). A refused doorbell is the recipient's engine
-saying no to peer messages, and its delivery is `refused`; the body stays unread.
+or `reply_to`) needs to be treated as evidence (W-095). A doorbell whose connection closes changes
+nothing: the delivery stays `pending` and its body unread (section 8.3).
 
 A channel message is visible through `chat.thread` to every session of the account that has **no
 delivery** of it (the related list limits only sending). A session that has a delivery of a message,
@@ -456,7 +456,7 @@ request ID.
 
 **Deadlines are checked where they matter, not only by the sweep.** In the same locked step in which
 the bridge would set `sending`, in which `chat.inbox` or `chat.thread` would return a body, in which a
-refused doorbell would be recorded, and in which a response or an ack would commit, the store
+reported refusal would be recorded, and in which a response or an ack would commit, the store
 compares `expires_at` with the clock; an overdue `pending` delivery, or an `open` request, is moved
 to `expired` right there (with its notice owed) and the action proceeds as if it had been expired
 already. For a request this is always the request **and** its delivery together (section 4.4): a
@@ -1294,7 +1294,11 @@ notices, the session's `notices_rung_at`). For each due session the pass:
      2 min. The hooks ring meanwhile.
 
 A pass rings from what it found due when it started; a session that turns busy or rebinds during the
-pass may still be rung once, which is harmless. A binding is rung only when its own Claude Code
+pass may still be rung once, which is harmless. Two limits follow (W-096): after a `/clear` during
+the pass, the ring can reach the new conversation and mark the old one's deliveries rung, which then
+wake it only through its hooks or a newer message; and a notice owed in the same instant as one a
+ring already told of waits for the next prompt hook or the next ring. Neither loses a message or a
+notice: the inbox holds both. A binding is rung only when its own Claude Code
 version is verified. An error reading the store stops the pass; it is never taken as a failed ring.
 A ring is never retried for the same deliveries once taken, but ringing again is harmless: a
 recipient that ignored a doorbell is told again by its hooks, and by the next doorbell once a newer
@@ -1635,7 +1639,7 @@ narrower than the last, and review alone does not end that. The model is in
 
 - **TLA+, checked with TLC** (`just tla`, which runs when Java and the TLA+ tools are installed):
   `ChatDelivery.tla` is one delivery on each of the five routes, with two passes of the bridge that
-  may pause or crash at any step, the native doorbell and its refusal, the recipient's reads, acks
+  may pause or crash at any step, the native doorbell (which changes nothing), the recipient's reads, acks
   and answers, the sweep, the deadline, the recipient's end and a mailbox's freeze;
   `ChatSend.tla` is one response and its retry with the same key, a process crash or a machine
   crash (which loses a commit record whose folder was not fsynced) at every step of section 7.3,
@@ -1650,7 +1654,7 @@ narrower than the last, and review alone does not end that. The model is in
 
 Checked: the bridge steers a message at most once, and every other route shows its text only
 through the inbox read (W-095); a crash never makes a steer look not made; final states are never
-left; the deadline is applied before an ack, a read, a steer or a refused doorbell; every `refused`, `dropped` or `expired` delivery
+left; the deadline is applied before an ack, a read or a steer; every `refused`, `dropped` or `expired` delivery
 owes exactly one notice, and a request and its delivery that expire together owe one between them;
 a request and its response agree, answered or closed once and never overwritten; no steer of a
 closed request begins, and no question is written after its freeze; a deadline found by any step
@@ -1772,7 +1776,8 @@ throwaway repositories `#alpha` and `#beta` (`#alpha` relates to `#beta`):
    - `B` is busy in a long tool loop; `A` sends `now`: its hooks ring and `B` reads it before its
      turn ends;
    - on an unverified version: the same through the hooks alone, the `Stop` hold included;
-   - `B` set to refuse peer messages: `A`'s next message is `refused` and `A` is shown the notice;
+   - `B` set to refuse peer messages: `B`'s socket closes the doorbell's connection and `A`'s next
+     message stays `pending`, rung (section 8.3, W-095 as amended), and `B` reads it from its inbox;
      then `B` ends with a message to it still unread: it is `dropped`, and `A` is shown that too;
    - `B` (whose repository has no related list) can write to `#alpha`; a third repository not in
      `#alpha`'s list is refused for `A`;
