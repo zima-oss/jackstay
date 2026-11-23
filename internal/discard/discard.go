@@ -181,6 +181,10 @@ func (run Run) inside(top, given string) (string, string) {
 	// The path the system means: `link/..` follows the link, as git and the shell do; a missing
 	// parent (a deleted tracked folder) is read as written.
 	real, err := trash.PhysicalFrom(run.Working, given)
+	if err != nil && slices.Contains(strings.Split(filepath.ToSlash(given), "/"), "..") {
+		// Read as written, `..` would skip a link it cannot follow: another file than the system's.
+		return "", fmt.Sprintf("%s cannot be resolved (%v), and its `..` cannot be read without it: name the path without `..`", given, err)
+	}
 	if err != nil {
 		absolute := given
 		if !filepath.IsAbs(absolute) {

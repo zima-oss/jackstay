@@ -489,3 +489,18 @@ func TestDiscardFollowsALinkedParentAsTheSystemDoes(t *testing.T) {
 		t.Fatalf("other %q sub %q", w.read("other/x.txt"), w.read("sub/x.txt"))
 	}
 }
+
+// A `..` after a link that leads nowhere is refused, not read as written.
+func TestDiscardRefusesDotDotAfterADanglingLink(t *testing.T) {
+	w := newWorld(t, map[string]string{"sub/x.txt": "head\n"})
+	w.repo.Write(map[string]string{"sub/x.txt": "mine\n"})
+	if err := os.Symlink(filepath.Join(w.repo.Root, "gone", "run"), filepath.Join(w.repo.Root, "sub", "current")); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.discard(w.repo.Root, "sub/current/../x.txt"); code == 0 {
+		t.Fatal("a path through a dangling link was discarded")
+	}
+	if w.read("sub/x.txt") != "mine\n" {
+		t.Fatalf("sub/x.txt was changed: %q", w.read("sub/x.txt"))
+	}
+}
