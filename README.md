@@ -28,6 +28,7 @@ silicon, Intel) and Linux (x86-64, arm64), not Windows.
   guard check.
 - [Install](docs/guide/install.md): read the script first, other ways, update, remove.
 - [The guide](docs/guide/README.md): every task, one page each.
+- [Changelog](CHANGELOG.md): what changed in each release, and how to upgrade.
 - [Security notes](SECURITY.md): what the guard does and does not protect, and how to report a
   vulnerability.
 - [Contributing](CONTRIBUTING.md), the [design](docs/design/implementation.md) and the
