@@ -75,8 +75,9 @@ func wide() (time.Time, time.Time) { return time.Now().Add(-time.Hour), time.Now
 // A5: refusals per rule, retried within two minutes or given up.
 func TestRefusalsRetriedAndGivenUp(t *testing.T) {
 	folder := home(t)
-	// Each call a second after the one before, whatever the wall clock does (a laptop may sleep).
-	start := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	// Each call a second after the one before, whatever the wall clock does (a laptop may sleep);
+	// anchored at the test's start so the journal reader's window still holds them.
+	start := time.Now()
 	t.Cleanup(func() { processClock = nil })
 	for index, call := range [][2]string{{"session-a", "rm -rf src"}, {"session-a", "jst trash src"},
 		{"session-b", "rm -rf build-output"}, {"session-b", "rm -rf build-output"}} {

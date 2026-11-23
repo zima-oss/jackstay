@@ -84,8 +84,8 @@ func TestOneTraceAcrossProcesses(t *testing.T) {
 // A stopped `jst test` ends its spans as stopped, and still dies by the signal.
 func TestStoppedBySignal(t *testing.T) {
 	folder, home, env := project(t)
-	// A child that never ends by itself: only the signal ends the run.
-	command := exec.Command(binary, "test", "--", "sleep", "3600")
+	// A child that never ends by itself, on a timer or otherwise: only the signal ends the run.
+	command := exec.Command(binary, "test", "--", "tail", "-f", "/dev/null")
 	command.Dir, command.Env = folder, env
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -93,9 +93,9 @@ func TestStoppedBySignal(t *testing.T) {
 	defer func() { _ = command.Process.Kill() }()
 	// The child running means jackstay listens for the stop and has begun the run.
 	deadline := time.Now().Add(60 * time.Second)
-	for exec.Command("pgrep", "-P", strconv.Itoa(command.Process.Pid), "-x", "sleep").Run() != nil {
+	for exec.Command("pgrep", "-P", strconv.Itoa(command.Process.Pid), "-x", "tail").Run() != nil {
 		if time.Now().After(deadline) {
-			t.Fatal("the child sleep did not start")
+			t.Fatal("the child did not start")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
