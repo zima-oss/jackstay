@@ -31,7 +31,7 @@ const (
 var upgradeSteps = []string{
 	"the pin: `jst adopt --apply --pin --settings-only` moves adopt.pin to this jackstay in jackstay.json alone (schema 2)",
 	"the workflows: on the merged base, `jst adopt --apply` writes the workflows that download the new pin",
-	"schema 3: on the merged base, `jst adopt --apply` writes jackstay.json with `jackstay_schema` 3 and the `land` section",
+	"schema 3: on the merged base, `jst adopt --apply --settings-only` writes jackstay.json alone, with `jackstay_schema` 3 and the `land` section; on each merged base, repeat it until it writes nothing (a terminal apply may record more answers), then `jst adopt --apply` writes the other files",
 }
 
 // landSection plans the `land` section (docs/design/land.md section 5) for a jackstay that reads

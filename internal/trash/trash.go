@@ -1,7 +1,9 @@
-// Package trash is `jst trash`: the undoable way to delete inside the agent sandbox, where macOS's
-// own Trash cannot be written (W-042, docs/design/guard.md section 10). An item is moved into
-// `<jackstay home>/.trash/`, one entry each, and can be put back; entries older than the project's
-// `trash.keep_days` (7 by default, W-043) are removed by its next `jst trash`.
+// Package trash is `jst trash`: the recorded way to delete inside the agent sandbox (W-042, W-107,
+// docs/design/guard.md section 10). An item is moved into `<jackstay home>/.trash/`, one entry
+// each. By default (`trash.keep` off) the entry is then deleted and the deletion logged (path,
+// size, digest, session, command); with `trash.keep` on (experimental) it is kept and can be put
+// back, and entries older than the project's `trash.keep_days` (7 by default, W-043) are removed
+// by its next `jst trash`.
 package trash
 
 import (
@@ -32,13 +34,13 @@ import (
 // DefaultKeepDays is how long an entry is kept when the project does not say (W-043).
 const DefaultKeepDays = 7
 
-const usage = `usage: jst trash PATH...                      move each into jackstay's trash (undoable)
-       jst trash list [--json]                 the entries, newest first
-       jst trash restore ENTRY [--to PATH]     put an item back (refused when something is there)
-       jst trash prune                         remove entries older than trash.keep_days`
+const usage = `usage: jst trash PATH...                      delete each and log it (kept, to restore, with trash.keep on)
+       jst trash list [--json]                 the kept entries and the logged deletions, newest first
+       jst trash restore ENTRY [--to PATH]     put a kept item back (refused when something is there)
+       jst trash prune                         remove kept entries older than trash.keep_days`
 
 func init() {
-	cli.Register(cli.Command{Name: "trash", Summary: "move files and folders into jackstay's trash, undoably; list, restore, prune",
+	cli.Register(cli.Command{Name: "trash", Summary: "delete files and folders with a log, or keep them to restore (trash.keep); list, restore, prune",
 		Usage: help, Run: Command})
 }
 
@@ -128,10 +130,30 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	// Pruned first, so nothing this call moves is pruned by it, whatever keep_days says.
 	Prune(folder, time.Now())
+	// One setting for every path, from the project the command runs in, as the guard reads it.
+	working, _ := os.Getwd()
+	keep := Keeps(working)
+	// Each item's project and keep_days are read before the first moves: moving jackstay.json
+	// first must not change what a later item records.
+	origins := make([]string, len(paths))
+	projects, days := make([]string, len(paths)), make([]int, len(paths))
+	for index, given := range paths {
+		origins[index] = Origin(given)
+		projects[index], days[index] = ProjectOf(origins[index]), KeepDays(origins[index])
+	}
 	status := 0
-	for _, given := range paths {
-		origin := Origin(given)
-		entry, err := Move(folder, given, ProjectOf(origin), os.Getenv("CLAUDE_SESSION_ID"), KeepDays(origin), time.Now())
+	for index, given := range paths {
+		if !keep {
+			deletion, err := Delete(folder, given, projects[index], Session(), "jst trash", time.Now())
+			if err != nil {
+				fmt.Fprintln(stderr, "jst trash:", err)
+				status = 1
+				continue
+			}
+			fmt.Fprintf(stdout, "jst trash: %s deleted, %s (logged: `jst trash list`)\n", deletion.Path, Measure(deletion))
+			continue
+		}
+		entry, err := Move(folder, given, projects[index], Session(), days[index], time.Now())
 		if err != nil {
 			fmt.Fprintln(stderr, "jst trash:", err)
 			status = 1
@@ -155,7 +177,7 @@ func Folder() (string, error) {
 // real folder from inside itself (a whole checkout carries its own jackstay.json), anything else
 // from the folder that holds it.
 func Origin(given string) string {
-	absolute, err := filepath.Abs(given)
+	absolute, err := Physical(given)
 	if err != nil {
 		return filepath.Dir(given)
 	}
@@ -163,6 +185,50 @@ func Origin(given string) string {
 		return absolute
 	}
 	return filepath.Dir(absolute)
+}
+
+// Physical is the absolute path the system means by given, from the working folder: its parent
+// resolved through links as the system walks it (so `link/../x` is beside the link's target, as
+// `ls` sees it, never beside the link), then its last element appended, so a final link stays the
+// link itself. A last element `.` or `..` resolves the whole path.
+func Physical(given string) (string, error) {
+	text := given
+	if !filepath.IsAbs(text) {
+		working, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		text = working + "/" + text // joined without cleaning: `..` must follow links
+	}
+	return physicalOf(text)
+}
+
+// PhysicalFrom is Physical with an explicit working folder.
+func PhysicalFrom(working, given string) (string, error) {
+	if filepath.IsAbs(given) {
+		return physicalOf(given)
+	}
+	return physicalOf(working + "/" + given)
+}
+
+func physicalOf(text string) (string, error) {
+	trimmed := strings.TrimRight(text, "/")
+	if trimmed == "" {
+		return "/", nil
+	}
+	cut := strings.LastIndexByte(trimmed, '/')
+	parent, last := trimmed[:cut], trimmed[cut+1:]
+	if parent == "" {
+		parent = "/"
+	}
+	if last == "." || last == ".." {
+		return filepath.EvalSymlinks(trimmed)
+	}
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, last), nil
 }
 
 // ProjectOf is the project a folder is in, for an entry's record.
@@ -202,25 +268,16 @@ func MoveForDiscard(folder, given, project, session string, keepDays int, now ti
 }
 
 func move(folder, given, project, session string, keepDays int, now time.Time, expected *Replaced) (Entry, error) {
-	source, err := filepath.Abs(given)
+	source, err := Physical(given)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, fmt.Errorf("%s: %w", given, err)
 	}
 	info, err := os.Lstat(source)
 	if err != nil {
 		return Entry{}, fmt.Errorf("%s: %w", given, err)
 	}
-	home := filepath.Dir(folder)
-	realSource := source
-	if resolved, err := filepath.EvalSymlinks(filepath.Dir(source)); err == nil {
-		realSource = filepath.Join(resolved, filepath.Base(source))
-	}
-	realHome := home
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
-		realHome = resolved
-	}
-	if realSource == realHome || strings.HasPrefix(realHome+"/", realSource+"/") {
-		return Entry{}, fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
+	if err := holdsHome(folder, given, source); err != nil {
+		return Entry{}, err
 	}
 	kind := "file"
 	switch {
@@ -267,6 +324,45 @@ func move(folder, given, project, session string, keepDays int, now time.Time, e
 		entry.Held = true // the record on disk still holds it: kept until restored, never lost
 	}
 	return entry, nil
+}
+
+// holdsHome refuses the jackstay home and a folder that holds it, and the trash folder and what is
+// in it (it holds the deletion log). Folders are compared by identity, not by spelling: a
+// case-insensitive volume names one folder in more than one way. A link given as the item is the
+// link itself, never what it leads to.
+func holdsHome(folder, given, source string) error {
+	home := filepath.Dir(folder)
+	parent := filepath.Dir(source)
+	if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = resolved
+	}
+	item, itemErr := os.Lstat(filepath.Join(parent, filepath.Base(source)))
+	homes := []string{home}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil && resolved != home {
+		homes = append(homes, resolved) // a home moved elsewhere through a link: its real folders too
+	}
+	for _, start := range homes {
+		for place := start; ; place = filepath.Dir(place) {
+			if info, err := os.Stat(place); err == nil && itemErr == nil && item.IsDir() && os.SameFile(info, item) {
+				return fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
+			}
+			if place == filepath.Dir(place) {
+				break
+			}
+		}
+	}
+	trashInfo, err := os.Stat(folder)
+	if err != nil {
+		return nil // no trash yet: nothing of it to delete
+	}
+	for place := filepath.Join(parent, filepath.Base(source)); ; place = filepath.Dir(place) {
+		if info, err := os.Lstat(place); err == nil && os.SameFile(info, trashInfo) {
+			return fmt.Errorf("%s is in jackstay's trash, which holds its deletion log: not deleted (`jst trash prune` removes old entries)", given)
+		}
+		if place == filepath.Dir(place) {
+			return nil
+		}
+	}
 }
 
 // newEntry makes an entry's folder and writes its record under a lock; entry.ID is set.
@@ -526,22 +622,29 @@ func list(folder string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
-	entries := Entries(folder)
+	entries, deletions := Entries(folder), Deletions(folder)
 	if asJSON {
 		type shown struct {
 			ID string `json:"id"`
 			Entry
 		}
-		out := make([]shown, 0, len(entries))
+		kept := make([]shown, 0, len(entries))
 		for _, entry := range entries {
-			out = append(out, shown{ID: entry.ID, Entry: entry})
+			kept = append(kept, shown{ID: entry.ID, Entry: entry})
 		}
-		data, _ := json.MarshalIndent(out, "", "  ")
+		if deletions == nil {
+			deletions = []Deletion{}
+		}
+		data, _ := json.MarshalIndent(map[string]any{"kept": kept, "deleted": deletions}, "", "  ")
 		fmt.Fprintln(stdout, string(data))
 		return 0
 	}
 	for _, entry := range entries {
 		fmt.Fprintf(stdout, "%s  %-6s  %s  (%s)\n", entry.ID, entry.Kind, entry.Path, entry.Project)
+	}
+	for _, deletion := range deletions {
+		fmt.Fprintf(stdout, "deleted %s  %-6s  %s  %s  (%s, %s)\n", deletion.DeletedAt, deletion.Kind, deletion.Path,
+			Measure(deletion), deletion.Command, deletion.Project)
 	}
 	return 0
 }
@@ -560,7 +663,7 @@ func restore(folder string, args []string, stdout, stderr io.Writer) int {
 	locked, err := lockEntry(place)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			fmt.Fprintln(stderr, "jst trash: no entry", id)
+			fmt.Fprintln(stderr, "jst trash: no entry", id, "(with trash.keep off, nothing is kept to restore)")
 		} else {
 			fmt.Fprintf(stderr, "jst trash: cannot lock entry %s: %v\n", id, err)
 		}

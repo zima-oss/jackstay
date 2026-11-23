@@ -100,15 +100,20 @@ func runReview(t *testing.T, home string, command, store string, env map[string]
 	return result
 }
 
+// generousHookBudget keeps the guard from failing open on a loaded machine: the goldens check what
+// it records, not how fast it answers.
+const generousHookBudget = 2 * time.Minute
+
 // hook is one guard process given a call.
 func hook(t *testing.T, home string, input string) string {
 	t.Helper()
 	t.Setenv("JACKSTAY_HOME", home)
 	separateProcess(t)
+	t.Setenv(telemetry.FinishWaitVariable, telemetrytest.GenerousFinishWait)
 	telemetry.Reset()
 	telemetry.Begin("guard", nil)
 	var stdout, stderr bytes.Buffer
-	status := guard.Hook(strings.NewReader(input), &stdout, &stderr)
+	status := guard.HookWithin(generousHookBudget, strings.NewReader(input), &stdout, &stderr)
 	telemetry.Finish(status)
 	return stdout.String()
 }

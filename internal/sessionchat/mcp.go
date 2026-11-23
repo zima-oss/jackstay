@@ -54,6 +54,8 @@ type Server struct {
 	waited    bool
 	// afterWrite runs once a response is written: what a tool marks only after its handoff.
 	afterWrite func()
+	// toolBudget bounds one tool call; 0 is toolTimeout.
+	toolBudget time.Duration
 }
 
 const serveUsage = `usage: jst chat serve [--name NAME]

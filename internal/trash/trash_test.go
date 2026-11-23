@@ -1,8 +1,10 @@
 package trash
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,7 +134,10 @@ func TestTheJackstayHomeIsNotMoved(t *testing.T) {
 }
 
 func TestPruneReadsEachEntrysOwnDays(t *testing.T) {
-	work := t.TempDir()
+	work, err := filepath.EvalSymlinks(t.TempDir()) // entries record the path the system means
+	if err != nil {
+		t.Fatal(err)
+	}
 	folder := filepath.Join(t.TempDir(), ".trash")
 	moved := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	for _, name := range []string{"short", "long"} {
@@ -160,7 +165,7 @@ func TestPruneReadsEachEntrysOwnDays(t *testing.T) {
 
 func TestPruneReadsTheOriginOfAnEntryWithoutDays(t *testing.T) {
 	keeping := t.TempDir()
-	config := `{"jackstay_schema": 2, "project": "keeping", "trash": {"keep_days": 30}}`
+	config := `{"jackstay_schema": 3, "project": "keeping", "trash": {"keep": "on", "keep_days": 30}}`
 	if err := os.WriteFile(filepath.Join(keeping, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +192,7 @@ func TestPruneReadsTheOriginOfAnEntryWithoutDays(t *testing.T) {
 
 func TestTrashKeepsWhatItMovesWithZeroDays(t *testing.T) {
 	project := t.TempDir()
-	config := `{"jackstay_schema": 2, "project": "p", "trash": {"keep_days": 0}}`
+	config := `{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 0}}`
 	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +251,7 @@ func TestAFailedRemovalAcrossVolumesKeepsTheCopy(t *testing.T) {
 
 func TestKeepDaysReadsTheProjectsSetting(t *testing.T) {
 	project := t.TempDir()
-	config := `{"jackstay_schema": 2, "project": "p", "trash": {"keep_days": 30}}`
+	config := `{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 30}}`
 	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +266,7 @@ func TestKeepDaysReadsTheProjectsSetting(t *testing.T) {
 func TestTrashRecordsTheDaysOfTheItemsOwnCheckout(t *testing.T) {
 	short, long := t.TempDir(), t.TempDir()
 	for folder, days := range map[string]int{short: 7, long: 30} {
-		config := fmt.Sprintf(`{"jackstay_schema": 2, "project": "same", "trash": {"keep_days": %d}}`, days)
+		config := fmt.Sprintf(`{"jackstay_schema": 3, "project": "same", "trash": {"keep": "on", "keep_days": %d}}`, days)
 		if err := os.WriteFile(filepath.Join(folder, "jackstay.json"), []byte(config), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -313,8 +318,12 @@ func TestTrashingAWholeCheckoutKeepsItsOwnDays(t *testing.T) {
 	if err := os.Mkdir(checkout, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	config := `{"jackstay_schema": 2, "project": "checkout", "trash": {"keep_days": 30}}`
+	config := `{"jackstay_schema": 3, "project": "checkout", "trash": {"keep": "on", "keep_days": 30}}`
 	if err := os.WriteFile(filepath.Join(checkout, "jackstay.json"), []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// trash.keep is the setting of the project the command runs in.
+	if err := os.WriteFile(filepath.Join(parent, "jackstay.json"), []byte(`{"jackstay_schema": 3, "project": "outer", "trash": {"keep": "on"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("JACKSTAY_HOME", t.TempDir())
@@ -444,5 +453,231 @@ func TestARecordWrittenButNotSyncedIsReportedWithItsEntry(t *testing.T) {
 	}
 	if entries := Entries(folder); len(entries) != 1 || entries[0].Held {
 		t.Fatalf("entries %+v; the record on disk is released", entries)
+	}
+}
+
+// By default (trash.keep off) jst trash deletes at once and logs each deletion; nothing is kept,
+// and restore says the entry was deleted.
+func TestTrashDeletesAndLogsByDefault(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(`{"jackstay_schema": 2, "project": "p"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "item"), []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "tree", "inner"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "tree", "inner", "a"), []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "session-1")
+	t.Chdir(project)
+	var out, errs strings.Builder
+	if status := Command([]string{"item", "tree"}, nil, &out, &errs); status != 0 {
+		t.Fatalf("jst trash = %d: %s", status, errs.String())
+	}
+	for _, name := range []string{"item", "tree"} {
+		if _, err := os.Lstat(filepath.Join(project, name)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("%s is still there: %v", name, err)
+		}
+	}
+	folder, _ := Folder()
+	if entries := Entries(folder); len(entries) != 0 {
+		t.Fatalf("entries kept: %+v", entries)
+	}
+	deletions := Deletions(folder)
+	if len(deletions) != 2 {
+		t.Fatalf("deletions %+v", deletions)
+	}
+	byKind := map[string]Deletion{}
+	for _, deletion := range deletions {
+		byKind[deletion.Kind] = deletion
+	}
+	file := byKind["file"]
+	if file.Size != 5 || file.SHA256 != "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" ||
+		file.Session != "session-1" || file.Command != "jst trash" || file.Project != "p" || !strings.HasSuffix(file.Path, "/item") {
+		t.Fatalf("file %+v", file)
+	}
+	if tree := byKind["folder"]; tree.Size != 3 || len(tree.SHA256) != 64 {
+		t.Fatalf("folder %+v", tree)
+	}
+	out.Reset()
+	if status := list(folder, nil, &out, &errs); status != 0 || !strings.Contains(out.String(), "deleted ") || !strings.Contains(out.String(), "5 bytes") {
+		t.Fatalf("list = %d: %s", status, out.String())
+	}
+}
+
+// A deletion is logged before anything is removed: one whose log cannot be written deletes nothing.
+func TestADeletionThatCannotBeLoggedDeletesNothing(t *testing.T) {
+	notAFolder := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notAFolder, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(t.TempDir(), "x")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Delete(filepath.Join(notAFolder, ".trash"), source, "p", "s", "jst trash", time.Now()); err == nil ||
+		!strings.Contains(err.Error(), "nothing was deleted") {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Fatalf("deleted without a log: %v", err)
+	}
+}
+
+// The jackstay home, which holds the log, is refused.
+func TestDeleteRefusesTheJackstayHome(t *testing.T) {
+	home := t.TempDir()
+	if _, err := Delete(filepath.Join(home, ".trash"), home, "p", "s", "jst trash", time.Now()); err == nil {
+		t.Fatal("the home was deleted")
+	}
+}
+
+// The log moves aside at its limit, and both parts are read.
+func TestTheDeletionLogRollsOver(t *testing.T) {
+	folder := t.TempDir()
+	big := strings.Repeat("a", 40<<10)
+	for count := 0; count < 30; count++ {
+		if err := appendLog(folder, Deletion{Path: big, DeletedAt: fmt.Sprintf("2026-11-23T00:00:%02dZ", count)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(folder, oldLogName)); err != nil {
+		t.Fatalf("no previous log: %v", err)
+	}
+	if info, _ := os.Stat(filepath.Join(folder, logName)); info.Size() >= logLimit {
+		t.Fatalf("the log is %d bytes", info.Size())
+	}
+	if deletions := Deletions(folder); len(deletions) != 30 || deletions[0].DeletedAt != "2026-11-23T00:00:29Z" {
+		t.Fatalf("%d deletions, newest %v", len(deletions), deletions[0].DeletedAt)
+	}
+}
+
+// A line a stopped writer left unfinished does not hide the next deletion.
+func TestAnUnfinishedLogLineDoesNotHideTheNext(t *testing.T) {
+	folder := t.TempDir()
+	if err := os.WriteFile(filepath.Join(folder, logName), []byte(`{"path": "/cut`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendLog(folder, Deletion{Path: "/next", DeletedAt: "2026-11-23T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if deletions := Deletions(folder); len(deletions) != 1 || deletions[0].Path != "/next" {
+		t.Fatalf("deletions %+v", deletions)
+	}
+}
+
+// The trash folder, which holds the log, is refused.
+func TestDeleteRefusesTheTrashFolder(t *testing.T) {
+	home := t.TempDir()
+	folder := filepath.Join(home, ".trash")
+	if err := appendLog(folder, Deletion{Path: "/x"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{folder, filepath.Join(folder, logName)} {
+		if _, err := Delete(folder, target, "p", "s", "jst trash", time.Now()); err == nil {
+			t.Fatalf("%s was deleted", target)
+		}
+	}
+}
+
+// On a case-insensitive volume another spelling of the trash folder is the same folder: refused.
+func TestDeleteRefusesTheTrashFolderUnderAnotherSpelling(t *testing.T) {
+	home := t.TempDir()
+	folder := filepath.Join(home, ".trash")
+	if err := appendLog(folder, Deletion{Path: "/x"}); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(home, ".Trash")
+	if _, err := os.Stat(other); err != nil {
+		t.Skip("the volume is case-sensitive")
+	}
+	if _, err := Delete(folder, other, "p", "s", "jst trash", time.Now()); err == nil {
+		t.Fatal("the trash folder was deleted under another spelling")
+	}
+}
+
+// A home reached through a link is protected at its real place too.
+func TestDeleteRefusesTheRealParentOfALinkedHome(t *testing.T) {
+	real := filepath.Join(t.TempDir(), "old-project")
+	if err := os.MkdirAll(filepath.Join(real, ".jackstay"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), ".jackstay")
+	if err := os.Symlink(filepath.Join(real, ".jackstay"), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Delete(filepath.Join(link, ".trash"), real, "p", "s", "jst trash", time.Now()); err == nil {
+		t.Fatal("the real parent of the home was deleted")
+	}
+}
+
+// Each item's keep_days is read before the first moves: trashing jackstay.json first does not
+// shorten a later item's days.
+func TestTrashReadsEveryItemsDaysBeforeMoving(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(`{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 30}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "output.dat"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	t.Chdir(project)
+	var out, errs strings.Builder
+	if status := Command([]string{"jackstay.json", "output.dat"}, nil, &out, &errs); status != 0 {
+		t.Fatalf("jst trash = %d: %s", status, errs.String())
+	}
+	folder, _ := Folder()
+	for _, entry := range Entries(folder) {
+		if entry.KeepDays == nil || *entry.KeepDays != 30 {
+			t.Fatalf("%s records %v days", entry.Path, entry.KeepDays)
+		}
+	}
+	if len(Entries(folder)) != 2 {
+		t.Fatalf("entries %+v", Entries(folder))
+	}
+}
+
+// `link/../x` is beside the link's target, as the system walks it: that is what is deleted, never
+// the x beside the link; and a final link is the link itself.
+func TestDeleteFollowsALinkedParentAsTheSystemDoes(t *testing.T) {
+	work, elsewhere := t.TempDir(), t.TempDir()
+	for _, folder := range []string{filepath.Join(work, "build"), filepath.Join(elsewhere, "run1")} {
+		if err := os.MkdirAll(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, file := range []string{filepath.Join(work, "build", "scratch"), filepath.Join(elsewhere, "scratch")} {
+		if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(elsewhere, "run1"), filepath.Join(work, "build", "current")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(work)
+	folder := filepath.Join(t.TempDir(), ".trash")
+	if _, err := Delete(folder, "build/current/../scratch", "p", "s", "jst trash", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, "scratch")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("the scratch beside the link's target is still there")
+	}
+	if _, err := os.Stat(filepath.Join(work, "build", "scratch")); err != nil {
+		t.Fatalf("the scratch beside the link was deleted: %v", err)
+	}
+	if _, err := Delete(folder, "build/current", "p", "s", "jst trash", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, "run1")); err != nil {
+		t.Fatalf("a final link's target was deleted: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(work, "build", "current")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("the link is still there")
 	}
 }

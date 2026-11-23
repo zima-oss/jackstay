@@ -107,6 +107,12 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, TestUsage)
 		return 0
 	}
+	// A removed option is said first: no run follows, so whether evidence could be written is moot.
+	if scopeCommand != nil && !IsRaw(args) && asksResume(args) {
+		Say(stderr, "%s", ResumeRemoved)
+		Say(stderr, "outcome=not-started (nothing was run)")
+		return StatusUnusable
+	}
 	if path := UnwritableEvidence(""); path != "" {
 		Say(stderr, "%s", EvidenceRefusal(path))
 		Say(stderr, "outcome=not-started (nothing was run)")
@@ -131,7 +137,7 @@ func TestCommand(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 
 // UnwritableEvidence is the first piece of a project's evidence this process cannot write, "" when
 // it can write them all: the run log (opened for appending, nothing written), and the project's
-// receipts, gate marks and bars (a file made and removed in each, or where it would be made).
+// receipts and failure notes (a file made and removed in each, or where it would be made).
 // Claude Code's sandbox refuses them once setup has left evidence read-only there (#59), and so may
 // an owner's deny rule; a run that cannot write them could neither be found again nor, failing, undo
 // an earlier pass, so every jst test that runs something checks them first. project "" checks the
@@ -193,9 +199,25 @@ func canCreateIn(folder string) bool {
 	return os.Remove(name) == nil && closeErr == nil
 }
 
+// ResumeRemoved is what `jst test … --resume` gets: it went in 0.6.0 with the gate's marks and bars.
+const ResumeRemoved = "--resume was removed in jackstay 0.6.0: a gate runs every node each time; reuse of passes comes with the cache of jackstay 1"
+
+// asksResume says whether a scope run's words carry `--resume` among its options (before `--`).
+func asksResume(args []string) bool {
+	for _, word := range args {
+		if word == "--" {
+			return false
+		}
+		if word == "--resume" {
+			return true
+		}
+	}
+	return false
+}
+
 // EvidenceRefusal is what a run that cannot write its evidence says.
 func EvidenceRefusal(path string) string {
-	return fmt.Sprintf("jst test records evidence (the run log, receipts, gate marks) and cannot write %s here: inside Claude "+
+	return fmt.Sprintf("jst test records evidence (the run log, receipts) and cannot write %s here: inside Claude "+
 		"Code's sandbox it is read-only, so a run could neither be found again nor undo an earlier pass. Run it outside the sandbox.", path)
 }
 

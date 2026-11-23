@@ -292,7 +292,7 @@ func stageOf(span journal.Span) string {
 
 func statusOf(span journal.Span) string {
 	switch outcome := query.Outcome(span); outcome {
-	case "ok", "passed", "failed", "pending", "reused", "would-hit", "exited-0", "nothing-run", "passed-on-retry",
+	case "ok", "passed", "failed", "pending", "reused", "would-hit", "exited-0", "nothing-run", "passed-on-retry", "resumed",
 		"timed-out", "unjudged", "not-started", "stopped", "crashed", "done", "clear", "blocks", "redesign-due",
 		"no-round", "timeout", "unparsable":
 		return outcome

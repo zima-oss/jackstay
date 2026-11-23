@@ -67,3 +67,6 @@ is added in a pull request.
 | [W-095](W-095-the-socket-is-a-doorbell.md) | Claude Code's messaging socket is only a doorbell; a chat message is delivered when the recipient reads it from its inbox |
 | [W-096](W-096-clear-limits-over-more-machinery.md) | Every mechanism has simple behaviour and written limits; a place that draws corner cases is narrowed or replaced by an existing solution; CI does not run the same test twice on one commit, within written limits (concurrent jobs, cache eviction); see [the task-graph record](W-096-task-graph-and-input-cache.md) |
 | [W-096](W-096-task-graph-and-input-cache.md) | Test scopes run as a task graph, each once after its `deps`; a cache by a hash of their inputs comes in a later version, not 0.6.0; CI runs each scope at most once per system job |
+| [W-107](W-107-trash-deletes-and-logs.md) | `jst trash` and `jst discard` delete at once and log each deletion; `trash.keep: on` keeps copies to restore, experimental |
+| [W-107](W-107-step-kinds.md) | Step kinds: a `test` scope must count tests to pass, a `check` scope passes on exit 0; a gate passes when every test passed and every check exited 0 |
+| [W-108](W-108-managed-by-the-pinned-release.md) | jackstay's repository is managed by its pinned release: the self-adoption test plans at `adopt.pin`, and a release goes bump, tag, then the configuration that adopts it |

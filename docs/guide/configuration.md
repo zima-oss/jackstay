@@ -40,16 +40,17 @@ jst check
 | Section | What it configures | Guide |
 |---|---|---|
 | `test`, `receipts`, `lock` | test scopes, their judges, receipts and the machine-wide lock | [Tests](tests.md) |
-| `guard`, `trash` | the guard's rules and levels, how long the trash keeps things | [The guard](guard.md) |
+| `guard`, `trash` | the guard's rules and levels, whether the trash keeps things | [The guard](guard.md) |
 | `procs` | the deadlines of background processes | [Background processes](background.md) |
-| `github` | the account and remote jackstay uses on GitHub | [Branches and GitHub](branches-and-github.md) |
+| `github`, `land` | the account and remote jackstay uses on GitHub; who merges a change, how, and which paths only a person lands | [Branches and GitHub](branches-and-github.md) |
 | `review` | reviewers, severities and rounds | [Reviews](review.md) |
 | `ids`, `records`, `cards`, `changes`, `release` | numbers, records, cards, changelogs and releases | [Records](records.md), [Releases](releases.md) |
 | `telemetry` | what the local journal keeps | [What jackstay did](observability.md) |
 | `adopt` | the workflows' pin and the organisation's profile | [Adopting a project](adopt.md) |
 | `brief` | how long a compaction brief stays fresh | [Compaction briefs](context-brief.md) |
 | `baseline` | what `jst baseline` counts | `jst baseline --help` |
-| `chat`, `queue`, `status` | chat between sessions, the local merge queue, the status overview | being reworked for 0.6.0 |
+| `chat` | chat between this repository's agent sessions | [Session chat](session-chat.md) |
+| `status` | the repositories `jst status` reads when none are named | [`jst status`](status.md) |
 
 Every section and key, with its type, default and meaning: [Configuration
 reference](../reference/configuration.md).

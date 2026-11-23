@@ -11,11 +11,11 @@ Download the four `jackstay_<version>_<os>_<arch>.tar.gz` assets and `checksums.
 *same published release* into one folder, then generate the formula and check its syntax:
 
 ```sh
-go run ./cmd/jst-homebrew-formula 0.5.11 /path/to/release-assets > /tmp/jackstay.rb
+go run ./cmd/jst-homebrew-formula 0.6.0 /path/to/release-assets > /tmp/jackstay.rb
 ruby -c /tmp/jackstay.rb
 ```
 
-Use the release's version in place of `0.5.11`. The generator checks every archive against
+Use the release's version in place of `0.6.0`. The generator checks every archive against
 `checksums.txt`, requires an executable `jst`, `LICENSE` and the dependency licence files at each
 archive's root, prints the formula and changes nothing remote. The formula declares distinct URLs and
 SHA-256 hashes for Apple silicon, Intel macOS, Linux arm64 and Linux x86-64. The formula installs

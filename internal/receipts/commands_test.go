@@ -3,6 +3,7 @@ package receipts
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,6 +157,31 @@ func TestTestRunsNothingWhereItCannotRecordItsEvidence(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("the command ran")
+	}
+}
+
+// `--resume` was removed in 0.6.0: a run that asks for it is told so first, even where the sandbox
+// would refuse to let it record evidence, and nothing runs.
+func TestTheResumeRemovalIsSaidBeforeTheSandboxRefusal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("JACKSTAY_HOME", home)
+	shared := filepath.Join(home, ".all")
+	if err := os.MkdirAll(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(shared, 0o700) })
+	called := false
+	previous := scopeCommand
+	RegisterScopes(func([]string, io.Reader, io.Writer, io.Writer) int { called = true; return 0 })
+	t.Cleanup(func() { scopeCommand = previous })
+	var stdout, stderr bytes.Buffer
+	code := TestCommand([]string{"gate", "--resume"}, nil, &stdout, &stderr)
+	if code != StatusUnusable || !strings.Contains(stderr.String(), "--resume was removed in jackstay 0.6.0") ||
+		strings.Contains(stderr.String(), "Run it outside the sandbox.") || called {
+		t.Fatalf("exit %d, scope run %v: %s", code, called, &stderr)
 	}
 }
 

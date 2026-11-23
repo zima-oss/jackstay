@@ -14,9 +14,14 @@ import (
 
 	"github.com/zima-oss/jackstay/internal/chatevent"
 	"github.com/zima-oss/jackstay/internal/cli"
+	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/procs"
 	"github.com/zima-oss/jackstay/internal/sessionchat/chatstore"
 )
+
+// fixtureBound is the hook's and a tool call's budget in tests not about it: generous, so a loaded
+// machine never decides the outcome.
+const fixtureBound = 2 * time.Minute
 
 type clock struct{ now time.Time }
 
@@ -65,7 +70,7 @@ func tokenServer(t *testing.T, root, name, token string) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{chat: chat, name: name, token: "tk:" + token}
+	return &Server{chat: chat, name: name, token: "tk:" + token, toolBudget: fixtureBound}
 }
 
 // call runs one tool through a whole MCP exchange and returns its structured result.
@@ -180,7 +185,7 @@ func hook(t *testing.T, input map[string]any) map[string]any {
 	t.Helper()
 	encoded, _ := json.Marshal(input)
 	var output, diagnostics bytes.Buffer
-	if code := runHook(nil, bytes.NewReader(encoded), &output, &diagnostics); code != 0 {
+	if code := runHookWithin(fixtureBound, nil, bytes.NewReader(encoded), &output, &diagnostics); code != 0 {
 		t.Fatalf("the hook exits 0: %d", code)
 	}
 	if diagnostics.Len() > 0 {
@@ -238,6 +243,46 @@ func TestTheHookRingsAndHoldsATurnForUrgentWork(t *testing.T) {
 	hook(t, with("SessionEnd", nil))
 	if sessions, _ := store.Sessions(context.Background()); sessions[0].State != chatstore.StateEnded {
 		t.Fatalf("SessionEnd: %+v", sessions[0])
+	}
+}
+
+// The hook's budget ends a hook that has not done its work within it: nothing is recorded, and the
+// hook still exits 0 with no answer.
+func TestTheHookBudgetEndsTheHook(t *testing.T) {
+	root, _ := chatRepository(t)
+	encoded, _ := json.Marshal(map[string]any{"session_id": "late", "hook_event_name": "SessionStart", "cwd": root})
+	var output, diagnostics bytes.Buffer
+	if code := runHookWithin(time.Nanosecond, nil, bytes.NewReader(encoded), &output, &diagnostics); code != 0 || output.Len() != 0 {
+		t.Fatalf("%d %q", code, output.String())
+	}
+	if diagnostics.Len() == 0 {
+		t.Fatal("the hook ended by its budget says so")
+	}
+	store, _ := openStore()
+	if sessions, err := store.Sessions(context.Background()); err != nil || len(sessions) != 0 {
+		t.Fatalf("nothing is recorded past the budget: %+v %v", sessions, err)
+	}
+}
+
+// The tool budget ends a call that has not answered within it: a holder of the store's lock that
+// never lets go keeps the call waiting until the budget, and the call is refused as busy.
+func TestTheToolBudgetEndsTheCall(t *testing.T) {
+	root, _ := chatRepository(t)
+	server := tokenServer(t, root, "alice", strings.Repeat("a", 64))
+	storeFolder := filepath.Join(os.Getenv("JACKSTAY_HOME"), "store")
+	if err := os.MkdirAll(storeFolder, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	held, err := flock.TryFile(filepath.Join(storeFolder, "lock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	server.toolBudget = time.Nanosecond
+	answer, _ := server.call(json.RawMessage(`{"name":"chat.whoami","arguments":{}}`)).(map[string]any)
+	fields, _ := answer["structuredContent"].(map[string]any)
+	if fields["outcome"] != "refused" || fields["reason"] != chatstore.ReasonStoreBusy {
+		t.Fatalf("a call past its budget answered: %+v", answer)
 	}
 }
 

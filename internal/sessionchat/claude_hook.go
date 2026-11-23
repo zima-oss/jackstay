@@ -50,6 +50,11 @@ type hookInput struct {
 }
 
 func runHook(args []string, input io.Reader, output, diagnostics io.Writer) int {
+	return runHookWithin(hookBudget, args, input, output, diagnostics)
+}
+
+// runHookWithin is the hook under a given budget, so tests on a loaded machine are not decided by it.
+func runHookWithin(budget time.Duration, args []string, input io.Reader, output, diagnostics io.Writer) int {
 	if len(args) != 0 {
 		fmt.Fprint(diagnostics, hookUsage)
 		return 0
@@ -63,7 +68,7 @@ func runHook(args []string, input io.Reader, output, diagnostics io.Writer) int 
 		fmt.Fprintln(diagnostics, "jackstay chat: the hook's input names no session or event")
 		return 0
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), hookBudget)
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	answer, err := dispatch(ctx, hook)
 	if err != nil {
@@ -87,7 +92,7 @@ func runHook(args []string, input io.Reader, output, diagnostics io.Writer) int 
 	}
 	// What the ring told of is marked only once the answer is handed over (section 8.4).
 	if len(answer.told) > 0 {
-		marking, cancel := context.WithTimeout(context.Background(), hookBudget)
+		marking, cancel := context.WithTimeout(context.Background(), budget)
 		defer cancel()
 		if err := answer.store.MarkHookRung(marking, answer.key, answer.told); err != nil {
 			fmt.Fprintf(diagnostics, "jackstay chat: %v\n", err)

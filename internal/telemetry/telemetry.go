@@ -45,6 +45,9 @@ const (
 	// ClaudeSessionVariable is the Claude Code session a Bash child runs for (measured, research
 	// section 2; not documented, so best effort).
 	ClaudeSessionVariable = "CLAUDE_CODE_SESSION_ID"
+	// FinishWaitVariable, set to a Go duration, replaces FinishBound: a test that reads back what a
+	// process wrote sets it long, so a loaded machine cannot outrun the write. Unset, FinishBound holds.
+	FinishWaitVariable = "JACKSTAY_TELEMETRY_FINISH_WAIT"
 )
 
 // ScopeName is the instrumentation scope of jackstay's own spans.
@@ -52,6 +55,16 @@ const ScopeName = "jackstay"
 
 // FinishBound is the most Finish waits for a write (the exporter's lock wait is shorter).
 const FinishBound = 200 * time.Millisecond
+
+// finishBound is FinishBound, unless FinishWaitVariable names another positive duration.
+func finishBound() time.Duration {
+	if given := os.Getenv(FinishWaitVariable); given != "" {
+		if bound, err := time.ParseDuration(given); err == nil && bound > 0 {
+			return bound
+		}
+	}
+	return FinishBound
+}
 
 // process is this process's telemetry.
 type process struct {
@@ -481,7 +494,7 @@ func (state *process) finish(exitCode int, errorType, outcome string) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(FinishBound):
+	case <-time.After(finishBound()):
 	}
 }
 

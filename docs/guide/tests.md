@@ -11,8 +11,8 @@ status alone: a test command may itself end with 2 or 77.
 
 | Outcome | Meaning |
 |---|---|
-| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A gate: every step `passed`, `exited-0` or `skipped`, and at least one ran; a gate of exit-judged steps alone can pass with no test counted, so read each step's outcome on the same line |
-| `exited-0` | ended 0, but nothing counted its tests: **not a pass** |
+| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A `check` scope (`kind: check`): ended 0. A gate: every step `passed` or `skipped`, and at least one ran |
+| `exited-0` | ended 0, but nothing counted its tests and it is not a `check`: **not a pass**; a gate with such a step is `exited-0` too |
 | `reused` | nothing ran: a receipt for this tree exists and reuse is on |
 | `failed` | ended non-zero, or a veto line was seen |
 | `not-started` | `jackstay.json` or the lock could not be used, or a `requires` check failed; nothing ran |
@@ -26,6 +26,7 @@ status alone: a test command may itself end with 2 or 77.
 | `passed-on-retry` | every test passed, but at least one only after its runner retried it: **not a pass**, no receipt, and it fails a gate |
 | `timed-out` | a scope's timeout ended the whole process tree |
 | `stopped` | `jst test` was asked to stop; it ends by that signal |
+| `stopped-waiting` | `jst test` was asked to stop while it waited for the machine-wide lock; nothing ran |
 
 The exit status of each outcome: `jst test --help`.
 
@@ -46,7 +47,8 @@ jst test last
 
 ## Declare scopes
 
-A scope is a named way to run your tests, declared in `jackstay.json`'s `test` section:
+A scope is a named way to run your tests, declared in `jackstay.json`'s `test` section (`kind`,
+like the graph keys, needs `"jackstay_schema": 3`):
 
 ```json
 "receipts": {"toolchain": []},
@@ -62,7 +64,7 @@ A scope is a named way to run your tests, declared in `jackstay.json`'s `test` s
     "gate":    {"steps": ["lint", "full"], "when": "before every pull request"}
   },
   "steps": {
-    "lint": {"run": ["ruff", "check", "."], "judge": "exit"}
+    "lint": {"run": ["ruff", "check", "."], "judge": "exit", "kind": "check"}
   }
 }
 ```
@@ -122,19 +124,22 @@ every step whose deps passed and reports each. A step whose `systems` leave this
 full again. `--commit HEAD` runs on a clean copy of HEAD that jackstay makes and removes.
 
 ```text
-jst test: outcome=passed (gate, 0.9 s: lint=exited-0, full=passed)
-jst test: outcome=failed (gate failed at full, exit 1, 0.9 s: lint=exited-0, full=failed, gate=not-run)
+jst test: outcome=passed (gate, 0.9 s: lint=passed, full=passed)
+jst test: outcome=failed (gate failed at full, exit 1, 0.9 s: lint=passed, full=failed, gate=not-run)
 ```
 
-- The line names each step's own outcome: `lint=exited-0` ran and ended 0 without counting tests;
-  `full=passed` counted them.
+- The line names each step's own outcome: `lint=passed` is a check (`"kind": "check"`) that ended
+  0; `full=passed` counted its tests.
+- **Step kinds** (schema 3): `"kind": "test"` must count tests to pass (its judge cannot be
+  `exit`); `"kind": "check"`, for a linter, an audit or a build, passes on exit 0. A step without
+  `kind` that counts no tests is `exited-0`, and so is a gate that runs it: mark your linters and
+  builds `check`.
 - A run that fails names the first failure in this order: `failed`, `passed-on-retry`,
   `timed-out`, `stopped`, `stopped-waiting`, `unjudged`, `nothing-run`, `gave-up`, `not-started`.
 - `jst check` refuses a cycle of deps, an unknown dep, `steps` with `deps`, a dep that needs test
   names, and, in schema 3, `requires` on a scope with no `run`: the check goes to the dep that
   needs it. A schema-2 list's own `requires` run once, before anything, when the list is in the run.
-- `--resume` and the `resume` key were removed in 0.6.0: `--resume` is refused (2), and
-  `jst check` refuses the key. Reuse of passes comes with the cache of jackstay 1.
+- `--resume` and the `resume` key are gone in 0.6.0 ([Upgrading](upgrading.md)).
 - `--commit REV` runs on a clone that shares the repository's objects, so your uncommitted work
   cannot make it pass or fail. It has no ignored files (`node_modules`, build folders): a step that
   needs them builds them.
@@ -188,9 +193,9 @@ A scope's `ci` names the systems whose CI job runs it; `systems` the systems it 
 
 ```json
 "scopes": {
-  "x-build": {"run": ["just", "build"], "judge": "exit"},
+  "x-build": {"run": ["just", "build"], "judge": "exit", "kind": "check"},
   "x-go":    {"run": ["just", "go"], "deps": ["x-build"], "ci": ["linux"]},
-  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "kind": "check", "ci": ["linux"]},
   "x-ios":   {"run": ["just", "ios"], "deps": ["x-build"], "systems": ["darwin"]},
   "gate":    {"deps": ["x-docs", "x-go", "x-ios"]}
 }
@@ -213,7 +218,7 @@ one group: **here** (it runs on this machine and is not covered), **ci** (covere
 their deps from any group:
 
 ```text
-jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; ci: x-docs, x-go; elsewhere: none)
+jst test: outcome=passed (changed, 40 s; here: x-build=passed, x-ios=passed; ci: x-docs, x-go; elsewhere: none)
 ```
 
 - `jst test changed` ends `needs-other-system` (80) when a test of the change runs on no CI system
@@ -224,12 +229,12 @@ jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; c
   when the commit's `jackstay.json` gives some scope a `ci`.
 - `jst test ci` runs every scope covered on this system, each once, in graph order. Name the CI
   job `jst test ci (SYSTEM)` and require it in the base's rules; `jst doctor` reports a system
-  whose job they do not require.
+  whose job they do not require. It ends 77 on `exited-0`: a CI job is green only on a pass, so
+  mark each linter and build `"kind": "check"`.
 - jackstay schedules each scope once but cannot see inside a command: scopes CI runs on one system
   must test disjoint sets, or a test runs twice.
-- Not in 0.6.0: the cache by input hash, planned for a later version ([land.md](../design/land.md)
-  section 7.3), which is also when a gate will reuse earlier passes. Not built yet: the CI workflow
-  `jst adopt` writes for these jobs.
+- There is no cache in 0.6.0: a scope with deps runs every step each time. `jst adopt` does not
+  write the CI workflow for these jobs: add the job yourself.
 
 ## Structured test reports
 
@@ -464,7 +469,7 @@ run-record parts have anything to read. Every flag: `jst baseline --help`.
 
 | What you see | What to do |
 |---|---|
-| `outcome=exited-0` | Nothing counted the tests. Give the scope `judge: steps` and an `evidence` pattern with one number group, or a structured judge. |
+| `outcome=exited-0` | Nothing counted the tests. Give the scope `judge: steps` and an `evidence` pattern with one number group, or a structured judge; for a linter, an audit or a build, `"kind": "check"`. |
 | `not-started`: `receipts.toolchain` must be written out | Add `"receipts": {"toolchain": []}` (or your toolchain commands). |
 | `unjudged` with `left-running=…` | The tests left processes behind; jackstay stopped them. Fix the test's cleanup. |
 | `timed-out` | The scope's `timeout` ended the whole tree. Raise it, or split the scope. |

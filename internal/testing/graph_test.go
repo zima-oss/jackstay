@@ -26,7 +26,7 @@ func whereSection() map[string]any {
 		"selection": map[string]any{"order": argv("x-docs", "gate"),
 			"rules": []any{map[string]any{"glob": "docs/**", "scope": "x-docs"}}},
 		"scopes": map[string]any{
-			"x-build": map[string]any{"run": counted("x-build", "true"), "judge": "exit"},
+			"x-build": map[string]any{"run": counted("x-build", "true"), "judge": "exit", "kind": "check"},
 			"x-go":    counting("x-go", map[string]any{"deps": argv("x-build"), "ci": argv("linux")}),
 			"x-docs":  counting("x-docs", map[string]any{"ci": argv("linux")}),
 			"x-ios":   counting("x-ios", map[string]any{"deps": argv("x-build"), "systems": argv("darwin")}),
@@ -144,7 +144,8 @@ func TestASharedDepRunsOnceAfterWhatItNeeds(t *testing.T) {
 	w := newWorld(t, section, nil)
 	w.expectStatus(w.jst("gate"), 0)
 	w.expectCounters("x-lib x-a x-b", 1, 1, 1)
-	w.expectLast("outcome=passed (gate, ", "x-lib=exited-0, x-a=exited-0, x-b=exited-0")
+	// Scopes that count no tests and are not declared checks are not evidence: the gate is exited-0.
+	w.expectLast("outcome=exited-0 (gate, ", "x-lib=exited-0, x-a=exited-0, x-b=exited-0")
 	// A scope with run and deps runs its deps first.
 	w.expectStatus(w.jst("x-a"), 0)
 	w.expectCounters("x-lib x-a x-b", 2, 2, 1)
@@ -247,7 +248,7 @@ func TestTheRunsOutcomeIsTheFirstInTheOrder(t *testing.T) {
 		{[]step{line("a", "not-run", 0), line("b", "not-started", 2)}, "not-started", 2},
 		{[]step{line("a", "skipped", 0)}, "skipped", statusSkipped},
 		{[]step{line("b", "passed", 0), line("a", "exited-0", 0)}, "exited-0", 0},
-		{[]step{line("b", "exited-0", 0), line("a", "passed", 0)}, "passed", 0},
+		{[]step{line("b", "exited-0", 0), line("a", "passed", 0)}, "exited-0", 0}, // a dep that counted nothing taints the run
 	} {
 		state := &gateState{steps: each.lines}
 		outcomes := map[string]string{}
@@ -266,7 +267,7 @@ func TestChangedSplitsBetweenHereCIAndElsewhere(t *testing.T) {
 	mac := newWhereWorld(t, "darwin")
 	mac.repo.Commit("change", map[string]string{"Sources/b.swift": "let b = 2\n"})
 	mac.expectStatus(mac.jst("changed", "--base", "main"), 0)
-	mac.expectLast("outcome=passed (changed, ", "here: x-build=exited-0, x-ios=passed; ci: x-docs, x-go; elsewhere: none")
+	mac.expectLast("outcome=passed (changed, ", "here: x-build=passed, x-ios=passed; ci: x-docs, x-go; elsewhere: none")
 	mac.expectCounters("x-build x-ios x-go x-docs", 1, 1, 0, 0)
 	// On Linux nothing runs here; x-ios needs another machine.
 	linux := newWhereWorld(t, "linux")
@@ -354,7 +355,7 @@ func TestUncoveredRunsWhatCIDoesNotCoverOnThisSystemOnACleanCopy(t *testing.T) {
 	mac.system = "darwin"
 	mac.expectStatus(mac.jst(uncoveredCommand), 0)
 	mac.expectSaid("clean copy of")
-	mac.expectLast("outcome=passed (uncovered, ", "here: x-docs=passed, x-build=exited-0, x-go=passed, x-ios=passed; ci: none")
+	mac.expectLast("outcome=passed (uncovered, ", "here: x-docs=passed, x-build=passed, x-go=passed, x-ios=passed; ci: none")
 	if record := mac.lastRecord("gate"); record.Text("pinned_candidate") != mac.repo.Git("rev-parse", "HEAD") || record.Text("system") != "darwin" {
 		t.Fatalf("the record: %v", record)
 	}
@@ -388,7 +389,7 @@ func TestUncoveredLeavesOutADepThatNeedsABase(t *testing.T) {
 	w := newWorld(t, section, nil)
 	w.system = "darwin"
 	w.expectStatus(w.jst(uncoveredCommand), 0)
-	w.expectLast("outcome=passed (uncovered, ", "here: x-docs=passed, x-build=exited-0, x-go=passed, x-ios=passed; ci: none")
+	w.expectLast("outcome=passed (uncovered, ", "here: x-docs=passed, x-build=passed, x-go=passed, x-ios=passed; ci: none")
 	w.expectCounters("x-based x-after", 0, 0)
 }
 
@@ -396,7 +397,7 @@ func TestCIRunsEveryScopeCoveredOnThisSystemOnceInGraphOrder(t *testing.T) {
 	w := newWhereWorld(t, "linux")
 	w.expectStatus(w.jst(ciCommand), 0)
 	w.expectCounters("x-docs x-build x-go x-ios", 1, 1, 1, 0)
-	w.expectLast("outcome=passed (ci, ", "x-docs=passed, x-build=exited-0, x-go=passed")
+	w.expectLast("outcome=passed (ci, ", "x-docs=passed, x-build=passed, x-go=passed")
 	if gate := w.lastRecord("gate"); gate.Text("scope") != ciCommand || gate.Text("system") != "linux" {
 		t.Fatalf("the record: %v", gate)
 	}
@@ -416,4 +417,90 @@ func TestChangedWithoutCIOrSystemsRunsTheSelectedScope(t *testing.T) {
 	if got := w.lastRecord("run").Text("scope"); got != "full" || len(w.records(receipts.EventGate)) != 0 {
 		t.Fatalf("ran %q", got)
 	}
+}
+
+// Step kinds (land.md section 7.1): a `check` that exits 0 passes; a gate passes when every test
+// passed and every check exited 0; an undeclared scope that counts nothing keeps it `exited-0`.
+func TestAGatePassesWhenItsChecksExitZeroAndItsTestsCount(t *testing.T) {
+	section := map[string]any{"scopes": map[string]any{
+		"gate":   map[string]any{"deps": argv("x-lint", "x-unit")},
+		"x-lint": map[string]any{"run": counted("x-lint", "true"), "judge": "exit", "kind": "check"},
+		"x-unit": counting("x-unit", map[string]any{"kind": "test"}),
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectLast("outcome=passed (gate, ", "x-lint=passed")
+	w.expectStatus(w.jst("x-lint"), 0)
+	w.expectLast("outcome=passed (a check: it ended 0")
+	undeclared := map[string]any{"scopes": map[string]any{
+		"gate":   map[string]any{"deps": argv("x-lint", "x-unit")},
+		"x-lint": map[string]any{"run": counted("x-lint", "true"), "judge": "exit"},
+		"x-unit": counting("x-unit", nil),
+	}}
+	w = newWorld(t, undeclared, nil)
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectLast("outcome=exited-0 (gate, ", "x-lint=exited-0")
+}
+
+// A dep that counted nothing taints the run even under a scope that passed.
+func TestAnUncountedDepUnderAPassingScopeIsNotAPass(t *testing.T) {
+	section := map[string]any{"scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-unit")},
+		"x-unit":  counting("x-unit", map[string]any{"deps": argv("x-smoke")}),
+		"x-smoke": map[string]any{"run": counted("x-smoke", "true"), "judge": "exit"},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectLast("outcome=exited-0 (gate, ", "x-smoke=exited-0, x-unit=passed, gate=exited-0")
+}
+
+// The required CI job fails on a run that is only exited-0.
+func TestCIFailsOnARunThatOnlyExitedZero(t *testing.T) {
+	section := whereSection()
+	scopes := section["scopes"].(map[string]any)
+	scopes["x-build"] = map[string]any{"run": counted("x-build", "true"), "judge": "exit"}
+	w := newWorld(t, section, nil)
+	w.system = "linux"
+	w.expectStatus(w.jst(ciCommand), receipts.StatusUnjudged)
+	w.expectLast("outcome=exited-0 (ci, ")
+}
+
+// A check is judged by its status even when the section's judge counts tests.
+func TestACheckIgnoresTheSectionsCountingJudge(t *testing.T) {
+	section := map[string]any{"judge": "go-json", "scopes": map[string]any{
+		"x-lint": map[string]any{"run": counted("x-lint", "true"), "kind": "check"},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("x-lint"), 0)
+	w.expectLast("outcome=passed (a check: it ended 0")
+}
+
+// A skipped branch carries no uncounted dep up into a composite.
+func TestASkippedBranchDoesNotTaintAComposite(t *testing.T) {
+	section := map[string]any{"scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-smoke", "x-suite")},
+		"x-smoke": map[string]any{"run": counted("x-smoke", "true"), "judge": "exit"},
+		"x-suite": map[string]any{"deps": argv("x-unit", "x-mac")},
+		"x-unit":  counting("x-unit", nil),
+		"x-mac":   counting("x-mac", map[string]any{"deps": argv("x-smoke"), "systems": argv("darwin")}),
+	}}
+	w := newWorld(t, section, nil)
+	w.system = "linux"
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectLast("outcome=exited-0 (gate, ", "x-mac=skipped")
+	// A composite that passed is not named on the line; one tainted would be.
+	if strings.Contains(w.lastLine(), "x-suite=exited-0") {
+		t.Fatalf("the skipped branch tainted x-suite: %s", w.lastLine())
+	}
+}
+
+// A check is its exit status alone: an evidence or veto pattern in its output changes nothing.
+func TestACheckIgnoresOutputPatterns(t *testing.T) {
+	section := map[string]any{"scopes": map[string]any{
+		"x-lint": map[string]any{"run": counted("x-lint", "echo ERROR; echo ran 3 tests; true"), "kind": "check",
+			"evidence": "ran ([0-9]+) tests", "veto": "^ERROR"},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("x-lint"), 0)
+	w.expectLast("outcome=passed (a check: it ended 0")
 }

@@ -124,7 +124,7 @@ func TestUpkeepCompressesAndDeletes(t *testing.T) {
 	if err := os.WriteFile(broken+".gz", []byte("not gzip"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	Upkeep(folder, DefaultRetention, now)
+	UpkeepWithin(folder, DefaultRetention, now, time.Hour)
 	exists := func(place string) bool { _, err := os.Stat(place); return err == nil }
 	if !exists(fresh) || exists(fresh+".gz") {
 		t.Fatal("a fresh file was touched")
@@ -144,6 +144,21 @@ func TestUpkeepCompressesAndDeletes(t *testing.T) {
 	buffer := make([]byte, 20)
 	if _, err := unpacked.Read(buffer); err != nil || !strings.HasPrefix(string(buffer), `{"resourceSpans"`) {
 		t.Fatalf("content %q %v", buffer, err)
+	}
+}
+
+// An upkeep past its bound before the first file leaves every file as it was (the bound's own
+// test: a negative bound is over at once, whatever the machine's speed).
+func TestUpkeepStopsAtItsBound(t *testing.T) {
+	folder := t.TempDir()
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local)
+	place := filepath.Join(folder, FileName(now.AddDate(0, 0, -200).Format(time.DateOnly)))
+	if err := os.WriteFile(place, line("ee", now, now), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	UpkeepWithin(folder, DefaultRetention, now, -time.Nanosecond)
+	if _, err := os.Stat(place); err != nil {
+		t.Fatalf("an upkeep past its bound removed a file: %v", err)
 	}
 }
 

@@ -31,7 +31,8 @@ the chosen scope's execution and receipt policy. An explicit `BASE..REV` runs on
 
 `jst test <scope>` runs a scope; `jst test list` lists the project's scopes (name, what it runs,
 when the project runs it); `jst test plan <scope>` prints the words that would run, step by step,
-and runs nothing. Flags: `jst test --help`.
+and runs nothing. `jst test uncovered` (what CI does not cover on this system) and `jst test ci`
+(the CI job's command) run the split of [land.md](land.md) section 7.4. Flags: `jst test --help`.
 
 ### The vocabulary
 
@@ -53,7 +54,8 @@ When each is required is the project's rule, written **once**, in the scope's `w
 
 ### Declaring a scope
 
-The optional `test` section, abridged (use: the [tests guide](../guide/tests.md#declare-scopes)):
+The optional `test` section, abridged, in schema 3 (use: the
+[tests guide](../guide/tests.md#declare-scopes)):
 
 ```json
 "test": {
@@ -64,11 +66,12 @@ The optional `test` section, abridged (use: the [tests guide](../guide/tests.md#
     "quick":   {"run": ["swift", "test", "--skip", "{slow}"], "slow": {"class_seconds": 20}},
     "gate":    {"steps": ["format", "quick"], "when": "before every pull request"}
   },
-  "steps": {"format": {"run": ["swift", "format", "lint", "-r", "Sources"], "judge": "exit"}}
+  "steps": {"format": {"run": ["swift", "format", "lint", "-r", "Sources"], "judge": "exit", "kind": "check"}}
 }
 ```
 
-Keys of a scope (all optional except `run` or `steps`):
+Keys of a scope (all optional, but a scope has `run`, or else `deps` or `steps` and is then a
+composite with no command of its own; a scope with `run` may also have `deps`, which pass first):
 
 - `run`: the words. Placeholders, whole words or inside one: `{tests}` (`focused`'s ARGS, escaped,
   one alternation: `Target.Class/test` exactly; `Target.Class` → `^Target\.Class(/|$)`; `Class` →

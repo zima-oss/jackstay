@@ -17,6 +17,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/procs"
+	"github.com/zima-oss/jackstay/internal/trash"
 )
 
 func init() {
@@ -28,9 +29,18 @@ func init() {
 const (
 	maxInputBytes  = 4 << 20
 	maxConfigBytes = 1 << 20
-	answerBy       = 5 * time.Second
-	exitBy         = 8 * time.Second
 )
+
+// hookBudgets are the hook's time bounds (sections 3 and 7). They are passed by value to each run,
+// so a test can give real work room on a loaded machine without a shared setting.
+var hookBudgets = budgets{answer: 5 * time.Second, exit: 8 * time.Second, reading: readingDeadline,
+	question: questionBudget, call: callBudget}
+
+// budgets: answer and exit bound the hook, reading the reading of the command, question and call
+// the questions to git.
+type budgets struct {
+	answer, exit, reading, question, call time.Duration
+}
 
 const askTheOwner = "If the owner really wants exactly this, ask them to run it in their own terminal. " +
 	"Do not rephrase the command to get around the guard."
@@ -55,12 +65,14 @@ type project struct {
 	cards   map[string]any
 	broken  bool   // it declares `cards` and the section cannot be used
 	problem string // why its jackstay.json cannot be used, or ""
+	stamp   string // the path, size and time of an unusable jackstay.json, "" when it changed while it was read
 }
 
 // projectOf reads the project around a folder: a broken section the guard does not read takes
 // nothing away; a jackstay.json that cannot be used takes the project's own rules away, not the built-in ones.
 func projectOf(folder string) project {
 	found := project{}
+	before := stampOf(folder)
 	root, loaded, err := config.Load(folder, []string{"guard"})
 	if err != nil {
 		var problem *config.Error
@@ -71,6 +83,9 @@ func projectOf(folder string) project {
 		}
 		root, _ = config.Find(folder)
 		loaded = config.Config{}
+	}
+	if found.problem != "" && stampOf(folder) == before {
+		found.stamp = before // the file did not change while it was read: its problem is of this state
 	}
 	found.root = root
 	found.name = config.ProjectName(root, loaded, folder)
@@ -136,10 +151,17 @@ func environment() map[string]string {
 	return found
 }
 
-func (found project) settingsFor(folder string, scratch []string) Settings {
+func (found project) settingsFor(folder string, scratch []string, within budgets) Settings {
 	return Settings{Folder: folder, Environ: environment(), Scratch: scratch, Home: homedir.AccountHome(),
 		ProjectRoot: found.root, Guard: found.guard, Cards: found.cards, CardsBroken: found.broken, CardsAt: CardsOf,
-		Git: NewGit(CardRange)}
+		Git: NewGitWithBudget(CardRange, within.question, within.call), TrashKeep: trash.Keeps(folder),
+		Deadline: within.reading}
+}
+
+// HookWithin is Hook with every budget set to within, for tests of other packages that run the hook
+// with real work and must not fail open on a loaded machine; Hook keeps the production budgets.
+func HookWithin(within time.Duration, stdin io.Reader, stdout, stderr io.Writer) int {
+	return hookWith(budgets{answer: within, exit: within, reading: within, question: within, call: within}, stdin, stdout, stderr)
 }
 
 // Refusal is the text a refusal gives the agent.
@@ -231,7 +253,8 @@ type reply struct {
 	context string // given to the agent (additionalContext); with a refusal it joins the reason
 }
 
-func (given reply) write(stdout io.Writer) {
+// write writes the answer; it says whether all of it was written (an empty answer is).
+func (given reply) write(stdout io.Writer) bool {
 	fields := map[string]any{}
 	if given.message != "" {
 		fields["systemMessage"] = given.message
@@ -250,14 +273,16 @@ func (given reply) write(stdout io.Writer) {
 		fields["hookSpecificOutput"] = map[string]any{"hookEventName": "PreToolUse", "additionalContext": given.context}
 	}
 	if len(fields) == 0 {
-		return
+		return true
 	}
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
-	if encoder.Encode(fields) == nil {
-		_, _ = stdout.Write(buffer.Bytes())
+	if encoder.Encode(fields) != nil {
+		return false
 	}
+	_, err := stdout.Write(buffer.Bytes())
+	return err == nil
 }
 
 const failedOpen = "jst guard failed and did NOT check this command (%s). The command runs unchecked; tell the jackstay project."
@@ -266,7 +291,13 @@ const failedOpen = "jst guard failed and did NOT check this command (%s). The co
 // 0 always. Input it cannot read is refused; evidence it cannot get makes the rule that needed it
 // refuse; only a fault of its own fails open (section 7).
 func Hook(stdin io.Reader, stdout, stderr io.Writer) int {
+	return hookWith(hookBudgets, stdin, stdout, stderr)
+}
+
+// hookWith is Hook under the given budgets.
+func hookWith(within budgets, stdin io.Reader, stdout, stderr io.Writer) int {
 	started := time.Now()
+	answerBy, exitBy := within.answer, within.exit
 	done := make(chan func(), 1)
 	go func() {
 		var after func()
@@ -282,7 +313,7 @@ func Hook(stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 			done <- after
 		}()
-		after = decideCall(stdin, stdout, stderr)
+		after = decideCall(within, stdin, stdout, stderr)
 	}()
 	var after func()
 	select {
@@ -312,7 +343,7 @@ func Hook(stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 // decideCall reads the call, writes the answer, and gives what is to be logged after it.
-func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
+func decideCall(within budgets, stdin io.Reader, stdout, stderr io.Writer) func() {
 	data, err := io.ReadAll(io.LimitReader(stdin, maxInputBytes+1))
 	given := call{fields: map[string]any{}}
 	if err == nil && len(data) > maxInputBytes {
@@ -383,10 +414,13 @@ func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
 	if place := given.text("scratchpad_dir"); place != "" {
 		scratch = []string{place}
 	}
-	decision := Decide(commandText, found.settingsFor(folder, scratch))
-	if found.problem != "" {
-		decision.Warnings = append([]Warning{{ID: "config-unusable",
-			Text: "jackstay.json cannot be used, so only the built-in rules were applied (" + found.problem + ")"}}, decision.Warnings...)
+	decision := Decide(commandText, found.settingsFor(folder, scratch, within))
+	toldMark, toldConfig := "", found.problem != ""
+	if toldConfig {
+		toldMark, toldConfig = configNews(given.text("session_id"), found, time.Now())
+	}
+	if toldConfig {
+		decision.Warnings = append([]Warning{{ID: "config-unusable", Text: configUnusable}}, decision.Warnings...)
 	}
 	answered := reply{}
 	var told []string
@@ -405,10 +439,12 @@ func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
 	if len(decision.Findings) > 0 {
 		answered.deny = Refusal(decision.Findings)
 	}
-	answered.write(stdout)
+	if answered.write(stdout) && toldMark != "" {
+		later = append(later, func() { markTold(toldMark, time.Now()) })
+	}
 	later = append(later, func() {
 		others := len(decision.Warnings)
-		if found.problem != "" {
+		if toldConfig {
 			others--
 		}
 		decided := judged{outcome: outcomeAllowed, command: commandText, warnings: warningIDs(decision.Warnings), configError: found.problem,
@@ -426,6 +462,11 @@ func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
 
 // check is `jst guard check [--cwd DIR] -- COMMAND`: exit 0 allowed, 2 refused.
 func check(args []string, stdout, stderr io.Writer) int {
+	return checkWith(hookBudgets, args, stdout, stderr)
+}
+
+// checkWith is check under the given budgets.
+func checkWith(within budgets, args []string, stdout, stderr io.Writer) int {
 	folder, _ := os.Getwd()
 	if len(args) >= 2 && args[0] == "--cwd" {
 		folder, args = args[1], args[2:]
@@ -435,7 +476,7 @@ func check(args []string, stdout, stderr io.Writer) int {
 		return 64
 	}
 	found := projectOf(folder)
-	decision := Decide(args[1], found.settingsFor(folder, nil))
+	decision := Decide(args[1], found.settingsFor(folder, nil, within))
 	if found.problem != "" {
 		fmt.Fprintln(stderr, "jst guard: jackstay.json cannot be used, so only the built-in rules are applied ("+found.problem+")")
 	}

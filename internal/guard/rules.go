@@ -20,11 +20,30 @@ type Rule struct {
 	Instead string
 }
 
-const trashAdvice = "move it to jackstay's trash, which can be undone: `jst trash <path>`"
+// trashAdvice and discardAdvice are the advice with `trash.keep` off, the default: a deletion with
+// a log (W-107). With it on, keepWording gives the words of an undo (W-052).
+const trashAdvice = "delete it with `jst trash <path>`, which logs what was deleted"
 
-// discardAdvice is how uncommitted changes are dropped without losing them (W-052).
-const discardAdvice = "`jst discard <path>` puts the path back to HEAD and keeps your changes in jackstay's trash " +
-	"(`jst trash restore <entry>` brings them back)"
+const discardAdvice = "`jst discard <path>` puts the path back to HEAD; it drops your changes and logs it"
+
+const (
+	trashKeptAdvice   = "move it to jackstay's trash, which can be undone: `jst trash <path>`"
+	discardKeptAdvice = "`jst discard <path>` puts the path back to HEAD and keeps your changes in jackstay's trash " +
+		"(`jst trash restore <entry>` brings them back)"
+)
+
+// keepWording gives findings the words of an undo when the project keeps what jst trash and jst
+// discard remove (`trash.keep` on); the commands are the same either way.
+func keepWording(findings []Finding, keep bool) []Finding {
+	if !keep {
+		return findings
+	}
+	for index := range findings {
+		advice := strings.ReplaceAll(findings[index].Instead, discardAdvice, discardKeptAdvice)
+		findings[index].Instead = strings.ReplaceAll(advice, trashAdvice, trashKeptAdvice)
+	}
+	return findings
+}
 
 // hostMergeWhy and hostMergeInstead are the words of the rows that refuse a merge on the host (land.md section 3.3).
 const hostMergeWhy = "it merges the change on the host outside jst land, past the project's landing policy " +

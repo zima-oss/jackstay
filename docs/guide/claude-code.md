@@ -18,9 +18,9 @@ Everything but the hook. You and any agent can run every `jst` command from a sh
 | `jst doctor`'s sandbox check | relevant when the sandbox is enabled |
 | Claude Code review rounds | choose Codex for the round, or read saved review reports |
 
-For coordination between sessions, register the optional [MCP session chat](session-chat.md)
-and its prompt/tool-batch hooks. A hook announces pending messages at the next Claude Code
-boundary, and the recipient acknowledges processing through `chat.ack`.
+For messages between sessions, register the optional [session chat](session-chat.md) and its
+hook, `jst hook claude`. The hook rings when something waits, with a count and never the text; the
+session reads the text with `chat.inbox`.
 
 ## The guard hook
 
@@ -100,12 +100,11 @@ backup of the settings. What else runs outside the sandbox:
 
 | Command | Inside the sandbox |
 |---|---|
-| `jst review` with Codex | refused, exit 6: Codex must be able to write its login (`~/.codex`) |
 | `jst tidy --fix` | keeps every worktree: the sandbox hides other processes, so it cannot prove a worktree unused |
 | `jst procs stop`, a stop of something the sandbox did not start | refused by the system; jackstay names what to run outside |
 | `jst lock` | exit 2 when the lock is not writable: run `jst setup` |
 | `jst test`, any form that runs something | runs nothing: it records evidence the sandbox may only read |
-| `jst review` | its rounds are evidence too: run it outside the sandbox |
+| `jst review` | refused, exit 6, when the reviewer cannot save its login or state (`~/.codex` for Codex, its state file for Claude Code); its rounds are evidence too |
 
 ## Claude Code as the reviewer
 
@@ -131,8 +130,8 @@ in `review.use`. Rounds, verdicts and the `review` section: [Reviews](review.md)
 | A hook error on every Bash call, and commands run unchecked | `jst-guard` is not at the path the settings name (127). Install, or fix the path. |
 | `jst doctor`: `guard-never-called` / `expected-never-called` | No session has called the hook: the project's settings are not loaded (trust dialog), or the path is wrong. |
 | `jst doctor`: `sandbox-blocks-state` | jst cannot keep its logs, locks, chat or jobs in sandboxed sessions; run `jst setup`, which adds only the folders listed above. |
-| `jst doctor`: `sandbox-writes-evidence` | the sandbox may write receipts; run `jst setup` to replace a whole-home entry, or narrow a broader one yourself. |
+| `jst doctor`: `sandbox-writes-evidence` | the sandbox may write evidence (receipts, review rounds, the run log); run `jst setup` to replace a whole-home entry, or narrow a broader one yourself. |
 | `jst test`: `Run it outside the sandbox.` | the run records evidence the sandbox may only read; run that command outside it. |
-| The guard says `config-unusable` on every call | `jackstay.json` is broken; the built-in rules still apply. Run `jst check`. |
+| The guard says `config-unusable` | `jackstay.json` cannot be used (broken, or newer than the installed jst reads); the built-in rules still apply. Run `jst check`. The guard says it about every 10 minutes in a session (two calls at once may both say it). |
 
 The design: [the hook contract](../design/guard.md#the-hook-contract), [the hook's answers](../design/guard.md#7-the-hook).

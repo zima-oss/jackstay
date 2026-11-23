@@ -68,9 +68,7 @@ var items = []item{
 	{id: "bg", commands: []string{"bg", "procs", "procs stop"}, wanted: always, first: true, text: fixed(
 		"- **Instead of `&` or `nohup`**, run `jst bg --for MIN --name N -- COMMAND`; `jst procs stop N`\n" +
 			"  stops it.")},
-	{id: "discard", commands: []string{"discard", "trash"}, wanted: always, first: true, text: fixed(
-		"- **Instead of `git restore` or `git checkout -- PATH`**, run `jst discard PATH…`;\n" +
-			"  `jst trash restore` brings the changes back.")},
+	{id: "discard", commands: []string{"discard", "trash"}, wanted: always, first: true, text: discardText},
 	{id: "evidence", commands: []string{"receipts export", "receipts verify"}, wanted: hasSection("receipts"), text: fixed(
 		"- **Share a counted pass**: `jst receipts export KEY`. Check one with `jst receipts verify`, taking\n" +
 			"  the expected digest, revision and key from a trusted source, never from the receipt.")},
@@ -126,6 +124,16 @@ var items = []item{
 	{id: "doctor", commands: []string{"doctor", "check", "adopt", "setup"}, wanted: always, text: fixed(
 		"- **Is jackstay healthy here**: `jst doctor`; `jst check` (is `jackstay.json` usable); `jst adopt --plan` (is\n" +
 			"  this project up to date with jackstay). For machine PATH repairs, preview `jst setup --plan`.")},
+}
+
+// discardText follows `trash.keep`: an undo only when the project keeps what is dropped (W-107).
+func discardText(config map[string]any) string {
+	if section(config, "trash")["keep"] == "on" {
+		return "- **Instead of `git restore` or `git checkout -- PATH`**, run `jst discard PATH…`;\n" +
+			"  `jst trash restore` brings the changes back."
+	}
+	return "- **Instead of `git restore` or `git checkout -- PATH`**, run `jst discard PATH…`;\n" +
+		"  it drops the changes and logs it (`jst trash list`)."
 }
 
 func fixed(text string) func(map[string]any) string {

@@ -34,12 +34,12 @@ status.
 Give settings to the `sh` that runs the script:
 
 ```sh
-script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && JACKSTAY_VERSION=0.5.11 JACKSTAY_PREFIX="$HOME/tools" sh -c "$script"
+script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && JACKSTAY_VERSION=0.6.0 JACKSTAY_PREFIX="$HOME/tools" sh -c "$script"
 ```
 
 | Setting | Effect |
 |---|---|
-| `JACKSTAY_VERSION=0.5.11` (or `v0.5.11`) | installs that release instead of the newest |
+| `JACKSTAY_VERSION=0.6.0` (or `v0.6.0`) | installs that release instead of the newest |
 | `JACKSTAY_PREFIX=DIR` | installs under `DIR` instead of `~/.local` |
 | `JACKSTAY_PROVENANCE=attestation` | requires `gh` and verifies the release's signed GitHub build attestation for `zima-oss/jackstay`, `.github/workflows/release.yml` and the selected tag |
 | `JACKSTAY_SHA256=HEX` | requires the archive to match a 64-digit lowercase SHA-256 digest you obtained separately; works for older releases and without `gh` |
@@ -88,7 +88,7 @@ The install changes nothing outside its prefix. These steps are yours:
 | Step | Where | Needed for |
 |---|---|---|
 | Put `~/.local/bin` on `PATH` | your shell's profile; the script prints the line | running `jst` |
-| Let Claude Code's sandbox write `~/.jackstay` | `~/.claude/settings.json` ([Claude Code](claude-code.md#the-sandbox)) | records of runs in sandboxed sessions |
+| `jst setup`: let Claude Code's sandbox write the folders jst needs in `~/.jackstay` | `~/.claude/settings.json` ([Claude Code](claude-code.md#the-sandbox)) | the journal, locks, chat and jobs in sandboxed sessions |
 | `jst adopt --apply`, then commit what it wrote | each project ([Adopting a project](adopt.md)) | the guard hook and the `AGENTS.md` block |
 | Accept Claude Code's trust dialog | the first session in each project | Claude Code loading the hook |
 | Optional: install Codex or Claude Code and sign in | your terminal | review rounds ([Reviews](review.md)) |
@@ -119,11 +119,12 @@ The first command reads files only. The other commands apply **only** the select
 Running `jst setup` in a terminal offers apply, show and skip; with piped input it only prints
 the plan. The quick installer runs that interactive setup after a successful install only when both
 input and output are terminals. Before it starts, it says that setup first asks who merges and which
-reviewer runs (once per machine), then shows each change and asks before making it. Without a
-terminal it says that setup did not start and that `jst setup` runs it once `jst` is on your PATH. A
-release without `jst setup` is told apart, with `jst doctor` named instead. Before changing an existing shell profile or Claude Code settings,
-setup shows the change and saves the original content in a
-unique `*.jackstay-backup-*` file beside it and shows that path. It refuses a symlink, an
+reviewer runs (once per machine), then shows each change and asks before making it; Ctrl-C stops
+setup and leaves the install as it is. Without a terminal it says that setup did not start and that
+`jst setup` runs it once `jst` is on your PATH. A release without `jst setup` is told apart, with
+`jst doctor` named instead. Before changing an existing shell profile or Claude Code settings,
+setup shows the change, saves the original content in a unique `*.jackstay-backup-*` file beside
+it and shows that path. It refuses a symlink, an
 unusual file, a profile with a different jackstay PATH entry, malformed settings, or a sandbox
 deny rule that needs an owner's decision. A second run does not append the same entry again.
 Open a new shell or Claude Code session after a change, then run `jst doctor` again.
@@ -137,11 +138,10 @@ decides. The plan lists the current answers. To set one without being asked:
 jst setup --reviewer codex,claude-code
 ```
 
-`jst setup --chat` shows local session chat integration routes. The terminal can show steps for
-Codex, Claude Code and other MCP hosts. Use `jst setup --chat --plan --json` for the same
-read-only plan in JSON. See the [session chat guide](session-chat.md) to register a launcher.
-The managed Codex bridge can deliver into a running turn. Other local routes use inbox polling
-while their engine integration is unavailable.
+`jst setup --chat` shows the steps that connect Codex and Claude Code to the session chat, and
+whether each is on your `PATH`; `jst setup --chat --plan --json` gives them as JSON. It changes
+nothing. Claude Code is rung by its hooks; Codex reads its inbox with `chat.inbox`
+([Session chat](session-chat.md)).
 
 ## Other ways to install
 
@@ -154,7 +154,7 @@ of the modules compiled into it; `checksums.txt` covers them.
 ```sh
 (
   set -eu
-  VERSION=0.5.11                                # the release you want, without the v
+  VERSION=0.6.0                                # the release you want, without the v
   PLATFORM=darwin_arm64                        # or darwin_amd64, linux_amd64, linux_arm64
   ARCHIVE="jackstay_${VERSION}_${PLATFORM}.tar.gz"
   BASE="https://github.com/zima-oss/jackstay/releases/download/v$VERSION"
@@ -206,12 +206,12 @@ use `jst install --checkout DIR`.
 (
   set -eu
   dir=$(mktemp -d)                             # a folder of its own, whatever GOBIN says
-  GOBIN="$dir" go install github.com/zima-oss/jackstay/cmd/jst@v0.5.11
+  GOBIN="$dir" go install github.com/zima-oss/jackstay/cmd/jst@v0.6.0
   "$dir/jst" install --binary "$dir/jst"
 )
 ```
 
-Install at a version tag (`@v0.5.11`), not a branch or a commit: `jst version` then names the tag.
+Install at a version tag (`@v0.6.0`), not a branch or a commit: `jst version` then names the tag.
 
 ## Update
 

@@ -268,6 +268,85 @@ func splitCommands(line string) []string {
 	return append(parts, line[start:])
 }
 
+// removedName is the removed command a command names exactly, or "": a migration table may name
+// one in a row that gives its replacement (TestCommandExamplesRun). Its words up to the first flag must be the
+// removed name whole, so `jst gh pr-land` names one and `jst gh pr-lnad` does not. A sentence or a code
+// block never gets this pass.
+func removedName(command string, removed map[string][]string) string {
+	var words []string
+	for _, word := range strings.Fields(command)[1:] {
+		if strings.HasPrefix(word, "-") {
+			break
+		}
+		words = append(words, word)
+	}
+	name := strings.Join(words, " ")
+	if _, gone := removed[name]; gone {
+		return name
+	}
+	return ""
+}
+
+// namesReplacement says whether a line's commands include one of the replacements a removed
+// command's advice names (`jst gh ci-wait` | `jst checks wait`), as a command jst has: the
+// command's words up to its first flag are the replacement's words, or those followed by a value
+// that is no action (`jst checks wait 42`). `jst land status` is no replacement for `jst land`.
+func namesReplacement(commands []string, name string, removed map[string][]string, helps map[string]commandHelp, names []string) bool {
+	for _, command := range commands {
+		if removedName(command, removed) != "" || checkCommand(command, helps, names) != "" ||
+			slices.Contains(strings.Fields(command), "--help") {
+			continue
+		}
+		var words []string
+		for _, word := range strings.Fields(command)[1:] {
+			if strings.HasPrefix(word, "-") {
+				break
+			}
+			words = append(words, word)
+		}
+		for _, replacement := range removed[name] {
+			wanted := strings.Fields(replacement)
+			if len(words) < len(wanted) || !slices.Equal(words[:len(wanted)], wanted) {
+				continue
+			}
+			if len(words) == len(wanted) || !actionWord.MatchString(words[len(wanted)]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// removedEntry is one entry of internal/cli's removed list: the removed name and its advice.
+var removedEntry = regexp.MustCompile(`(?m)^\t"([a-z][a-z -]*)":\s+"(.*)",$`)
+
+// replacementName is a command the advice of a removed one names, such as `jst land`.
+var replacementName = regexp.MustCompile("`jst ([a-z][a-z-]*(?: [a-z][a-z-]*)?)")
+
+// readRemovedCommands reads the `removed` map in internal/cli/cli.go: each removed command with the
+// commands its advice names as replacements.
+func readRemovedCommands(t *testing.T, root string) map[string][]string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, "internal", "cli", "cli.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	start := strings.Index(text, "var removed = map[string]string{")
+	if start < 0 {
+		t.Fatal("internal/cli/cli.go has no removed list")
+	}
+	block, _, _ := strings.Cut(text[start:], "\n}")
+	removed := map[string][]string{}
+	for _, match := range removedEntry.FindAllStringSubmatch(block, -1) {
+		removed[match[1]] = nil
+		for _, replacement := range replacementName.FindAllStringSubmatch(match[2], -1) {
+			removed[match[1]] = append(removed[match[1]], replacement[1])
+		}
+	}
+	return removed
+}
+
 // globalFlags are the flags jst takes in place of a command.
 var globalFlags = []string{"--help", "--version"}
 
@@ -348,6 +427,10 @@ func joinContinuations(lines []string, kinds []lineKind) ([]string, []lineKind) 
 func TestCommandExamplesRun(t *testing.T) {
 	root := repoRoot(t)
 	helps := commandHelps(t, root)
+	removed := readRemovedCommands(t, root)
+	if _, gone := removed["gh pr-land"]; !gone {
+		t.Fatalf("the removed list read from internal/cli/cli.go lacks gh pr-land: %v", removed)
+	}
 	names := make([]string, 0, len(helps))
 	for name := range helps {
 		names = append(names, name)
@@ -393,6 +476,10 @@ func TestCommandExamplesRun(t *testing.T) {
 				}
 			}
 			for _, command := range commands {
+				if name := removedName(command, removed); kinds[n] == prose && strings.HasPrefix(strings.TrimSpace(line), "|") &&
+					name != "" && namesReplacement(commands, name, removed, helps, names) {
+					continue
+				}
 				if problem := checkCommand(command, helps, names); problem != "" {
 					t.Errorf("%s:%d: %s: %s (docs/STYLE.md rule 6)", file, n+1, command, problem)
 				}
@@ -429,6 +516,47 @@ func TestCheckCommand(t *testing.T) {
 		if got := checkCommand(command, helps, names); got != want {
 			t.Errorf("checkCommand(%q) = %q, want %q", command, got, want)
 		}
+	}
+}
+
+func TestOnlyAWholeRemovedNameIsAReference(t *testing.T) {
+	removed := map[string][]string{"gh": {"checks", "land"}, "gh pr-land": {"land"}, "queue": {"land"}}
+	for command, want := range map[string]string{
+		"jst gh pr-land":        "gh pr-land",
+		"jst gh pr-land --pr 3": "gh pr-land",
+		"jst gh":                "gh",
+		"jst queue":             "queue",
+		"jst gh pr-lnad":        "",
+		"jst gh foo --x":        "",
+		"jst land":              "",
+	} {
+		if got := removedName(command, removed); got != want {
+			t.Errorf("removedName(%q) = %q, want %q", command, got, want)
+		}
+	}
+}
+
+func TestARemovedCommandNeedsItsOwnReplacementOnTheLine(t *testing.T) {
+	helps := map[string]commandHelp{
+		"land":   parseHelp("land", "usage: jst land [--change N]\n"),
+		"status": parseHelp("status", "usage: jst status\n"),
+	}
+	names, removed := []string{"land", "status"}, map[string][]string{"gh pr-land": {"land"}}
+	if !namesReplacement([]string{"jst gh pr-land", "jst land --change 3"}, "gh pr-land", removed, helps, names) {
+		t.Error("a migration line naming jst land is refused")
+	}
+	if namesReplacement([]string{"jst gh pr-land --pr 3"}, "gh pr-land", removed, helps, names) {
+		t.Error("an instruction to run a removed command passes")
+	}
+	if namesReplacement([]string{"jst gh pr-land", "jst land --help"}, "gh pr-land", removed, helps, names) {
+		t.Error("a help call counts as the replacement")
+	}
+	if namesReplacement([]string{"jst gh pr-land", "jst status"}, "gh pr-land", removed, helps, names) {
+		t.Error("an unrelated command counts as the replacement")
+	}
+	helps["land"] = parseHelp("land", "usage: jst land [--change N]\n       jst land status [--change N]\n")
+	if namesReplacement([]string{"jst gh pr-land", "jst land status"}, "gh pr-land", removed, helps, names) {
+		t.Error("another action of the replacing command counts as the replacement")
 	}
 }
 

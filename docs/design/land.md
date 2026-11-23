@@ -274,16 +274,17 @@ store.
 | `deps` | scope or step names | `[]` | what must pass first, in the order given |
 | `ci` | systems | `[]`: not in CI | the systems whose CI job runs this scope (section 7.4) |
 | `systems` | systems | any | the systems the scope runs on at all |
+| `kind` | `test` or `check` | undeclared | a scope with `run`: `test` must count tests to pass, `check` passes on exit 0 (below) |
 
-A system is Go's name for it: `darwin`, `linux`. The three keys need `"jackstay_schema": 3`
+A system is Go's name for it: `darwin`, `linux`. The four keys need `"jackstay_schema": 3`
 ([W-090](../decisions/W-090-compatibility-of-0-6-0.md)). The cache's keys, `inputs` and `cache`
 (section 7.3), are not accepted in 0.6.0.
 
 ```json
 "scopes": {
-  "x-build": {"run": ["just", "build"], "judge": "exit"},
+  "x-build": {"run": ["just", "build"], "judge": "exit", "kind": "check"},
   "x-go":    {"run": ["just", "go"], "deps": ["x-build"], "ci": ["linux"]},
-  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "kind": "check", "ci": ["linux"]},
   "x-ios":   {"run": ["just", "ios"], "deps": ["x-build"], "systems": ["darwin"]},
   "gate":    {"deps": ["x-docs", "x-go", "x-ios"]}
 }
@@ -293,7 +294,17 @@ A system is Go's name for it: `darwin`, `linux`. The three keys need `"jackstay_
 `systems` and `when`. It runs nothing and checks nothing of its own: `requires` and every other run
 setting (`judge`, `timeout`, `lock_wait`, `lock`, `env`) belong to scopes with
 `run`. It passes when every dep eligible on this system (section 7.2) passed, and at least one
-did.
+did; a dep that ended `exited-0` makes it `exited-0`, not a pass.
+
+**Step kinds** ([W-107](../decisions/W-107-step-kinds.md), after Bazel's test and build targets and Nx's targets). A scope with `run`
+may say `kind`:
+
+- `test`: it must count tests to pass, so its judge cannot be `exit` (`jst check` refuses it).
+- `check` (a linter, an audit, a build): it passes on exit 0. Its judge can only be `exit`; its
+  node is `passed`, with no receipt: there is no count to record.
+
+A scope that does not say `kind` and counts no tests ends `exited-0`, not a pass, as before. So a
+gate passes when every `test` scope passed and every `check` scope exited 0. `kind` needs schema 3.
 
 **`steps` is read as `deps`.** A scope's `steps` list is its `deps` in the same order, in schema 2
 and 3, so a schema-2 project keeps working unchanged; a scope with both is an error in
@@ -385,13 +396,13 @@ with its status:
 | 10 | `needs-other-system` | `jst test changed` (section 7.4) | 80 |
 | 11 | `skipped` | a scope asked for that is not eligible here | 79 |
 | 12 | `left-to-ci` | `jst test changed` or `jst test uncovered` with nothing to run here (section 7.4) | 0 |
-| 13 | `exited-0` | every scope asked for passed or ended `exited-0`, and one ended `exited-0` | 0 |
-| 14 | `passed` | every scope asked for passed | 0 |
+| 13 | `exited-0` | no failure, and a node that ran ended `exited-0` (a scope without `kind: check` that counted no tests), also a dep under a scope that passed | 0; 77 for `jst test ci`, whose job is green only on a pass |
+| 14 | `passed` | every scope asked for passed (a `check` that exited 0 is `passed`) | 0 |
 
 `not-run` is never the run's outcome: a node is `not-run` only after a failure higher in the order.
 Only `passed` is a pass, as before; its detail names each node's outcome, with the `skipped` deps
-of a composite: `jst test: outcome=passed (gate, 41 s: x-docs=exited-0, x-build=exited-0,
-x-go=passed, x-ios=passed)`. A failure names its node: `outcome=failed (gate failed at x-go)`.
+of a composite: `jst test: outcome=passed (gate, 41 s: x-docs=passed, x-build=passed,
+x-go=passed, x-ios=passed)`, where `x-docs` and `x-build` are checks. A failure names its node: `outcome=failed (gate failed at x-go)`.
 
 `jst test plan SCOPE` prints the order and whether each node would be skipped or run; it runs
 nothing. `jst test plan changed` plans what `jst test changed` runs (section 7.4): the **here**
@@ -518,13 +529,14 @@ still leads to its tests: `needs-other-system`, never `left-to-ci`, when no CI c
 
 The **here** nodes run now through the graph (section 7.2), each with its deps from any group. The
 last line names the three groups:
-`jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; ci: x-docs, x-go;
+`jst test: outcome=passed (changed, 40 s; here: x-build=passed, x-ios=passed; ci: x-docs, x-go;
 elsewhere: none)`. Its outcome, the first that applies:
 
 | outcome | when | exit | a pass? |
 |---|---|---|---|
 | a failure | a **here** node or a dep of one did not pass (section 7.2) | its own | no |
 | `needs-other-system` | `jst test changed`: **elsewhere** is not empty; the line names each system and its scopes | 80 | no |
+| `exited-0` | **here** is not empty, and a node that ran counted no tests and is no `check` | 0 | no |
 | `passed` | **here** is not empty and passed | 0 | yes |
 | `left-to-ci` | `jst test changed`: **here** and **elsewhere** are empty. `jst test uncovered`: **here** is empty | 0 | no |
 
@@ -598,9 +610,9 @@ gate. Each scope with `ci` tests a set no other one does:
 "scopes": {
   "x-go":    {"run": ["go", "test", "-race", "-tags", "integration", "-json", "-count=1", "./..."],
               "judge": "go-json", "ci": ["linux"]},
-  "x-check": {"run": ["just", "check"], "judge": "exit", "ci": ["linux"]},
-  "x-sec":   {"run": ["just", "security"], "judge": "exit", "ci": ["linux"]},
-  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
+  "x-check": {"run": ["just", "check"], "judge": "exit", "kind": "check", "ci": ["linux"]},
+  "x-sec":   {"run": ["just", "security"], "judge": "exit", "kind": "check", "ci": ["linux"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "kind": "check", "ci": ["linux"]},
   "gate":    {"deps": ["x-check", "x-go", "x-sec", "x-docs"]}
 }
 ```

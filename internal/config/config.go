@@ -59,7 +59,7 @@ var Stage3Sections = []string{"$schema", "chat", "brief", "status", "land"}
 
 // stage3RunKeys are the keys of a test scope or step, and of a receipts command, that need
 // "jackstay_schema": 3.
-var stage3RunKeys = []string{"selector", "report", "reports", "empty_exit", "xcresult_bundles"}
+var stage3RunKeys = []string{"selector", "report", "reports", "empty_exit", "xcresult_bundles", "kind"}
 
 // stage3GraphKeys are the keys of the task graph (docs/design/land.md section 7.1) that need
 // "jackstay_schema": 3: `deps` on a scope or step, `ci` and `systems` on a scope.
@@ -79,6 +79,9 @@ func Schema3Keys(config Config) []string {
 		if has(objectOf(reviewers[name]), "mcp_servers") {
 			found = append(found, "review.reviewers."+name+".mcp_servers")
 		}
+	}
+	if has(objectOf(config["trash"]), "keep") {
+		found = append(found, "trash.keep")
 	}
 	if has(objectOf(config["adopt"]), "profile_sha256") {
 		found = append(found, "adopt.profile_sha256")
@@ -343,6 +346,7 @@ var testRun = object(
 	"expect", texts(), "selector", str(),
 	"report", str(), "reports", texts(), "empty_exit", integer(), "xcresult_bundles", texts(),
 	"requires", list(object("run", texts(), "why", str(), "timeout", number())), "deps", texts(),
+	"kind", str(),
 )
 
 // testScope is a scope: a run, and the systems CI runs it on (`ci`) and it runs on (`systems`).
@@ -483,7 +487,7 @@ var Table = object(
 	"release", object("merge", str(), "branch", str(), "base", str(), "tag", str(), "first", str(),
 		"files", list(object("path", str(), "match", regex())), "build", object("path", str(), "match", regex())),
 	"procs", object("default_minutes", number(), "max_minutes", number()),
-	"trash", object("keep_days", integer()),
+	"trash", object("keep_days", integer(), "keep", str()),
 	// docs/design/review.md, section 1; the meaning is internal/review's validator.
 	"review", object(
 		"reviewers", mapOf(object("command", str(), "model", text(), "effort", text(), "timeout_minutes", integer(),
@@ -685,7 +689,7 @@ func SectionProblems(config Config) Problems {
 			problems.add(key, typeProblems(config[key], sub, key)...)
 		}
 	}
-	for _, section := range []string{"receipts", "lock", "guard", "baseline", "adopt", "test", "github", "telemetry", "land", "chat"} {
+	for _, section := range []string{"receipts", "lock", "guard", "baseline", "adopt", "test", "github", "telemetry", "land", "chat", "trash"} {
 		if _, ok := config[section]; ok && len(problems.found[section]) == 0 {
 			problems.add(section, sectionCheck(section, config)...)
 		}
@@ -835,6 +839,10 @@ func sectionCheck(section string, config Config) []string {
 		}
 	case "land":
 		found = landProblems(objectOf(config["land"]))
+	case "trash":
+		if keep, ok := objectOf(config["trash"])["keep"].(string); ok && keep != "on" && keep != "off" {
+			found = append(found, fmt.Sprintf("`trash.keep` must be \"on\" or \"off\": %q", keep))
+		}
 	case "github":
 		found = githubProblems(objectOf(config["github"]))
 	case "telemetry":
@@ -861,9 +869,49 @@ func testGraphProblems(config Config) []string {
 				found = append(found, fmt.Sprintf("`test.%s.%s.requires`: a scope with no `run` runs nothing and checks nothing in schema 3; "+
 					"move the check to the dep that needs it", kind, name))
 			}
+			found = append(found, stepKindProblems(test, kind, name, entry)...)
 		}
 	}
 	return found
+}
+
+// The step kinds (docs/design/land.md section 7.1): a `test` scope must count tests to pass; a
+// `check` scope (a linter, an audit, a build) passes on exit 0.
+const (
+	StepKindTest  = "test"
+	StepKindCheck = "check"
+)
+
+func stepKindProblems(test map[string]any, kind, name string, entry map[string]any) []string {
+	value, present := entry["kind"]
+	if !present {
+		return nil
+	}
+	given, _ := value.(string)
+	switch {
+	case given != StepKindTest && given != StepKindCheck:
+		return []string{fmt.Sprintf("`test.%s.%s.kind` must be \"test\" or \"check\": %q", kind, name, given)}
+	case !has(entry, "run"):
+		return []string{fmt.Sprintf("`test.%s.%s.kind` is for a scope with `run`; a composite passes by its deps", kind, name)}
+	case given == StepKindCheck && has(entry, "judge") && entry["judge"] != "exit":
+		return []string{fmt.Sprintf("`test.%s.%s.kind` is \"check\", which is judged by its exit status: "+
+			"its judge can only be `exit` (or none)", kind, name)}
+	case given == StepKindTest && effectiveJudge(test, entry) == "exit":
+		return []string{fmt.Sprintf("`test.%s.%s.kind` is \"test\", which must count tests to pass, and its judge is `exit`, "+
+			"which counts none: give it a judge that counts, or make it \"check\"", kind, name)}
+	}
+	return nil
+}
+
+// effectiveJudge is a run's judge: its own, else `test.judge`, else `exit`.
+func effectiveJudge(test, entry map[string]any) string {
+	if judge, ok := entry["judge"].(string); ok && judge != "" {
+		return judge
+	}
+	if judge, ok := test["judge"].(string); ok && judge != "" {
+		return judge
+	}
+	return "exit"
 }
 
 // TestAdapterProblems checks the settings shared by scope and direct structured judges.

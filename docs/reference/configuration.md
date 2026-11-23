@@ -279,7 +279,7 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 | Key | Type | What it does |
 |---|---|---|
 | `expect` | list of strings | Lists the engines (`xctest`, `swift-testing`) every `swift-test` scope must show markers of, unless the scope sets its own (default `xctest`). |
-| `judge` | string | Judges every scope and step that sets no judge of its own (default `exit`). One of `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx`, `xcresult-json`. |
+| `judge` | string | Judges every scope and step that sets no judge of its own (default `exit`). A `kind: check` scope ignores it. One of `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx`, `xcresult-json`. |
 | `leftovers` | list of objects | Lists file globs a test run must not leave behind. |
 | `leftovers[].fail` | boolean | Fails the run when its leftovers match the glob; false lists them. |
 | `leftovers[].glob` | string | Matches leftover files; `~`, `$TMPDIR`, `{run_id}` and `{run_tmp}` are expanded, and a glob holding the run's token is attributed exactly. |
@@ -294,7 +294,8 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 | `scopes.*.env` | map of strings | Sets these environment variables for the run; they are recorded. |
 | `scopes.*.evidence` | regex | Counts the tests a run passed from the lines this pattern matches (RE2, one group for the number); the `steps` judge needs it. |
 | `scopes.*.expect` | list of strings | Lists the engines (`xctest`, `swift-testing`) whose markers a `swift-test` run must show (default `test.expect`, else `xctest`). |
-| `scopes.*.judge` | string | Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`). |
+| `scopes.*.judge` | string | Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`). A scope with `kind: check` is always judged by `exit`: an explicit judge other than `exit` is refused. |
+| `scopes.*.kind` | string | `test`: must count tests to pass (its judge cannot be `exit`); `check` (a linter, an audit, a build): passes on exit 0. Undeclared, a run that counts no tests ends `exited-0`, not a pass (schema 3). |
 | `scopes.*.lock` | boolean | Takes the machine-wide lock when `lock.enabled` is true (default true, false for `focused` and `quick`). |
 | `scopes.*.lock_wait` | number | Gives up waiting for the lock after this many seconds (default the scope's timeout). |
 | `scopes.*.report` | string | Names the report file a file-based judge reads; `{report}` in the words gives its path. |
@@ -325,8 +326,9 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 
 ## `trash`
 
-Sets how `jst trash` keeps what it removes.
+Sets whether `jst trash` and `jst discard` keep what they delete.
 
 | Key | Type | What it does |
 |---|---|---|
-| `keep_days` | integer | Keeps a trash entry for this many days (default 7). |
+| `keep` | string | "off" (default): delete at once and log each deletion; "on" (experimental): keep a copy for `keep_days`, which `jst trash restore` brings back. |
+| `keep_days` | integer | With `keep` on, keeps a trash entry for this many days (default 7). |

@@ -45,7 +45,7 @@ column is the gist of its `Instead`.
 
 | Rule | Refused | Safe | The refusal names |
 |---|---|---|---|
-| `git-reset-hard` | `git reset --hard` | `--soft`, `--mixed`, `--keep`, `--merge`, a path reset | `jst discard <path>` (the edits kept in jackstay's trash); `git reset --keep <commit>` |
+| `git-reset-hard` | `git reset --hard` | `--soft`, `--mixed`, `--keep`, `--merge`, a path reset | `jst discard <path>` (the edits it drops logged, or kept with `trash.keep` on); `git reset --keep <commit>` |
 | `git-checkout-path` | `git checkout -- <path>`, `git checkout <tree> <path>`, `git checkout .`, `-p`, `--pathspec-from-file`, `--ignore-skip-worktree-bits` | `-b`, `--detach`, `--orphan`; a single name that is not a path on disk; a name that is also a path when a local branch of that name exists (asked of git); a path under which git reports nothing uncommitted (and, when another commit's files are written, nothing untracked or ignored): there is nothing to lose; taking a side, below | `jst discard <path>`; to take files from another commit, `jst discard` first, then `git checkout <commit> -- <path>`; to change branch, `git switch` |
 | `git-checkout-force` | `git checkout -f` / `--force` | without `-f` | `git stash push -u`, then `git switch <branch>` |
 | `git-switch-discard` | `git switch --discard-changes` / `-f` | plain `git switch` | `git stash push -u`, then `git switch <branch>` |
@@ -136,7 +136,8 @@ Input the guard cannot read is refused; evidence it cannot get (git does not ans
 rule that needed it refuse; only a fault of its own code fails open, because a guard that blocked
 on its own bug would stop every session at once. Every outcome is the table of section 7; beside
 it, an unusable `jackstay.json` turns off the project's `deny` rules, regenerable names and levels
-(`config-unusable` on every answer), one bad entry is passed over and said (`regenerable-ignored`,
+(`config-unusable`: a short line naming `jst check`, which gives the reason, said to a session
+at most every 10 minutes and again when the file changes; the span carries the reason on every call), one bad entry is passed over and said (`regenerable-ignored`,
 `project-rule-unreadable`, `guard-exception-not-applied`), and a binary that cannot start ends 126
 or 127, which Claude Code shows and runs the command (`jst doctor` reports it, `implementation.md`
 section 7.7). `failed_open` must stay at zero; `jst doctor` reports each project's 7-day count.
@@ -383,7 +384,7 @@ uses it). Every outcome, in order:
 | `tool_input` present but not readable, or `command` not a string | deny (`unreadable-call`) | `refused` | 0 |
 | no command, or only spaces | nothing | — | 0 |
 | a background call not through `jst bg` | (goes on) | the journal event `jackstay.bg.requested_outside` | — |
-| jackstay.json unusable | built-in rules only; `systemMessage` says so — **except the Card push rule**, which follows the next row | `jackstay.guard.config_error` on the span | 0 |
+| jackstay.json unusable | built-in rules only; `systemMessage` says so, to a session at most every 10 minutes and again when the file changes (a mark under `<jackstay home>/<project>/guard-told/`, touched once the answer is written in full; two calls at once may both say it) — **except the Card push rule**, which follows the next row | `jackstay.guard.config_error` on the span | 0 |
 | the project **declares** `cards` but the section cannot be used (a broken section, or a jackstay.json that does not parse while its text holds a `"cards"` member name, or cannot be read at all) | the Card push rule stays on and refuses every `git push` that could move a remote branch (it cannot judge them: `card-push-unreadable-config`); nothing else changes | `refused` when it refuses | 0 |
 | findings | deny with the reasons | `refused` | 0 |
 | warnings only, or findings of rules set to `warn` | `systemMessage` to the person, `additionalContext` to the agent | `warned` | 0 |
@@ -418,11 +419,39 @@ read them there.
 - `just guard-latency` measures the hook's wall time (about a millisecond a call) outside the gate;
   a change that moves it records its numbers.
 
-## 10. `jst trash`: the undoable way to delete (W-042)
+## 10. `jst trash`: the recorded way to delete (W-042, W-107)
 
 The guard's advice for `rm -r` must be something a session can do, and macOS's `trash` fails in
 the sandbox (`afpAccessDenied`), so the advice is `jst trash PATH`; the guard knows `jst trash` as
-harmless. Use: the [guard guide](../guide/guard.md#delete-undoably-jst-trash).
+harmless. Use: the [guard guide](../guide/guard.md#delete-with-a-log-jst-trash).
+
+`trash.keep` (W-107) says whether an item is kept. `off`, the default: `jst trash` deletes each
+item where it is, and `jst discard` puts its new version in over what it drops, as when nothing
+differs; neither makes an entry. `on` (experimental): the item is kept as an entry, as described
+below. The guard's advice and the AGENTS block name the same commands either way, and promise an
+undo only with `on`.
+
+- Each deletion is logged and synced (the log's folder too, when the log is new or rolled over)
+  before anything is removed, so none goes unlogged. Written limits: a removal that then fails, or a
+  command stopped part way, leaves a line for an item still there, in whole or in part, and the
+  command's error says so; what a running job writes into an item after it was measured is deleted
+  with it, unmeasured.
+- The deletion log is `<jackstay home>/.trash/deleted.jsonl`, one JSON line each: `deleted_at`,
+  `path`, `kind` (`file`, `link`, `folder`, or `staged` for an index version), `size`, `sha256` (of
+  a file's bytes or a link's target; of a folder, of a listing of each entry's relative path, kind,
+  mode and digest, so a folder is read whole; a pipe, socket or device is never read), `project`,
+  `session` (`CLAUDE_CODE_SESSION_ID`) and `command`. Writers take `deleted.lock` for the size
+  check, the rollover and the append; `jst trash list` reads both generations under it, shared.
+- The trash folder and what is in it are refused: it holds the log (`jst trash prune` removes old
+  entries). At 1 MiB the log becomes `deleted.1.jsonl`, replacing the one
+  before; `jst trash list` reads both.
+- `trash.keep` is one setting for a whole command: that of the project the command runs in, read
+  before anything changes, as the guard reads it for its advice; a jackstay.json that cannot be used
+  reads as `off`. Written limit: a path inside a nested project with another setting follows the
+  outer one, and the guard's advice follows the folder its hook runs in (a `cd` inside the command
+  is not followed). A kept item records its own project and `keep_days`, read before any path changes. The
+  AGENTS block says what the setting was when `jst adopt` last wrote it; after a change of
+  `trash.keep`, `jst adopt --plan` shows the block out of date. `keep_days` is still the item's own. It needs `"jackstay_schema": 3`.
 
 - `jst trash PATH…` moves each item into `<jackstay home>/.trash/<time>-<n>/` beside `entry.json`
   (`path` absolute, `moved_at`, `project`, `session`, `kind`). On the same volume the move is a

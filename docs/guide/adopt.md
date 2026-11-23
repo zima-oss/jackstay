@@ -145,25 +145,12 @@ moving the pin takes two pull requests:
 
 Between the two, `jst adopt --plan` lists the files still to write.
 
-The upgrade from 0.5.x to 0.6.0 takes three pull requests, each merged by a person, and the notes
-of `jst adopt --plan` name them and the one due:
-
-1. the pin: `jst adopt --apply --pin --settings-only`; `jackstay.json` stays schema 2, which 0.6.0
-   reads;
-2. the workflows that download 0.6.0, with `card-line.yml`, which runs `jst lint pr` for the
-   coming `land` section: `jst adopt --apply` on the merged base;
-3. schema 3 with the `land` section: `jst adopt --apply` on the merged base, which asks who merges
-   (`--settings-only` keeps it to `jackstay.json`; the AGENTS block follows in the next apply).
-
-Each plan holds only the step that is due: a later step is planned once the earlier one has merged.
-If you keep any workflow of your own (or one kept by an exception), step 3 waits for you to
-confirm that none still downloads a jackstay older than 0.6.0, directly or through a script or an
-action, which jackstay does not read from them: add
-`"upgrade:workflows": "release.yml downloads v0.6.0; build.yml downloads none"` (your own words)
-to `adopt.exceptions`.
-Until then the plan lists a blocker naming the files, `--apply` prints it and `jst doctor` reports
-the project as not up to date. Record a profile's digest (`--profile-sha256`) in step 3 or after
-the upgrade: before step 3 it is refused, since it needs schema 3.
+The upgrade from 0.5.x to 0.6.0 takes three stages, landed in pull requests a person merges; the plan holds
+only the one that is due, and a blocker names what waits on you:
+[Upgrading from 0.5.x](upgrading.md#2-each-project-one-pull-request-at-a-time). The exception
+`upgrade:workflows` takes your own words, such as
+`"release.yml downloads v0.6.0; build.yml downloads none"`. Record a profile's digest
+(`--profile-sha256`) in the schema-3 step or after it: before, it is refused.
 
 The generated `card-line.yml` and `release.yml` download the pinned Linux archive and check
 `checksums.txt`. For releases with build attestations, set the repository variable
@@ -215,7 +202,7 @@ newer file with "upgrade jackstay" rather than half-reading it:
 |---|---|
 | 1 | `guard`, `test`, `receipts`, `lock`, `baseline`, `trash`, `telemetry` |
 | 2 | `cards`, `ids`, `records`, `changes`, `procs`, `release`, `github`, `review`, `adopt` |
-| 3 (jackstay 0.6.0 and later) | `$schema`, `land`, `chat`, `brief`, `status`, `adopt.profile_sha256`, `test.selection`, and a scope's, step's or receipts command's `selector`, `report`, `reports`, `empty_exit`, `xcresult_bundles` (and a receipts command's `judge`) |
+| 3 (jackstay 0.6.0 and later) | `$schema`, `land`, `chat`, `brief`, `status`, `adopt.profile_sha256`, `test.selection`, `review.reviewers.<name>.mcp_servers`; a scope's or step's `deps`, `selector`, `report`, `reports`, `empty_exit`, `xcresult_bundles`, and a scope's `ci` and `systems`; a receipts command's `judge`, `report`, `reports`, `empty_exit`, `xcresult_bundles` |
 
 A project whose workflows download a pinned jackstay (`adopt.pin`) must keep to what that release
 reads. **Do not add `$schema` or another schema-3 key while the pin is older than 0.6.0**: the
@@ -240,7 +227,7 @@ pin. The schema cannot express rules about paths, other fields or Go regular exp
 | `lock` | the machine-wide lock for heavy runs (off by default) | [tests](tests.md#the-machine-wide-lock-jst-lock) |
 | `baseline` | the kinds of test run `jst baseline` counts | [tests](tests.md#measuring-jst-baseline) |
 | `procs` | `jst bg`'s default and maximum deadline | [background](background.md) |
-| `trash` | how long `jst trash` keeps entries | [guard](guard.md#delete-undoably-jst-trash) |
+| `trash` | whether `jst trash` and `jst discard` keep what they delete, and for how long | [guard](guard.md#delete-with-a-log-jst-trash) |
 | `github` | the account jackstay acts as, the remote, wait defaults | [branches and GitHub](branches-and-github.md) |
 | `land` | who merges (`autonomy`), the merge method, extra required checks, paths only a person lands | [branches and GitHub](branches-and-github.md#the-land-section) |
 | `review` | reviewers, brief, severities, round limit; present (even `{}`), the AGENTS block tells agents about `jst review` | [reviews](review.md) |
@@ -304,7 +291,7 @@ authority and transient identities in the relevant launcher, credential store or
 | Capability | Project configuration | Local or per-run input |
 |---|---|---|
 | Session chat | `chat.enabled` and bounded message, pending, session and retention settings | MCP host registration, session label, optional reconnect token |
-| Local merge queue | `queue.enabled` and `queue.base_ref` | Head to enqueue, local repository, candidate and evidence |
+| Landing | `land.autonomy`, `land.method`, `land.checks`, `land.human_paths` | The GitHub account's sign-in, `--prepare` or `--confirm` for one run |
 | Structured tests | `test.scopes`, judge, report names, selector and duration settings, path selection | Test ID, revision or base to test |
 | Review | Reviewer commands, options, selected reviewers and limits | Local provider authentication and optional invocation override |
 | Installation and adoption | Profile and pin when a project needs them | Installer arguments, local permissions and external trust credentials |

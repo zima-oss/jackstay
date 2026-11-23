@@ -355,9 +355,18 @@ func (run *backgroundRun) begin(id string, group int, control stopper, started t
 	return found
 }
 
-// repositoryOf is the repository a folder is in, "" when Git cannot tell within a moment.
+// repositoryBudget is how long Git is given to name the repository of a start.
+const repositoryBudget = 5 * time.Second
+
+// repositoryOf is the repository a folder is in, "" when Git cannot tell within repositoryBudget.
 func repositoryOf(folder string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	return repositoryWithin(folder, repositoryBudget)
+}
+
+// repositoryWithin is repositoryOf under a given budget, so tests on a loaded machine are not
+// decided by it.
+func repositoryWithin(folder string, budget time.Duration) string {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	id, err := (gitcli.Git{Dir: folder}).RepositoryInode(ctx)
 	if err != nil {

@@ -131,6 +131,8 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		}
 	}
 	outcomes := map[string]string{}
+	// uncounted says a node ended exited-0 or has such a dep anywhere below it.
+	uncounted := map[string]bool{}
 	ended := false
 	for _, name := range order {
 		kind, entry := find(proj.section, name)
@@ -143,7 +145,13 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		case slices.ContainsFunc(depsOf(entry), func(dep string) bool { return !passing(outcomes[dep]) }):
 			line = step{"step": name, "outcome": outcomeNotRun, "seconds": 0}
 		case isComposite(entry):
-			line = step{"step": name, "outcome": receipts.OutcomePassed, "seconds": 0, "composite": true}
+			// A composite passes when every eligible dep passed; one that only exited 0 (a `test`
+			// or undeclared scope that counted nothing) makes it `exited-0`, not a pass.
+			outcome := receipts.OutcomePassed
+			if slices.ContainsFunc(depsOf(entry), func(dep string) bool { return uncounted[dep] }) {
+				outcome = receipts.OutcomeExited0
+			}
+			line = step{"step": name, "outcome": outcome, "seconds": 0, "composite": true}
 		default:
 			var signalled *int
 			if line, signalled = proj.gateStep(name, kind, entry, gateID); signalled != nil {
@@ -152,6 +160,9 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		}
 		outcome := textOf(line["outcome"])
 		outcomes[name] = outcome
+		// A skipped node carries nothing up: a composite ignores it (section 7.2).
+		uncounted[name] = outcome == receipts.OutcomeExited0 || outcome != outcomeSkipped &&
+			slices.ContainsFunc(depsOf(entry), func(dep string) bool { return uncounted[dep] })
 		state.steps = append(state.steps, line)
 		if !passing(outcome) && outcome != outcomeNotRun && !proj.options.keepGoing {
 			ended = true
@@ -164,9 +175,6 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 			state.outcome, state.status = outcomeNeedsOtherSystem, statusNeedsOtherSystem
 		case len(split.here) == 0:
 			state.outcome, state.status = outcomeLeftToCI, 0
-		case state.outcome == receipts.OutcomeExited0:
-			// The split's here passes as a composite does: every node passed or ended exited-0.
-			state.outcome = receipts.OutcomePassed
 		}
 	}
 	if problem := proj.pinnedProblem(); problem != "" && !slices.Contains(failureOrder, state.outcome) {
@@ -199,7 +207,8 @@ func (state *gateState) settle(asked []string, outcomes map[string]string) {
 	switch {
 	case slices.ContainsFunc(asked, func(name string) bool { return outcomes[name] == outcomeSkipped }):
 		state.outcome, state.status = outcomeSkipped, statusSkipped
-	case slices.ContainsFunc(asked, func(name string) bool { return outcomes[name] == receipts.OutcomeExited0 }):
+	case slices.ContainsFunc(state.steps, func(line step) bool { return line["outcome"] == receipts.OutcomeExited0 }):
+		// Any node that ran and counted nothing, also a dep under a passing scope: not evidence.
 		state.outcome = receipts.OutcomeExited0
 	default:
 		state.outcome = receipts.OutcomePassed
@@ -282,6 +291,11 @@ func (proj *project) compositeRequires(composite string) (string, *int) {
 
 // gateLine writes the run's line (each node's outcome, seconds and run id) and says its outcome.
 func (proj *project) gateLine(label, gateID string, began time.Time, state *gateState, split *partition) int {
+	if label == ciCommand && state.outcome == receipts.OutcomeExited0 {
+		// A required CI job is green only on a pass: a node that counted nothing and is no check fails it.
+		proj.say("a CI job passes only when every test scope counted its tests and every check exited 0; mark a linter or a build `\"kind\": \"check\"`")
+		state.status = receipts.StatusUnjudged
+	}
 	endedAt := proj.clock.Now()
 	seconds := secondsBetween(began, endedAt)
 	failure := slices.Contains(failureOrder, state.outcome)

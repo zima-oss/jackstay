@@ -3,19 +3,35 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/telemetry"
 	"github.com/zima-oss/jackstay/internal/telemetry/telemetrytest"
 )
 
+// generousBudgets give the hook's real work room on a loaded machine; only a budget's own test
+// shortens one.
+var generousBudgets = budgets{answer: testBudget, exit: testBudget, reading: testBudget, question: testBudget,
+	call: testBudget}
+
 // runHook runs the hook as the guard command runs it, its span written to home's journal.
 func runHook(t *testing.T, home string, payload any, raw string) (map[string]any, string) {
 	t.Helper()
+	return runHookWithin(t, generousBudgets, home, payload, raw)
+}
+
+// runHookWithin is runHook with the hook's budgets set to within for the run.
+func runHookWithin(t *testing.T, within budgets, home string, payload any, raw string) (map[string]any, string) {
+	t.Helper()
 	t.Setenv("JACKSTAY_HOME", home)
+	// The journal is read back: Finish waits for its write however long a loaded machine takes.
+	t.Setenv(telemetry.FinishWaitVariable, telemetrytest.GenerousFinishWait)
 	telemetry.Reset()
 	t.Cleanup(telemetry.Reset)
 	telemetry.Begin("guard", nil)
@@ -28,18 +44,39 @@ func runHook(t *testing.T, home string, payload any, raw string) (map[string]any
 		}
 		text = string(data)
 	}
-	var stdout, stderr bytes.Buffer
-	if code := Hook(strings.NewReader(text), &stdout, &stderr); code != 0 {
+	// Locked: a worker that outlived its answer budget may still write after Hook returned.
+	var stdout, stderr lockedBuffer
+	if code := hookWith(within, strings.NewReader(text), &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if stdout.Len() == 0 {
-		return nil, stderr.String()
+	written, said := stdout.snapshot(), string(stderr.snapshot())
+	if len(written) == 0 {
+		return nil, said
 	}
+	// The first answer is the hook's; a late worker's write, if any, follows it.
 	var out map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("stdout %q: %v", stdout.String(), err)
+	if err := json.NewDecoder(bytes.NewReader(written)).Decode(&out); err != nil {
+		t.Fatalf("stdout %q: %v", written, err)
 	}
-	return out, stderr.String()
+	return out, said
+}
+
+// lockedBuffer is a buffer safe to write from a goroutine the test does not wait for.
+type lockedBuffer struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (locked *lockedBuffer) Write(data []byte) (int, error) {
+	locked.mutex.Lock()
+	defer locked.mutex.Unlock()
+	return locked.buffer.Write(data)
+}
+
+func (locked *lockedBuffer) snapshot() []byte {
+	locked.mutex.Lock()
+	defer locked.mutex.Unlock()
+	return bytes.Clone(locked.buffer.Bytes())
 }
 
 func bashCall(command, cwd string) map[string]any {
@@ -145,7 +182,9 @@ func TestHookKeepsTheBuiltInRulesWhenJackstayJSONCannotBeUsed(t *testing.T) {
 			strings.Contains(out["systemMessage"].(string), "did NOT check") {
 			t.Fatalf("%s: %v", text, out)
 		}
-		out, _ = runHook(t, home, bashCall("git status", folder), "")
+		second := bashCall("git status", folder)
+		second["session_id"] = "another"
+		out, _ = runHook(t, home, second, "")
 		if !strings.Contains(out["systemMessage"].(string), "jackstay.json cannot be used") || !toldTheAgentOnly(out, "jackstay.json cannot be used") {
 			t.Fatalf("%s: %v", text, out)
 		}
@@ -158,6 +197,50 @@ func TestHookKeepsTheBuiltInRulesWhenJackstayJSONCannotBeUsed(t *testing.T) {
 		}
 		if strings.Join(events, " ") != "refused allowed" {
 			t.Fatalf("%s: events %v", text, events)
+		}
+	}
+}
+
+// An unusable jackstay.json is said once to a session within toldEvery, again when the file changes,
+// and every time to a call without a session; every call still logs the reason.
+func TestHookSaysAnUnusableConfigOnceInASession(t *testing.T) {
+	home, folder := t.TempDir(), t.TempDir()
+	writeConfig(t, folder, "{broken")
+	said := func(given map[string]any) bool {
+		t.Helper()
+		out, _ := runHook(t, home, given, "")
+		message, _ := out["systemMessage"].(string)
+		return strings.Contains(message, "jackstay.json cannot be used")
+	}
+	if !said(bashCall("git status", folder)) {
+		t.Fatal("the first call of a session was not told")
+	}
+	if said(bashCall("git status", folder)) {
+		t.Fatal("the second call of the same session was told again")
+	}
+	if out, _ := runHook(t, home, bashCall("git reset --hard", folder), ""); decisionOf(out) != "deny" ||
+		strings.Contains(fmt.Sprint(out), "cannot be used") {
+		t.Fatalf("a refusal later in the session: %v", out)
+	}
+	other := bashCall("git status", folder)
+	other["session_id"] = "other"
+	if !said(other) {
+		t.Fatal("another session was not told")
+	}
+	writeConfig(t, folder, "{broken again")
+	if !said(bashCall("git status", folder)) {
+		t.Fatal("a changed file was not told")
+	}
+	alone := bashCall("git status", folder)
+	delete(alone, "session_id")
+	for range 2 {
+		if !said(alone) {
+			t.Fatal("a call without a session was not told each time")
+		}
+	}
+	for _, record := range readLog(t, home) {
+		if record["config_error"] == "" {
+			t.Fatalf("a call without its config error: %v", record)
 		}
 	}
 }
@@ -234,10 +317,10 @@ func TestHookFindsTheProjectFromTheWorkingFolder(t *testing.T) {
 
 func TestCheckCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := check([]string{"--cwd", "/tmp", "--", "git clean -fd"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "git clean -n") {
+	if code := checkWith(generousBudgets, []string{"--cwd", "/tmp", "--", "git clean -fd"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "git clean -n") {
 		t.Fatalf("%d %q", code, stderr.String())
 	}
-	if code := check([]string{"--cwd", "/tmp", "--", "git clean -n"}, &stdout, &stderr); code != 0 {
+	if code := checkWith(generousBudgets, []string{"--cwd", "/tmp", "--", "git clean -n"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("%d", code)
 	}
 }
@@ -252,4 +335,59 @@ func toldTheAgentOnly(out map[string]any, text string) bool {
 	_, decided := specific["permissionDecision"]
 	context, _ := specific["additionalContext"].(string)
 	return !decided && specific["hookEventName"] == "PreToolUse" && strings.Contains(context, text)
+}
+
+// The mark is taken only once the answer is written, and lasts toldEvery: a hook stopped before
+// it tells again, and so does a session toldEvery later.
+func TestASessionIsToldAgainUnlessTheAnswerWasWrittenRecently(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	found := project{name: "demo", problem: "broken", stamp: "jackstay.json\x001\x002"}
+	now := time.Now()
+	mark, news := configNews("s", found, now)
+	if !news || mark == "" {
+		t.Fatalf("first: %q %v", mark, news)
+	}
+	if _, news := configNews("s", found, now); !news {
+		t.Fatal("a session whose answer was never written counts as told")
+	}
+	markTold(mark, now)
+	if _, news := configNews("s", found, now.Add(toldEvery-time.Second)); news {
+		t.Fatal("a session just told is told again")
+	}
+	if _, news := configNews("s", found, now.Add(toldEvery+time.Second)); !news {
+		t.Fatal("a session is not told again after toldEvery")
+	}
+	changed := found
+	changed.stamp = ""
+	if _, news := configNews("s", changed, now); !news {
+		t.Fatal("a file that changed while read is not told")
+	}
+}
+
+// An answer that cannot be written takes no mark.
+func TestAnUnwrittenAnswerTakesNoMark(t *testing.T) {
+	if (reply{message: "m"}).write(failingWriter{}) {
+		t.Fatal("a failed write said written")
+	}
+	if !(reply{}).write(failingWriter{}) {
+		t.Fatal("an empty answer is not written")
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
+
+// The advice follows trash.keep: an undo only when the project keeps what jst trash removes.
+func TestTrashAdviceFollowsTheKeepSetting(t *testing.T) {
+	for keep, want := range map[bool]string{false: "which logs what was deleted", true: "which can be undone"} {
+		decision := Decide("rm -r src", Settings{Folder: t.TempDir(), TrashKeep: keep, Git: testGit(), Deadline: testBudget})
+		if len(decision.Findings) == 0 || !strings.Contains(decision.Findings[0].Instead, want) {
+			t.Fatalf("keep %v: %+v", keep, decision.Findings)
+		}
+	}
+	decision := Decide("git reset --hard", Settings{Folder: t.TempDir(), Git: testGit(), Deadline: testBudget})
+	if len(decision.Findings) == 0 || strings.Contains(decision.Findings[0].Instead, "restore") {
+		t.Fatalf("discard advice with keep off: %+v", decision.Findings)
+	}
 }

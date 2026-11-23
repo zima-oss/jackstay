@@ -23,6 +23,9 @@ rather than repeating it. A command's flags and exit statuses are in its `--help
 | [release.md](release.md) | `jst release`, `jst changes` in a project with releases, `jst lint pr`'s release checks |
 | [adopt.md](adopt.md) | `jst adopt`, profiles and the generated AGENTS block |
 | [observability.md](observability.md) | the journal, `jst log`, `jst stats` |
+| [land.md](land.md) | `jst land`, the hosting adapter, and where tests run: the scope graph, `jst test changed`, `uncovered`, `ci` (section 7) |
+| [chat.md](chat.md) | the agent chat: `jst chat`, `jst hook claude` |
+| [context-brief.md](context-brief.md) | `jst brief` |
 
 When the code and a spec disagree, one of them is wrong and is fixed in the same change; neither
 is history.
@@ -62,6 +65,11 @@ the installed folder (section 7.1).
 | `supervise`, `proctree`, `procs`, `wait`, `flock`, `lock` | starting and stopping processes; `jst bg`, `jst procs`, `jst wait`; the machine-wide lock, `jst lock` | section 5 |
 | `install`, `layout`, `prove`, `doctor`, `version` | `jst install`, `jst uninstall`, the prefix's layout, the probes, `jst doctor`; the version constant and build commit | section 7 |
 | `land`, `hosting` | `jst land`; the host interface it asks | [land.md](land.md) |
+| `status` | `jst status`: the one read-only overview, reading other packages through their public read functions | [W-090](../decisions/W-090-one-status-command.md) |
+| `sessionchat`, `chatevent` | `jst chat`, `jst hook claude`; jackstay's own events published into the chat | [chat.md](chat.md) |
+| `contextbrief` | `jst brief` | [context-brief.md](context-brief.md) |
+| `choices` | the questions `jst setup` and `jst adopt` both put to a person (reviewer, chat) | [adopt.md](adopt.md) |
+| `durable`, `testreport` | whole-or-nothing writes of small state files under a bounded lock; structured test reports carried from a run | sections 10, 9 |
 | `gh`, `githubapi`, `remote`, `branch`, `tidy`, `owner` | `jst checks` and the GitHub adapter of `jst land`; the one GitHub client (`githubfake` for tests); the remote and default branch; `jst start`, `jst sync`, `jst tidy`, `jst owner` | section 8 |
 | `gitcli` | the one adapter that runs git: a deadline, a stated environment, typed errors | section 5.2 |
 | `telemetry`, `logs`, `stats` | the journal, `jst log`, `jst stats` | [observability.md](observability.md) |
@@ -122,13 +130,17 @@ every other character is `%XX` of its UTF-8 bytes; an empty name is `unknown`.
     .all/codesign-identity                  the signing identity `jst install` uses (section 7)
     .all/procs/<id>.json, <id>.stop, sessions/   what `jst bg` supervises (section 5.1)
     .all/reviews/                           `jst review`'s shared state (review.md)
+    .all/chat/                              the agent chat's store and its pusher (chat.md section 7)
+    .all/context-brief/                     `jst brief`'s briefs (context-brief.md)
+    .all/delivery/                          versioned checkpoints of adoption (section 1); `jst changes collect`
+                                            keeps its own in the repository's Git folder (`jackstay-changes.json`)
+    .all/setup.json                         the answers `jst setup` keeps for adopt to offer first (adopt.md)
     .all/telemetry/                         the journal of calls with no project (observability.md)
     .trash/                                 `jst trash` (guard.md section 10)
     <project>/receipts/<key>.json           receipts (section 9)
     <project>/receipts/<key>.failed.<when>-<process>   a failure of that key, one file each
     <project>/outputs/<run_id>.log          the output of the newest runs (section 9)
     <project>/durations.jsonl               per-class durations (testing.md section 4)
-    <project>/cache/                        scope cache entries and their failure notes (land.md section 7.3)
     <project>/clean-copies/                 copies `--commit` makes (discard-and-clean-gate.md)
     <project>/guard-seen                    touched by every hook call from a session (guard.md)
     <project>/ids/<series>.jsonl            the number counters (`jst id`)
@@ -192,7 +204,6 @@ states it. The meaning checks this file owns:
   written out (an empty list counts). An `evidence` pattern needs a group.
 - `lock`: an `also_hold` entry needs `path` (absolute or `~/…`) and `held_env` (a variable's name).
 - `baseline`: `kinds` names are unique; `merge_unit` is `pr` or `commit`.
-- `test`: a scope with `steps` needs `receipts.toolchain` written out.
 - `guard`: a `regenerable` entry may not mean everything (`*`, `**`, `.`, `..`, `/`, `*/*`,
   `**/*`).
 
@@ -661,8 +672,7 @@ approving, the maintainer has run `jst test gate` on a Mac on the tagged commit
 
 1. Refuse a tag that is not annotated, not the commit checked out, not on main, or not
    `v` + `internal/version`'s `Version`.
-2. The Linux CI job `jst test ci (linux)` on the tagged commit, like any other CI run, with its
-   cache ([land.md](land.md) sections 7.4 and 7.6).
+2. `just gate` on the tagged tree (Linux; section 10).
 3. GoReleaser builds, signs and notarises with that tag (`GORELEASER_CURRENT_TAG`,
    `--skip=publish,announce`).
 4. `actions/attest` signs build provenance for each archive, bound to the repository, workflow and
@@ -758,7 +768,7 @@ uninstall and doctor all decide from `layout.Read(P)`.
 - `--binary FILE`, or with neither flag and no checkout the running binary (`SOURCE` `release`).
 
 Its `jst version` text, `jackstay <version> (<commit>)`, is `VERSION`. A `go install` build names
-its tag (`v0.5.11`) or pseudo-version commit, so a tag-named and a hash-named build of one version
+its tag (`v0.6.0`) or pseudo-version commit, so a tag-named and a hash-named build of one version
 are two commits of it.
 
 **Refused** (exit 2, nothing changed): a commit `unknown` or `+changes` (a `+changes` checkout build
@@ -1089,8 +1099,7 @@ The contract behind it:
 
 - `passed` only when the command ran now, ended 0, its output was read to its end, its tests were
   **counted** above zero and no veto line was seen. Nothing else is `passed`, and only `passed`
-  stores a receipt. The one exception is a scope's cached pass: a pass counted before for the same
-  inputs ([land.md](land.md) section 7.3).
+  stores a receipt.
 - `exited-0`: ended 0 with nothing to count its tests (no `evidence` pattern, or the `exit` judge);
   the line reads `outcome=exited-0 (no test count: not proof that tests ran)`. Never a pass in any
   count.
@@ -1101,9 +1110,8 @@ The contract behind it:
 - `stopped` / `stopped-waiting`: asked to stop after the start, or while waiting for the lock
   (nothing ran); it ends by that signal. `gave-up` (75) and `not-started` (2) ran nothing; a
   command that cannot start is 127. `timed-out` (124) is a scope's (testing.md section 3);
-  `skipped`, `not-run`, `left-to-ci` and `needs-other-system` are a graph's, and a scope served
-  from the cache keeps its stored `passed` marked `cached` ([land.md](land.md) sections 7.2 and
-  7.4).
+  `skipped`, `not-run`, `left-to-ci` and `needs-other-system` are a graph's ([land.md](land.md)
+  sections 7.2 and 7.4).
 
 A command's own 2, 75–78 shows as `failed`, so the line, not the status, is read. An unwritable
 record line adds a `WARNING` just before it and never turns a pass into a failure.

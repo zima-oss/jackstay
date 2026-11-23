@@ -46,8 +46,7 @@ The tools:
 - `chat.ack`: declare a message `read` or `acted`. `chat.respond`: answer a request.
 - `chat.outbox` and `chat.thread`: what you sent and what became of it, and a whole thread.
 
-The 0.5.x names keep working: `chat.self` is `chat.whoami`, `chat.reply` is a send with `reply_to`,
-`chat.send` takes `body` and `kind: request`, and `chat.ack` with only a `message_id` means acted.
+The 0.5.x tool names keep working through 0.6.x ([Upgrading from 0.5.x](upgrading.md)).
 
 jackstay never guesses whether a session lives. A message to a session that never reads it expires
 by its own deadline, and its sender is told. A Claude Code session that ended shows as `ended` and
@@ -81,7 +80,6 @@ batch hears of each new message once, and a `Stop` holds the turn, at most three
 while an urgent (`now`) message is unread. An idle session on a verified Claude Code version
 (2.1.328) is also rung on its messaging socket by `jst chat push`, which the hooks start when a
 doorbell is due; any other version waits for its next prompt. The hook never fails a turn.
-`jst chat claude-hook` is the old name, kept through 0.6.x.
 
 [Claude Code hook events and output](https://code.claude.com/docs/en/hooks)
 
@@ -104,6 +102,3 @@ recipient next reads its inbox. See [Run a review in the background](review.md#r
 - Events to a whole channel, such as a merged branch.
 - A list of related repositories that limits whom a session may write to.
 - `jst chat inbox` for a session that reads from a shell.
-
-State written by jackstay 0.5.x under `~/.jackstay/.all/session-chat/` is not read by 0.6.0 and is
-not imported.

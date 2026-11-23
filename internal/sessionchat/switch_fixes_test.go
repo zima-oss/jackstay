@@ -112,7 +112,7 @@ func TestAServerLeavesTheHooksRouteOfATokenSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	key, _ := tokenKey()
-	server := &Server{chat: chat, token: key, claude: true}
+	server := &Server{chat: chat, token: key, claude: true, toolBudget: fixtureBound}
 	if whoami := call(t, server, "chat.whoami", nil); whoami["delivery"] != chatstore.DeliveryHooks || whoami["engine"] != chatstore.EngineClaudeCode {
 		t.Fatalf("%+v", whoami)
 	}
@@ -130,7 +130,7 @@ func TestALateBindingMovesTheServerToItsSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{chat: chat, claude: true, waited: true}
+	server := &Server{chat: chat, claude: true, waited: true, toolBudget: fixtureBound}
 	if first := call(t, server, "chat.whoami", nil); first["key_source"] != chatstore.SourceEphemeral {
 		t.Fatalf("no binding yet: %+v", first)
 	}
