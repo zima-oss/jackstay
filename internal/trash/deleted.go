@@ -251,5 +251,3 @@ func Measure(deletion Deletion) string {
 	}
 	return fmt.Sprintf("%d bytes, sha256 %s", deletion.Size, digest)
 }
-
-

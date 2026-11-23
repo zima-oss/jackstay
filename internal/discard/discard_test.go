@@ -441,7 +441,7 @@ func TestKeepIsReadFromEachPathsProject(t *testing.T) {
 	w := newWorld(t, map[string]string{"a.txt": "head\n", "sub/b.txt": "head\n"})
 	w.repo.Write(map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "outer"}`,
 		"sub/jackstay.json": `{"jackstay_schema": 3, "project": "inner", "trash": {"keep": "on"}}`,
-		"a.txt": "mine\n", "sub/b.txt": "mine\n"})
+		"a.txt":             "mine\n", "sub/b.txt": "mine\n"})
 	w.out.Reset()
 	w.errors.Reset()
 	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "outer", Session: "s", KeepDays: 7, Now: time.Now, Out: &w.out, Errors: &w.errors}
