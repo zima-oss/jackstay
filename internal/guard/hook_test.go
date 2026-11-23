@@ -3,6 +3,7 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,7 +146,9 @@ func TestHookKeepsTheBuiltInRulesWhenJackstayJSONCannotBeUsed(t *testing.T) {
 			strings.Contains(out["systemMessage"].(string), "did NOT check") {
 			t.Fatalf("%s: %v", text, out)
 		}
-		out, _ = runHook(t, home, bashCall("git status", folder), "")
+		second := bashCall("git status", folder)
+		second["session_id"] = "another"
+		out, _ = runHook(t, home, second, "")
 		if !strings.Contains(out["systemMessage"].(string), "jackstay.json cannot be used") || !toldTheAgentOnly(out, "jackstay.json cannot be used") {
 			t.Fatalf("%s: %v", text, out)
 		}
@@ -158,6 +161,48 @@ func TestHookKeepsTheBuiltInRulesWhenJackstayJSONCannotBeUsed(t *testing.T) {
 		}
 		if strings.Join(events, " ") != "refused allowed" {
 			t.Fatalf("%s: events %v", text, events)
+		}
+	}
+}
+
+// An unusable jackstay.json is said once in a session, again when the file changes, and every time
+// to a call without a session; every call still logs the reason.
+func TestHookSaysAnUnusableConfigOnceInASession(t *testing.T) {
+	home, folder := t.TempDir(), t.TempDir()
+	writeConfig(t, folder, "{broken")
+	said := func(given map[string]any) bool {
+		t.Helper()
+		out, _ := runHook(t, home, given, "")
+		message, _ := out["systemMessage"].(string)
+		return strings.Contains(message, "jackstay.json cannot be used")
+	}
+	if !said(bashCall("git status", folder)) {
+		t.Fatal("the first call of a session was not told")
+	}
+	if said(bashCall("git status", folder)) {
+		t.Fatal("the second call of the same session was told again")
+	}
+	if out, _ := runHook(t, home, bashCall("git reset --hard", folder), ""); decisionOf(out) != "deny" ||
+		strings.Contains(fmt.Sprint(out), "cannot be used") {
+		t.Fatalf("a refusal later in the session: %v", out)
+	}
+	other := bashCall("git status", folder)
+	other["session_id"] = "other"
+	if !said(other) {
+		t.Fatal("another session was not told")
+	}
+	writeConfig(t, folder, "{broken again")
+	if !said(bashCall("git status", folder)) {
+		t.Fatal("a changed file was not told")
+	}
+	alone := bashCall("git status", folder)
+	delete(alone, "session_id")
+	if !said(alone) || !said(alone) {
+		t.Fatal("a call without a session was not told each time")
+	}
+	for _, record := range readLog(t, home) {
+		if record["config_error"] == "" {
+			t.Fatalf("a call without its config error: %v", record)
 		}
 	}
 }
