@@ -44,7 +44,7 @@ const (
 )
 
 func init() {
-	cli.Register(cli.Command{Name: "discard", Summary: "put paths back to HEAD, keeping what that drops in jackstay's trash (undoable)",
+	cli.Register(cli.Command{Name: "discard", Summary: "put paths back to HEAD; what that drops is deleted and logged, or kept with trash.keep on",
 		Usage: help, Run: command})
 }
 
@@ -62,7 +62,7 @@ func command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	run := Run{Working: working, Trash: folder, Project: trash.ProjectOf(working), Session: os.Getenv("CLAUDE_SESSION_ID"),
-		KeepDays: trash.KeepDays(working), Now: time.Now, Out: stdout, Errors: stderr}
+		KeepDays: trash.KeepDays(working), Keep: trash.Keeps(working), Now: time.Now, Out: stdout, Errors: stderr}
 	return run.Discard(ctx, args)
 }
 
@@ -71,9 +71,12 @@ type Run struct {
 	Working, Trash   string
 	Project, Session string
 	KeepDays         int
-	Now              func() time.Time
-	Out, Errors      io.Writer
-	repo             repository
+	// Keep keeps what is dropped as trash entries (`trash.keep` on); otherwise, once the path is
+	// back, they are deleted and the deletions logged.
+	Keep        bool
+	Now         func() time.Time
+	Out, Errors io.Writer
+	repo        repository
 }
 
 // A change is one path to put back, as git and the disk show it before anything is done.
@@ -156,8 +159,11 @@ func (run Run) Discard(ctx context.Context, args []string) int {
 	for _, name := range untracked {
 		run.say("%s is untracked, not a change git can put back: left as it is (`jst trash %s` moves it)", name, name)
 	}
-	if len(changes) > 0 {
+	switch {
+	case len(changes) > 0 && run.Keep:
 		run.say("%d path(s) back to HEAD; %d kept in jackstay's trash for %d days (`jst trash list`)", len(changes), kept, run.KeepDays)
+	case len(changes) > 0:
+		run.say("%d path(s) back to HEAD; what they dropped is deleted and logged (`jst trash list`)", len(changes))
 	}
 	return statusDone
 }
@@ -316,7 +322,9 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 			return 0, err
 		}
 		entries = append(entries, entry.ID)
-		run.say("%s: the staged version kept as %s (`jst trash restore %s --to <path>`)", each.path, entry.ID, entry.ID)
+		if run.Keep {
+			run.say("%s: the staged version kept as %s (`jst trash restore %s --to <path>`)", each.path, entry.ID, entry.ID)
+		}
 	}
 	if each.keepDisk {
 		entry, err := trash.MoveForDiscard(run.Trash, place, run.Project, run.Session, run.KeepDays, run.Now(), each.disk)
@@ -326,7 +334,9 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		if err != nil {
 			return len(entries), err
 		}
-		run.say("%s: what was on disk kept as %s (`jst trash restore %s`)", each.path, entry.ID, entry.ID)
+		if run.Keep {
+			run.say("%s: what was on disk kept as %s (`jst trash restore %s`)", each.path, entry.ID, entry.ID)
+		}
 	}
 	var err error
 	expected := each.disk
@@ -355,6 +365,23 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		if err := trash.Mark(run.Trash, id, "discard", replacement); err != nil {
 			return len(entries), err
 		}
+	}
+	if run.Keep {
+		return len(entries), nil
+	}
+	// The path is back: what it dropped is deleted, each deletion logged. One that cannot be is
+	// kept, and said so.
+	for _, id := range entries {
+		deletion, err := trash.Purge(run.Trash, id, "jst discard", run.Now())
+		if err != nil {
+			run.say("%s: %v (kept as %s: `jst trash restore %s --to <path>`)", each.path, err, id, id)
+			continue
+		}
+		what := "what was on disk"
+		if deletion.Kind == "staged" {
+			what = "the staged version"
+		}
+		run.say("%s: %s deleted, %s (logged: `jst trash list`)", each.path, what, trash.Measure(deletion))
 	}
 	return len(entries), nil
 }

@@ -227,7 +227,7 @@ pin. The schema cannot express rules about paths, other fields or Go regular exp
 | `lock` | the machine-wide lock for heavy runs (off by default) | [tests](tests.md#the-machine-wide-lock-jst-lock) |
 | `baseline` | the kinds of test run `jst baseline` counts | [tests](tests.md#measuring-jst-baseline) |
 | `procs` | `jst bg`'s default and maximum deadline | [background](background.md) |
-| `trash` | how long `jst trash` keeps entries | [guard](guard.md#delete-undoably-jst-trash) |
+| `trash` | whether `jst trash` and `jst discard` keep what they delete, and for how long | [guard](guard.md#delete-with-a-log-jst-trash) |
 | `github` | the account jackstay acts as, the remote, wait defaults | [branches and GitHub](branches-and-github.md) |
 | `land` | who merges (`autonomy`), the merge method, extra required checks, paths only a person lands | [branches and GitHub](branches-and-github.md#the-land-section) |
 | `review` | reviewers, brief, severities, round limit; present (even `{}`), the AGENTS block tells agents about `jst review` | [reviews](review.md) |

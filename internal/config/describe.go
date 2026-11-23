@@ -210,6 +210,7 @@ var keyDescriptions = map[string]string{
 	"test.steps":                               "Declares the steps a scope's `steps` lists, with the same keys as a scope.",
 	"test.steps.*":                             "Defines one step: the command it runs or the steps it lists, and how it is judged.",
 	"test.timeout":                             "Stops a scope or step without a timeout of its own after this many seconds.",
-	"trash":                                    "Sets how `jst trash` keeps what it removes.",
-	"trash.keep_days":                          "Keeps a trash entry for this many days (default 7).",
+	"trash":                                    "Sets whether `jst trash` and `jst discard` keep what they delete.",
+	"trash.keep":                               "\"off\" (default): delete at once and log each deletion; \"on\" (experimental): keep a copy for `keep_days`, which `jst trash restore` brings back.",
+	"trash.keep_days":                          "With `keep` on, keeps a trash entry for this many days (default 7).",
 }

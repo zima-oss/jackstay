@@ -1,8 +1,10 @@
 package trash
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,7 +162,7 @@ func TestPruneReadsEachEntrysOwnDays(t *testing.T) {
 
 func TestPruneReadsTheOriginOfAnEntryWithoutDays(t *testing.T) {
 	keeping := t.TempDir()
-	config := `{"jackstay_schema": 2, "project": "keeping", "trash": {"keep_days": 30}}`
+	config := `{"jackstay_schema": 3, "project": "keeping", "trash": {"keep": "on", "keep_days": 30}}`
 	if err := os.WriteFile(filepath.Join(keeping, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +189,7 @@ func TestPruneReadsTheOriginOfAnEntryWithoutDays(t *testing.T) {
 
 func TestTrashKeepsWhatItMovesWithZeroDays(t *testing.T) {
 	project := t.TempDir()
-	config := `{"jackstay_schema": 2, "project": "p", "trash": {"keep_days": 0}}`
+	config := `{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 0}}`
 	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +248,7 @@ func TestAFailedRemovalAcrossVolumesKeepsTheCopy(t *testing.T) {
 
 func TestKeepDaysReadsTheProjectsSetting(t *testing.T) {
 	project := t.TempDir()
-	config := `{"jackstay_schema": 2, "project": "p", "trash": {"keep_days": 30}}`
+	config := `{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 30}}`
 	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +263,7 @@ func TestKeepDaysReadsTheProjectsSetting(t *testing.T) {
 func TestTrashRecordsTheDaysOfTheItemsOwnCheckout(t *testing.T) {
 	short, long := t.TempDir(), t.TempDir()
 	for folder, days := range map[string]int{short: 7, long: 30} {
-		config := fmt.Sprintf(`{"jackstay_schema": 2, "project": "same", "trash": {"keep_days": %d}}`, days)
+		config := fmt.Sprintf(`{"jackstay_schema": 3, "project": "same", "trash": {"keep": "on", "keep_days": %d}}`, days)
 		if err := os.WriteFile(filepath.Join(folder, "jackstay.json"), []byte(config), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -313,7 +315,7 @@ func TestTrashingAWholeCheckoutKeepsItsOwnDays(t *testing.T) {
 	if err := os.Mkdir(checkout, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	config := `{"jackstay_schema": 2, "project": "checkout", "trash": {"keep_days": 30}}`
+	config := `{"jackstay_schema": 3, "project": "checkout", "trash": {"keep": "on", "keep_days": 30}}`
 	if err := os.WriteFile(filepath.Join(checkout, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -444,5 +446,105 @@ func TestARecordWrittenButNotSyncedIsReportedWithItsEntry(t *testing.T) {
 	}
 	if entries := Entries(folder); len(entries) != 1 || entries[0].Held {
 		t.Fatalf("entries %+v; the record on disk is released", entries)
+	}
+}
+
+// By default (trash.keep off) jst trash deletes at once and logs each deletion; nothing is kept,
+// and restore says the entry was deleted.
+func TestTrashDeletesAndLogsByDefault(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(`{"jackstay_schema": 2, "project": "p"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "item"), []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(project, "tree", "inner"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "tree", "inner", "a"), []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	t.Setenv("CLAUDE_SESSION_ID", "session-1")
+	t.Chdir(project)
+	var out, errs strings.Builder
+	if status := Command([]string{"item", "tree"}, nil, &out, &errs); status != 0 {
+		t.Fatalf("jst trash = %d: %s", status, errs.String())
+	}
+	for _, name := range []string{"item", "tree"} {
+		if _, err := os.Lstat(filepath.Join(project, name)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("%s is still there: %v", name, err)
+		}
+	}
+	folder, _ := Folder()
+	if entries := Entries(folder); len(entries) != 0 {
+		t.Fatalf("entries kept: %+v", entries)
+	}
+	deletions := Deletions(folder)
+	if len(deletions) != 2 {
+		t.Fatalf("deletions %+v", deletions)
+	}
+	byKind := map[string]Deletion{}
+	for _, deletion := range deletions {
+		byKind[deletion.Kind] = deletion
+	}
+	file := byKind["file"]
+	if file.Size != 5 || file.SHA256 != "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" ||
+		file.Session != "session-1" || file.Command != "jst trash" || file.Project != "p" || !strings.HasSuffix(file.Path, "/item") {
+		t.Fatalf("file %+v", file)
+	}
+	if tree := byKind["folder"]; tree.Size != 3 || len(tree.SHA256) != 64 {
+		t.Fatalf("folder %+v", tree)
+	}
+	out.Reset()
+	if status := list(folder, nil, &out, &errs); status != 0 || !strings.Contains(out.String(), "deleted ") || !strings.Contains(out.String(), "5 bytes") {
+		t.Fatalf("list = %d: %s", status, out.String())
+	}
+	errs.Reset()
+	if status := restore(folder, []string{file.Entry}, &out, &errs); status != 1 || !strings.Contains(errs.String(), "was deleted, not kept") {
+		t.Fatalf("restore = %d: %s", status, errs.String())
+	}
+}
+
+// A deletion stopped after it was logged leaves the entry kept: it is listed as kept, not deleted.
+func TestADeletionStoppedPartWayIsListedAsKept(t *testing.T) {
+	folder := filepath.Join(t.TempDir(), ".trash")
+	source := filepath.Join(t.TempDir(), "x")
+	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := Move(folder, source, "p", "s", 7, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := appendLog(folder, Deletion{Path: source, Entry: entry.ID, DeletedAt: time.Now().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if deletions := Deletions(folder); len(deletions) != 0 {
+		t.Fatalf("a kept entry is listed as deleted: %+v", deletions)
+	}
+	if entries := Entries(folder); len(entries) != 1 {
+		t.Fatalf("entries %+v", entries)
+	}
+}
+
+// The log moves aside at its limit, and both parts are read.
+func TestTheDeletionLogRollsOver(t *testing.T) {
+	folder := t.TempDir()
+	big := strings.Repeat("a", 40<<10)
+	for count := 0; count < 30; count++ {
+		if err := appendLog(folder, Deletion{Path: big, DeletedAt: fmt.Sprintf("2026-11-23T00:00:%02dZ", count)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(folder, oldLogName)); err != nil {
+		t.Fatalf("no previous log: %v", err)
+	}
+	if info, _ := os.Stat(filepath.Join(folder, logName)); info.Size() >= logLimit {
+		t.Fatalf("the log is %d bytes", info.Size())
+	}
+	if deletions := Deletions(folder); len(deletions) != 30 || deletions[0].DeletedAt != "2026-11-23T00:00:29Z" {
+		t.Fatalf("%d deletions, newest %v", len(deletions), deletions[0].DeletedAt)
 	}
 }

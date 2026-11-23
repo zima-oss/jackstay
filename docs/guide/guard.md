@@ -2,8 +2,9 @@
 
 The guard stops an agent's shell command before it destroys work that cannot be got back:
 uncommitted edits, branches whose commits are nowhere else, folders. Each refusal names a command
-that does the job safely, often one of jackstay's own: `jst discard` drops uncommitted changes but
-keeps a copy, and `jst trash` is a delete you can undo.
+that does the job safely, often one of jackstay's own: `jst discard` drops uncommitted changes, and
+`jst trash` deletes; both log each deletion, and with `trash.keep` on (experimental) they keep a
+copy you can restore.
 
 The guard runs as a hook in [Claude Code](claude-code.md#the-guard-hook) (written by `jst adopt`)
 or [Codex](codex.md#the-guard-as-a-codex-hook). Without a hook, ask it about any command yourself.
@@ -109,37 +110,51 @@ The full table, with every allowance: [the guard's design](../design/guard.md).
 ## Drop uncommitted changes: `jst discard`
 
 `jst discard` puts each path (a file or a folder) back to HEAD. Whatever that throws away, the file
-on disk or a staged version that differs from both, is first kept in jackstay's trash:
+on disk or a staged version that differs from both, is deleted, and each deletion is logged with
+its size and SHA-256 (`jst trash list` shows them):
 
 ```sh
 jst discard src/parser.go docs/draft.md
 ```
 
 ```text
-jst discard: src/parser.go: what was on disk kept as 20261117-224808-1 (`jst trash restore 20261117-224808-1`)
-jst discard: 2 path(s) back to HEAD; 1 kept in jackstay's trash for 7 days (`jst trash list`)
+jst discard: src/parser.go: what was on disk deleted, 1834 bytes, sha256 5f1c0e9a2b7d (logged: `jst trash list`)
+jst discard: 2 path(s) back to HEAD; what they dropped is deleted and logged (`jst trash list`)
 ```
 
-An untracked file is left alone (`jst trash PATH` moves it). Every path is checked before anything
+With `trash.keep` on, it is kept in jackstay's trash instead, and `jst trash restore` puts it back
+(see below). An untracked file is left alone (`jst trash PATH` deletes it). Every path is checked before anything
 changes: with one bad path (outside a work tree, in a merge conflict, a submodule) nothing is done.
 Every flag and exit status: `jst discard --help`.
 
-## Delete undoably: `jst trash`
+## Delete with a log: `jst trash`
 
 ```sh
 jst trash build/old-output
 jst trash list
-jst trash restore 20261117-224808-2
-jst trash restore 20261117-224808-2 --to /tmp/old-output
 jst trash -- list
 ```
 
-The last two put an entry back somewhere else, and move a path named `list` into the trash. Entries
-live in `~/.jackstay/.trash/`, which Claude Code's sandbox can write once `~/.jackstay` is allowed
+`jst trash` deletes each path at once and logs the deletion: the path, its kind, size and SHA-256
+(of a folder, of a listing of its entries), the project, the session and the command. `jst trash
+list` shows the log, newest first; the last line deletes a path named `list`. The log lives in
+`~/.jackstay/.trash/`, which Claude Code's sandbox can write once `~/.jackstay` is allowed
 ([Claude Code](claude-code.md#the-sandbox)); the system's Trash cannot be written from inside it.
-Each entry is kept for the `trash.keep_days` (default 7) of the project it came from; once older,
-the next `jst trash` or `jst discard` removes it, and `jst trash prune` removes it now. Every flag
-and exit status: `jst trash --help`.
+Nothing is kept: a deleted item cannot be restored.
+
+### Keep a copy: `trash.keep` (experimental)
+
+With `"trash": {"keep": "on"}` in `jackstay.json`, `jst trash` and `jst discard` keep each item
+as an entry instead of deleting it:
+
+```sh
+jst trash restore 20261117-224808-2
+jst trash restore 20261117-224808-2 --to /tmp/old-output
+```
+
+The second puts an entry back somewhere else. Each entry is kept for the `trash.keep_days`
+(default 7) of the project it came from; once older, the next `jst trash` or `jst discard` removes
+it, and `jst trash prune` removes it now. Every flag and exit status: `jst trash --help`.
 
 ## What can go wrong
 
@@ -147,7 +162,8 @@ and exit status: `jst trash --help`.
   own terminal. To loosen a rule for a whole project, set its level in `guard.rules`.
 - **A `zsh-glob` warning on a pattern that will match later** (a folder that is empty now): quote
   the word; the warning is about the shell, not about danger.
-- **`jst trash restore` refused**: something is already at the path; use `--to PATH`.
+- **`jst trash restore` refused**: something is already at the path; use `--to PATH`. An entry
+  that was deleted (`trash.keep` off) cannot be restored.
 - **The trash is per machine**: an entry is kept `trash.keep_days`, then gone.
 
 The design: [guard.md](../design/guard.md), [discard-and-clean-gate.md](../design/discard-and-clean-gate.md).

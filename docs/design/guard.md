@@ -418,11 +418,27 @@ read them there.
 - `just guard-latency` measures the hook's wall time (about a millisecond a call) outside the gate;
   a change that moves it records its numbers.
 
-## 10. `jst trash`: the undoable way to delete (W-042)
+## 10. `jst trash`: the recorded way to delete (W-042, W-107)
 
 The guard's advice for `rm -r` must be something a session can do, and macOS's `trash` fails in
 the sandbox (`afpAccessDenied`), so the advice is `jst trash PATH`; the guard knows `jst trash` as
-harmless. Use: the [guard guide](../guide/guard.md#delete-undoably-jst-trash).
+harmless. Use: the [guard guide](../guide/guard.md#delete-with-a-log-jst-trash).
+
+`trash.keep` (W-107) says whether an item is kept. `off`, the default: each item goes through an
+entry as below and the entry is then deleted, after its deletion is logged; `jst discard` does the
+same once its path is back at HEAD. `on` (experimental): the entry is kept, as described below.
+
+- The deletion log is `<jackstay home>/.trash/deleted.jsonl`, one JSON line each: `deleted_at`,
+  `path`, `kind`, `size`, `sha256` (of a file's bytes or a link's target; of a folder, of a listing
+  of each entry's relative path, kind, mode and digest, so a folder is read whole), `project`,
+  `session`, `command` and the `entry` it went through. The line is written and synced before the
+  entry is removed: a deletion stopped between the two leaves the entry kept, and `jst trash list`
+  shows it as kept, not as deleted. At 1 MiB the log becomes `deleted.1.jsonl`, replacing the one
+  before; `jst trash list` reads both.
+- An entry that cannot be deleted (held, or its log line cannot be written) is kept, and the
+  command says so.
+- `trash.keep` is read from the item's own project, before the item moves, as `keep_days` is; a
+  jackstay.json that cannot be used reads as `off`. It needs `"jackstay_schema": 3`.
 
 - `jst trash PATH…` moves each item into `<jackstay home>/.trash/<time>-<n>/` beside `entry.json`
   (`path` absolute, `moved_at`, `project`, `session`, `kind`). On the same volume the move is a

@@ -1,7 +1,9 @@
-// Package trash is `jst trash`: the undoable way to delete inside the agent sandbox, where macOS's
-// own Trash cannot be written (W-042, docs/design/guard.md section 10). An item is moved into
-// `<jackstay home>/.trash/`, one entry each, and can be put back; entries older than the project's
-// `trash.keep_days` (7 by default, W-043) are removed by its next `jst trash`.
+// Package trash is `jst trash`: the recorded way to delete inside the agent sandbox (W-042, W-107,
+// docs/design/guard.md section 10). An item is moved into `<jackstay home>/.trash/`, one entry
+// each. By default (`trash.keep` off) the entry is then deleted and the deletion logged (path,
+// size, digest, session, command); with `trash.keep` on (experimental) it is kept and can be put
+// back, and entries older than the project's `trash.keep_days` (7 by default, W-043) are removed
+// by its next `jst trash`.
 package trash
 
 import (
@@ -32,13 +34,13 @@ import (
 // DefaultKeepDays is how long an entry is kept when the project does not say (W-043).
 const DefaultKeepDays = 7
 
-const usage = `usage: jst trash PATH...                      move each into jackstay's trash (undoable)
-       jst trash list [--json]                 the entries, newest first
-       jst trash restore ENTRY [--to PATH]     put an item back (refused when something is there)
-       jst trash prune                         remove entries older than trash.keep_days`
+const usage = `usage: jst trash PATH...                      delete each and log it (kept, to restore, with trash.keep on)
+       jst trash list [--json]                 the kept entries and the logged deletions, newest first
+       jst trash restore ENTRY [--to PATH]     put a kept item back (refused when something is there)
+       jst trash prune                         remove kept entries older than trash.keep_days`
 
 func init() {
-	cli.Register(cli.Command{Name: "trash", Summary: "move files and folders into jackstay's trash, undoably; list, restore, prune",
+	cli.Register(cli.Command{Name: "trash", Summary: "delete files and folders with a log, or keep them to restore (trash.keep); list, restore, prune",
 		Usage: help, Run: Command})
 }
 
@@ -131,10 +133,21 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	status := 0
 	for _, given := range paths {
 		origin := Origin(given)
+		keep := Keeps(origin) // read before the move: a whole checkout carries its own setting away
 		entry, err := Move(folder, given, ProjectOf(origin), os.Getenv("CLAUDE_SESSION_ID"), KeepDays(origin), time.Now())
 		if err != nil {
 			fmt.Fprintln(stderr, "jst trash:", err)
 			status = 1
+			continue
+		}
+		if !keep {
+			deletion, err := Purge(folder, entry.ID, "jst trash", time.Now())
+			if err != nil {
+				fmt.Fprintf(stderr, "jst trash: %s: %v (`jst trash list` shows it)\n", entry.Path, err)
+				status = 1
+				continue
+			}
+			fmt.Fprintf(stdout, "jst trash: %s deleted, %s (logged: `jst trash list`)\n", deletion.Path, Measure(deletion))
 			continue
 		}
 		fmt.Fprintf(stdout, "jst trash: %s -> %s (jst trash restore %s)\n", entry.Path, entry.ID, entry.ID)
@@ -526,22 +539,29 @@ func list(folder string, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, usage)
 		return 2
 	}
-	entries := Entries(folder)
+	entries, deletions := Entries(folder), Deletions(folder)
 	if asJSON {
 		type shown struct {
 			ID string `json:"id"`
 			Entry
 		}
-		out := make([]shown, 0, len(entries))
+		kept := make([]shown, 0, len(entries))
 		for _, entry := range entries {
-			out = append(out, shown{ID: entry.ID, Entry: entry})
+			kept = append(kept, shown{ID: entry.ID, Entry: entry})
 		}
-		data, _ := json.MarshalIndent(out, "", "  ")
+		if deletions == nil {
+			deletions = []Deletion{}
+		}
+		data, _ := json.MarshalIndent(map[string]any{"kept": kept, "deleted": deletions}, "", "  ")
 		fmt.Fprintln(stdout, string(data))
 		return 0
 	}
 	for _, entry := range entries {
 		fmt.Fprintf(stdout, "%s  %-6s  %s  (%s)\n", entry.ID, entry.Kind, entry.Path, entry.Project)
+	}
+	for _, deletion := range deletions {
+		fmt.Fprintf(stdout, "deleted %s  %-6s  %s  %s  (%s, %s)\n", deletion.DeletedAt, deletion.Kind, deletion.Path,
+			Measure(deletion), deletion.Command, deletion.Project)
 	}
 	return 0
 }
@@ -559,7 +579,9 @@ func restore(folder string, args []string, stdout, stderr io.Writer) int {
 	place := filepath.Join(folder, id)
 	locked, err := lockEntry(place)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrNotExist) && wasDeleted(folder, id) {
+			fmt.Fprintf(stderr, "jst trash: %s was deleted, not kept (trash.keep is off): nothing to restore\n", id)
+		} else if errors.Is(err, fs.ErrNotExist) {
 			fmt.Fprintln(stderr, "jst trash: no entry", id)
 		} else {
 			fmt.Fprintf(stderr, "jst trash: cannot lock entry %s: %v\n", id, err)
