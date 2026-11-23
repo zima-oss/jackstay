@@ -1496,10 +1496,15 @@
     },
     "trash": {
       "additionalProperties": false,
-      "description": "Sets how `jst trash` keeps what it removes.",
+      "description": "Sets whether `jst trash` and `jst discard` keep what they delete.",
       "properties": {
+        "keep": {
+          "description": "\"off\" (default): delete at once and log each deletion; \"on\" (experimental): keep a copy for `keep_days`, which `jst trash restore` brings back.",
+          "pattern": "\\S",
+          "type": "string"
+        },
         "keep_days": {
-          "description": "Keeps a trash entry for this many days (default 7).",
+          "description": "With `keep` on, keeps a trash entry for this many days (default 7).",
           "type": "integer"
         }
       },

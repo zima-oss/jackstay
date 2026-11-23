@@ -80,6 +80,9 @@ func Schema3Keys(config Config) []string {
 			found = append(found, "review.reviewers."+name+".mcp_servers")
 		}
 	}
+	if has(objectOf(config["trash"]), "keep") {
+		found = append(found, "trash.keep")
+	}
 	if has(objectOf(config["adopt"]), "profile_sha256") {
 		found = append(found, "adopt.profile_sha256")
 	}
@@ -484,7 +487,7 @@ var Table = object(
 	"release", object("merge", str(), "branch", str(), "base", str(), "tag", str(), "first", str(),
 		"files", list(object("path", str(), "match", regex())), "build", object("path", str(), "match", regex())),
 	"procs", object("default_minutes", number(), "max_minutes", number()),
-	"trash", object("keep_days", integer()),
+	"trash", object("keep_days", integer(), "keep", str()),
 	// docs/design/review.md, section 1; the meaning is internal/review's validator.
 	"review", object(
 		"reviewers", mapOf(object("command", str(), "model", text(), "effort", text(), "timeout_minutes", integer(),
@@ -686,7 +689,7 @@ func SectionProblems(config Config) Problems {
 			problems.add(key, typeProblems(config[key], sub, key)...)
 		}
 	}
-	for _, section := range []string{"receipts", "lock", "guard", "baseline", "adopt", "test", "github", "telemetry", "land", "chat"} {
+	for _, section := range []string{"receipts", "lock", "guard", "baseline", "adopt", "test", "github", "telemetry", "land", "chat", "trash"} {
 		if _, ok := config[section]; ok && len(problems.found[section]) == 0 {
 			problems.add(section, sectionCheck(section, config)...)
 		}
@@ -836,6 +839,10 @@ func sectionCheck(section string, config Config) []string {
 		}
 	case "land":
 		found = landProblems(objectOf(config["land"]))
+	case "trash":
+		if keep, ok := objectOf(config["trash"])["keep"].(string); ok && keep != "on" && keep != "off" {
+			found = append(found, fmt.Sprintf("`trash.keep` must be \"on\" or \"off\": %q", keep))
+		}
 	case "github":
 		found = githubProblems(objectOf(config["github"]))
 	case "telemetry":

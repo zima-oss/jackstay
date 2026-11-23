@@ -326,8 +326,9 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 
 ## `trash`
 
-Sets how `jst trash` keeps what it removes.
+Sets whether `jst trash` and `jst discard` keep what they delete.
 
 | Key | Type | What it does |
 |---|---|---|
-| `keep_days` | integer | Keeps a trash entry for this many days (default 7). |
+| `keep` | string | "off" (default): delete at once and log each deletion; "on" (experimental): keep a copy for `keep_days`, which `jst trash restore` brings back. |
+| `keep_days` | integer | With `keep` on, keeps a trash entry for this many days (default 7). |

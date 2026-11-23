@@ -28,7 +28,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/trash"
 )
 
-const usage = `usage: jst discard PATH...    put each path back to HEAD; what that drops is kept in jackstay's trash`
+const usage = `usage: jst discard PATH...    put each path back to HEAD; what that drops is deleted and logged (kept with trash.keep on)`
 
 // emptyTree is git's tree with nothing in it: HEAD of a repository with no commit yet.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -44,7 +44,7 @@ const (
 )
 
 func init() {
-	cli.Register(cli.Command{Name: "discard", Summary: "put paths back to HEAD, keeping what that drops in jackstay's trash (undoable)",
+	cli.Register(cli.Command{Name: "discard", Summary: "put paths back to HEAD; what that drops is deleted and logged, or kept with trash.keep on",
 		Usage: help, Run: command})
 }
 
@@ -61,8 +61,8 @@ func command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	run := Run{Working: working, Trash: folder, Project: trash.ProjectOf(working), Session: os.Getenv("CLAUDE_SESSION_ID"),
-		KeepDays: trash.KeepDays(working), Now: time.Now, Out: stdout, Errors: stderr}
+	run := Run{Working: working, Trash: folder, Project: trash.ProjectOf(working), Session: trash.Session(),
+		KeepDays: trash.KeepDays(working), Keep: trash.Keeps(working), Now: time.Now, Out: stdout, Errors: stderr}
 	return run.Discard(ctx, args)
 }
 
@@ -71,9 +71,12 @@ type Run struct {
 	Working, Trash   string
 	Project, Session string
 	KeepDays         int
-	Now              func() time.Time
-	Out, Errors      io.Writer
-	repo             repository
+	// Keep keeps what is dropped (`trash.keep` on), read once from the project the command runs
+	// in, as the project name and keep_days are: one setting for every path it is given.
+	Keep        bool
+	Now         func() time.Time
+	Out, Errors io.Writer
+	repo        repository
 }
 
 // A change is one path to put back, as git and the disk show it before anything is done.
@@ -85,6 +88,8 @@ type change struct {
 	disk      trash.Replaced
 	keepDisk  bool
 	keepIndex bool
+	project   string // the item's own project and keep_days, for a kept copy
+	keepDays  int
 }
 
 // An object is a file as git keeps it: its mode and its blob.
@@ -156,8 +161,11 @@ func (run Run) Discard(ctx context.Context, args []string) int {
 	for _, name := range untracked {
 		run.say("%s is untracked, not a change git can put back: left as it is (`jst trash %s` moves it)", name, name)
 	}
-	if len(changes) > 0 {
+	switch {
+	case len(changes) > 0 && kept > 0:
 		run.say("%d path(s) back to HEAD; %d kept in jackstay's trash for %d days (`jst trash list`)", len(changes), kept, run.KeepDays)
+	case len(changes) > 0:
+		run.say("%d path(s) back to HEAD; what they dropped is deleted and logged (`jst trash list`)", len(changes))
 	}
 	return statusDone
 }
@@ -250,6 +258,9 @@ func (run Run) plan(ctx context.Context, specs []string) ([]change, []string, st
 		if statErr == nil && info.IsDir() {
 			return nil, nil, fmt.Sprintf("%s is a folder on disk where git has a file: move it yourself first (`jst trash %s`)", name, name)
 		}
+		// Read while planning, before any path changes: a discard that restores jackstay.json first
+		// must not change what a later path's kept copy records.
+		each.project, each.keepDays = trash.ProjectOf(filepath.Dir(place)), trash.KeepDays(filepath.Dir(place))
 		each.disk, err = trash.Describe(place)
 		if err != nil {
 			return nil, nil, err.Error()
@@ -305,21 +316,33 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 			return 0, err
 		}
 	}
+	keep := run.Keep
+	var dropped []trash.Deletion
+	if !keep {
+		// trash.keep off: what the change drops is logged first, then the replacement goes in over
+		// it as when nothing is kept; written limit: a replacement that then fails leaves a line
+		// for a version still there, and the error says so.
+		var err error
+		if dropped, err = run.logDropped(ctx, each, place); err != nil {
+			return 0, err
+		}
+		each.keepIndex = false
+	}
 	var entries []string
 	if each.keepIndex {
 		data, err := repo.git(ctx, "cat-file", "blob", each.index.blob)
 		if err != nil {
 			return 0, err
 		}
-		entry, err := trash.Keep(run.Trash, place, data, each.index.executable(), each.index.link(), run.Project, run.Session, run.KeepDays, run.Now())
+		entry, err := trash.Keep(run.Trash, place, data, each.index.executable(), each.index.link(), each.project, run.Session, each.keepDays, run.Now())
 		if err != nil {
 			return 0, err
 		}
 		entries = append(entries, entry.ID)
 		run.say("%s: the staged version kept as %s (`jst trash restore %s --to <path>`)", each.path, entry.ID, entry.ID)
 	}
-	if each.keepDisk {
-		entry, err := trash.MoveForDiscard(run.Trash, place, run.Project, run.Session, run.KeepDays, run.Now(), each.disk)
+	if each.keepDisk && keep {
+		entry, err := trash.MoveForDiscard(run.Trash, place, each.project, run.Session, each.keepDays, run.Now(), each.disk)
 		if entry.ID != "" {
 			entries = append(entries, entry.ID)
 		}
@@ -330,25 +353,46 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 	}
 	var err error
 	expected := each.disk
-	if each.keepDisk {
+	movedDisk := each.keepDisk && keep
+	if movedDisk {
 		expected = trash.Replaced{Kind: "none"}
 	}
-	if len(entries) > 0 {
+	if len(entries) > 0 || len(dropped) > 0 {
 		err = repo.recheck(ctx, each, expected)
 	}
 	if err == nil && each.head == nil {
-		_, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path)
+		if !keep && each.keepDisk {
+			err = os.Remove(place) // a file HEAD does not have: dropped with its staged version
+			if err == nil {
+				if _, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path); err != nil {
+					err = fmt.Errorf("the file was deleted, and its index entry could not be removed (`git rm --cached %s`): %w", each.path, err)
+				}
+			}
+		} else {
+			_, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path)
+		}
 	} else if err == nil {
 		err = repo.restoreStaged(ctx, each, staged, place, expected)
 	}
 	if err != nil {
-		if each.keepDisk {
+		if movedDisk {
 			return len(entries), fmt.Errorf("%w; what was on disk is in the trash: `jst trash restore %s` puts it back",
 				err, entries[len(entries)-1])
 		}
+		if len(dropped) > 0 {
+			return len(entries), fmt.Errorf("%w; the log already lists what this path was to drop, which may be in part "+
+				"still there: `git status` and `git diff` show what is", err)
+		}
 		return len(entries), err
 	}
-	if !each.keepDisk && !each.keepIndex {
+	for _, deletion := range dropped {
+		what := "what was on disk"
+		if deletion.Kind == "staged" {
+			what = "the staged version"
+		}
+		run.say("%s: %s deleted, %s (logged: `jst trash list`)", each.path, what, trash.Measure(deletion))
+	}
+	if !each.keepDisk && !each.keepIndex && len(dropped) == 0 {
 		run.say("%s: written back from HEAD (nothing to keep)", each.path)
 	}
 	for _, id := range entries {
@@ -357,6 +401,36 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		}
 	}
 	return len(entries), nil
+}
+
+// logDropped logs what a change drops, the staged version and what is on disk, before it is dropped.
+func (run Run) logDropped(ctx context.Context, each change, place string) ([]trash.Deletion, error) {
+	var found []trash.Deletion
+	deletedAt := run.Now().Format(time.RFC3339)
+	if each.keepIndex {
+		data, err := run.repo.git(ctx, "cat-file", "blob", each.index.blob)
+		if err != nil {
+			return nil, err
+		}
+		size, digest := trash.Digest(data)
+		found = append(found, trash.Deletion{DeletedAt: deletedAt, Path: place, Kind: "staged", Size: size, SHA256: digest,
+			Project: run.Project, Session: run.Session, Command: "jst discard"})
+	}
+	if each.keepDisk {
+		info, err := os.Lstat(place)
+		if err != nil {
+			return nil, err
+		}
+		size := info.Size()
+		found = append(found, trash.Deletion{DeletedAt: deletedAt, Path: place, Kind: each.disk.Kind, Size: size, SHA256: each.disk.SHA256,
+			Project: run.Project, Session: run.Session, Command: "jst discard"})
+	}
+	for _, deletion := range found {
+		if err := trash.Log(run.Trash, deletion); err != nil {
+			return nil, fmt.Errorf("the deletion cannot be logged, so nothing was dropped: %w", err)
+		}
+	}
+	return found, nil
 }
 
 func (repo repository) restoreStaged(ctx context.Context, each change, staged, place string, expected trash.Replaced) error {

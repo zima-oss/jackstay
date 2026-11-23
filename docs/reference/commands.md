@@ -410,8 +410,8 @@ example: jst wait --line 'listening on' --in server.log --fail 'error' --timeout
 | [`jst start`](#jst-start) | a new branch and its worktree on the default branch as fetched |
 | [`jst sync`](#jst-sync) | bring this branch up to date with the default branch |
 | [`jst tidy`](#jst-tidy) | report, or remove, the branches and worktrees whose work is done |
-| [`jst discard`](#jst-discard) | put paths back to HEAD, keeping what that drops in jackstay's trash (undoable) |
-| [`jst trash`](#jst-trash) | move files and folders into jackstay's trash, undoably; list, restore, prune |
+| [`jst discard`](#jst-discard) | put paths back to HEAD; what that drops is deleted and logged, or kept with trash.keep on |
+| [`jst trash`](#jst-trash) | delete files and folders with a log, or keep them to restore (trash.keep); list, restore, prune |
 | [`jst land`](#jst-land) | push and open a change request, wait for its required checks, merge when the policy allows |
 | [`jst checks`](#jst-checks) | wait on a pull request's checks and a workflow's runs on GitHub |
 
@@ -473,14 +473,15 @@ example: jst tidy --fix --branch fix-parser
 
 ### jst discard
 
-Put paths back to HEAD, keeping what that drops in jackstay's trash (undoable)
+Put paths back to HEAD; what that drops is deleted and logged, or kept with trash.keep on.
 
 ```text
 usage: jst discard [--] PATH...
 
-Each file or folder goes back to HEAD; the file on disk and a differing index version go to the
-trash first (`jst trash restore ENTRY` puts them back). An untracked file is left alone
-(`jst trash PATH` moves it). Every path is checked before anything changes; -- lets a path
+Each file or folder goes back to HEAD; the file on disk and a differing index version are then
+deleted, each deletion logged (`jst trash list` shows it). With trash.keep on (experimental)
+they are kept in jackstay's trash instead, and `jst trash restore ENTRY` puts them back. An
+untracked file is left alone (`jst trash PATH` deletes it). Every path is checked before anything changes; -- lets a path
 start with -.
 
 exit: 0 done; 1 a path could not be put back (the message says which); 2 refused, nothing was
@@ -491,21 +492,24 @@ example: jst discard src/parser.go docs/draft.md
 
 ### jst trash
 
-Move files and folders into jackstay's trash, undoably; list, restore, prune.
+Delete files and folders with a log, or keep them to restore (trash.keep); list, restore, prune.
 
 ```text
-usage: jst trash PATH...                      move each into jackstay's trash (undoable)
-       jst trash list [--json]                 the entries, newest first
-       jst trash restore ENTRY [--to PATH]     put an item back (refused when something is there)
-       jst trash prune                         remove entries older than trash.keep_days
+usage: jst trash PATH...                      delete each and log it (kept, to restore, with trash.keep on)
+       jst trash list [--json]                 the kept entries and the logged deletions, newest first
+       jst trash restore ENTRY [--to PATH]     put a kept item back (refused when something is there)
+       jst trash prune                         remove kept entries older than trash.keep_days
 
-Entries older than trash.keep_days (default 7) are removed on the way.
-  PATH...        files or folders to move; -- before them lets a path be named list, restore,
+By default (trash.keep off) each item is deleted at once, and the deletion is logged: its path,
+kind, size, SHA-256, project, session and command; `jst trash list` shows the log. With
+trash.keep on (experimental), each item is kept as an entry for trash.keep_days (default 7), and
+`jst trash restore` puts it back; older entries are removed on the way.
+  PATH...        files or folders to delete; -- before them lets a path be named list, restore,
                  prune or start with -
-  --json         with list: as JSON
+  --json         with list: as JSON, {"kept": [...], "deleted": [...]}
   --to PATH      with restore: put the item back at PATH instead of where it was
 
-exit: 0 done; 1 a path could not be moved, or no such entry; 2 a bad request.
+exit: 0 done; 1 a path could not be deleted or kept, or no such entry; 2 a bad request.
 
 example: jst trash build/old-output
 ```
