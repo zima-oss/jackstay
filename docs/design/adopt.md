@@ -459,7 +459,9 @@ means `jst adopt --plan` exits 0 and `jst doctor` reports no adoption problem**,
   times unchanged) and `--plan` exits 0. The same input planned twenty times gives the same bytes.
 - **jackstay adopts itself**: in `cmd/jst`, with the real command table, jackstay's own checkout
   plans no change and no conflict, so a new command or block item fails the test until
-  `jst adopt --apply` is run here and `AGENTS.md` committed with it.
+  `jst adopt --apply` is run here and `AGENTS.md` committed with it. The plan is made at the
+  version of `adopt.pin`, the release that manages the checkout, not the version being built
+  ([W-108](../decisions/W-108-managed-by-the-pinned-release.md)); a checkout without a pin fails it.
 - Each rule of sections 3 to 10 has a case: ownership (`:edited`, `:unmarked`, accept, exception,
   stale exception, an absent `--accept`), markers, `jackstay.json` merging and validity, the hook,
   every profile key and invalidity, every template pin and value and removed or renamed templates,

@@ -1,6 +1,5 @@
 {
-  "$schema": "./schemas/jackstay.schema.json",
-  "jackstay_schema": 3,
+  "jackstay_schema": 2,
   "project": "jackstay",
   "receipts": {
     "inputs": [
@@ -94,5 +93,8 @@
     "default_minutes": 30,
     "max_minutes": 240
   },
-  "review": {}
+  "review": {},
+  "adopt": {
+    "pin": "v0.5.11"
+  }
 }

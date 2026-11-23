@@ -93,7 +93,9 @@ func TestTheCoreNeedsNeitherClaudeCodeNorCodex(t *testing.T) {
 		t.Fatalf("the command's output is not shown:\n%s", out)
 	}
 	run(3, "adopt", "--plan")
-	run(0, "adopt", "--apply")
+	// A new project at 0.6.0 or later gets a `land` section; who merges is a person's choice, given
+	// here as there is no terminal to ask at.
+	run(0, "adopt", "--apply", "--autonomy", "prepare")
 	run(0, "adopt", "--plan")
 	run(0, "check")
 	// Without the Claude Code hook the project still works: the hook is an integration.
