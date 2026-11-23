@@ -92,8 +92,13 @@ func TestStoppedBySignal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = command.Process.Kill() }()
-	// The child is in its own process group: whatever happens to jst, cleanup ends it by its pid.
+	// The child is in its own process group: if the run did not end by the signal, cleanup ends it by
+	// its pid; once it did, jst has ended the child, and its pid may belong to another process.
+	signalled := false
 	defer func() {
+		if signalled {
+			return
+		}
 		if data, err := os.ReadFile(ready); err == nil { // #nosec G304 -- the test's own file
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
 				_ = syscall.Kill(pid, syscall.SIGKILL)
@@ -113,6 +118,7 @@ func TestStoppedBySignal(t *testing.T) {
 	}
 	_ = command.Process.Signal(syscall.SIGTERM)
 	err := command.Wait()
+	signalled = err != nil
 	status, _ := err.(*exec.ExitError)
 	if status == nil || status.Sys().(syscall.WaitStatus).Signal() != syscall.SIGTERM {
 		t.Fatalf("jackstay did not die by SIGTERM: %v", err)
