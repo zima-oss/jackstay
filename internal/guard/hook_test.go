@@ -3,10 +3,12 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/telemetry"
 	"github.com/zima-oss/jackstay/internal/telemetry/telemetrytest"
@@ -145,7 +147,9 @@ func TestHookKeepsTheBuiltInRulesWhenJackstayJSONCannotBeUsed(t *testing.T) {
 			strings.Contains(out["systemMessage"].(string), "did NOT check") {
 			t.Fatalf("%s: %v", text, out)
 		}
-		out, _ = runHook(t, home, bashCall("git status", folder), "")
+		second := bashCall("git status", folder)
+		second["session_id"] = "another"
+		out, _ = runHook(t, home, second, "")
 		if !strings.Contains(out["systemMessage"].(string), "jackstay.json cannot be used") || !toldTheAgentOnly(out, "jackstay.json cannot be used") {
 			t.Fatalf("%s: %v", text, out)
 		}
@@ -158,6 +162,50 @@ func TestHookKeepsTheBuiltInRulesWhenJackstayJSONCannotBeUsed(t *testing.T) {
 		}
 		if strings.Join(events, " ") != "refused allowed" {
 			t.Fatalf("%s: events %v", text, events)
+		}
+	}
+}
+
+// An unusable jackstay.json is said once to a session within toldEvery, again when the file changes,
+// and every time to a call without a session; every call still logs the reason.
+func TestHookSaysAnUnusableConfigOnceInASession(t *testing.T) {
+	home, folder := t.TempDir(), t.TempDir()
+	writeConfig(t, folder, "{broken")
+	said := func(given map[string]any) bool {
+		t.Helper()
+		out, _ := runHook(t, home, given, "")
+		message, _ := out["systemMessage"].(string)
+		return strings.Contains(message, "jackstay.json cannot be used")
+	}
+	if !said(bashCall("git status", folder)) {
+		t.Fatal("the first call of a session was not told")
+	}
+	if said(bashCall("git status", folder)) {
+		t.Fatal("the second call of the same session was told again")
+	}
+	if out, _ := runHook(t, home, bashCall("git reset --hard", folder), ""); decisionOf(out) != "deny" ||
+		strings.Contains(fmt.Sprint(out), "cannot be used") {
+		t.Fatalf("a refusal later in the session: %v", out)
+	}
+	other := bashCall("git status", folder)
+	other["session_id"] = "other"
+	if !said(other) {
+		t.Fatal("another session was not told")
+	}
+	writeConfig(t, folder, "{broken again")
+	if !said(bashCall("git status", folder)) {
+		t.Fatal("a changed file was not told")
+	}
+	alone := bashCall("git status", folder)
+	delete(alone, "session_id")
+	for range 2 {
+		if !said(alone) {
+			t.Fatal("a call without a session was not told each time")
+		}
+	}
+	for _, record := range readLog(t, home) {
+		if record["config_error"] == "" {
+			t.Fatalf("a call without its config error: %v", record)
 		}
 	}
 }
@@ -253,3 +301,44 @@ func toldTheAgentOnly(out map[string]any, text string) bool {
 	context, _ := specific["additionalContext"].(string)
 	return !decided && specific["hookEventName"] == "PreToolUse" && strings.Contains(context, text)
 }
+
+// The mark is taken only once the answer is written, and lasts toldEvery: a hook stopped before
+// it tells again, and so does a session toldEvery later.
+func TestASessionIsToldAgainUnlessTheAnswerWasWrittenRecently(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	found := project{name: "demo", problem: "broken", stamp: "jackstay.json\x001\x002"}
+	now := time.Now()
+	mark, news := configNews("s", found, now)
+	if !news || mark == "" {
+		t.Fatalf("first: %q %v", mark, news)
+	}
+	if _, news := configNews("s", found, now); !news {
+		t.Fatal("a session whose answer was never written counts as told")
+	}
+	markTold(mark, now)
+	if _, news := configNews("s", found, now.Add(toldEvery-time.Second)); news {
+		t.Fatal("a session just told is told again")
+	}
+	if _, news := configNews("s", found, now.Add(toldEvery+time.Second)); !news {
+		t.Fatal("a session is not told again after toldEvery")
+	}
+	changed := found
+	changed.stamp = ""
+	if _, news := configNews("s", changed, now); !news {
+		t.Fatal("a file that changed while read is not told")
+	}
+}
+
+// An answer that cannot be written takes no mark.
+func TestAnUnwrittenAnswerTakesNoMark(t *testing.T) {
+	if (reply{message: "m"}).write(failingWriter{}) {
+		t.Fatal("a failed write said written")
+	}
+	if !(reply{}).write(failingWriter{}) {
+		t.Fatal("an empty answer is not written")
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }

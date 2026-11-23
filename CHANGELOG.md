@@ -140,6 +140,9 @@ that rings Claude Code, and puts what is going on in one `jst status`. Upgrading
   [#62](https://github.com/zima-oss/jackstay/pull/62)
 - `jst procs stop` no longer says a running job "had ended already" when its supervisor answers
   between two checks. [#115](https://github.com/zima-oss/jackstay/pull/115)
+- The guard says an unusable `jackstay.json` in one short line that names `jst check`, about every
+  10 minutes in a session and again when the file changes, not its whole reason on every call.
+  [#123](https://github.com/zima-oss/jackstay/pull/123)
 - `jst adopt --plan` names `jst adopt --apply --settings-only` when the changes touch
   `jackstay.json` and other files, and the upgrade's schema-3 step names it too, so nobody splits a
   mixed write by hand. [#124](https://github.com/zima-oss/jackstay/pull/124)

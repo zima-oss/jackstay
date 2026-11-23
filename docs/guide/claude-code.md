@@ -132,6 +132,6 @@ in `review.use`. Rounds, verdicts and the `review` section: [Reviews](review.md)
 | `jst doctor`: `sandbox-blocks-state` | jst cannot keep its logs, locks, chat or jobs in sandboxed sessions; run `jst setup`, which adds only the folders listed above. |
 | `jst doctor`: `sandbox-writes-evidence` | the sandbox may write evidence (receipts, review rounds, the run log); run `jst setup` to replace a whole-home entry, or narrow a broader one yourself. |
 | `jst test`: `Run it outside the sandbox.` | the run records evidence the sandbox may only read; run that command outside it. |
-| The guard says `config-unusable` on every call | `jackstay.json` is broken; the built-in rules still apply. Run `jst check`. |
+| The guard says `config-unusable` | `jackstay.json` cannot be used (broken, or newer than the installed jst reads); the built-in rules still apply. Run `jst check`. The guard says it about every 10 minutes in a session (two calls at once may both say it). |
 
 The design: [the hook contract](../design/guard.md#the-hook-contract), [the hook's answers](../design/guard.md#7-the-hook).
