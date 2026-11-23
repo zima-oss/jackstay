@@ -452,3 +452,25 @@ func TestWithoutKeepANewFileIsDeletedAndLogged(t *testing.T) {
 		t.Fatalf("deletions %+v", deletions)
 	}
 }
+
+// Each kept copy records its project's keep_days as planned, before any path changes: putting
+// jackstay.json back first does not shorten a later copy's days.
+func TestKeptDaysAreReadBeforeAnyPathChanges(t *testing.T) {
+	w := newWorld(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 1}}`, "src/a.txt": "head\n"})
+	w.repo.Write(map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 30}}`, "src/a.txt": "mine\n"})
+	if code := w.discard(w.repo.Root, "jackstay.json", "src"); code != 0 {
+		t.Fatalf("exit %d: %s", code, w.errors.String())
+	}
+	found := false
+	for _, entry := range trash.Entries(w.trash) {
+		if strings.HasSuffix(entry.Path, "a.txt") {
+			found = true
+			if entry.KeepDays == nil || *entry.KeepDays != 30 {
+				t.Fatalf("the copy of a.txt records %v days", entry.KeepDays)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no copy of a.txt was kept")
+	}
+}

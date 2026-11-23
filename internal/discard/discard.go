@@ -88,6 +88,8 @@ type change struct {
 	disk      trash.Replaced
 	keepDisk  bool
 	keepIndex bool
+	project   string // the item's own project and keep_days, for a kept copy
+	keepDays  int
 }
 
 // An object is a file as git keeps it: its mode and its blob.
@@ -256,6 +258,9 @@ func (run Run) plan(ctx context.Context, specs []string) ([]change, []string, st
 		if statErr == nil && info.IsDir() {
 			return nil, nil, fmt.Sprintf("%s is a folder on disk where git has a file: move it yourself first (`jst trash %s`)", name, name)
 		}
+		// Read while planning, before any path changes: a discard that restores jackstay.json first
+		// must not change what a later path's kept copy records.
+		each.project, each.keepDays = trash.ProjectOf(filepath.Dir(place)), trash.KeepDays(filepath.Dir(place))
 		each.disk, err = trash.Describe(place)
 		if err != nil {
 			return nil, nil, err.Error()
@@ -329,7 +334,7 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		entry, err := trash.Keep(run.Trash, place, data, each.index.executable(), each.index.link(), trash.ProjectOf(filepath.Dir(place)), run.Session, trash.KeepDays(filepath.Dir(place)), run.Now())
+		entry, err := trash.Keep(run.Trash, place, data, each.index.executable(), each.index.link(), each.project, run.Session, each.keepDays, run.Now())
 		if err != nil {
 			return 0, err
 		}
@@ -337,7 +342,7 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		run.say("%s: the staged version kept as %s (`jst trash restore %s --to <path>`)", each.path, entry.ID, entry.ID)
 	}
 	if each.keepDisk && keep {
-		entry, err := trash.MoveForDiscard(run.Trash, place, trash.ProjectOf(filepath.Dir(place)), run.Session, trash.KeepDays(filepath.Dir(place)), run.Now(), each.disk)
+		entry, err := trash.MoveForDiscard(run.Trash, place, each.project, run.Session, each.keepDays, run.Now(), each.disk)
 		if entry.ID != "" {
 			entries = append(entries, entry.ID)
 		}

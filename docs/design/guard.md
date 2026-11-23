@@ -448,7 +448,9 @@ undo only with `on`.
   before anything changes, as the guard reads it for its advice; a jackstay.json that cannot be used
   reads as `off`. Written limit: a path inside a nested project with another setting follows the
   outer one, and the guard's advice follows the folder its hook runs in (a `cd` inside the command
-  is not followed). A kept item records its own project and `keep_days`. `keep_days` is still the item's own. It needs `"jackstay_schema": 3`.
+  is not followed). A kept item records its own project and `keep_days`, read before any path changes. The
+  AGENTS block says what the setting was when `jst adopt` last wrote it; after a change of
+  `trash.keep`, `jst adopt --plan` shows the block out of date. `keep_days` is still the item's own. It needs `"jackstay_schema": 3`.
 
 - `jst trash PATH…` moves each item into `<jackstay home>/.trash/<time>-<n>/` beside `entry.json`
   (`path` absolute, `moved_at`, `project`, `session`, `kind`). On the same volume the move is a

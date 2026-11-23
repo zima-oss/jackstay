@@ -581,3 +581,19 @@ func TestDeleteRefusesTheTrashFolder(t *testing.T) {
 		}
 	}
 }
+
+// On a case-insensitive volume another spelling of the trash folder is the same folder: refused.
+func TestDeleteRefusesTheTrashFolderUnderAnotherSpelling(t *testing.T) {
+	home := t.TempDir()
+	folder := filepath.Join(home, ".trash")
+	if err := appendLog(folder, Deletion{Path: "/x"}); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(home, ".Trash")
+	if _, err := os.Stat(other); err != nil {
+		t.Skip("the volume is case-sensitive")
+	}
+	if _, err := Delete(folder, other, "p", "s", "jst trash", time.Now()); err == nil {
+		t.Fatal("the trash folder was deleted under another spelling")
+	}
+}

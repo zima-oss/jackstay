@@ -275,24 +275,37 @@ func move(folder, given, project, session string, keepDays int, now time.Time, e
 	return entry, nil
 }
 
-// holdsHome refuses the jackstay home, which holds the trash, and a folder that holds it.
+// holdsHome refuses the jackstay home and a folder that holds it, and the trash folder and what is
+// in it (it holds the deletion log). Folders are compared by identity, not by spelling: a
+// case-insensitive volume names one folder in more than one way. A link given as the item is the
+// link itself, never what it leads to.
 func holdsHome(folder, given, source string) error {
 	home := filepath.Dir(folder)
-	realSource := source
-	if resolved, err := filepath.EvalSymlinks(filepath.Dir(source)); err == nil {
-		realSource = filepath.Join(resolved, filepath.Base(source))
+	parent := filepath.Dir(source)
+	if resolved, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = resolved
 	}
-	realHome := home
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
-		realHome = resolved
+	item, itemErr := os.Lstat(filepath.Join(parent, filepath.Base(source)))
+	for place := home; ; place = filepath.Dir(place) {
+		if info, err := os.Stat(place); err == nil && itemErr == nil && item.IsDir() && os.SameFile(info, item) {
+			return fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
+		}
+		if place == filepath.Dir(place) {
+			break
+		}
 	}
-	if realSource == realHome || strings.HasPrefix(realHome+"/", realSource+"/") {
-		return fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
+	trashInfo, err := os.Stat(folder)
+	if err != nil {
+		return nil // no trash yet: nothing of it to delete
 	}
-	if realTrash := filepath.Join(realHome, filepath.Base(folder)); realSource == realTrash || strings.HasPrefix(realSource, realTrash+"/") {
-		return fmt.Errorf("%s is in jackstay's trash, which holds its deletion log: not deleted (`jst trash prune` removes old entries)", given)
+	for place := filepath.Join(parent, filepath.Base(source)); ; place = filepath.Dir(place) {
+		if info, err := os.Lstat(place); err == nil && os.SameFile(info, trashInfo) {
+			return fmt.Errorf("%s is in jackstay's trash, which holds its deletion log: not deleted (`jst trash prune` removes old entries)", given)
+		}
+		if place == filepath.Dir(place) {
+			return nil
+		}
 	}
-	return nil
 }
 
 // newEntry makes an entry's folder and writes its record under a lock; entry.ID is set.
