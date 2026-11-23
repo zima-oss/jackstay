@@ -130,11 +130,18 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	// Pruned first, so nothing this call moves is pruned by it, whatever keep_days says.
 	Prune(folder, time.Now())
+	Recover(folder)
 	status := 0
 	for _, given := range paths {
 		origin := Origin(given)
 		keep := Keeps(origin) // read before the move: a whole checkout carries its own setting away
-		entry, err := Move(folder, given, ProjectOf(origin), os.Getenv("CLAUDE_SESSION_ID"), KeepDays(origin), time.Now())
+		var entry Entry
+		var err error
+		if keep {
+			entry, err = Move(folder, given, ProjectOf(origin), Session(), KeepDays(origin), time.Now())
+		} else {
+			entry, err = MoveToDelete(folder, given, ProjectOf(origin), Session(), time.Now())
+		}
 		if err != nil {
 			fmt.Fprintln(stderr, "jst trash:", err)
 			status = 1
@@ -206,15 +213,21 @@ func KeepDays(folder string) int {
 // Move puts one file or folder into the trash and records where it came from.
 // keepDays is the project's `trash.keep_days`, recorded on the entry.
 func Move(folder, given, project, session string, keepDays int, now time.Time) (Entry, error) {
-	return move(folder, given, project, session, keepDays, now, nil)
+	return move(folder, given, project, session, keepDays, now, nil, false)
+}
+
+// MoveToDelete moves an item into an entry that stays held, for Purge: no pruning can take it
+// before its deletion is logged.
+func MoveToDelete(folder, given, project, session string, now time.Time) (Entry, error) {
+	return move(folder, given, project, session, 0, now, nil, true)
 }
 
 // MoveForDiscard verifies what was moved and holds it until Mark records the replacement.
 func MoveForDiscard(folder, given, project, session string, keepDays int, now time.Time, expected Replaced) (Entry, error) {
-	return move(folder, given, project, session, keepDays, now, &expected)
+	return move(folder, given, project, session, keepDays, now, &expected, false)
 }
 
-func move(folder, given, project, session string, keepDays int, now time.Time, expected *Replaced) (Entry, error) {
+func move(folder, given, project, session string, keepDays int, now time.Time, expected *Replaced, hold bool) (Entry, error) {
 	source, err := filepath.Abs(given)
 	if err != nil {
 		return Entry{}, err
@@ -270,6 +283,9 @@ func move(folder, given, project, session string, keepDays int, now time.Time, e
 		if actual != *expected {
 			return entry, fmt.Errorf("the working file changed during the move; its changed contents are kept as %s (`jst trash restore %s`)", entry.ID, entry.ID)
 		}
+		return entry, nil
+	}
+	if hold {
 		return entry, nil
 	}
 	entry.Held = false
@@ -494,6 +510,9 @@ func Entries(folder string) []Entry {
 	}
 	var found []Entry
 	for _, name := range names {
+		if strings.HasPrefix(name.Name(), deletingPrefix) {
+			continue // being deleted: no longer an entry
+		}
 		entry, err := readEntry(filepath.Join(folder, name.Name()))
 		if err == nil {
 			found = append(found, entry)

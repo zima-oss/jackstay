@@ -19,7 +19,8 @@ most needs is a record of what went, and when, and by which session.
   `jst trash list` shows the log; `jst trash restore` works only for what was kept.
 - `on`: they keep a copy for `trash.keep_days`, as before; this mode is experimental and is marked
   so in the help and the documentation.
-- The commands, and the guard's advice that names them, stay as they are.
+- The commands stay as they are, and the guard's advice still names them; only its promise of an
+  undo goes, since by default there is none.
 
 ## Consequences
 

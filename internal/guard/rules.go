@@ -20,11 +20,11 @@ type Rule struct {
 	Instead string
 }
 
-const trashAdvice = "move it to jackstay's trash, which can be undone: `jst trash <path>`"
+const trashAdvice = "delete it with `jst trash <path>`, which logs what it deletes"
 
-// discardAdvice is how uncommitted changes are dropped without losing them (W-052).
-const discardAdvice = "`jst discard <path>` puts the path back to HEAD and keeps your changes in jackstay's trash " +
-	"(`jst trash restore <entry>` brings them back)"
+// discardAdvice is how uncommitted changes are dropped with a record of what went (W-052, W-107).
+const discardAdvice = "`jst discard <path>` puts the path back to HEAD and logs the changes it drops " +
+	"(kept to restore when trash.keep is on)"
 
 // hostMergeWhy and hostMergeInstead are the words of the rows that refuse a merge on the host (land.md section 3.3).
 const hostMergeWhy = "it merges the change on the host outside jst land, past the project's landing policy " +

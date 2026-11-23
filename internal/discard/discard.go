@@ -61,7 +61,7 @@ func command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	run := Run{Working: working, Trash: folder, Project: trash.ProjectOf(working), Session: os.Getenv("CLAUDE_SESSION_ID"),
+	run := Run{Working: working, Trash: folder, Project: trash.ProjectOf(working), Session: trash.Session(),
 		KeepDays: trash.KeepDays(working), Keep: trash.Keeps(working), Now: time.Now, Out: stdout, Errors: stderr}
 	return run.Discard(ctx, args)
 }
@@ -145,6 +145,7 @@ func (run Run) Discard(ctx context.Context, args []string) int {
 	}
 	// Pruned first, so nothing this run keeps is pruned by it, whatever keep_days says.
 	trash.Prune(run.Trash, run.Now())
+	trash.Recover(run.Trash)
 	kept := 0
 	for _, each := range changes {
 		done, err := run.putBack(ctx, each)
@@ -361,21 +362,21 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 	if !each.keepDisk && !each.keepIndex {
 		run.say("%s: written back from HEAD (nothing to keep)", each.path)
 	}
-	for _, id := range entries {
-		if err := trash.Mark(run.Trash, id, "discard", replacement); err != nil {
-			return len(entries), err
-		}
-	}
 	if run.Keep {
+		for _, id := range entries {
+			if err := trash.Mark(run.Trash, id, "discard", replacement); err != nil {
+				return len(entries), err
+			}
+		}
 		return len(entries), nil
 	}
-	// The path is back: what it dropped is deleted, each deletion logged. One that cannot be is
-	// kept, and said so.
-	for _, id := range entries {
+	// The path is back: what it dropped is deleted, each deletion logged. The entries stay held
+	// until then, so no prune takes one unlogged; one that cannot be deleted is kept, and said so.
+	for index, id := range entries {
 		deletion, err := trash.Purge(run.Trash, id, "jst discard", run.Now())
 		if err != nil {
-			run.say("%s: %v (kept as %s: `jst trash restore %s --to <path>`)", each.path, err, id, id)
-			continue
+			return len(entries), fmt.Errorf("%w; the path is back at HEAD, and %s is kept (`jst trash restore %s --to <path>`)",
+				err, strings.Join(entries[index:], ", "), id)
 		}
 		what := "what was on disk"
 		if deletion.Kind == "staged" {

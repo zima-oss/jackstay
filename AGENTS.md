@@ -31,7 +31,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:7e06e9debf3b — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:5ab0550002ce — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,
@@ -52,7 +52,7 @@ the same rules hold.
 - **Instead of `&` or `nohup`**, run `jst bg --for MIN --name N -- COMMAND`; `jst procs stop N`
   stops it.
 - **Instead of `git restore` or `git checkout -- PATH`**, run `jst discard PATH…`;
-  `jst trash restore` brings the changes back.
+  it logs the changes it drops (`jst trash list`).
 
 ### The other tools
 

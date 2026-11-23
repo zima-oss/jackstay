@@ -70,7 +70,7 @@ var items = []item{
 			"  stops it.")},
 	{id: "discard", commands: []string{"discard", "trash"}, wanted: always, first: true, text: fixed(
 		"- **Instead of `git restore` or `git checkout -- PATH`**, run `jst discard PATH…`;\n" +
-			"  `jst trash restore` brings the changes back.")},
+			"  it logs the changes it drops (`jst trash list`).")},
 	{id: "evidence", commands: []string{"receipts export", "receipts verify"}, wanted: hasSection("receipts"), text: fixed(
 		"- **Share a counted pass**: `jst receipts export KEY`. Check one with `jst receipts verify`, taking\n" +
 			"  the expected digest, revision and key from a trusted source, never from the receipt.")},

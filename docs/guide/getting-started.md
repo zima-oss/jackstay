@@ -89,7 +89,7 @@ answers:
 
 ```text
 jst guard refused this command; nothing was run.
-- `rm -r jackstay-guard-probe`: a recursive rm outside temporary and regenerable folders cannot be undone: jackstay-guard-probe. Instead: move it to jackstay's trash, which can be undone: `jst trash <path>`; …
+- `rm -r jackstay-guard-probe`: a recursive rm outside temporary and regenerable folders cannot be undone: jackstay-guard-probe. Instead: delete it with `jst trash <path>`, which logs what it deletes; …
 ```
 
 Only the hook can stop the agent's own command, so that answer proves the hook works. If the line

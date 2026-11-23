@@ -466,7 +466,7 @@ func TestTrashDeletesAndLogsByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("JACKSTAY_HOME", t.TempDir())
-	t.Setenv("CLAUDE_SESSION_ID", "session-1")
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "session-1")
 	t.Chdir(project)
 	var out, errs strings.Builder
 	if status := Command([]string{"item", "tree"}, nil, &out, &errs); status != 0 {
@@ -507,25 +507,66 @@ func TestTrashDeletesAndLogsByDefault(t *testing.T) {
 	}
 }
 
-// A deletion stopped after it was logged leaves the entry kept: it is listed as kept, not deleted.
-func TestADeletionStoppedPartWayIsListedAsKept(t *testing.T) {
+// A deletion stopped after its entry was renamed aside is finished by the next command: logged
+// once, removed, never listed as kept and never restorable.
+func TestADeletionStoppedPartWayIsFinishedOnce(t *testing.T) {
+	folder := filepath.Join(t.TempDir(), ".trash")
+	for _, logged := range []bool{false, true} {
+		source := filepath.Join(t.TempDir(), "x")
+		if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		entry, err := MoveToDelete(folder, source, "p", "s", time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		aside := filepath.Join(folder, deletingPrefix+entry.ID)
+		if err := os.Rename(filepath.Join(folder, entry.ID), aside); err != nil {
+			t.Fatal(err)
+		}
+		if logged {
+			if err := appendLog(folder, Deletion{Path: source, Entry: entry.ID, Size: 1}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if entries := Entries(folder); len(entries) != 0 {
+			t.Fatalf("an entry being deleted is listed as kept: %+v", entries)
+		}
+		Recover(folder)
+		if _, err := os.Lstat(aside); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("logged %v: the aside entry is still there", logged)
+		}
+		count := 0
+		for _, deletion := range Deletions(folder) {
+			if deletion.Entry == entry.ID {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("logged %v: %d log lines for the entry", logged, count)
+		}
+	}
+}
+
+// An entry moved for deletion is held: no prune takes it before its deletion is logged.
+func TestAnEntryMovedForDeletionIsNotPruned(t *testing.T) {
 	folder := filepath.Join(t.TempDir(), ".trash")
 	source := filepath.Join(t.TempDir(), "x")
 	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	entry, err := Move(folder, source, "p", "s", 7, time.Now())
+	entry, err := MoveToDelete(folder, source, "p", "s", time.Now().Add(-48*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := appendLog(folder, Deletion{Path: source, Entry: entry.ID, DeletedAt: time.Now().Format(time.RFC3339)}); err != nil {
+	if removed := Prune(folder, time.Now()); removed != 0 {
+		t.Fatalf("pruned %d", removed)
+	}
+	if _, err := Purge(folder, entry.ID, "jst trash", time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if deletions := Deletions(folder); len(deletions) != 0 {
-		t.Fatalf("a kept entry is listed as deleted: %+v", deletions)
-	}
-	if entries := Entries(folder); len(entries) != 1 {
-		t.Fatalf("entries %+v", entries)
+	if deletions := Deletions(folder); len(deletions) != 1 || deletions[0].Size != 1 {
+		t.Fatalf("deletions %+v", deletions)
 	}
 }
 

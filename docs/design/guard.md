@@ -45,7 +45,7 @@ column is the gist of its `Instead`.
 
 | Rule | Refused | Safe | The refusal names |
 |---|---|---|---|
-| `git-reset-hard` | `git reset --hard` | `--soft`, `--mixed`, `--keep`, `--merge`, a path reset | `jst discard <path>` (the edits kept in jackstay's trash); `git reset --keep <commit>` |
+| `git-reset-hard` | `git reset --hard` | `--soft`, `--mixed`, `--keep`, `--merge`, a path reset | `jst discard <path>` (the edits it drops logged, or kept with `trash.keep` on); `git reset --keep <commit>` |
 | `git-checkout-path` | `git checkout -- <path>`, `git checkout <tree> <path>`, `git checkout .`, `-p`, `--pathspec-from-file`, `--ignore-skip-worktree-bits` | `-b`, `--detach`, `--orphan`; a single name that is not a path on disk; a name that is also a path when a local branch of that name exists (asked of git); a path under which git reports nothing uncommitted (and, when another commit's files are written, nothing untracked or ignored): there is nothing to lose; taking a side, below | `jst discard <path>`; to take files from another commit, `jst discard` first, then `git checkout <commit> -- <path>`; to change branch, `git switch` |
 | `git-checkout-force` | `git checkout -f` / `--force` | without `-f` | `git stash push -u`, then `git switch <branch>` |
 | `git-switch-discard` | `git switch --discard-changes` / `-f` | plain `git switch` | `git stash push -u`, then `git switch <branch>` |
@@ -425,18 +425,22 @@ the sandbox (`afpAccessDenied`), so the advice is `jst trash PATH`; the guard kn
 harmless. Use: the [guard guide](../guide/guard.md#delete-with-a-log-jst-trash).
 
 `trash.keep` (W-107) says whether an item is kept. `off`, the default: each item goes through an
-entry as below and the entry is then deleted, after its deletion is logged; `jst discard` does the
+entry as below, held (so no prune takes it), and the entry is then deleted; `jst discard` does the
 same once its path is back at HEAD. `on` (experimental): the entry is kept, as described below.
 
+- A deletion renames the entry, under its lock, to `.deleting-<entry>` (no longer an entry: no
+  restore or prune reaches it), then logs and syncs the deletion, then removes it. A command
+  stopped after the rename leaves the folder aside; the next `jst trash` or `jst discard` logs it
+  (unless the log has it) and removes it. Nothing is deleted unlogged, and nothing restored is
+  logged as deleted.
 - The deletion log is `<jackstay home>/.trash/deleted.jsonl`, one JSON line each: `deleted_at`,
   `path`, `kind`, `size`, `sha256` (of a file's bytes or a link's target; of a folder, of a listing
-  of each entry's relative path, kind, mode and digest, so a folder is read whole), `project`,
-  `session`, `command` and the `entry` it went through. The line is written and synced before the
-  entry is removed: a deletion stopped between the two leaves the entry kept, and `jst trash list`
-  shows it as kept, not as deleted. At 1 MiB the log becomes `deleted.1.jsonl`, replacing the one
-  before; `jst trash list` reads both.
-- An entry that cannot be deleted (held, or its log line cannot be written) is kept, and the
-  command says so.
+  of each entry's relative path, kind, mode and digest, so a folder is read whole; a pipe, socket or
+  device is never read), `project`, `session` (`CLAUDE_CODE_SESSION_ID`), `command` and the `entry`.
+  Writers take `deleted.lock` for the size check, the rollover and the append. At 1 MiB the log
+  becomes `deleted.1.jsonl`, replacing the one before; `jst trash list` reads both.
+- An entry that cannot be deleted (another command holds it, or its log line cannot be written) is
+  kept or left aside, and the command says so and fails.
 - `trash.keep` is read from the item's own project, before the item moves, as `keep_days` is; a
   jackstay.json that cannot be used reads as `off`. It needs `"jackstay_schema": 3`.
 
