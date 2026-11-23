@@ -293,7 +293,17 @@ A system is Go's name for it: `darwin`, `linux`. The three keys need `"jackstay_
 `systems` and `when`. It runs nothing and checks nothing of its own: `requires` and every other run
 setting (`judge`, `timeout`, `lock_wait`, `lock`, `env`) belong to scopes with
 `run`. It passes when every dep eligible on this system (section 7.2) passed, and at least one
-did.
+did; a dep that ended `exited-0` makes it `exited-0`, not a pass.
+
+**Step kinds** (W-107, after Bazel's test and build targets and Nx's targets). A scope with `run`
+may say `kind`:
+
+- `test`: it must count tests to pass, so its judge cannot be `exit` (`jst check` refuses it).
+- `check` (a linter, an audit, a build): it passes on exit 0. Its node is `passed`, with no
+  receipt: there is no count to record.
+
+A scope that does not say `kind` and counts no tests ends `exited-0`, not a pass, as before. So a
+gate passes when every `test` scope passed and every `check` scope exited 0. `kind` needs schema 3.
 
 **`steps` is read as `deps`.** A scope's `steps` list is its `deps` in the same order, in schema 2
 and 3, so a schema-2 project keeps working unchanged; a scope with both is an error in
@@ -385,13 +395,13 @@ with its status:
 | 10 | `needs-other-system` | `jst test changed` (section 7.4) | 80 |
 | 11 | `skipped` | a scope asked for that is not eligible here | 79 |
 | 12 | `left-to-ci` | `jst test changed` or `jst test uncovered` with nothing to run here (section 7.4) | 0 |
-| 13 | `exited-0` | every scope asked for passed or ended `exited-0`, and one ended `exited-0` | 0 |
-| 14 | `passed` | every scope asked for passed | 0 |
+| 13 | `exited-0` | every scope asked for passed or ended `exited-0`, and one ended `exited-0`: a scope without `kind: check` that counted no tests, or a composite with such a dep | 0 |
+| 14 | `passed` | every scope asked for passed (a `check` that exited 0 is `passed`) | 0 |
 
 `not-run` is never the run's outcome: a node is `not-run` only after a failure higher in the order.
 Only `passed` is a pass, as before; its detail names each node's outcome, with the `skipped` deps
-of a composite: `jst test: outcome=passed (gate, 41 s: x-docs=exited-0, x-build=exited-0,
-x-go=passed, x-ios=passed)`. A failure names its node: `outcome=failed (gate failed at x-go)`.
+of a composite: `jst test: outcome=passed (gate, 41 s: x-docs=passed, x-build=passed,
+x-go=passed, x-ios=passed)`, where `x-docs` and `x-build` are checks. A failure names its node: `outcome=failed (gate failed at x-go)`.
 
 `jst test plan SCOPE` prints the order and whether each node would be skipped or run; it runs
 nothing. `jst test plan changed` plans what `jst test changed` runs (section 7.4): the **here**

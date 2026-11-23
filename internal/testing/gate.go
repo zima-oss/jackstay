@@ -143,7 +143,13 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		case slices.ContainsFunc(depsOf(entry), func(dep string) bool { return !passing(outcomes[dep]) }):
 			line = step{"step": name, "outcome": outcomeNotRun, "seconds": 0}
 		case isComposite(entry):
-			line = step{"step": name, "outcome": receipts.OutcomePassed, "seconds": 0, "composite": true}
+			// A composite passes when every eligible dep passed; one that only exited 0 (a `test`
+			// or undeclared scope that counted nothing) makes it `exited-0`, not a pass.
+			outcome := receipts.OutcomePassed
+			if slices.ContainsFunc(depsOf(entry), func(dep string) bool { return outcomes[dep] == receipts.OutcomeExited0 }) {
+				outcome = receipts.OutcomeExited0
+			}
+			line = step{"step": name, "outcome": outcome, "seconds": 0, "composite": true}
 		default:
 			var signalled *int
 			if line, signalled = proj.gateStep(name, kind, entry, gateID); signalled != nil {
@@ -164,9 +170,6 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 			state.outcome, state.status = outcomeNeedsOtherSystem, statusNeedsOtherSystem
 		case len(split.here) == 0:
 			state.outcome, state.status = outcomeLeftToCI, 0
-		case state.outcome == receipts.OutcomeExited0:
-			// The split's here passes as a composite does: every node passed or ended exited-0.
-			state.outcome = receipts.OutcomePassed
 		}
 	}
 	if problem := proj.pinnedProblem(); problem != "" && !slices.Contains(failureOrder, state.outcome) {

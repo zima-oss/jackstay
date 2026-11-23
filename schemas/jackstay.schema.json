@@ -1151,6 +1151,11 @@
                 "pattern": "\\S",
                 "type": "string"
               },
+              "kind": {
+                "description": "`test`: must count tests to pass (its judge cannot be `exit`); `check` (a linter, an audit, a build): passes on exit 0. Undeclared, a run that counts no tests ends `exited-0`, not a pass (schema 3).",
+                "pattern": "\\S",
+                "type": "string"
+              },
               "lock": {
                 "description": "Takes the machine-wide lock when `lock.enabled` is true (default true, false for `focused` and `quick`).",
                 "type": "boolean"
@@ -1374,6 +1379,10 @@
                   "trx",
                   "xcresult-json"
                 ],
+                "pattern": "\\S",
+                "type": "string"
+              },
+              "kind": {
                 "pattern": "\\S",
                 "type": "string"
               },

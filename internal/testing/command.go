@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/receipts"
@@ -301,6 +302,11 @@ func (did *ran) judged(launchedRun launched, reader *judge.Reader, seen *leftove
 	case judge.ExitedZero:
 		more["stored"], more["not_stored"] = false, "judge `exit` counts no tests"
 		more["not_stored_kind"] = receipts.NotStoredNoEvidence
+		if did.leaf.stepKind == config.StepKindCheck {
+			// A check (a linter, an audit, a build) passes on exit 0 (land.md section 7.1).
+			more["kind"] = config.StepKindCheck
+			return did.finish(receipts.OutcomePassed, 0, more, fmt.Sprintf("outcome=passed (a check: it ended 0, %s s)", took))
+		}
 		did.say("the command ended 0; its judge is `exit`, which counts no tests: this is not a pass.")
 		return did.finish(receipts.OutcomeExited0, 0, more, fmt.Sprintf("outcome=exited-0 (no test count: not proof that tests ran), %s s", took))
 	case judge.Failed:

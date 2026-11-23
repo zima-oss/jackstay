@@ -107,6 +107,12 @@ that rings Claude Code, and puts what is going on in one `jst status`. Upgrading
 
 ### Changed
 
+- Step kinds: a scope may say `"kind": "test"` (it must count tests to pass) or `"kind": "check"`
+  (a linter, an audit, a build: it passes on exit 0). A gate passes when every test scope passed and
+  every check exited 0; a scope that says neither and counts no tests is `exited-0`, and so is a
+  gate or `jst test changed` that runs it. Mark exit-judged linters and builds `check`.
+  [#126](https://github.com/zima-oss/jackstay/pull/126)
+
 - The AGENTS block opens with "instead of X, run Y" lines for what agents most often do by hand:
   raw test runners, `gh` waits, `sleep`, `git worktree`.
   [#99](https://github.com/zima-oss/jackstay/pull/99)

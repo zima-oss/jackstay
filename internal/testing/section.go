@@ -419,6 +419,8 @@ type leaf struct {
 	expect    []string
 	requires  []check
 	when      string
+	// stepKind is `kind` (land.md section 7.1): "test", "check" or "" undeclared.
+	stepKind string
 }
 
 func secondsOf(value any) float64 {
@@ -428,7 +430,8 @@ func secondsOf(value any) float64 {
 
 // resolve is a leaf's settings with the section's defaults.
 func resolve(section map[string]any, name, kind string, entry map[string]any) leaf {
-	resolved := leaf{name: name, kind: kind, run: textsOf(entry["run"]), cwd: ".", judge: judgeOf(section, entry),
+	stepKind, _ := entry["kind"].(string)
+	resolved := leaf{name: name, kind: kind, stepKind: stepKind, run: textsOf(entry["run"]), cwd: ".", judge: judgeOf(section, entry),
 		evidence: textOf(entry["evidence"]), veto: textOf(entry["veto"]), lock: !slices.Contains(unlockedByDefault, name),
 		env: map[string]string{}, base: textOf(entry["base"]), when: textOf(entry["when"])}
 	resolved.selector = textOf(entry["selector"])

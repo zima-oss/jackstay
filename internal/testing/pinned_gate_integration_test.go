@@ -24,7 +24,7 @@ func TestPinnedGateChecksTrackedInputsAtEachBoundary(t *testing.T) {
 	}
 	for _, each := range fixtures {
 		t.Run(each.name, func(t *testing.T) {
-			preparation := map[string]any{"run": argv("sh", "-c", each.preparation), "judge": "exit"}
+			preparation := map[string]any{"run": argv("sh", "-c", each.preparation), "judge": "exit", "kind": "check"}
 			gate := map[string]any{"steps": argv("prepare", "verify")}
 			if each.prerequisite {
 				// In schema 3 a check belongs to the step that needs it, not to the list.
@@ -33,7 +33,7 @@ func TestPinnedGateChecksTrackedInputsAtEachBoundary(t *testing.T) {
 			}
 			section := map[string]any{"scopes": map[string]any{"gate": gate}, "steps": map[string]any{
 				"prepare": preparation,
-				"verify":  map[string]any{"run": counted("verified", "true"), "judge": "exit"},
+				"verify":  map[string]any{"run": counted("verified", "true"), "judge": "exit", "kind": "check"},
 			}}
 			w := newWorld(t, section, nil)
 			w.commit()

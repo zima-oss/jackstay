@@ -245,3 +245,22 @@ func TestCardsRejectsAPatternThatCanMatchEmptyText(t *testing.T) {
 		t.Fatalf("card ID was not rejected: %v", problems)
 	}
 }
+
+func TestStepKindsAreChecked(t *testing.T) {
+	for text, want := range map[string]string{
+		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"run": ["true"], "kind": "lint"}}}}`:                     "must be \"test\" or \"check\"",
+		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"deps": ["b"], "kind": "check"}, "b": {"run": ["x"]}}}}`: "is for a scope with `run`",
+		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"run": ["true"], "kind": "test"}}}}`:                     "which counts none",
+		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"run": ["true"], "kind": "check"}}}}`:                    "",
+		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"run": ["go"], "judge": "go-json", "kind": "test"}}}}`:   "",
+	} {
+		parsed, err := Parse([]byte(text))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := strings.Join(SectionProblems(parsed).found["test"], "; ")
+		if (want == "") != (got == "") || !strings.Contains(got, want) {
+			t.Errorf("%s: %q, want %q", text, got, want)
+		}
+	}
+}

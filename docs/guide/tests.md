@@ -11,8 +11,8 @@ status alone: a test command may itself end with 2 or 77.
 
 | Outcome | Meaning |
 |---|---|
-| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A gate: every step `passed`, `exited-0` or `skipped`, and at least one ran; a gate of exit-judged steps alone can pass with no test counted, so read each step's outcome on the same line |
-| `exited-0` | ended 0, but nothing counted its tests: **not a pass** |
+| `passed` | one command: ran now, ended 0, output read to its end, tests **counted** (above zero), no veto line. A `check` scope (`kind: check`): ended 0. A gate: every step `passed` or `skipped`, and at least one ran |
+| `exited-0` | ended 0, but nothing counted its tests and it is not a `check`: **not a pass**; a gate with such a step is `exited-0` too |
 | `reused` | nothing ran: a receipt for this tree exists and reuse is on |
 | `failed` | ended non-zero, or a veto line was seen |
 | `not-started` | `jackstay.json` or the lock could not be used, or a `requires` check failed; nothing ran |
@@ -123,12 +123,16 @@ every step whose deps passed and reports each. A step whose `systems` leave this
 full again. `--commit HEAD` runs on a clean copy of HEAD that jackstay makes and removes.
 
 ```text
-jst test: outcome=passed (gate, 0.9 s: lint=exited-0, full=passed)
-jst test: outcome=failed (gate failed at full, exit 1, 0.9 s: lint=exited-0, full=failed, gate=not-run)
+jst test: outcome=passed (gate, 0.9 s: lint=passed, full=passed)
+jst test: outcome=failed (gate failed at full, exit 1, 0.9 s: lint=passed, full=failed, gate=not-run)
 ```
 
-- The line names each step's own outcome: `lint=exited-0` ran and ended 0 without counting tests;
-  `full=passed` counted them.
+- The line names each step's own outcome: `lint=passed` is a check (`"kind": "check"`) that ended
+  0; `full=passed` counted its tests.
+- **Step kinds** (schema 3): `"kind": "test"` must count tests to pass (its judge cannot be
+  `exit`); `"kind": "check"`, for a linter, an audit or a build, passes on exit 0. A step without
+  `kind` that counts no tests is `exited-0`, and so is a gate that runs it: mark your linters and
+  builds `check`.
 - A run that fails names the first failure in this order: `failed`, `passed-on-retry`,
   `timed-out`, `stopped`, `stopped-waiting`, `unjudged`, `nothing-run`, `gave-up`, `not-started`.
 - `jst check` refuses a cycle of deps, an unknown dep, `steps` with `deps`, a dep that needs test
@@ -213,7 +217,7 @@ one group: **here** (it runs on this machine and is not covered), **ci** (covere
 their deps from any group:
 
 ```text
-jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; ci: x-docs, x-go; elsewhere: none)
+jst test: outcome=passed (changed, 40 s; here: x-build=passed, x-ios=passed; ci: x-docs, x-go; elsewhere: none)
 ```
 
 - `jst test changed` ends `needs-other-system` (80) when a test of the change runs on no CI system
@@ -463,7 +467,7 @@ run-record parts have anything to read. Every flag: `jst baseline --help`.
 
 | What you see | What to do |
 |---|---|
-| `outcome=exited-0` | Nothing counted the tests. Give the scope `judge: steps` and an `evidence` pattern with one number group, or a structured judge. |
+| `outcome=exited-0` | Nothing counted the tests. Give the scope `judge: steps` and an `evidence` pattern with one number group, or a structured judge; for a linter, an audit or a build, `"kind": "check"`. |
 | `not-started`: `receipts.toolchain` must be written out | Add `"receipts": {"toolchain": []}` (or your toolchain commands). |
 | `unjudged` with `left-running=…` | The tests left processes behind; jackstay stopped them. Fix the test's cleanup. |
 | `timed-out` | The scope's `timeout` ended the whole tree. Raise it, or split the scope. |

@@ -295,6 +295,7 @@ Declares the project's test scopes and steps, their judges and timeouts, run by 
 | `scopes.*.evidence` | regex | Counts the tests a run passed from the lines this pattern matches (RE2, one group for the number); the `steps` judge needs it. |
 | `scopes.*.expect` | list of strings | Lists the engines (`xctest`, `swift-testing`) whose markers a `swift-test` run must show (default `test.expect`, else `xctest`). |
 | `scopes.*.judge` | string | Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`). |
+| `scopes.*.kind` | string | `test`: must count tests to pass (its judge cannot be `exit`); `check` (a linter, an audit, a build): passes on exit 0. Undeclared, a run that counts no tests ends `exited-0`, not a pass (schema 3). |
 | `scopes.*.lock` | boolean | Takes the machine-wide lock when `lock.enabled` is true (default true, false for `focused` and `quick`). |
 | `scopes.*.lock_wait` | number | Gives up waiting for the lock after this many seconds (default the scope's timeout). |
 | `scopes.*.report` | string | Names the report file a file-based judge reads; `{report}` in the words gives its path. |
