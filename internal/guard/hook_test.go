@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zima-oss/jackstay/internal/telemetry"
 	"github.com/zima-oss/jackstay/internal/telemetry/telemetrytest"
@@ -165,8 +166,8 @@ func TestHookKeepsTheBuiltInRulesWhenJackstayJSONCannotBeUsed(t *testing.T) {
 	}
 }
 
-// An unusable jackstay.json is said once in a session, again when the file changes, and every time
-// to a call without a session; every call still logs the reason.
+// An unusable jackstay.json is said once to a session within toldEvery, again when the file changes,
+// and every time to a call without a session; every call still logs the reason.
 func TestHookSaysAnUnusableConfigOnceInASession(t *testing.T) {
 	home, folder := t.TempDir(), t.TempDir()
 	writeConfig(t, folder, "{broken")
@@ -299,19 +300,43 @@ func toldTheAgentOnly(out map[string]any, text string) bool {
 	return !decided && specific["hookEventName"] == "PreToolUse" && strings.Contains(context, text)
 }
 
-// The mark is taken only once the answer is written: a hook stopped before that tells again.
-func TestASessionIsMarkedToldOnlyAfterTheAnswer(t *testing.T) {
+// The mark is taken only once the answer is written, and lasts toldEvery: a hook stopped before
+// it tells again, and so does a session toldEvery later.
+func TestASessionIsToldAgainUnlessTheAnswerWasWrittenRecently(t *testing.T) {
 	t.Setenv("JACKSTAY_HOME", t.TempDir())
 	found := project{name: "demo", problem: "broken", stamp: "jackstay.json\x001\x002"}
-	mark, news := configNews("s", found)
+	now := time.Now()
+	mark, news := configNews("s", found, now)
 	if !news || mark == "" {
 		t.Fatalf("first: %q %v", mark, news)
 	}
-	if _, news := configNews("s", found); !news {
+	if _, news := configNews("s", found, now); !news {
 		t.Fatal("a session whose answer was never written counts as told")
 	}
-	markTold(mark)
-	if _, news := configNews("s", found); news {
-		t.Fatal("a told session is told again")
+	markTold(mark, now)
+	if _, news := configNews("s", found, now.Add(toldEvery-time.Second)); news {
+		t.Fatal("a session just told is told again")
+	}
+	if _, news := configNews("s", found, now.Add(toldEvery+time.Second)); !news {
+		t.Fatal("a session is not told again after toldEvery")
+	}
+	changed := found
+	changed.stamp = ""
+	if _, news := configNews("s", changed, now); !news {
+		t.Fatal("a file that changed while read is not told")
 	}
 }
+
+// An answer that cannot be written takes no mark.
+func TestAnUnwrittenAnswerTakesNoMark(t *testing.T) {
+	if (reply{message: "m"}).write(failingWriter{}) {
+		t.Fatal("a failed write said written")
+	}
+	if !(reply{}).write(failingWriter{}) {
+		t.Fatal("an empty answer is not written")
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
