@@ -553,3 +553,31 @@ func TestTheDeletionLogRollsOver(t *testing.T) {
 		t.Fatalf("%d deletions, newest %v", len(deletions), deletions[0].DeletedAt)
 	}
 }
+
+// A line a stopped writer left unfinished does not hide the next deletion.
+func TestAnUnfinishedLogLineDoesNotHideTheNext(t *testing.T) {
+	folder := t.TempDir()
+	if err := os.WriteFile(filepath.Join(folder, logName), []byte(`{"path": "/cut`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := appendLog(folder, Deletion{Path: "/next", DeletedAt: "2026-11-23T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if deletions := Deletions(folder); len(deletions) != 1 || deletions[0].Path != "/next" {
+		t.Fatalf("deletions %+v", deletions)
+	}
+}
+
+// The trash folder, which holds the log, is refused.
+func TestDeleteRefusesTheTrashFolder(t *testing.T) {
+	home := t.TempDir()
+	folder := filepath.Join(home, ".trash")
+	if err := appendLog(folder, Deletion{Path: "/x"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{folder, filepath.Join(folder, logName)} {
+		if _, err := Delete(folder, target, "p", "s", "jst trash", time.Now()); err == nil {
+			t.Fatalf("%s was deleted", target)
+		}
+	}
+}

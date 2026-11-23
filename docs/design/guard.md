@@ -440,12 +440,15 @@ undo only with `on`.
   a file's bytes or a link's target; of a folder, of a listing of each entry's relative path, kind,
   mode and digest, so a folder is read whole; a pipe, socket or device is never read), `project`,
   `session` (`CLAUDE_CODE_SESSION_ID`) and `command`. Writers take `deleted.lock` for the size
-  check, the rollover and the append; `jst trash list` reads both generations under it, shared. At 1 MiB the log becomes `deleted.1.jsonl`, replacing the one
+  check, the rollover and the append; `jst trash list` reads both generations under it, shared.
+- The trash folder and what is in it are refused: it holds the log (`jst trash prune` removes old
+  entries). At 1 MiB the log becomes `deleted.1.jsonl`, replacing the one
   before; `jst trash list` reads both.
 - `trash.keep` is one setting for a whole command: that of the project the command runs in, read
   before anything changes, as the guard reads it for its advice; a jackstay.json that cannot be used
   reads as `off`. Written limit: a path inside a nested project with another setting follows the
-  outer one. `keep_days` is still the item's own. It needs `"jackstay_schema": 3`.
+  outer one, and the guard's advice follows the folder its hook runs in (a `cd` inside the command
+  is not followed). A kept item records its own project and `keep_days`. `keep_days` is still the item's own. It needs `"jackstay_schema": 3`.
 
 - `jst trash PATH…` moves each item into `<jackstay home>/.trash/<time>-<n>/` beside `entry.json`
   (`path` absolute, `moved_at`, `project`, `session`, `kind`). On the same volume the move is a

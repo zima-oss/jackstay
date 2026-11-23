@@ -329,7 +329,7 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		entry, err := trash.Keep(run.Trash, place, data, each.index.executable(), each.index.link(), run.Project, run.Session, run.KeepDays, run.Now())
+		entry, err := trash.Keep(run.Trash, place, data, each.index.executable(), each.index.link(), trash.ProjectOf(filepath.Dir(place)), run.Session, trash.KeepDays(filepath.Dir(place)), run.Now())
 		if err != nil {
 			return 0, err
 		}
@@ -337,7 +337,7 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		run.say("%s: the staged version kept as %s (`jst trash restore %s --to <path>`)", each.path, entry.ID, entry.ID)
 	}
 	if each.keepDisk && keep {
-		entry, err := trash.MoveForDiscard(run.Trash, place, run.Project, run.Session, run.KeepDays, run.Now(), each.disk)
+		entry, err := trash.MoveForDiscard(run.Trash, place, trash.ProjectOf(filepath.Dir(place)), run.Session, trash.KeepDays(filepath.Dir(place)), run.Now(), each.disk)
 		if entry.ID != "" {
 			entries = append(entries, entry.ID)
 		}
@@ -358,8 +358,12 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 	if err == nil && each.head == nil {
 		if !keep && each.keepDisk {
 			err = os.Remove(place) // a file HEAD does not have: dropped with its staged version
-		}
-		if err == nil {
+			if err == nil {
+				if _, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path); err != nil {
+					err = fmt.Errorf("the file was deleted, and its index entry could not be removed (`git rm --cached %s`): %w", each.path, err)
+				}
+			}
+		} else {
 			_, err = repo.git(ctx, "rm", "--cached", "--quiet", "--ignore-unmatch", "--", each.path)
 		}
 	} else if err == nil {

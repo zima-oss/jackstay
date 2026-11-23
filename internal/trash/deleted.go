@@ -198,11 +198,16 @@ func appendLog(folder string, deletion Deletion) error {
 			return err
 		}
 	}
-	_, statErr := os.Stat(place)
-	created := statErr != nil
-	file, err := os.OpenFile(place, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600) // #nosec G304 -- jackstay's own log
+	file, err := os.OpenFile(place, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0o600) // #nosec G304 -- jackstay's own log
 	if err != nil {
 		return err
+	}
+	// A line a stopped writer left without its end is closed first, so this one reads on its own.
+	if info, err := file.Stat(); err == nil && info.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := file.ReadAt(last, info.Size()-1); err == nil && last[0] != '\n' {
+			line = append([]byte{'\n'}, line...)
+		}
 	}
 	if _, err := file.Write(append(line, '\n')); err != nil {
 		_ = file.Close()
@@ -215,10 +220,7 @@ func appendLog(folder string, deletion Deletion) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	if created {
-		return durable.SyncFolder(folder) // a new log's name, or a rollover, survives a crash
-	}
-	return nil
+	return durable.SyncFolder(folder) // the log's name, after a creation or a rollover, survives a crash
 }
 
 // lockLog takes the deletion log's lock (shared to read, exclusive to write) and gives its release.

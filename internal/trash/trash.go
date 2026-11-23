@@ -289,6 +289,9 @@ func holdsHome(folder, given, source string) error {
 	if realSource == realHome || strings.HasPrefix(realHome+"/", realSource+"/") {
 		return fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
 	}
+	if realTrash := filepath.Join(realHome, filepath.Base(folder)); realSource == realTrash || strings.HasPrefix(realSource, realTrash+"/") {
+		return fmt.Errorf("%s is in jackstay's trash, which holds its deletion log: not deleted (`jst trash prune` removes old entries)", given)
+	}
 	return nil
 }
 
