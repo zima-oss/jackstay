@@ -41,7 +41,7 @@ git), and the whole gate at the end.
 - **jackstay stays general.** It must not know any one project, runner or organisation: what differs
   between projects is data in `jackstay.json` or a profile, never a code path named after someone.
 - **Both systems.** jackstay runs on macOS and Linux. CI runs the gate's scopes on Linux only; code under
-  `*_darwin.go` is checked on a Mac by a maintainer before an install and a release. Run `just darwin-smoke` for a focused local
+  `*_darwin.go` is checked on a Mac by a maintainer (`jst test uncovered`) before an install and a release. Run `just darwin-smoke` for a focused local
   check of process shutdown, the hook, installation recovery, receipts and clean-copy tests
   ([W-083](docs/decisions/W-083-no-macos-job-in-ci.md)).
 - **The tools describe themselves.** A new command answers `jst <command> --help`. If it changes
@@ -54,7 +54,7 @@ git), and the whole gate at the end.
 ## Writing documentation
 
 Pages, help texts and the AGENTS block follow [docs/STYLE.md](docs/STYLE.md): outcome first, plain
-English, one meaning in one place, and command examples that run. `just docs` checks what it can.
+English, one meaning in one place, and command examples that run. The documents' own checks are Go tests (`go test ./internal/docs`, part of the gate); `just docs` builds the site.
 
 ## Pull requests
 

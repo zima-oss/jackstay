@@ -158,8 +158,8 @@ tla:
       echo "tla: $model holds"
     done
 
-# What a push needs (W-040): the Go checks, the integration tests, the security checks and the
-# docs check.
+# The recipes the gate scope runs, in order, for a quick local pass; what a push needs is
+# `jst test gate` (jackstay.json, W-040), and CI runs `jst test ci`.
 gate:
     #!/usr/bin/env bash
     set -euo pipefail

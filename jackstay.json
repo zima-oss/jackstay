@@ -91,7 +91,7 @@
           "x-sec",
           "x-docs"
         ],
-        "when": "before a finished step is pushed (W-040) and before an install: every scope; on a Mac it also tests the *_darwin.go code no CI job reaches"
+        "when": "before a finished step is pushed (W-040): every scope; on a Mac it also tests the *_darwin.go code no CI job reaches. Before an install or a tag, `jst test uncovered` runs the same on a Mac and records the pass the install needs"
       }
     }
   },

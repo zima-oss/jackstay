@@ -667,12 +667,12 @@ snapshot is unsigned; the release workflow refuses to run without all five secre
 only, on `ubuntu-latest` in the `release` environment (the secrets, the owner's approval), with
 `contents: write`, `id-token: write`, `attestations: write` and `artifact-metadata: write`. Actions
 are pinned by commit hash; GoReleaser runs pinned through `go run`, Go's build cache off. Before
-approving, the maintainer has run `jst test gate` on a Mac on the tagged commit
+approving, the maintainer has run `jst test uncovered` on a Mac on the tagged commit
 ([W-083](../decisions/W-083-no-macos-job-in-ci.md)). In order:
 
 1. Refuse a tag that is not annotated, not the commit checked out, not on main, or not
    `v` + `internal/version`'s `Version`.
-2. `just gate` on the tagged tree (Linux; section 10).
+2. `bin/jst test ci` on the tagged tree (Linux; the job `jst test ci (linux)`, section 10).
 3. GoReleaser builds, signs and notarises with that tag (`GORELEASER_CURRENT_TAG`,
    `--skip=publish,announce`).
 4. `actions/attest` signs build provenance for each archive, bound to the repository, workflow and
@@ -1240,8 +1240,9 @@ its version in a comment.
 (gofmt over `cmd` and `internal`, `go vet`, golangci-lint v2 per `.golangci.yml`, shellcheck on
 `install.sh`), `go` (`tests/go.sh`: `go vet`, every test with `-race`, a build), `integration`
 (`//go:build integration`, real git or processes, `-race`), `security` (govulncheck; gosec at high
-severity and medium confidence, `.claude/` left out) and `docs` (links and anchors, every decision
-listed, the site built with no warning or broken link: section 6). **The gate**
+severity and medium confidence, `.claude/` left out) and `docs` (the site built with no warning or
+broken link; the documents' own checks, links and anchors and every decision listed, are the Go
+tests of `internal/docs`, which `x-go` runs: section 6). **The gate**
 ([W-040](../decisions/W-040-python-frozen-tests-by-change-readable-names.md)) is the `gate` scope
 of `jackstay.json`: a node whose `deps` are the scopes `x-check` (`just check`), `x-go` (every unit
 and integration test, once, with `-race`, judged from `go test -json`), `x-sec` (`just security`)
@@ -1256,7 +1257,9 @@ pull request, push to `main` and by hand; `release.yml` runs the same before GoR
 credentials not kept, a 30-minute limit, a pull request's older run cancelled. `main` requires it, and `card-line`.
 The Vitest producer check runs separately. There is no macOS job
 ([W-083](../decisions/W-083-no-macos-job-in-ci.md)): `*_darwin.go` is checked by the maintainers'
-`jst test gate` on a Mac before an install and a release ([land.md](land.md) section 7.6).
+`jst test uncovered` on a Mac before an install and a release: on macOS no scope is covered by CI,
+so it runs every scope, and its pass is the record `jst install` from a checkout needs
+([land.md](land.md) section 7.6).
 
 **Practices:**
 - The commit is injected at build (`-X …/internal/version.Commit`), else the build info's

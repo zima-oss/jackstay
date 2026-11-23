@@ -4,7 +4,7 @@ name: gate
 # ci`, built from this tree, runs every scope of jackstay.json whose `ci` names linux (x-check, x-go,
 # x-sec, x-docs), each once in graph order. This is the check `main` requires. jackstay supports
 # macOS and Linux (W-069); there is no macOS job (W-083): the macOS-only code (`*_darwin.go`) is
-# checked by the maintainers' `jst test gate` on a Mac before an install and a release.
+# checked by the maintainers' `jst test uncovered` on a Mac before an install and a release.
 
 on:
   pull_request:
