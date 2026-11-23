@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The corpus (tests/guard/corpus.jsonl) is the authority for the guard (guard.md section
@@ -157,9 +158,14 @@ func settingsOf(one corpusCase) Settings {
 	if root == "" && one.Guard != nil {
 		root = folder
 	}
+	// The corpus checks what the guard decides, not how fast it reads: a generous budget keeps a
+	// loaded machine from turning a case into `too-long`. TestTheReadingDeadline covers the bound.
 	return Settings{Folder: folder, Environ: env, Scratch: scratch, Home: "/Users/someone", ProjectRoot: root,
-		Guard: one.Guard, Git: corpusGit{Git: NewGit(nil), answers: answers}}
+		Guard: one.Guard, Git: corpusGit{Git: NewGit(nil), answers: answers}, Deadline: corpusDeadline}
 }
+
+// corpusDeadline is the reading's budget in the corpus, far above any machine's reading time.
+const corpusDeadline = time.Minute
 
 func TestCorpus(t *testing.T) {
 	failed := 0
