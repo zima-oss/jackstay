@@ -406,14 +406,14 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 // logDropped logs what a change drops, the staged version and what is on disk, before it is dropped.
 func (run Run) logDropped(ctx context.Context, each change, place string) ([]trash.Deletion, error) {
 	var found []trash.Deletion
-	at := run.Now().Format(time.RFC3339)
+	deletedAt := run.Now().Format(time.RFC3339)
 	if each.keepIndex {
 		data, err := run.repo.git(ctx, "cat-file", "blob", each.index.blob)
 		if err != nil {
 			return nil, err
 		}
 		size, digest := trash.Digest(data)
-		found = append(found, trash.Deletion{DeletedAt: at, Path: place, Kind: "staged", Size: size, SHA256: digest,
+		found = append(found, trash.Deletion{DeletedAt: deletedAt, Path: place, Kind: "staged", Size: size, SHA256: digest,
 			Project: run.Project, Session: run.Session, Command: "jst discard"})
 	}
 	if each.keepDisk {
@@ -422,7 +422,7 @@ func (run Run) logDropped(ctx context.Context, each change, place string) ([]tra
 			return nil, err
 		}
 		size := info.Size()
-		found = append(found, trash.Deletion{DeletedAt: at, Path: place, Kind: each.disk.Kind, Size: size, SHA256: each.disk.SHA256,
+		found = append(found, trash.Deletion{DeletedAt: deletedAt, Path: place, Kind: each.disk.Kind, Size: size, SHA256: each.disk.SHA256,
 			Project: run.Project, Session: run.Session, Command: "jst discard"})
 	}
 	for _, deletion := range found {
