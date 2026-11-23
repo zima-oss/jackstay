@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/zima-oss/jackstay/v0.5.11/schemas/jackstay.schema.json",
+  "$id": "https://raw.githubusercontent.com/zima-oss/jackstay/v0.6.0/schemas/jackstay.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "Project configuration for jackstay. Run jst check for semantic and cross-field validation.",

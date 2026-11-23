@@ -9,7 +9,7 @@ import (
 )
 
 // Version is jackstay's version.
-const Version = "0.5.11"
+const Version = "0.6.0"
 
 // Commit is the commit the binary was built from, set at build time with
 // -ldflags "-X github.com/zima-oss/jackstay/internal/version.Commit=…" (install, goreleaser).

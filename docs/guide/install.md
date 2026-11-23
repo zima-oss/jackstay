@@ -34,12 +34,12 @@ status.
 Give settings to the `sh` that runs the script:
 
 ```sh
-script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && JACKSTAY_VERSION=0.5.11 JACKSTAY_PREFIX="$HOME/tools" sh -c "$script"
+script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && JACKSTAY_VERSION=0.6.0 JACKSTAY_PREFIX="$HOME/tools" sh -c "$script"
 ```
 
 | Setting | Effect |
 |---|---|
-| `JACKSTAY_VERSION=0.5.11` (or `v0.5.11`) | installs that release instead of the newest |
+| `JACKSTAY_VERSION=0.6.0` (or `v0.6.0`) | installs that release instead of the newest |
 | `JACKSTAY_PREFIX=DIR` | installs under `DIR` instead of `~/.local` |
 | `JACKSTAY_PROVENANCE=attestation` | requires `gh` and verifies the release's signed GitHub build attestation for `zima-oss/jackstay`, `.github/workflows/release.yml` and the selected tag |
 | `JACKSTAY_SHA256=HEX` | requires the archive to match a 64-digit lowercase SHA-256 digest you obtained separately; works for older releases and without `gh` |
@@ -154,7 +154,7 @@ of the modules compiled into it; `checksums.txt` covers them.
 ```sh
 (
   set -eu
-  VERSION=0.5.11                                # the release you want, without the v
+  VERSION=0.6.0                                # the release you want, without the v
   PLATFORM=darwin_arm64                        # or darwin_amd64, linux_amd64, linux_arm64
   ARCHIVE="jackstay_${VERSION}_${PLATFORM}.tar.gz"
   BASE="https://github.com/zima-oss/jackstay/releases/download/v$VERSION"
@@ -206,12 +206,12 @@ use `jst install --checkout DIR`.
 (
   set -eu
   dir=$(mktemp -d)                             # a folder of its own, whatever GOBIN says
-  GOBIN="$dir" go install github.com/zima-oss/jackstay/cmd/jst@v0.5.11
+  GOBIN="$dir" go install github.com/zima-oss/jackstay/cmd/jst@v0.6.0
   "$dir/jst" install --binary "$dir/jst"
 )
 ```
 
-Install at a version tag (`@v0.5.11`), not a branch or a commit: `jst version` then names the tag.
+Install at a version tag (`@v0.6.0`), not a branch or a commit: `jst version` then names the tag.
 
 ## Update
 

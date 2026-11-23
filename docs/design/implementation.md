@@ -768,7 +768,7 @@ uninstall and doctor all decide from `layout.Read(P)`.
 - `--binary FILE`, or with neither flag and no checkout the running binary (`SOURCE` `release`).
 
 Its `jst version` text, `jackstay <version> (<commit>)`, is `VERSION`. A `go install` build names
-its tag (`v0.5.11`) or pseudo-version commit, so a tag-named and a hash-named build of one version
+its tag (`v0.6.0`) or pseudo-version commit, so a tag-named and a hash-named build of one version
 are two commits of it.
 
 **Refused** (exit 2, nothing changed): a commit `unknown` or `+changes` (a `+changes` checkout build
