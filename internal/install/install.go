@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/semver"
+
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/gitcli"
 	"github.com/zima-oss/jackstay/internal/homedir"
@@ -22,7 +24,6 @@ import (
 	"github.com/zima-oss/jackstay/internal/prove"
 	"github.com/zima-oss/jackstay/internal/supervise"
 	scopes "github.com/zima-oss/jackstay/internal/testing"
-	"golang.org/x/mod/semver"
 )
 
 func init() {
