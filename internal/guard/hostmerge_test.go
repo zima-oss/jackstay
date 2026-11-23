@@ -56,7 +56,7 @@ func TestOtherGhAndGlabCommandsAreNotRefused(t *testing.T) {
 func TestAHostMergeRuleIsConfigurable(t *testing.T) {
 	folder := realFolder(t)
 	settings := func(level string) Settings {
-		return Settings{Folder: folder, Home: "/Users/someone", ProjectRoot: folder, Git: NoGit{},
+		return Settings{Folder: folder, Home: "/Users/someone", ProjectRoot: folder, Git: NoGit{}, Deadline: testBudget,
 			Guard: map[string]any{"rules": map[string]any{"gh-pr-merge": map[string]any{"level": level},
 				"glab-mr-merge": map[string]any{"level": level}}}}
 	}

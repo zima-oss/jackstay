@@ -13,9 +13,18 @@ import (
 
 // Each bound of guard.md section 3 with a test that reaches it.
 
+// testBudget is every wall-clock budget the tests give real work: far above any machine's time, so
+// only a budget's own test below reaches it.
+const testBudget = time.Hour
+
+// testGit is the real git with testBudget for each question and for a call.
+func testGit() *Git {
+	return NewGitWithBudget(nil, testBudget, testBudget)
+}
+
 func plainRules(command string) []string {
 	return Decide(command, Settings{Folder: "/Users/someone/project", Environ: map[string]string{"TMPDIR": "/var/folders/ab/cdef/T/"},
-		Scratch: []string{"/tmp"}, Home: "/Users/someone", Git: corpusGit{Git: NewGit(nil)}}).Rules()
+		Scratch: []string{"/tmp"}, Home: "/Users/someone", Git: corpusGit{Git: testGit()}, Deadline: testBudget}).Rules()
 }
 
 func TestTheCommandTextBound(t *testing.T) {
@@ -104,11 +113,32 @@ func TestTheLoopPassesBound(t *testing.T) {
 }
 
 func TestTheReadingDeadline(t *testing.T) {
-	started := time.Now()
-	settings := Settings{Folder: "/", Home: "/", Git: corpusGit{Git: NewGit(nil)}, Deadline: time.Nanosecond}
-	got := Decide(strings.Repeat("true\n", 2000), settings).Rules()
-	if !slices.Equal(got, []string{ruleTooLong}) || time.Since(started) > 2*time.Second {
-		t.Fatalf("past the deadline: %v in %v", got, time.Since(started))
+	// The rule is the check: a 1 ns budget is spent before the reading ends, however fast the machine.
+	settings := Settings{Folder: "/", Home: "/", Git: corpusGit{Git: testGit()}, Deadline: time.Nanosecond}
+	if got := Decide(strings.Repeat("true\n", 2000), settings).Rules(); !slices.Equal(got, []string{ruleTooLong}) {
+		t.Fatalf("past the deadline: %v", got)
+	}
+}
+
+func TestTheGitQuestionBudget(t *testing.T) {
+	// A git that never answers: the question's budget, not git, ends it, and the answer is unsure.
+	fake := filepath.Join(t.TempDir(), "git")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexec sleep 600\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	git := NewGitWithBudget(nil, time.Nanosecond, testBudget)
+	git.program = fake
+	if got := git.Held(realFolder(t), "main"); got != answerUnsure {
+		t.Fatalf("a stalled git answered %v", got)
+	}
+}
+
+func TestTheGitCallBudget(t *testing.T) {
+	// A call's budget spent, no question is asked of git at all.
+	git := NewGitWithBudget(nil, testBudget, time.Nanosecond)
+	git.spent = time.Nanosecond
+	if got := git.BranchExists(realFolder(t), "main"); got != answerUnsure {
+		t.Fatalf("past the call's budget git answered %v", got)
 	}
 }
 
@@ -117,11 +147,10 @@ func TestTheHookAnswersWhenJackstayJSONStalls(t *testing.T) {
 	if err := syscall.Mkfifo(filepath.Join(folder, "jackstay.json"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	started := time.Now()
-	out, _ := runHook(t, t.TempDir(), bashCall("git status", folder), "")
-	if took := time.Since(started); took > answerBy+time.Second {
-		t.Fatalf("answered after %v", took)
-	}
+	// A short answer budget: the stalled read never ends, so the budget is what answers.
+	within := generousBudgets
+	within.answer = 50 * time.Millisecond
+	out, _ := runHookWithin(t, within, t.TempDir(), bashCall("git status", folder), "")
 	if message, _ := out["systemMessage"].(string); !strings.Contains(message, "did NOT check") {
 		t.Fatalf("answer %v", out)
 	}

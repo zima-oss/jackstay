@@ -172,7 +172,15 @@ type Git struct {
 // NewGit is the questions asked of the real git; cards answers the Card push question (nil: the
 // push rule cannot be judged and refuses).
 func NewGit(cards func(folder string, push CardPush, ask func(args ...string) (string, bool)) ([]string, bool)) *Git {
-	return &Git{program: "git", limit: callBudget, each: questionBudget, cards: cards}
+	return NewGitWithBudget(cards, questionBudget, callBudget)
+}
+
+// NewGitWithBudget is NewGit with each question given at most each and a call at most limit, so
+// tests can give real git room on a loaded machine.
+func NewGitWithBudget(cards func(folder string, push CardPush, ask func(args ...string) (string, bool)) ([]string, bool),
+	each, limit time.Duration,
+) *Git {
+	return &Git{program: "git", limit: limit, each: each, cards: cards}
 }
 
 // run asks git one question in a folder; false when git fails, times out, or the call's budget is spent.

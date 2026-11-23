@@ -29,9 +29,18 @@ func init() {
 const (
 	maxInputBytes  = 4 << 20
 	maxConfigBytes = 1 << 20
-	answerBy       = 5 * time.Second
-	exitBy         = 8 * time.Second
 )
+
+// hookBudgets are the hook's time bounds (sections 3 and 7); a variable only so tests can give real
+// work room on a loaded machine.
+var hookBudgets = budgets{answer: 5 * time.Second, exit: 8 * time.Second, reading: readingDeadline,
+	question: questionBudget, call: callBudget}
+
+// budgets: answer and exit bound the hook, reading the reading of the command, question and call
+// the questions to git.
+type budgets struct {
+	answer, exit, reading, question, call time.Duration
+}
 
 const askTheOwner = "If the owner really wants exactly this, ask them to run it in their own terminal. " +
 	"Do not rephrase the command to get around the guard."
@@ -145,7 +154,8 @@ func environment() map[string]string {
 func (found project) settingsFor(folder string, scratch []string) Settings {
 	return Settings{Folder: folder, Environ: environment(), Scratch: scratch, Home: homedir.AccountHome(),
 		ProjectRoot: found.root, Guard: found.guard, Cards: found.cards, CardsBroken: found.broken, CardsAt: CardsOf,
-		Git: NewGit(CardRange), TrashKeep: trash.Keeps(folder)}
+		Git: NewGitWithBudget(CardRange, hookBudgets.question, hookBudgets.call), TrashKeep: trash.Keeps(folder),
+		Deadline: hookBudgets.reading}
 }
 
 // Refusal is the text a refusal gives the agent.
@@ -276,6 +286,7 @@ const failedOpen = "jst guard failed and did NOT check this command (%s). The co
 // refuse; only a fault of its own fails open (section 7).
 func Hook(stdin io.Reader, stdout, stderr io.Writer) int {
 	started := time.Now()
+	answerBy, exitBy := hookBudgets.answer, hookBudgets.exit
 	done := make(chan func(), 1)
 	go func() {
 		var after func()

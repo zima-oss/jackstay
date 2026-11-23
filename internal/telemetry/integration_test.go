@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -49,7 +50,8 @@ func project(t *testing.T) (folder, home string, env []string) {
 			env = append(env, pair)
 		}
 	}
-	return folder, home, append(env, "JACKSTAY_HOME="+home, "CLAUDE_CODE_SESSION_ID=integration-session")
+	return folder, home, append(env, "JACKSTAY_HOME="+home, "CLAUDE_CODE_SESSION_ID=integration-session",
+		telemetry.FinishWaitVariable+"="+telemetrytest.GenerousFinishWait)
 }
 
 // A jackstay command run by `jst test --` is one trace: the command, the run, the child, the inner jackstay.
@@ -87,14 +89,15 @@ func TestStoppedBySignal(t *testing.T) {
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if found, _ := filepath.Glob(filepath.Join(home, "demo", "outputs", "*.log")); len(found) > 0 {
-			break
+	defer func() { _ = command.Process.Kill() }()
+	// The child running means jackstay listens for the stop and has begun the run.
+	deadline := time.Now().Add(60 * time.Second)
+	for exec.Command("pgrep", "-P", strconv.Itoa(command.Process.Pid), "-x", "sleep").Run() != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("the child sleep did not start")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	time.Sleep(200 * time.Millisecond)
 	_ = command.Process.Signal(syscall.SIGTERM)
 	err := command.Wait()
 	status, _ := err.(*exec.ExitError)

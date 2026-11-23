@@ -14,9 +14,23 @@ import (
 	"github.com/zima-oss/jackstay/internal/telemetry/telemetrytest"
 )
 
+// generousBudgets give the hook's real work room on a loaded machine; only a budget's own test
+// shortens one.
+var generousBudgets = budgets{answer: testBudget, exit: testBudget, reading: testBudget, question: testBudget,
+	call: testBudget}
+
 // runHook runs the hook as the guard command runs it, its span written to home's journal.
 func runHook(t *testing.T, home string, payload any, raw string) (map[string]any, string) {
 	t.Helper()
+	return runHookWithin(t, generousBudgets, home, payload, raw)
+}
+
+// runHookWithin is runHook with the hook's budgets set to within for the run.
+func runHookWithin(t *testing.T, within budgets, home string, payload any, raw string) (map[string]any, string) {
+	t.Helper()
+	saved := hookBudgets
+	hookBudgets = within
+	defer func() { hookBudgets = saved }()
 	t.Setenv("JACKSTAY_HOME", home)
 	telemetry.Reset()
 	t.Cleanup(telemetry.Reset)
@@ -346,12 +360,12 @@ func (failingWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
 // The advice follows trash.keep: an undo only when the project keeps what jst trash removes.
 func TestTrashAdviceFollowsTheKeepSetting(t *testing.T) {
 	for keep, want := range map[bool]string{false: "which logs what was deleted", true: "which can be undone"} {
-		decision := Decide("rm -r src", Settings{Folder: t.TempDir(), TrashKeep: keep})
+		decision := Decide("rm -r src", Settings{Folder: t.TempDir(), TrashKeep: keep, Git: testGit(), Deadline: testBudget})
 		if len(decision.Findings) == 0 || !strings.Contains(decision.Findings[0].Instead, want) {
 			t.Fatalf("keep %v: %+v", keep, decision.Findings)
 		}
 	}
-	decision := Decide("git reset --hard", Settings{Folder: t.TempDir()})
+	decision := Decide("git reset --hard", Settings{Folder: t.TempDir(), Git: testGit(), Deadline: testBudget})
 	if len(decision.Findings) == 0 || strings.Contains(decision.Findings[0].Instead, "restore") {
 		t.Fatalf("discard advice with keep off: %+v", decision.Findings)
 	}

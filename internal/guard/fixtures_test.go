@@ -53,7 +53,7 @@ func realFolder(t *testing.T) string {
 
 func liveRules(command, folder string, scratch ...string) []string {
 	return Decide(command, Settings{Folder: folder, Environ: map[string]string{"TMPDIR": "/var/folders/ab/cdef/T/"},
-		Scratch: scratch, Home: "/Users/someone", Git: NewGit(nil)}).Rules()
+		Scratch: scratch, Home: "/Users/someone", Git: testGit(), Deadline: testBudget}).Rules()
 }
 
 func expectRules(t *testing.T, command, folder string, want []string, scratch ...string) {
@@ -97,7 +97,7 @@ func TestLiveBranchQuestions(t *testing.T) {
 	gitIn(t, folder, "add", "work.txt")
 	gitIn(t, folder, "commit", "-q", "-m", "two")
 	gitIn(t, folder, "checkout", "-q", "main")
-	git := NewGit(nil)
+	git := testGit()
 	if git.Held(folder, "merged") != answerYes || git.Held(folder, "alone") != answerNo || git.Held(folder, "nope") != answerUnsure {
 		t.Fatal("held")
 	}
@@ -139,7 +139,7 @@ func TestLiveAddsNothing(t *testing.T) {
 	gitIn(t, folder, "commit", "-q", "-m", "a part of half")
 	commit("f", "ours\n", "ours")
 	objects := objectIDs(t, folder)
-	git := NewGit(nil)
+	git := testGit()
 	if !git.AddsNothing(folder, "squashed") || git.AddsNothing(folder, "half") || git.AddsNothing(folder, "clash") ||
 		git.AddsNothing(folder, "no-such-branch") || git.AddsNothing(folder, "main") || git.AddsNothing(folder, "--help") {
 		t.Fatal("adds nothing")
@@ -255,7 +255,7 @@ func TestLiveZshPatterns(t *testing.T) {
 	zsh := func(command string) []string {
 		// The judge itself, the row set to refuse; its default level (warn) is tested in levels_test.go.
 		return Decide(command, Settings{Folder: folder, Environ: map[string]string{"SHELL": "/bin/zsh"}, Home: "/Users/someone",
-			Git: NewGit(nil), Guard: map[string]any{"rules": map[string]any{"zsh-glob": map[string]any{"level": "refuse"}}}}).Rules()
+			Git: testGit(), Guard: map[string]any{"rules": map[string]any{"zsh-glob": map[string]any{"level": "refuse"}}}, Deadline: testBudget}).Rules()
 	}
 	for _, command := range []string{"grep -rn foo --include=*.swift .", "rg foo -g *.swift", "find . -name *.swift",
 		"ls *.nothing", "cat notes/*.md", "echo done?", "ls {lib,tests}/*.py", "zsh -c 'grep -r x --include=*.swift .'",

@@ -60,8 +60,8 @@ func newAdviceFixture(t *testing.T) adviceFixture {
 
 func (fixture adviceFixture) decide(command string) []string {
 	return Decide(command, Settings{Folder: fixture.folder, Environ: map[string]string{"TMPDIR": "/var/folders/ab/cdef/T/"},
-		Scratch: []string{fixture.scratch}, Home: "/Users/someone", ProjectRoot: fixture.folder, Git: NewGit(nil),
-		Guard: map[string]any{"rules": everyRow("refuse")}}).Rules()
+		Scratch: []string{fixture.scratch}, Home: "/Users/someone", ProjectRoot: fixture.folder, Git: testGit(),
+		Guard: map[string]any{"rules": everyRow("refuse")}, Deadline: testBudget}).Rules()
 }
 
 func (fixture adviceFixture) fill(snippet string) string {

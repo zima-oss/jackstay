@@ -29,6 +29,12 @@ const upkeepLock = ".upkeep.lock"
 // Upkeep gzips the day files older than CompressAfterDays and deletes those older than KeepDays,
 // under a lock tried once (held: another process is at it). now is the clock.
 func Upkeep(folder string, retention Retention, now time.Time) {
+	UpkeepWithin(folder, retention, now, UpkeepBound)
+}
+
+// UpkeepWithin is Upkeep that stops once it has worked longer than bound (a test gives a long one,
+// so a loaded machine cannot leave its files undone).
+func UpkeepWithin(folder string, retention Retention, now time.Time, bound time.Duration) {
 	started := time.Now()
 	lockFile, err := os.OpenFile(filepath.Join(folder, upkeepLock), os.O_WRONLY|os.O_CREATE, 0o600) // #nosec G304 -- jackstay's own journal
 	if err != nil {
@@ -41,7 +47,7 @@ func Upkeep(folder string, retention Retention, now time.Time) {
 	defer func() { _ = unix.Flock(int(lockFile.Fd()), unix.LOCK_UN) }() // #nosec G115 -- a descriptor
 	today := dayStart(now)
 	for _, day := range Days(folder) {
-		if time.Since(started) > UpkeepBound {
+		if time.Since(started) > bound {
 			return
 		}
 		age := int(today.Sub(day).Hours() / 24)

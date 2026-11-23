@@ -12,6 +12,9 @@ import (
 	"github.com/zima-oss/jackstay/internal/telemetry/journal"
 )
 
+// GenerousFinishWait is the FinishWaitVariable a test that reads spans back gives its processes.
+const GenerousFinishWait = "2m"
+
 // Begin starts a command's telemetry in a jackstay home of the test's own; the environment that would
 // steer it (a parent's TRACEPARENT, a Claude session, the switch) is cleared unless env sets it.
 func Begin(t *testing.T, command string, args []string, env map[string]string) string {
@@ -25,6 +28,8 @@ func Begin(t *testing.T, command string, args []string, env map[string]string) s
 			_ = os.Unsetenv(name)
 		}
 	}
+	// Finish waits for the write however long a loaded machine takes: the test reads it back.
+	t.Setenv(telemetry.FinishWaitVariable, GenerousFinishWait)
 	telemetry.Reset()
 	t.Cleanup(telemetry.Reset)
 	telemetry.Begin(command, args)
