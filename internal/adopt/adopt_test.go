@@ -697,6 +697,25 @@ func TestAPinMoveLandsSettingsFirst(t *testing.T) {
 	}
 }
 
+// Issue #120: a plan whose changes touch jackstay.json and other files names the split apply before
+// anything is written, and the upgrade's schema-3 step names --settings-only.
+func TestAPlanOfBothPartsNamesTheSplitApply(t *testing.T) {
+	both := &Plan{Changes: []Change{{ID: "jackstay.json", Path: "jackstay.json"}, {ID: "agents-block", Path: "AGENTS.md"}}}
+	var out bytes.Buffer
+	writeText(&out, both)
+	if !strings.Contains(out.String(), "`jst adopt --apply --settings-only` writes jackstay.json alone") {
+		t.Fatalf("%s", out.String())
+	}
+	out.Reset()
+	writeText(&out, &Plan{Changes: []Change{{ID: "jackstay.json", Path: "jackstay.json"}}})
+	if strings.Contains(out.String(), "--settings-only") {
+		t.Fatalf("a settings-only plan names the split: %s", out.String())
+	}
+	if !strings.Contains(upgradeSteps[2], "`jst adopt --apply --settings-only` writes jackstay.json alone") {
+		t.Fatalf("step 3: %s", upgradeSteps[2])
+	}
+}
+
 func TestAnApplyOfBothPartsSaysToSplitThem(t *testing.T) {
 	both := &Plan{Changes: []Change{{ID: "jackstay.json", Path: "jackstay.json"}, {ID: "workflow:release", Path: ".github/workflows/release.yml"}}}
 	var out bytes.Buffer

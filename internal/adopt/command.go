@@ -308,6 +308,10 @@ func writeText(out io.Writer, plan *Plan) {
 	for _, change := range plan.Changes {
 		fmt.Fprintf(&text, "  %-28s %s: %s\n", change.ID, change.Path, change.What)
 	}
+	if plan.SplitsSettings() {
+		fmt.Fprintf(&text, "  these touch %s and other files, which land apart (rule D0): `jst adopt --apply --settings-only` "+
+			"writes %s alone; once that is merged, `jst adopt --apply` writes the rest\n", config.Name, config.Name)
+	}
 	if len(plan.Conflicts) > 0 {
 		fmt.Fprintf(&text, "conflicts (%d) — nothing is written until each is settled:\n", len(plan.Conflicts))
 	} else {
