@@ -55,6 +55,7 @@
         ],
         "when": "with x-go: gofmt, go vet, golangci-lint, shellcheck; no test (docs/design/implementation.md section 10)",
         "judge": "exit",
+        "kind": "check",
         "ci": [
           "linux"
         ]
@@ -66,6 +67,7 @@
         ],
         "when": "before an install: govulncheck and gosec; no test",
         "judge": "exit",
+        "kind": "check",
         "ci": [
           "linux"
         ]
@@ -77,6 +79,7 @@
         ],
         "when": "after a change to documents: the site builds and its links lead somewhere; no Go test (x-go runs internal/docs)",
         "judge": "exit",
+        "kind": "check",
         "ci": [
           "linux"
         ]
