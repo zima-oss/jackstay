@@ -178,16 +178,19 @@ func under(name, spec string) bool {
 // inside is a given path relative to the top, or why it cannot be used. Its folder's links are
 // followed (the top git gives is a real path); the path's last part is not.
 func (run Run) inside(top, given string) (string, string) {
-	absolute := given
-	if !filepath.IsAbs(absolute) {
-		absolute = filepath.Join(run.Working, given)
+	// The path the system means: `link/..` follows the link, as git and the shell do; a missing
+	// parent (a deleted tracked folder) is read as written.
+	real, err := trash.PhysicalFrom(run.Working, given)
+	if err != nil {
+		absolute := given
+		if !filepath.IsAbs(absolute) {
+			absolute = filepath.Join(run.Working, given)
+		}
+		real = filepath.Clean(absolute)
+		if resolved, err := filepath.EvalSymlinks(filepath.Dir(real)); err == nil {
+			real = filepath.Join(resolved, filepath.Base(real))
+		}
 	}
-	absolute = filepath.Clean(absolute)
-	folder, base := filepath.Dir(absolute), filepath.Base(absolute)
-	if resolved, err := filepath.EvalSymlinks(folder); err == nil {
-		folder = resolved
-	}
-	real := filepath.Join(folder, base)
 	if real == top {
 		return ".", ""
 	}

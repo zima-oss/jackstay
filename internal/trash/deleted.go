@@ -64,9 +64,9 @@ func Session() string {
 // stopped part way, leaves a line for an item still there, in whole or in part, and the command says
 // so; what is written into the item after it was measured is deleted with it, unmeasured.
 func Delete(folder, given, project, session, command string, now time.Time) (Deletion, error) {
-	source, err := filepath.Abs(given)
+	source, err := Physical(given)
 	if err != nil {
-		return Deletion{}, err
+		return Deletion{}, fmt.Errorf("%s: %w", given, err)
 	}
 	if err := holdsHome(folder, given, source); err != nil {
 		return Deletion{}, err

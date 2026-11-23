@@ -134,7 +134,10 @@ func TestTheJackstayHomeIsNotMoved(t *testing.T) {
 }
 
 func TestPruneReadsEachEntrysOwnDays(t *testing.T) {
-	work := t.TempDir()
+	work, err := filepath.EvalSymlinks(t.TempDir()) // entries record the path the system means
+	if err != nil {
+		t.Fatal(err)
+	}
 	folder := filepath.Join(t.TempDir(), ".trash")
 	moved := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
 	for _, name := range []string{"short", "long"} {
@@ -637,5 +640,44 @@ func TestTrashReadsEveryItemsDaysBeforeMoving(t *testing.T) {
 	}
 	if len(Entries(folder)) != 2 {
 		t.Fatalf("entries %+v", Entries(folder))
+	}
+}
+
+// `link/../x` is beside the link's target, as the system walks it: that is what is deleted, never
+// the x beside the link; and a final link is the link itself.
+func TestDeleteFollowsALinkedParentAsTheSystemDoes(t *testing.T) {
+	work, elsewhere := t.TempDir(), t.TempDir()
+	for _, folder := range []string{filepath.Join(work, "build"), filepath.Join(elsewhere, "run1")} {
+		if err := os.MkdirAll(folder, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, file := range []string{filepath.Join(work, "build", "scratch"), filepath.Join(elsewhere, "scratch")} {
+		if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(elsewhere, "run1"), filepath.Join(work, "build", "current")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(work)
+	folder := filepath.Join(t.TempDir(), ".trash")
+	if _, err := Delete(folder, "build/current/../scratch", "p", "s", "jst trash", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, "scratch")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("the scratch beside the link's target is still there")
+	}
+	if _, err := os.Stat(filepath.Join(work, "build", "scratch")); err != nil {
+		t.Fatalf("the scratch beside the link was deleted: %v", err)
+	}
+	if _, err := Delete(folder, "build/current", "p", "s", "jst trash", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(elsewhere, "run1")); err != nil {
+		t.Fatalf("a final link's target was deleted: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(work, "build", "current")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("the link is still there")
 	}
 }
