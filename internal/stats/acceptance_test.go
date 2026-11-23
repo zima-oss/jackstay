@@ -41,9 +41,16 @@ func process(t *testing.T, home, command string, env map[string]string, body fun
 		t.Setenv(name, value)
 	}
 	telemetry.Reset()
+	if processClock != nil {
+		telemetry.SetClock(processClock)
+	}
 	telemetry.Begin(command, nil)
 	telemetry.Finish(body())
 }
+
+// processClock, when set, is the clock of each simulated process: a test whose report depends on
+// the time between calls gives them fixed times, not the wall clock.
+var processClock func() time.Time
 
 func guardCall(t *testing.T, home, session, command string, background bool) {
 	t.Helper()
@@ -68,10 +75,15 @@ func wide() (time.Time, time.Time) { return time.Now().Add(-time.Hour), time.Now
 // A5: refusals per rule, retried within two minutes or given up.
 func TestRefusalsRetriedAndGivenUp(t *testing.T) {
 	folder := home(t)
-	guardCall(t, folder, "session-a", "rm -rf src", false)
-	guardCall(t, folder, "session-a", "jst trash src", false)
-	guardCall(t, folder, "session-b", "rm -rf build-output", false)
-	guardCall(t, folder, "session-b", "rm -rf build-output", false)
+	// Each call a second after the one before, whatever the wall clock does (a laptop may sleep).
+	start := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	t.Cleanup(func() { processClock = nil })
+	for index, call := range [][2]string{{"session-a", "rm -rf src"}, {"session-a", "jst trash src"},
+		{"session-b", "rm -rf build-output"}, {"session-b", "rm -rf build-output"}} {
+		at := start.Add(time.Duration(index) * time.Second)
+		processClock = func() time.Time { return at }
+		guardCall(t, folder, call[0], call[1], false)
+	}
 	spans := telemetrytest.Spans(t, folder)
 	report, _ := stats.Compute("refusals", stats.Input{Spans: spans})
 	if len(report.Rows) != 1 {

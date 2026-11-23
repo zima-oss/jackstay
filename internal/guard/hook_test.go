@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,18 +44,39 @@ func runHookWithin(t *testing.T, within budgets, home string, payload any, raw s
 		}
 		text = string(data)
 	}
-	var stdout, stderr bytes.Buffer
+	// Locked: a worker that outlived its answer budget may still write after Hook returned.
+	var stdout, stderr lockedBuffer
 	if code := hookWith(within, strings.NewReader(text), &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if stdout.Len() == 0 {
-		return nil, stderr.String()
+	written, said := stdout.snapshot(), string(stderr.snapshot())
+	if len(written) == 0 {
+		return nil, said
 	}
+	// The first answer is the hook's; a late worker's write, if any, follows it.
 	var out map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("stdout %q: %v", stdout.String(), err)
+	if err := json.NewDecoder(bytes.NewReader(written)).Decode(&out); err != nil {
+		t.Fatalf("stdout %q: %v", written, err)
 	}
-	return out, stderr.String()
+	return out, said
+}
+
+// lockedBuffer is a buffer safe to write from a goroutine the test does not wait for.
+type lockedBuffer struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (locked *lockedBuffer) Write(data []byte) (int, error) {
+	locked.mutex.Lock()
+	defer locked.mutex.Unlock()
+	return locked.buffer.Write(data)
+}
+
+func (locked *lockedBuffer) snapshot() []byte {
+	locked.mutex.Lock()
+	defer locked.mutex.Unlock()
+	return bytes.Clone(locked.buffer.Bytes())
 }
 
 func bashCall(command, cwd string) map[string]any {

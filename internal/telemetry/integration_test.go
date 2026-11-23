@@ -84,7 +84,8 @@ func TestOneTraceAcrossProcesses(t *testing.T) {
 // A stopped `jst test` ends its spans as stopped, and still dies by the signal.
 func TestStoppedBySignal(t *testing.T) {
 	folder, home, env := project(t)
-	command := exec.Command(binary, "test", "--", "sleep", "30")
+	// A child that never ends by itself: only the signal ends the run.
+	command := exec.Command(binary, "test", "--", "sleep", "3600")
 	command.Dir, command.Env = folder, env
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
