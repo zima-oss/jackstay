@@ -493,3 +493,14 @@ func TestASkippedBranchDoesNotTaintAComposite(t *testing.T) {
 		t.Fatalf("the skipped branch tainted x-suite: %s", w.lastLine())
 	}
 }
+
+// A check is its exit status alone: an evidence or veto pattern in its output changes nothing.
+func TestACheckIgnoresOutputPatterns(t *testing.T) {
+	section := map[string]any{"scopes": map[string]any{
+		"x-lint": map[string]any{"run": counted("x-lint", "echo ERROR; echo ran 3 tests; true"), "kind": "check",
+			"evidence": "ran ([0-9]+) tests", "veto": "^ERROR"},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("x-lint"), 0)
+	w.expectLast("outcome=passed (a check: it ended 0")
+}

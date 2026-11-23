@@ -1040,7 +1040,7 @@
           "type": "array"
         },
         "judge": {
-          "description": "Judges every scope and step that sets no judge of its own (default `exit`).",
+          "description": "Judges every scope and step that sets no judge of its own (default `exit`). A `kind: check` scope ignores it.",
           "enum": [
             "swift-test",
             "steps",
@@ -1137,7 +1137,7 @@
                 "type": "array"
               },
               "judge": {
-                "description": "Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`). A scope with `kind: check` is always judged by `exit`.",
+                "description": "Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`). A scope with `kind: check` is always judged by `exit`: an explicit judge other than `exit` is refused.",
                 "enum": [
                   "swift-test",
                   "steps",

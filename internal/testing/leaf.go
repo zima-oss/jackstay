@@ -3,6 +3,7 @@ package scopes
 import (
 	"errors"
 	"fmt"
+	"github.com/zima-oss/jackstay/internal/config"
 	"io"
 	"os"
 	"path/filepath"
@@ -439,6 +440,10 @@ func (out *sink) Line(stream supervise.Stream, text string) error {
 // judgeOptions are the leaf's judge: its kind, engines, evidence, and its own veto with the
 // receipts entry's.
 func (run *leafRun) judgeOptions() judge.Options {
+	if run.leaf.stepKind == config.StepKindCheck {
+		// A check is its exit status alone: no evidence, veto or report changes it (land.md 7.1).
+		return judge.Options{Kind: judge.Exit}
+	}
 	options := judge.Options{Kind: judge.Kind(run.leaf.judge), Evidence: run.leaf.evidence, EmptyExit: run.leaf.emptyExit}
 	if options.Kind == judge.GoJSON {
 		options.GoSelection = run.words.goSelection
