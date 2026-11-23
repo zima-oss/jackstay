@@ -178,16 +178,23 @@ func under(name, spec string) bool {
 // inside is a given path relative to the top, or why it cannot be used. Its folder's links are
 // followed (the top git gives is a real path); the path's last part is not.
 func (run Run) inside(top, given string) (string, string) {
-	absolute := given
-	if !filepath.IsAbs(absolute) {
-		absolute = filepath.Join(run.Working, given)
+	// The path the system means: `link/..` follows the link, as git and the shell do; a missing
+	// parent (a deleted tracked folder) is read as written.
+	real, err := trash.PhysicalFrom(run.Working, given)
+	if err != nil && slices.Contains(strings.Split(filepath.ToSlash(given), "/"), "..") {
+		// Read as written, `..` would skip a link it cannot follow: another file than the system's.
+		return "", fmt.Sprintf("%s cannot be resolved (%v), and its `..` cannot be read without it: name the path without `..`", given, err)
 	}
-	absolute = filepath.Clean(absolute)
-	folder, base := filepath.Dir(absolute), filepath.Base(absolute)
-	if resolved, err := filepath.EvalSymlinks(folder); err == nil {
-		folder = resolved
+	if err != nil {
+		absolute := given
+		if !filepath.IsAbs(absolute) {
+			absolute = filepath.Join(run.Working, given)
+		}
+		real = filepath.Clean(absolute)
+		if resolved, err := filepath.EvalSymlinks(filepath.Dir(real)); err == nil {
+			real = filepath.Join(resolved, filepath.Base(real))
+		}
 	}
-	real := filepath.Join(folder, base)
 	if real == top {
 		return ".", ""
 	}

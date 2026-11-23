@@ -177,7 +177,7 @@ func Folder() (string, error) {
 // real folder from inside itself (a whole checkout carries its own jackstay.json), anything else
 // from the folder that holds it.
 func Origin(given string) string {
-	absolute, err := filepath.Abs(given)
+	absolute, err := Physical(given)
 	if err != nil {
 		return filepath.Dir(given)
 	}
@@ -185,6 +185,50 @@ func Origin(given string) string {
 		return absolute
 	}
 	return filepath.Dir(absolute)
+}
+
+// Physical is the absolute path the system means by given, from the working folder: its parent
+// resolved through links as the system walks it (so `link/../x` is beside the link's target, as
+// `ls` sees it, never beside the link), then its last element appended, so a final link stays the
+// link itself. A last element `.` or `..` resolves the whole path.
+func Physical(given string) (string, error) {
+	text := given
+	if !filepath.IsAbs(text) {
+		working, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		text = working + "/" + text // joined without cleaning: `..` must follow links
+	}
+	return physicalOf(text)
+}
+
+// PhysicalFrom is Physical with an explicit working folder.
+func PhysicalFrom(working, given string) (string, error) {
+	if filepath.IsAbs(given) {
+		return physicalOf(given)
+	}
+	return physicalOf(working + "/" + given)
+}
+
+func physicalOf(text string) (string, error) {
+	trimmed := strings.TrimRight(text, "/")
+	if trimmed == "" {
+		return "/", nil
+	}
+	cut := strings.LastIndexByte(trimmed, '/')
+	parent, last := trimmed[:cut], trimmed[cut+1:]
+	if parent == "" {
+		parent = "/"
+	}
+	if last == "." || last == ".." {
+		return filepath.EvalSymlinks(trimmed)
+	}
+	resolved, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, last), nil
 }
 
 // ProjectOf is the project a folder is in, for an entry's record.
@@ -224,9 +268,9 @@ func MoveForDiscard(folder, given, project, session string, keepDays int, now ti
 }
 
 func move(folder, given, project, session string, keepDays int, now time.Time, expected *Replaced) (Entry, error) {
-	source, err := filepath.Abs(given)
+	source, err := Physical(given)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, fmt.Errorf("%s: %w", given, err)
 	}
 	info, err := os.Lstat(source)
 	if err != nil {

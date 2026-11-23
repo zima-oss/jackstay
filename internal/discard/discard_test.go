@@ -474,3 +474,33 @@ func TestKeptDaysAreReadBeforeAnyPathChanges(t *testing.T) {
 		t.Fatal("no copy of a.txt was kept")
 	}
 }
+
+// `link/../x` names the x beside the link's target, as git and the shell see it.
+func TestDiscardFollowsALinkedParentAsTheSystemDoes(t *testing.T) {
+	w := newWorld(t, map[string]string{"other/x.txt": "head\n", "other/deep/keep": "k\n", "sub/x.txt": "head\n"})
+	w.repo.Write(map[string]string{"other/x.txt": "mine\n", "sub/x.txt": "mine\n"})
+	if err := os.Symlink(filepath.Join(w.repo.Root, "other", "deep"), filepath.Join(w.repo.Root, "sub", "link")); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.discard(w.repo.Root, "sub/link/../x.txt"); code != 0 {
+		t.Fatalf("exit %d: %s", code, w.errors.String())
+	}
+	if w.read("other/x.txt") != "head\n" || w.read("sub/x.txt") != "mine\n" {
+		t.Fatalf("other %q sub %q", w.read("other/x.txt"), w.read("sub/x.txt"))
+	}
+}
+
+// A `..` after a link that leads nowhere is refused, not read as written.
+func TestDiscardRefusesDotDotAfterADanglingLink(t *testing.T) {
+	w := newWorld(t, map[string]string{"sub/x.txt": "head\n"})
+	w.repo.Write(map[string]string{"sub/x.txt": "mine\n"})
+	if err := os.Symlink(filepath.Join(w.repo.Root, "gone", "run"), filepath.Join(w.repo.Root, "sub", "current")); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.discard(w.repo.Root, "sub/current/../x.txt"); code == 0 {
+		t.Fatal("a path through a dangling link was discarded")
+	}
+	if w.read("sub/x.txt") != "mine\n" {
+		t.Fatalf("sub/x.txt was changed: %q", w.read("sub/x.txt"))
+	}
+}
