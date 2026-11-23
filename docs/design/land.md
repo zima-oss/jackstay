@@ -3,10 +3,10 @@
 Status: for 0.6.0; sections 1 to 7 are built, except the CI workflow adopt writes for section 7.4.
 The input-hash cache of section 7.3 is not in 0.6.0: it is planned for a later version, and its
 design there may differ. It follows
-[W-090](../decisions/W-090-landing.md) (one forge-neutral `jst land`, hosting adapters, two autonomy
+[W-090](../decisions/W-090-the-shape-of-0-6-0.md#landing) (one forge-neutral `jst land`, hosting adapters, two autonomy
 modes chosen explicitly) and [W-092](../decisions/W-092-thin-land-and-where-tests-run.md) (the
 landing stays thin; where tests run is the project's declared split between local and CI) and
-[W-096](../decisions/W-096-task-graph-and-input-cache.md) (scopes as a task graph; the cache by their
+[W-096](../decisions/W-096-clear-limits-and-the-task-graph.md#task-graph) (scopes as a task graph; the cache by their
 inputs comes later). It keeps
 [W-047](../decisions/W-047-release-redesign-fixed-settings-no-one-off-imports.md) (`jackstay.json`
 changes alone and is a person's to merge) and
@@ -247,7 +247,7 @@ and `land.human_paths`: say so and stop; never merge on the host, never run `--c
 
 A run of `jst test` runs each scope at most once, after the scopes it depends on. The project
 declares which scopes CI runs and on which systems; CI is the gate for those, and a person's
-machine runs the rest. This follows [W-096](../decisions/W-096-task-graph-and-input-cache.md): a
+machine runs the rest. This follows [W-096](../decisions/W-096-clear-limits-and-the-task-graph.md#task-graph): a
 task graph on the model of monorepo task runners, with simple behaviour and written limits. It
 replaces the ordered lists of `steps` (section 7.7). The cache by input hash that W-096 also names
 is not in 0.6.0 (section 7.3), and neither is any reuse of a node's pass: 0.6.0 removes
@@ -277,7 +277,7 @@ store.
 | `kind` | `test` or `check` | undeclared | a scope with `run`: `test` must count tests to pass, `check` passes on exit 0 (below) |
 
 A system is Go's name for it: `darwin`, `linux`. The four keys need `"jackstay_schema": 3`
-([W-090](../decisions/W-090-compatibility-of-0-6-0.md)). The cache's keys, `inputs` and `cache`
+([W-090](../decisions/W-090-the-shape-of-0-6-0.md#compatibility)). The cache's keys, `inputs` and `cache`
 (section 7.3), are not accepted in 0.6.0.
 
 ```json
@@ -296,7 +296,7 @@ setting (`judge`, `timeout`, `lock_wait`, `lock`, `env`) belong to scopes with
 `run`. It passes when every dep eligible on this system (section 7.2) passed, and at least one
 did; a dep that ended `exited-0` makes it `exited-0`, not a pass.
 
-**Step kinds** ([W-107](../decisions/W-107-step-kinds.md), after Bazel's test and build targets and Nx's targets). A scope with `run`
+**Step kinds** ([W-107](../decisions/W-107-trash-and-step-kinds.md#step-kinds), after Bazel's test and build targets and Nx's targets). A scope with `run`
 may say `kind`:
 
 - `test`: it must count tests to pass, so its judge cannot be `exit` (`jst check` refuses it).

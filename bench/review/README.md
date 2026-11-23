@@ -1,6 +1,6 @@
 # Review wrapper measurement
 
-What `jst review` adds over calling a reviewer directly, measured ([W-090](../../docs/decisions/W-090-review-of-0-6-0.md)).
+What `jst review` adds over calling a reviewer directly, measured ([W-090](../../docs/decisions/W-090-the-shape-of-0-6-0.md#review)).
 `just review-bench` builds `jst`, makes a throwaway repository from `testdata/fixture` (a base and
 three commits, each a range), and has every arm review every range, run after run:
 

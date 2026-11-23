@@ -1,8 +1,44 @@
-# W-096 — Test scopes run as a task graph; a cache by their inputs comes later
+# W-096 — Clear limits over more machinery, and test scopes as a task graph
 
 Date: 2026-11-20.
 
-## Context
+One ruling in 2 parts (clear limits, task graph); each part has its own context, decision and
+consequences.
+
+## Clear limits
+
+Clear limits over more machinery.
+
+### Context
+
+Review rounds kept asking for one more corner case to be covered, and each answer added machinery
+to a place that already drew such findings. No mechanism covers everything. Separately, CI runner
+minutes are rented, with a quota and a cost, and some work ran the same tests more than once on one
+commit.
+
+### Decision
+
+- Every mechanism has simple, clear behaviour and explicit limits, and what it does not do is
+  written down. Coverage is not taken to extremes.
+- A place that keeps drawing corner cases is narrowed, or an existing solution is taken, rather than
+  growing more machinery. Before inventing something, look at how others have already solved it.
+- CI does not run the same test twice on one commit, within written limits (concurrent jobs,
+  cache eviction), and jobs and steps are not duplicated; see the
+  [task-graph part](#task-graph).
+- A review finding that only asks to cover more exotic cases (rated `unusual`, with no ordinary-work
+  path, W-094) never takes a blocking severity. The reviewer's prompt says so.
+
+### Consequences
+
+Mechanisms stay small and their documentation names what they leave out, so a reader knows where
+the edge is. Some rare cases stay uncovered by choice, recorded as limits. CI workflows are checked
+for repeated tests and steps before they are added to.
+
+## Task graph
+
+Test scopes run as a task graph; a cache by their inputs comes later.
+
+### Context
 
 W-092 made where tests run a project's declared split between local and CI. Its first
 implementation had to merge, deduplicate and order composite scopes (the `steps` lists of a gate)
@@ -11,7 +47,7 @@ run twice, or run before the scope it needs. Monorepo task runners solved this l
 graph and a cache keyed by a hash of the task's inputs. CI minutes are limited and cost money, so a
 test that runs twice on one commit in CI is waste.
 
-## Decision
+### Decision
 
 - **A task graph.** A scope declares `deps`, the scopes that must pass before it. A run builds the
   graph of the scopes asked for and their deps, refuses a cycle, sorts it topologically in a stable
@@ -28,7 +64,7 @@ test that runs twice on one commit in CI is waste.
   system's CI job. It cannot see inside a command, so a project keeps the tests of its CI scopes on one system
   disjoint: one scope does not rerun another's tests.
 
-## Consequences
+### Consequences
 
 The [landing design](../design/land.md) section 7 is the specification. `jackstay.json` gains
 `deps` beside `ci` and `systems`, with schema 3; a schema-2 `steps` list is read as `deps`, so

@@ -65,7 +65,7 @@ the installed folder (section 7.1).
 | `supervise`, `proctree`, `procs`, `wait`, `flock`, `lock` | starting and stopping processes; `jst bg`, `jst procs`, `jst wait`; the machine-wide lock, `jst lock` | section 5 |
 | `install`, `layout`, `prove`, `doctor`, `version` | `jst install`, `jst uninstall`, the prefix's layout, the probes, `jst doctor`; the version constant and build commit | section 7 |
 | `land`, `hosting` | `jst land`; the host interface it asks | [land.md](land.md) |
-| `status` | `jst status`: the one read-only overview, reading other packages through their public read functions | [W-090](../decisions/W-090-one-status-command.md) |
+| `status` | `jst status`: the one read-only overview, reading other packages through their public read functions | [W-090](../decisions/W-090-the-shape-of-0-6-0.md#overview) |
 | `sessionchat`, `chatevent` | `jst chat`, `jst hook claude`; jackstay's own events published into the chat | [chat.md](chat.md) |
 | `contextbrief` | `jst brief` | [context-brief.md](context-brief.md) |
 | `choices` | the questions `jst setup` and `jst adopt` both put to a person (reviewer, chat) | [adopt.md](adopt.md) |
