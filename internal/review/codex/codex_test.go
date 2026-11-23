@@ -23,7 +23,10 @@ dir=$(dirname "$0")
 env > "$dir/env"
 if [ "$1" = "--version" ]; then
   echo 'codex-cli 9.9.9'
-  if [ "$(cat "$dir/mode")" = versionhang ]; then sleep 30 & fi
+  if [ "$(cat "$dir/mode")" = versionhang ]; then
+    sleep 3000 &
+    echo "$!" > "$dir/pids.tmp"; mv "$dir/pids.tmp" "$dir/pids"
+  fi
   exit 0
 fi
 printf '%s\n' "$@" > "$dir/argv"
@@ -59,9 +62,12 @@ case "$mode" in
     echo '{"type":"turn.completed"}'
     ;;
   version) echo "codex-cli 9.9.9" ;;
-  versionhang) echo "codex-cli 9.9.9"; sleep 30 & ;;
 esac
 `
+
+// fixtureBound is the deadline of a run or probe whose test is not about it: generous, so a loaded
+// machine never decides the outcome.
+const fixtureBound = 2 * time.Minute
 
 func setup(t *testing.T, mode string) Request {
 	t.Helper()
@@ -77,7 +83,7 @@ func setup(t *testing.T, mode string) Request {
 	if err := os.MkdirAll(tree, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	return Request{Command: program, Effort: "medium", Timeout: 10 * time.Second, Isolation: []string{"--ephemeral"},
+	return Request{Command: program, Effort: "medium", Timeout: fixtureBound, Isolation: []string{"--ephemeral"},
 		Tree: tree, Folder: filepath.Join(dir, "run"), Prompt: []byte("the prompt\n"), SchemaPath: filepath.Join(dir, "schema.json"),
 		Environ: []string{"PATH=/usr/bin:/bin", "HOME=/home/x", "CLAUDE_SESSION=1", "JACKSTAY_HOME=/w", "OPENAI_API_KEY=k", "GIT_DIR=/g",
 			"GH_TOKEN=t", "ANTHROPIC_API_KEY=a", "HTTPS_PROXY=http://proxy:3128", "SSL_CERT_FILE=/ca.pem", "SSH_AUTH_SOCK=/s", "TMPDIR=/caller"}}
@@ -326,7 +332,7 @@ func TestMissingProgram(t *testing.T) {
 func TestProbe(t *testing.T) {
 	request := setup(t, "version")
 	t.Setenv("CLAUDE_SESSION_PROBE", "1")
-	version, err := Probe(context.Background(), request.Command)
+	version, err := probeWithin(context.Background(), request.Command, fixtureBound)
 	if err != nil || version != "codex-cli 9.9.9" {
 		t.Fatal(version, err)
 	}
@@ -335,15 +341,22 @@ func TestProbe(t *testing.T) {
 	}
 }
 
+// A descendant that never ends holding the output does not hold the probe: were it held, the
+// budget would end it with an error; the answer comes and the descendant is ended.
 func TestProbeNotHeldByADescendant(t *testing.T) {
 	request := setup(t, "versionhang")
-	started := time.Now()
-	version, err := Probe(context.Background(), request.Command)
+	version, err := probeWithin(context.Background(), request.Command, fixtureBound)
 	if err != nil || version != "codex-cli 9.9.9" {
 		t.Fatal(version, err)
 	}
-	if time.Since(started) > 8*time.Second {
-		t.Fatalf("the probe was held %s", time.Since(started))
+	expectGone(t, pidsOf(t, request))
+}
+
+// The probe's budget ends a probe that has not answered within it.
+func TestProbeBudgetEndsTheProbe(t *testing.T) {
+	request := setup(t, "version")
+	if version, err := probeWithin(context.Background(), request.Command, time.Nanosecond); err == nil {
+		t.Fatalf("a probe past its budget answered %q", version)
 	}
 }
 

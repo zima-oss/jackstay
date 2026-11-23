@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -49,7 +50,8 @@ func project(t *testing.T) (folder, home string, env []string) {
 			env = append(env, pair)
 		}
 	}
-	return folder, home, append(env, "JACKSTAY_HOME="+home, "CLAUDE_CODE_SESSION_ID=integration-session")
+	return folder, home, append(env, "JACKSTAY_HOME="+home, "CLAUDE_CODE_SESSION_ID=integration-session",
+		telemetry.FinishWaitVariable+"="+telemetrytest.GenerousFinishWait)
 }
 
 // A jackstay command run by `jst test --` is one trace: the command, the run, the child, the inner jackstay.
@@ -82,21 +84,41 @@ func TestOneTraceAcrossProcesses(t *testing.T) {
 // A stopped `jst test` ends its spans as stopped, and still dies by the signal.
 func TestStoppedBySignal(t *testing.T) {
 	folder, home, env := project(t)
-	command := exec.Command(binary, "test", "--", "sleep", "30")
+	// A child that never ends by itself and says when it runs: it writes its pid, then waits forever.
+	ready := filepath.Join(t.TempDir(), "child.pid")
+	command := exec.Command(binary, "test", "--", "sh", "-c", `echo $$ > "$0.tmp" && mv "$0.tmp" "$0" && exec tail -f /dev/null`, ready)
 	command.Dir, command.Env = folder, env
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if found, _ := filepath.Glob(filepath.Join(home, "demo", "outputs", "*.log")); len(found) > 0 {
+	defer func() { _ = command.Process.Kill() }()
+	// The child is in its own process group: if the run did not end by the signal, cleanup ends it by
+	// its pid; once it did, jst has ended the child, and its pid may belong to another process.
+	signalled := false
+	defer func() {
+		if signalled {
+			return
+		}
+		if data, err := os.ReadFile(ready); err == nil { // #nosec G304 -- the test's own file
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	}()
+	// The child running means jackstay listens for the stop and has begun the run.
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		if _, err := os.Stat(ready); err == nil {
 			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the child did not start")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	time.Sleep(200 * time.Millisecond)
 	_ = command.Process.Signal(syscall.SIGTERM)
 	err := command.Wait()
+	signalled = err != nil
 	status, _ := err.(*exec.ExitError)
 	if status == nil || status.Sys().(syscall.WaitStatus).Signal() != syscall.SIGTERM {
 		t.Fatalf("jackstay did not die by SIGTERM: %v", err)

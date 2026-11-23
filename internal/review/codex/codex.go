@@ -237,13 +237,21 @@ func CheckEnvironment(codexHome, marker string) string {
 	return ""
 }
 
-// Probe asks the program its version (10 s); an error when it cannot be run.
+// probeBudget is how long Probe waits for the version.
+const probeBudget = 10 * time.Second
+
+// Probe asks the program its version (probeBudget); an error when it cannot be run.
 func Probe(ctx context.Context, command string) (string, error) {
+	return probeWithin(ctx, command, probeBudget)
+}
+
+// probeWithin is Probe under a given budget, so tests on a loaded machine are not decided by it.
+func probeWithin(ctx context.Context, command string, budget time.Duration) (string, error) {
 	path, err := exec.LookPath(command)
 	if err != nil {
 		return "", fmt.Errorf("codex is not installed (%s): %w", command, err)
 	}
-	probeContext, cancel := context.WithTimeout(ctx, 10*time.Second)
+	probeContext, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	var stdout bytes.Buffer
 	probe := GroupSpec([]string{path, "--version"})

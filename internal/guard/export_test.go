@@ -41,7 +41,8 @@ func TestWordsAreTheSimpleCommandsAsWritten(t *testing.T) {
 
 func TestNoGitCountsForcedBranchDeletesAndNotSideTaking(t *testing.T) {
 	decide := func(line string) []string {
-		return Decide(line, Settings{Folder: "/nowhere/project", Environ: map[string]string{}, Home: "/Users/someone", Git: NoGit{}}).Rules()
+		return Decide(line, Settings{Folder: "/nowhere/project", Environ: map[string]string{}, Home: "/Users/someone", Git: NoGit{},
+			Deadline: testBudget}).Rules()
 	}
 	if rules := decide("git branch -D feature"); len(rules) == 0 {
 		t.Errorf("a forced branch delete: nothing found")

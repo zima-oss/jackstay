@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -58,7 +57,9 @@ func TestTheContextsEndStopsTheWholeGroup(t *testing.T) {
 	}
 	result := make(chan ended, 1)
 	go func() {
-		outcome, err := Run(nil, Spec{Mode: Group, Context: runContext, Grace: 5 * time.Second,
+		// The grace is the outer bound: the sleep dies by TERM, so a loaded machine slow to reap it
+		// must not turn the stop into a kill.
+		outcome, err := Run(nil, Spec{Mode: Group, Context: runContext, Grace: outerTimeout,
 			Argv: []string{"sh", "-c", `sleep 600 & echo $! > "$0.tmp"; mv "$0.tmp" "$0"; wait`, left}})
 		result <- ended{outcome, err}
 	}()

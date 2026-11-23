@@ -18,6 +18,14 @@ import (
 // toolTimeout bounds one tool call, the binding's wait included.
 const toolTimeout = 10 * time.Second
 
+// toolDeadline is the server's bound for one tool call: toolTimeout unless a test gave its own.
+func (server *Server) toolDeadline() time.Duration {
+	if server.toolBudget > 0 {
+		return server.toolBudget
+	}
+	return toolTimeout
+}
+
 type tool struct {
 	name, description string
 	properties        map[string]any
@@ -163,7 +171,7 @@ func (server *Server) call(raw json.RawMessage) any {
 			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), server.toolDeadline())
 	defer cancel()
 	session, err := server.session(ctx)
 	if err != nil {
@@ -443,7 +451,7 @@ func (server *Server) reviewStatus(input arguments) (any, error) {
 	if strings.TrimSpace(input.Task) == "" {
 		return nil, errors.New("review.status needs a task")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), toolTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), server.toolDeadline())
 	defer cancel()
 	background, err := reviewBackground(here)
 	if err != nil {

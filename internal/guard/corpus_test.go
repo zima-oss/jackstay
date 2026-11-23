@@ -161,7 +161,7 @@ func settingsOf(one corpusCase) Settings {
 	// The corpus checks what the guard decides, not how fast it reads: a generous budget keeps a
 	// loaded machine from turning a case into `too-long`. TestTheReadingDeadline covers the bound.
 	return Settings{Folder: folder, Environ: env, Scratch: scratch, Home: "/Users/someone", ProjectRoot: root,
-		Guard: one.Guard, Git: corpusGit{Git: NewGit(nil), answers: answers}, Deadline: corpusDeadline}
+		Guard: one.Guard, Git: corpusGit{Git: testGit(), answers: answers}, Deadline: corpusDeadline}
 }
 
 // corpusDeadline is the reading's budget in the corpus, far above any machine's reading time.

@@ -31,9 +31,13 @@ func TestJobsReportsStatesWithoutRemovingOrStopping(t *testing.T) {
 	}
 }
 
+// repositoryFixtureBound is Git's budget in tests not about it: generous, so a loaded machine never
+// decides the outcome.
+const repositoryFixtureBound = 2 * time.Minute
+
 func TestTheRepositoryOfAStartIsRecorded(t *testing.T) {
 	outside := t.TempDir()
-	if id := repositoryOf(outside); id != "" {
+	if id := repositoryWithin(outside, repositoryFixtureBound); id != "" {
 		t.Fatalf("a folder outside Git has repository %q", id)
 	}
 	inside := t.TempDir()
@@ -49,8 +53,19 @@ func TestTheRepositoryOfAStartIsRecorded(t *testing.T) {
 		t.Fatal(err)
 	}
 	want, err := gitcli.CommonFolderInode(common)
-	if id := repositoryOf(folder); err != nil || id != want || !strings.HasPrefix(id, "inode:") {
+	if id := repositoryWithin(folder, repositoryFixtureBound); err != nil || id != want || !strings.HasPrefix(id, "inode:") {
 		t.Fatalf("repository %q, want %q (%v)", id, want, err)
+	}
+}
+
+// Past its budget, Git names no repository, even for a folder inside one.
+func TestTheRepositoryBudgetLeavesTheRepositoryUnnamed(t *testing.T) {
+	inside := t.TempDir()
+	if output, err := exec.Command("git", "init", "-q", inside).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %s %v", output, err)
+	}
+	if id := repositoryWithin(inside, time.Nanosecond); id != "" {
+		t.Fatalf("a repository named past the budget: %q", id)
 	}
 }
 

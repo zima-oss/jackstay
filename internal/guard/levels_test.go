@@ -60,7 +60,8 @@ func rowsOfTable() []string {
 
 func TestZshGlobWarnsByDefaultAndRefusesWhenSet(t *testing.T) {
 	folder := realFolder(t)
-	settings := Settings{Folder: folder, Environ: map[string]string{"SHELL": "/bin/zsh"}, Home: "/Users/someone", Git: NewGit(nil)}
+	settings := Settings{Folder: folder, Environ: map[string]string{"SHELL": "/bin/zsh"}, Home: "/Users/someone", Git: testGit(),
+		Deadline: testBudget}
 	decision := Decide("ls *.nothing", settings)
 	if len(decision.Findings) != 0 || len(decision.Warned) != 1 || decision.Warned[0].Rule != "zsh-glob" {
 		t.Fatalf("default: %+v", decision)
@@ -76,7 +77,7 @@ func TestZshGlobWarnsByDefaultAndRefusesWhenSet(t *testing.T) {
 }
 
 func TestEachLevelOfADestructiveRow(t *testing.T) {
-	settings := Settings{Folder: realFolder(t), Home: "/Users/someone", Git: NoGit{}}
+	settings := Settings{Folder: realFolder(t), Home: "/Users/someone", Git: NoGit{}, Deadline: testBudget}
 	for level, refused := range map[string]bool{"refuse": true, "warn": false, "off": false} {
 		settings.Guard = map[string]any{"rules": withLevel(nil, "git-reset-hard", level)}
 		decision := Decide("git reset --hard && rm -r /Users/someone/project", settings)
@@ -91,7 +92,7 @@ func TestEachLevelOfADestructiveRow(t *testing.T) {
 }
 
 func TestTheRowsThatCannotJudgeAreNeverLoosened(t *testing.T) {
-	settings := Settings{Folder: realFolder(t), Home: "/Users/someone", Git: NoGit{},
+	settings := Settings{Folder: realFolder(t), Home: "/Users/someone", Git: NoGit{}, Deadline: testBudget,
 		Guard: map[string]any{"rules": map[string]any{"git-config-alias": map[string]any{"level": "off"}}}}
 	if got := Decide("git -c alias.x=status reset --hard", settings).Rules(); !slices.Contains(got, "git-config-alias") {
 		t.Fatalf("a row that cannot judge was loosened: %v", got)
@@ -122,7 +123,7 @@ func TestRowsThatMeetOnOneCommandAreEachReported(t *testing.T) {
 		"git push --force --prune origin":            {"git-push-force", "git-push-prune"},
 		"git update-ref --stdin":                     {"git-update-ref-delete", "git-update-ref-move"},
 	} {
-		settings := Settings{Folder: folder, Home: "/Users/someone", Git: NewGit(nil), Guard: refuseAll}
+		settings := Settings{Folder: folder, Home: "/Users/someone", Git: testGit(), Guard: refuseAll, Deadline: testBudget}
 		got := Decide(command, settings).Rules()
 		for _, row := range rows {
 			if !slices.Contains(got, row) {
@@ -201,7 +202,7 @@ func TestPathExceptionsOfTheDeletingRules(t *testing.T) {
 	if err := os.Symlink("../Sources/work/data", filepath.Join(folder, "Generated", "deep")); err != nil {
 		t.Fatal(err)
 	}
-	settings := Settings{Folder: folder, Home: "/Users/someone", ProjectRoot: folder, Guard: guard, Git: NoGit{},
+	settings := Settings{Folder: folder, Home: "/Users/someone", ProjectRoot: folder, Guard: guard, Git: NoGit{}, Deadline: testBudget,
 		Environ: map[string]string{"TMPDIR": "/var/folders/ab/cdef/T/"}}
 	for command, refused := range map[string]bool{
 		"rm -r Generated/cache":                                               false,
@@ -246,7 +247,8 @@ func TestAPatternOverTheTopIsNotApplied(t *testing.T) {
 	guard := map[string]any{"rules": map[string]any{
 		"rm-recursive": map[string]any{"paths": []any{"~/" + filepath.Base(folder)}},
 	}}
-	decision := Decide("rm -r Sources", Settings{Folder: folder, Home: home, ProjectRoot: folder, Guard: guard, Git: NoGit{}})
+	decision := Decide("rm -r Sources", Settings{Folder: folder, Home: home, ProjectRoot: folder, Guard: guard, Git: NoGit{},
+		Deadline: testBudget})
 	if !slices.Contains(decision.Rules(), "rm-recursive") ||
 		!slices.ContainsFunc(decision.Warnings, func(warning Warning) bool { return warning.ID == warnException }) {
 		t.Fatalf("%+v", decision)

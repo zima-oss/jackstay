@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,10 +15,23 @@ import (
 	"github.com/zima-oss/jackstay/internal/telemetry/telemetrytest"
 )
 
+// generousBudgets give the hook's real work room on a loaded machine; only a budget's own test
+// shortens one.
+var generousBudgets = budgets{answer: testBudget, exit: testBudget, reading: testBudget, question: testBudget,
+	call: testBudget}
+
 // runHook runs the hook as the guard command runs it, its span written to home's journal.
 func runHook(t *testing.T, home string, payload any, raw string) (map[string]any, string) {
 	t.Helper()
+	return runHookWithin(t, generousBudgets, home, payload, raw)
+}
+
+// runHookWithin is runHook with the hook's budgets set to within for the run.
+func runHookWithin(t *testing.T, within budgets, home string, payload any, raw string) (map[string]any, string) {
+	t.Helper()
 	t.Setenv("JACKSTAY_HOME", home)
+	// The journal is read back: Finish waits for its write however long a loaded machine takes.
+	t.Setenv(telemetry.FinishWaitVariable, telemetrytest.GenerousFinishWait)
 	telemetry.Reset()
 	t.Cleanup(telemetry.Reset)
 	telemetry.Begin("guard", nil)
@@ -30,18 +44,39 @@ func runHook(t *testing.T, home string, payload any, raw string) (map[string]any
 		}
 		text = string(data)
 	}
-	var stdout, stderr bytes.Buffer
-	if code := Hook(strings.NewReader(text), &stdout, &stderr); code != 0 {
+	// Locked: a worker that outlived its answer budget may still write after Hook returned.
+	var stdout, stderr lockedBuffer
+	if code := hookWith(within, strings.NewReader(text), &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	if stdout.Len() == 0 {
-		return nil, stderr.String()
+	written, said := stdout.snapshot(), string(stderr.snapshot())
+	if len(written) == 0 {
+		return nil, said
 	}
+	// The first answer is the hook's; a late worker's write, if any, follows it.
 	var out map[string]any
-	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
-		t.Fatalf("stdout %q: %v", stdout.String(), err)
+	if err := json.NewDecoder(bytes.NewReader(written)).Decode(&out); err != nil {
+		t.Fatalf("stdout %q: %v", written, err)
 	}
-	return out, stderr.String()
+	return out, said
+}
+
+// lockedBuffer is a buffer safe to write from a goroutine the test does not wait for.
+type lockedBuffer struct {
+	mutex  sync.Mutex
+	buffer bytes.Buffer
+}
+
+func (locked *lockedBuffer) Write(data []byte) (int, error) {
+	locked.mutex.Lock()
+	defer locked.mutex.Unlock()
+	return locked.buffer.Write(data)
+}
+
+func (locked *lockedBuffer) snapshot() []byte {
+	locked.mutex.Lock()
+	defer locked.mutex.Unlock()
+	return bytes.Clone(locked.buffer.Bytes())
 }
 
 func bashCall(command, cwd string) map[string]any {
@@ -282,10 +317,10 @@ func TestHookFindsTheProjectFromTheWorkingFolder(t *testing.T) {
 
 func TestCheckCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := check([]string{"--cwd", "/tmp", "--", "git clean -fd"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "git clean -n") {
+	if code := checkWith(generousBudgets, []string{"--cwd", "/tmp", "--", "git clean -fd"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "git clean -n") {
 		t.Fatalf("%d %q", code, stderr.String())
 	}
-	if code := check([]string{"--cwd", "/tmp", "--", "git clean -n"}, &stdout, &stderr); code != 0 {
+	if code := checkWith(generousBudgets, []string{"--cwd", "/tmp", "--", "git clean -n"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("%d", code)
 	}
 }
@@ -346,12 +381,12 @@ func (failingWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
 // The advice follows trash.keep: an undo only when the project keeps what jst trash removes.
 func TestTrashAdviceFollowsTheKeepSetting(t *testing.T) {
 	for keep, want := range map[bool]string{false: "which logs what was deleted", true: "which can be undone"} {
-		decision := Decide("rm -r src", Settings{Folder: t.TempDir(), TrashKeep: keep})
+		decision := Decide("rm -r src", Settings{Folder: t.TempDir(), TrashKeep: keep, Git: testGit(), Deadline: testBudget})
 		if len(decision.Findings) == 0 || !strings.Contains(decision.Findings[0].Instead, want) {
 			t.Fatalf("keep %v: %+v", keep, decision.Findings)
 		}
 	}
-	decision := Decide("git reset --hard", Settings{Folder: t.TempDir()})
+	decision := Decide("git reset --hard", Settings{Folder: t.TempDir(), Git: testGit(), Deadline: testBudget})
 	if len(decision.Findings) == 0 || strings.Contains(decision.Findings[0].Instead, "restore") {
 		t.Fatalf("discard advice with keep off: %+v", decision.Findings)
 	}
