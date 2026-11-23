@@ -10,9 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
-	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -43,8 +41,6 @@ type Deletion struct {
 	Project string `json:"project"`
 	Session string `json:"session"`
 	Command string `json:"command"`
-	// Entry is the trash entry it went through; while that entry is still there, it is kept.
-	Entry string `json:"entry"`
 }
 
 // Keeps says whether the project around a folder keeps what jst trash and jst discard delete
@@ -62,73 +58,55 @@ func Session() string {
 	return os.Getenv("CLAUDE_SESSION_ID")
 }
 
-// deletingPrefix names an entry being deleted: renamed out of the entries, so neither a restore
-// nor a prune can reach it, and renamed back by nothing.
-const deletingPrefix = ".deleting-"
-
-// Purge deletes an entry for good. Under the entry's lock it is renamed aside (`.deleting-ID`),
-// then its deletion is logged and synced, then it is removed. A stop after the rename leaves the
-// aside folder, which Recover logs (unless logged) and removes; nothing is deleted unlogged, and
-// a restored entry is never logged as deleted.
-func Purge(folder, id, command string, now time.Time) (Deletion, error) {
-	place := filepath.Join(folder, id)
-	locked, err := lockEntry(place)
+// Delete deletes an item at its path for good (`trash.keep` off). Its deletion is logged and synced
+// first, so no deletion goes unlogged; written limit: a removal that then fails, or a command stopped
+// part way, leaves a line for an item still there, in whole or in part, and the command says so.
+func Delete(folder, given, project, session, command string, now time.Time) (Deletion, error) {
+	source, err := filepath.Abs(given)
 	if err != nil {
 		return Deletion{}, err
 	}
-	aside := filepath.Join(folder, deletingPrefix+id)
-	err = os.Rename(place, aside)
-	_ = locked.Close()
+	if err := holdsHome(folder, given, source); err != nil {
+		return Deletion{}, err
+	}
+	info, err := os.Lstat(source)
 	if err != nil {
-		return Deletion{}, fmt.Errorf("entry %s cannot be deleted, so it is kept: %w", id, err)
+		return Deletion{}, fmt.Errorf("%s: %w", given, err)
 	}
-	return finish(folder, aside, command, now)
-}
-
-// finish logs the deletion of an aside entry, unless the log has it, and removes it.
-func finish(folder, aside, command string, now time.Time) (Deletion, error) {
-	id := strings.TrimPrefix(filepath.Base(aside), deletingPrefix)
-	entry, err := readEntry(aside)
+	size, digest, err := digestTree(source)
 	if err != nil {
-		return Deletion{}, fmt.Errorf("entry %s cannot be read, so it is left at %s: %w", id, aside, err)
+		return Deletion{}, fmt.Errorf("%s cannot be read, so nothing was deleted: %w", given, err)
 	}
-	deletion := Deletion{Path: entry.Path, Kind: entry.Kind, Project: entry.Project, Session: entry.Session,
-		Command: command, Entry: id, DeletedAt: now.Format(time.RFC3339)}
-	if logged, ok := loggedDeletion(folder, id); ok {
-		deletion = logged
-	} else {
-		item := filepath.Join(aside, "item", filepath.Base(entry.Path))
-		if deletion.Size, deletion.SHA256, err = digestTree(item); err != nil {
-			return Deletion{}, fmt.Errorf("entry %s cannot be read, so it is left at %s: %w", id, aside, err)
-		}
-		if err := appendLog(folder, deletion); err != nil {
-			return Deletion{}, fmt.Errorf("the deletion of %s cannot be logged, so it is left at %s: %w", id, aside, err)
-		}
+	deletion := Deletion{DeletedAt: now.Format(time.RFC3339), Path: source, Kind: kindOf(info), Size: size, SHA256: digest,
+		Project: project, Session: session, Command: command}
+	if err := appendLog(folder, deletion); err != nil {
+		return Deletion{}, fmt.Errorf("the deletion of %s cannot be logged, so nothing was deleted: %w", given, err)
 	}
-	if err := os.RemoveAll(aside); err != nil {
-		return deletion, fmt.Errorf("logged as deleted, but %s could not be removed in full: %w", aside, err)
+	if err := os.RemoveAll(source); err != nil {
+		return deletion, fmt.Errorf("logged as deleted, but %s could not be removed in full: %w", given, err)
 	}
 	return deletion, nil
 }
 
-// Recover finishes the deletions a stopped command left aside; one in use by another is skipped.
-func Recover(folder string) {
-	names, err := os.ReadDir(folder)
-	if err != nil {
-		return
+// Log logs a deletion another command makes (jst discard), before it makes it.
+func Log(folder string, deletion Deletion) error {
+	return appendLog(folder, deletion)
+}
+
+// Digest is the size and digest of bytes, as a deletion records them.
+func Digest(data []byte) (int64, string) {
+	sum := sha256.Sum256(data)
+	return int64(len(data)), hex.EncodeToString(sum[:])
+}
+
+func kindOf(info fs.FileInfo) string {
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		return "link"
+	case info.IsDir():
+		return "folder"
 	}
-	for _, name := range names {
-		if !strings.HasPrefix(name.Name(), deletingPrefix) {
-			continue
-		}
-		aside := filepath.Join(folder, name.Name())
-		locked, err := lockEntry(aside)
-		if err != nil {
-			continue
-		}
-		_, _ = finish(folder, aside, "recovered", time.Now())
-		_ = locked.Close()
-	}
+	return "file"
 }
 
 // digestTree is an item's size and digest, read without following links.
@@ -236,18 +214,9 @@ func appendLog(folder string, deletion Deletion) error {
 	return file.Close()
 }
 
-// Deletions are the logged deletions, newest first, without those whose entry is still kept (a
-// delete stopped part way): those are listed as entries.
+// Deletions are the logged deletions, newest first.
 func Deletions(folder string) []Deletion {
-	var found []Deletion
-	for _, deletion := range readLog(folder) {
-		if deletion.Entry != "" && !strings.Contains(deletion.Entry, "/") {
-			if _, err := os.Lstat(filepath.Join(folder, deletion.Entry, "entry.json")); err == nil {
-				continue
-			}
-		}
-		found = append(found, deletion)
-	}
+	found := readLog(folder)
 	sort.SliceStable(found, func(first, second int) bool { return found[first].DeletedAt > found[second].DeletedAt })
 	return found
 }
@@ -283,17 +252,4 @@ func Measure(deletion Deletion) string {
 	return fmt.Sprintf("%d bytes, sha256 %s", deletion.Size, digest)
 }
 
-// wasDeleted says whether the log records the deletion of entry id.
-func wasDeleted(folder, id string) bool {
-	return slices.ContainsFunc(Deletions(folder), func(deletion Deletion) bool { return deletion.Entry == id })
-}
 
-// loggedDeletion is the log's line for entry id, if it has one.
-func loggedDeletion(folder, id string) (Deletion, bool) {
-	for _, deletion := range readLog(folder) {
-		if deletion.Entry == id {
-			return deletion, true
-		}
-	}
-	return Deletion{}, false
-}

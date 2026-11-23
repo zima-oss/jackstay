@@ -17,7 +17,7 @@
 - **Instead of `&` or `nohup`**, run `jst bg --for MIN --name N -- COMMAND`; `jst procs stop N`
   stops it.
 - **Instead of `git restore` or `git checkout -- PATH`**, run `jst discard PATH…`;
-  it logs the changes it drops (`jst trash list`).
+  it drops the changes and logs it (`jst trash list`).
 
 ### The other tools
 

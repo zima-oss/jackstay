@@ -130,31 +130,24 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	// Pruned first, so nothing this call moves is pruned by it, whatever keep_days says.
 	Prune(folder, time.Now())
-	Recover(folder)
 	status := 0
 	for _, given := range paths {
 		origin := Origin(given)
 		keep := Keeps(origin) // read before the move: a whole checkout carries its own setting away
-		var entry Entry
-		var err error
-		if keep {
-			entry, err = Move(folder, given, ProjectOf(origin), Session(), KeepDays(origin), time.Now())
-		} else {
-			entry, err = MoveToDelete(folder, given, ProjectOf(origin), Session(), time.Now())
-		}
-		if err != nil {
-			fmt.Fprintln(stderr, "jst trash:", err)
-			status = 1
-			continue
-		}
 		if !keep {
-			deletion, err := Purge(folder, entry.ID, "jst trash", time.Now())
+			deletion, err := Delete(folder, given, ProjectOf(origin), Session(), "jst trash", time.Now())
 			if err != nil {
-				fmt.Fprintf(stderr, "jst trash: %s: %v (`jst trash list` shows it)\n", entry.Path, err)
+				fmt.Fprintln(stderr, "jst trash:", err)
 				status = 1
 				continue
 			}
 			fmt.Fprintf(stdout, "jst trash: %s deleted, %s (logged: `jst trash list`)\n", deletion.Path, Measure(deletion))
+			continue
+		}
+		entry, err := Move(folder, given, ProjectOf(origin), Session(), KeepDays(origin), time.Now())
+		if err != nil {
+			fmt.Fprintln(stderr, "jst trash:", err)
+			status = 1
 			continue
 		}
 		fmt.Fprintf(stdout, "jst trash: %s -> %s (jst trash restore %s)\n", entry.Path, entry.ID, entry.ID)
@@ -213,21 +206,15 @@ func KeepDays(folder string) int {
 // Move puts one file or folder into the trash and records where it came from.
 // keepDays is the project's `trash.keep_days`, recorded on the entry.
 func Move(folder, given, project, session string, keepDays int, now time.Time) (Entry, error) {
-	return move(folder, given, project, session, keepDays, now, nil, false)
-}
-
-// MoveToDelete moves an item into an entry that stays held, for Purge: no pruning can take it
-// before its deletion is logged.
-func MoveToDelete(folder, given, project, session string, now time.Time) (Entry, error) {
-	return move(folder, given, project, session, 0, now, nil, true)
+	return move(folder, given, project, session, keepDays, now, nil)
 }
 
 // MoveForDiscard verifies what was moved and holds it until Mark records the replacement.
 func MoveForDiscard(folder, given, project, session string, keepDays int, now time.Time, expected Replaced) (Entry, error) {
-	return move(folder, given, project, session, keepDays, now, &expected, false)
+	return move(folder, given, project, session, keepDays, now, &expected)
 }
 
-func move(folder, given, project, session string, keepDays int, now time.Time, expected *Replaced, hold bool) (Entry, error) {
+func move(folder, given, project, session string, keepDays int, now time.Time, expected *Replaced) (Entry, error) {
 	source, err := filepath.Abs(given)
 	if err != nil {
 		return Entry{}, err
@@ -236,17 +223,8 @@ func move(folder, given, project, session string, keepDays int, now time.Time, e
 	if err != nil {
 		return Entry{}, fmt.Errorf("%s: %w", given, err)
 	}
-	home := filepath.Dir(folder)
-	realSource := source
-	if resolved, err := filepath.EvalSymlinks(filepath.Dir(source)); err == nil {
-		realSource = filepath.Join(resolved, filepath.Base(source))
-	}
-	realHome := home
-	if resolved, err := filepath.EvalSymlinks(home); err == nil {
-		realHome = resolved
-	}
-	if realSource == realHome || strings.HasPrefix(realHome+"/", realSource+"/") {
-		return Entry{}, fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
+	if err := holdsHome(folder, given, source); err != nil {
+		return Entry{}, err
 	}
 	kind := "file"
 	switch {
@@ -285,9 +263,6 @@ func move(folder, given, project, session string, keepDays int, now time.Time, e
 		}
 		return entry, nil
 	}
-	if hold {
-		return entry, nil
-	}
 	entry.Held = false
 	if err := writeRecord(place, entry); errors.Is(err, durable.ErrNotSynced) {
 		// The record is released, and prunable, but a crash may bring the held one back.
@@ -296,6 +271,23 @@ func move(folder, given, project, session string, keepDays int, now time.Time, e
 		entry.Held = true // the record on disk still holds it: kept until restored, never lost
 	}
 	return entry, nil
+}
+
+// holdsHome refuses the jackstay home, which holds the trash, and a folder that holds it.
+func holdsHome(folder, given, source string) error {
+	home := filepath.Dir(folder)
+	realSource := source
+	if resolved, err := filepath.EvalSymlinks(filepath.Dir(source)); err == nil {
+		realSource = filepath.Join(resolved, filepath.Base(source))
+	}
+	realHome := home
+	if resolved, err := filepath.EvalSymlinks(home); err == nil {
+		realHome = resolved
+	}
+	if realSource == realHome || strings.HasPrefix(realHome+"/", realSource+"/") {
+		return fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
+	}
+	return nil
 }
 
 // newEntry makes an entry's folder and writes its record under a lock; entry.ID is set.
@@ -510,9 +502,6 @@ func Entries(folder string) []Entry {
 	}
 	var found []Entry
 	for _, name := range names {
-		if strings.HasPrefix(name.Name(), deletingPrefix) {
-			continue // being deleted: no longer an entry
-		}
 		entry, err := readEntry(filepath.Join(folder, name.Name()))
 		if err == nil {
 			found = append(found, entry)
@@ -598,10 +587,8 @@ func restore(folder string, args []string, stdout, stderr io.Writer) int {
 	place := filepath.Join(folder, id)
 	locked, err := lockEntry(place)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) && wasDeleted(folder, id) {
-			fmt.Fprintf(stderr, "jst trash: %s was deleted, not kept (trash.keep is off): nothing to restore\n", id)
-		} else if errors.Is(err, fs.ErrNotExist) {
-			fmt.Fprintln(stderr, "jst trash: no entry", id)
+		if errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintln(stderr, "jst trash: no entry", id, "(with trash.keep off, nothing is kept to restore)")
 		} else {
 			fmt.Fprintf(stderr, "jst trash: cannot lock entry %s: %v\n", id, err)
 		}

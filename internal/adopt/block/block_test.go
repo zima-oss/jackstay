@@ -149,3 +149,15 @@ func TestLocateRefusesMarkersThatMakeNoBlock(t *testing.T) {
 		t.Fatalf("got %+v", found)
 	}
 }
+
+// The discard item promises an undo only when the project keeps what it drops (trash.keep on).
+func TestTheDiscardItemFollowsTrashKeep(t *testing.T) {
+	off := Render(Inputs{Config: map[string]any{}, Has: everyCommand})
+	if !strings.Contains(off, "it drops the changes and logs it") || strings.Contains(off, "trash restore") {
+		t.Fatalf("keep off:\n%s", off)
+	}
+	on := Render(Inputs{Config: map[string]any{"trash": map[string]any{"keep": "on"}}, Has: everyCommand})
+	if !strings.Contains(on, "`jst trash restore` brings the changes back") {
+		t.Fatalf("keep on:\n%s", on)
+	}
+}

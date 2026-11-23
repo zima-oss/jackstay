@@ -501,72 +501,32 @@ func TestTrashDeletesAndLogsByDefault(t *testing.T) {
 	if status := list(folder, nil, &out, &errs); status != 0 || !strings.Contains(out.String(), "deleted ") || !strings.Contains(out.String(), "5 bytes") {
 		t.Fatalf("list = %d: %s", status, out.String())
 	}
-	errs.Reset()
-	if status := restore(folder, []string{file.Entry}, &out, &errs); status != 1 || !strings.Contains(errs.String(), "was deleted, not kept") {
-		t.Fatalf("restore = %d: %s", status, errs.String())
-	}
 }
 
-// A deletion stopped after its entry was renamed aside is finished by the next command: logged
-// once, removed, never listed as kept and never restorable.
-func TestADeletionStoppedPartWayIsFinishedOnce(t *testing.T) {
-	folder := filepath.Join(t.TempDir(), ".trash")
-	for _, logged := range []bool{false, true} {
-		source := filepath.Join(t.TempDir(), "x")
-		if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		entry, err := MoveToDelete(folder, source, "p", "s", time.Now())
-		if err != nil {
-			t.Fatal(err)
-		}
-		aside := filepath.Join(folder, deletingPrefix+entry.ID)
-		if err := os.Rename(filepath.Join(folder, entry.ID), aside); err != nil {
-			t.Fatal(err)
-		}
-		if logged {
-			if err := appendLog(folder, Deletion{Path: source, Entry: entry.ID, Size: 1}); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if entries := Entries(folder); len(entries) != 0 {
-			t.Fatalf("an entry being deleted is listed as kept: %+v", entries)
-		}
-		Recover(folder)
-		if _, err := os.Lstat(aside); !errors.Is(err, fs.ErrNotExist) {
-			t.Fatalf("logged %v: the aside entry is still there", logged)
-		}
-		count := 0
-		for _, deletion := range Deletions(folder) {
-			if deletion.Entry == entry.ID {
-				count++
-			}
-		}
-		if count != 1 {
-			t.Fatalf("logged %v: %d log lines for the entry", logged, count)
-		}
+// A deletion is logged before anything is removed: one whose log cannot be written deletes nothing.
+func TestADeletionThatCannotBeLoggedDeletesNothing(t *testing.T) {
+	notAFolder := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notAFolder, nil, 0o600); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// An entry moved for deletion is held: no prune takes it before its deletion is logged.
-func TestAnEntryMovedForDeletionIsNotPruned(t *testing.T) {
-	folder := filepath.Join(t.TempDir(), ".trash")
 	source := filepath.Join(t.TempDir(), "x")
 	if err := os.WriteFile(source, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	entry, err := MoveToDelete(folder, source, "p", "s", time.Now().Add(-48*time.Hour))
-	if err != nil {
-		t.Fatal(err)
+	if _, err := Delete(filepath.Join(notAFolder, ".trash"), source, "p", "s", "jst trash", time.Now()); err == nil ||
+		!strings.Contains(err.Error(), "nothing was deleted") {
+		t.Fatalf("err %v", err)
 	}
-	if removed := Prune(folder, time.Now()); removed != 0 {
-		t.Fatalf("pruned %d", removed)
+	if _, err := os.Stat(source); err != nil {
+		t.Fatalf("deleted without a log: %v", err)
 	}
-	if _, err := Purge(folder, entry.ID, "jst trash", time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if deletions := Deletions(folder); len(deletions) != 1 || deletions[0].Size != 1 {
-		t.Fatalf("deletions %+v", deletions)
+}
+
+// The jackstay home, which holds the log, is refused.
+func TestDeleteRefusesTheJackstayHome(t *testing.T) {
+	home := t.TempDir()
+	if _, err := Delete(filepath.Join(home, ".trash"), home, "p", "s", "jst trash", time.Now()); err == nil {
+		t.Fatal("the home was deleted")
 	}
 }
 

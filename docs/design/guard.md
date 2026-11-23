@@ -424,25 +424,24 @@ The guard's advice for `rm -r` must be something a session can do, and macOS's `
 the sandbox (`afpAccessDenied`), so the advice is `jst trash PATH`; the guard knows `jst trash` as
 harmless. Use: the [guard guide](../guide/guard.md#delete-with-a-log-jst-trash).
 
-`trash.keep` (W-107) says whether an item is kept. `off`, the default: each item goes through an
-entry as below, held (so no prune takes it), and the entry is then deleted; `jst discard` does the
-same once its path is back at HEAD. `on` (experimental): the entry is kept, as described below.
+`trash.keep` (W-107) says whether an item is kept. `off`, the default: `jst trash` deletes each
+item where it is, and `jst discard` puts its new version in over what it drops, as when nothing
+differs; neither makes an entry. `on` (experimental): the item is kept as an entry, as described
+below. The guard's advice and the AGENTS block name the same commands either way, and promise an
+undo only with `on`.
 
-- A deletion renames the entry, under its lock, to `.deleting-<entry>` (no longer an entry: no
-  restore or prune reaches it), then logs and syncs the deletion, then removes it. A command
-  stopped after the rename leaves the folder aside; the next `jst trash` or `jst discard` logs it
-  (unless the log has it) and removes it. Nothing is deleted unlogged, and nothing restored is
-  logged as deleted.
+- Each deletion is logged and synced before anything is removed, so none goes unlogged. Written
+  limit: a removal that then fails, or a command stopped part way, leaves a line for an item still
+  there, in whole or in part; the command's error says so.
 - The deletion log is `<jackstay home>/.trash/deleted.jsonl`, one JSON line each: `deleted_at`,
-  `path`, `kind`, `size`, `sha256` (of a file's bytes or a link's target; of a folder, of a listing
-  of each entry's relative path, kind, mode and digest, so a folder is read whole; a pipe, socket or
-  device is never read), `project`, `session` (`CLAUDE_CODE_SESSION_ID`), `command` and the `entry`.
-  Writers take `deleted.lock` for the size check, the rollover and the append. At 1 MiB the log
-  becomes `deleted.1.jsonl`, replacing the one before; `jst trash list` reads both.
-- An entry that cannot be deleted (another command holds it, or its log line cannot be written) is
-  kept or left aside, and the command says so and fails.
-- `trash.keep` is read from the item's own project, before the item moves, as `keep_days` is; a
-  jackstay.json that cannot be used reads as `off`. It needs `"jackstay_schema": 3`.
+  `path`, `kind` (`file`, `link`, `folder`, or `staged` for an index version), `size`, `sha256` (of
+  a file's bytes or a link's target; of a folder, of a listing of each entry's relative path, kind,
+  mode and digest, so a folder is read whole; a pipe, socket or device is never read), `project`,
+  `session` (`CLAUDE_CODE_SESSION_ID`) and `command`. Writers take `deleted.lock` for the size
+  check, the rollover and the append. At 1 MiB the log becomes `deleted.1.jsonl`, replacing the one
+  before; `jst trash list` reads both.
+- `trash.keep` is read from each item's own project (for `jst discard`, each path's), before the
+  item moves, as `keep_days` is; a jackstay.json that cannot be used reads as `off`. It needs `"jackstay_schema": 3`.
 
 - `jst trash PATH…` moves each item into `<jackstay home>/.trash/<time>-<n>/` beside `entry.json`
   (`path` absolute, `moved_at`, `project`, `session`, `kind`). On the same volume the move is a

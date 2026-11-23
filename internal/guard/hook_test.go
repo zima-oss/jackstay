@@ -253,3 +253,17 @@ func toldTheAgentOnly(out map[string]any, text string) bool {
 	context, _ := specific["additionalContext"].(string)
 	return !decided && specific["hookEventName"] == "PreToolUse" && strings.Contains(context, text)
 }
+
+// The advice follows trash.keep: an undo only when the project keeps what jst trash removes.
+func TestTrashAdviceFollowsTheKeepSetting(t *testing.T) {
+	for keep, want := range map[bool]string{false: "which logs what was deleted", true: "which can be undone"} {
+		decision := Decide("rm -r src", Settings{Folder: t.TempDir(), TrashKeep: keep})
+		if len(decision.Findings) == 0 || !strings.Contains(decision.Findings[0].Instead, want) {
+			t.Fatalf("keep %v: %+v", keep, decision.Findings)
+		}
+	}
+	decision := Decide("git reset --hard", Settings{Folder: t.TempDir()})
+	if len(decision.Findings) == 0 || strings.Contains(decision.Findings[0].Instead, "restore") {
+		t.Fatalf("discard advice with keep off: %+v", decision.Findings)
+	}
+}

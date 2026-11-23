@@ -31,7 +31,7 @@ func newWorld(t *testing.T, files map[string]string) *world {
 func (w *world) discard(working string, args ...string) int {
 	w.out.Reset()
 	w.errors.Reset()
-	run := Run{Working: working, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Keep: !w.delete, Now: time.Now, Out: &w.out,
+	run := Run{Working: working, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Keeps: func(string) bool { return !w.delete }, Now: time.Now, Out: &w.out,
 		Errors: &w.errors}
 	return run.Discard(context.Background(), args)
 }
@@ -359,7 +359,7 @@ func TestAWorkingFileChangedAfterPlanningIsLeftAlone(t *testing.T) {
 	w.repo.Write(map[string]string{"a.txt": "staged\n"})
 	w.repo.Git("add", "a.txt")
 	w.repo.Write(map[string]string{"a.txt": "head\n"})
-	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Keep: true, Now: time.Now,
+	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Keeps: func(string) bool { return true }, Now: time.Now,
 		Out: &w.out, Errors: &w.errors, repo: repository{top: w.repo.Root}}
 	ctx := context.Background()
 	planned, _, problem := run.plan(ctx, []string{"a.txt"})
@@ -382,7 +382,7 @@ func TestAWorkingFileChangedDuringTheMoveKeepsBothVersions(t *testing.T) {
 	w := newWorld(t, map[string]string{"a.txt": "head\n"})
 	w.repo.Write(map[string]string{"a.txt": "staged\n"})
 	w.repo.Git("add", "a.txt")
-	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 0, Keep: true,
+	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 0, Keeps: func(string) bool { return true },
 		Now: func() time.Time {
 			w.repo.Write(map[string]string{"a.txt": "another session\n"})
 			return time.Now()
@@ -433,5 +433,42 @@ func TestWithoutKeepWhatIsDroppedIsDeletedAndLogged(t *testing.T) {
 	}
 	if !strings.Contains(w.out.String(), "what was on disk deleted") || strings.Contains(w.out.String(), "trash restore") {
 		t.Fatalf("out %s", w.out.String())
+	}
+}
+
+// trash.keep is read from each path's own project: a nested project that keeps gets its edits kept.
+func TestKeepIsReadFromEachPathsProject(t *testing.T) {
+	w := newWorld(t, map[string]string{"a.txt": "head\n", "sub/b.txt": "head\n"})
+	w.repo.Write(map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "outer"}`,
+		"sub/jackstay.json": `{"jackstay_schema": 3, "project": "inner", "trash": {"keep": "on"}}`,
+		"a.txt": "mine\n", "sub/b.txt": "mine\n"})
+	w.out.Reset()
+	w.errors.Reset()
+	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "outer", Session: "s", KeepDays: 7, Now: time.Now, Out: &w.out, Errors: &w.errors}
+	if code := run.Discard(context.Background(), []string{"a.txt", "sub/b.txt"}); code != 0 {
+		t.Fatalf("exit %d: %s", code, w.errors.String())
+	}
+	if kept := w.kept(); len(kept["file"]) != 1 || kept["file"][0] != "mine\n" {
+		t.Fatalf("kept %v", kept)
+	}
+	if deletions := trash.Deletions(w.trash); len(deletions) != 1 || !strings.HasSuffix(deletions[0].Path, "/a.txt") {
+		t.Fatalf("deletions %+v", deletions)
+	}
+}
+
+// Without keep, a new file HEAD does not have goes from the disk and the index, logged.
+func TestWithoutKeepANewFileIsDeletedAndLogged(t *testing.T) {
+	w := newWorld(t, map[string]string{"a.txt": "head\n"})
+	w.delete = true
+	w.repo.Write(map[string]string{"new.txt": "fresh\n"})
+	w.repo.Git("add", "new.txt")
+	if code := w.discard(w.repo.Root, "new.txt"); code != 0 {
+		t.Fatalf("exit %d: %s", code, w.errors.String())
+	}
+	if w.read("new.txt") != "<missing>" || w.status() != "" {
+		t.Fatalf("file %q status %q", w.read("new.txt"), w.status())
+	}
+	if deletions := trash.Deletions(w.trash); len(deletions) != 1 || deletions[0].Size != 6 {
+		t.Fatalf("deletions %+v", deletions)
 	}
 }
