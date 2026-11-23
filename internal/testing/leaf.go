@@ -3,7 +3,6 @@ package scopes
 import (
 	"errors"
 	"fmt"
-	"github.com/zima-oss/jackstay/internal/config"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/flock"
 	"github.com/zima-oss/jackstay/internal/judge"
 	"github.com/zima-oss/jackstay/internal/lock"
