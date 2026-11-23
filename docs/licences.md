@@ -30,6 +30,7 @@ site).
 | `go.opentelemetry.io/otel/sdk` | v1.47.0 | Apache-2.0 | yes |
 | `go.opentelemetry.io/otel/trace` | v1.47.0 | Apache-2.0 | yes |
 | `go.opentelemetry.io/proto/otlp` | v1.11.1 | Apache-2.0 | no (tests) |
+| `golang.org/x/mod` | v0.43.0 | BSD-3-Clause | yes |
 | `golang.org/x/net` | v0.63.0 | BSD-3-Clause | no (`cmd/jst-sitelinks`: its HTML parser) |
 | `golang.org/x/sync` | v0.25.0 | BSD-3-Clause | yes |
 | `golang.org/x/sys` | v0.50.0 | BSD-3-Clause | yes |

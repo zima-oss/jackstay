@@ -12,9 +12,10 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 
 	"github.com/zima-oss/jackstay/internal/cli"
 	"github.com/zima-oss/jackstay/internal/gitcli"
@@ -500,27 +501,12 @@ func splitVersion(text string) (version, commit string) {
 	return version, strings.TrimSuffix(rest, ")")
 }
 
-// Compare orders two MAJOR.MINOR.PATCH versions (-1, 0, 1); a part that is not a number is 0.
+// Compare orders two versions (-1, 0, 1) by Semantic Versioning precedence: a pre-release orders
+// before its release (0.6.0-dev.4 < 0.6.0), pre-releases by their dot-separated identifiers
+// (dev.3 < dev.4), and MAJOR.MINOR stands for MAJOR.MINOR.0. A text that is not a version orders
+// before every version.
 func Compare(left, right string) int {
-	leftParts, rightParts := strings.Split(left, "."), strings.Split(right, ".")
-	for index := range max(len(leftParts), len(rightParts)) {
-		leftNumber, rightNumber := part(leftParts, index), part(rightParts, index)
-		if leftNumber != rightNumber {
-			if leftNumber < rightNumber {
-				return -1
-			}
-			return 1
-		}
-	}
-	return 0
-}
-
-func part(parts []string, index int) int {
-	if index >= len(parts) {
-		return 0
-	}
-	number, _ := strconv.Atoi(parts[index])
-	return number
+	return semver.Compare("v"+left, "v"+right)
 }
 
 func samePath(left, right string) bool {

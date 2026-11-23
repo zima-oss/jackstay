@@ -5,6 +5,14 @@ What changed in each jackstay release, newest first. The form follows
 [Semantic Versioning](https://semver.org/). Releases before 0.6.0 are on the
 [releases page](https://github.com/zima-oss/jackstay/releases).
 
+## Unreleased
+
+### Fixed
+
+- `jst install` orders versions by Semantic Versioning precedence: a release installs over its own
+  pre-release (`0.6.0` over `0.6.0-dev.4`), which it refused as older.
+  [#137](https://github.com/zima-oss/jackstay/pull/137)
+
 ## 0.6.0 — 2026-11-23
 
 0.6.0 lands changes with one thin command, runs a project's test scopes as a graph split between

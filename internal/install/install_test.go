@@ -15,7 +15,10 @@ func TestCompare(t *testing.T) {
 	for _, tc := range []struct {
 		left, right string
 		want        int
-	}{{"0.5.0", "0.4.3", 1}, {"0.4.3", "0.5.0", -1}, {"0.10.0", "0.9.9", 1}, {"1.0", "1.0.0", 0}, {"0.4.3", "0.4.3", 0}} {
+	}{{"0.5.0", "0.4.3", 1}, {"0.4.3", "0.5.0", -1}, {"0.10.0", "0.9.9", 1}, {"1.0", "1.0.0", 0}, {"0.4.3", "0.4.3", 0},
+		// A pre-release orders before its release, and pre-releases by their identifiers (#133).
+		{"0.6.0", "0.6.0-dev.4", 1}, {"0.6.0-dev.4", "0.6.0", -1}, {"0.6.0-dev.3", "0.6.0-dev.4", -1},
+		{"0.6.0-dev.10", "0.6.0-dev.9", 1}, {"0.6.0-dev.4", "0.5.11", 1}, {"0.6.0-dev.4", "0.6.0-dev.4", 0}} {
 		if got := Compare(tc.left, tc.right); got != tc.want {
 			t.Errorf("Compare(%s, %s) = %d, want %d", tc.left, tc.right, got, tc.want)
 		}
@@ -29,6 +32,9 @@ func TestGoingBack(t *testing.T) {
 	prefix := t.TempDir()
 	if problem := goingBack(live("0.5.0 (abc)"), "0.4.3 (626b40c)", prefix); !strings.Contains(problem, "only moves forward") {
 		t.Errorf("an older version taken: %q", problem)
+	}
+	if problem := goingBack(live("0.6.0-dev.4 (abc)"), "0.6.0 (def)", prefix); problem != "" {
+		t.Errorf("a release refused over its own pre-release: %s", problem)
 	}
 	if problem := goingBack(live("0.5.0 (abc)"), "0.5.1 (def)", prefix); problem != "" {
 		t.Errorf("a newer version refused: %s", problem)
