@@ -4,7 +4,7 @@ Decisions: [W-012](../decisions/W-012-test-scopes-vocabulary.md) (one vocabulary
 project defines its selection) and [W-013](../decisions/W-013-quality-testing-declarative.md) (no
 time-sensitive tests; everything declarative and general). Status: built. 0.6.0 runs scopes as a
 graph ([land.md](land.md) section 7, after
-[W-096](../decisions/W-096-task-graph-and-input-cache.md)), which section 5 summarises; the cache
+[W-096](../decisions/W-096-clear-limits-and-the-task-graph.md#task-graph)), which section 5 summarises; the cache
 by input hash is not in 0.6.0 (planned for jackstay 1, whose design may differ), and 0.6.0 removes
 a gate's `--resume`, marks and bars: a gate runs every node each time. How to use scopes is the
 [tests guide](../guide/tests.md); the raw form `jst test -- COMMAND`, its outcomes, receipts and run

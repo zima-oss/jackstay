@@ -128,7 +128,7 @@ that rings Claude Code, and puts what is going on in one `jst status`. Upgrading
 - `jst trash` and `jst discard` delete at once and log each deletion (path, kind, size, SHA-256,
   project, session, command); `jst trash list` shows the log. `"trash": {"keep": "on"}` keeps a copy
   to restore for `keep_days`, as before, and is experimental. `jst trash list --json` is now
-  `{"kept": [...], "deleted": [...]}`. ([W-107](docs/decisions/W-107-trash-deletes-and-logs.md))
+  `{"kept": [...], "deleted": [...]}`. ([W-107](docs/decisions/W-107-trash-and-step-kinds.md#trash))
   [#125](https://github.com/zima-oss/jackstay/pull/125)
 - `jst trash` and `jst discard` read a path as the system walks it: `link/../x` is the `x` beside the
   link's target, as `ls` sees it, and a final link is the link itself.

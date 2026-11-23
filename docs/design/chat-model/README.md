@@ -70,7 +70,7 @@ generated, the temporal properties checked over the whole graph) and **335** for
 generated) with no error. The Go exploration reaches the same 8,505 and 335 states, and its tests
 fail if either count changes, so the two forms cannot drift apart unnoticed. Showing a notice, with
 a stop between the page and its mark, took the delivery model from 7,104 states to 27,056
-([W-096](../../decisions/W-096-clear-limits-over-more-machinery.md)); a closed doorbell no longer
+([W-096](../../decisions/W-096-clear-limits-and-the-task-graph.md#clear-limits)); a closed doorbell no longer
 refusing a delivery (W-095, as amended) took it to 26,496; taking out liveness, so that no
 recipient ends and nothing is dropped, took it to 8,505.
 Before W-095, when the native route still pushed the text, both reached 30,736 delivery states; the

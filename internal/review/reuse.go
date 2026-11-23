@@ -12,7 +12,7 @@ import (
 )
 
 // A crashed or partly failed attempt keeps the answers its reviewers gave. The next run of the
-// task re-runs only the reviewers whose answer is missing (docs/decisions/W-090-review-of-0-6-0.md): a saved answer is reused when
+// task re-runs only the reviewers whose answer is missing (docs/decisions/W-090-the-shape-of-0-6-0.md#review): a saved answer is reused when
 // the attempt that holds it is bound to exactly what this attempt asks — the same round, commits,
 // prompt, verdict schema, review policy and reviewers' settings.
 
