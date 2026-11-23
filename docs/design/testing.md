@@ -54,7 +54,8 @@ When each is required is the project's rule, written **once**, in the scope's `w
 
 ### Declaring a scope
 
-The optional `test` section, abridged (use: the [tests guide](../guide/tests.md#declare-scopes)):
+The optional `test` section, abridged, in schema 3 (use: the
+[tests guide](../guide/tests.md#declare-scopes)):
 
 ```json
 "test": {
@@ -65,7 +66,7 @@ The optional `test` section, abridged (use: the [tests guide](../guide/tests.md#
     "quick":   {"run": ["swift", "test", "--skip", "{slow}"], "slow": {"class_seconds": 20}},
     "gate":    {"steps": ["format", "quick"], "when": "before every pull request"}
   },
-  "steps": {"format": {"run": ["swift", "format", "lint", "-r", "Sources"], "judge": "exit"}}
+  "steps": {"format": {"run": ["swift", "format", "lint", "-r", "Sources"], "judge": "exit", "kind": "check"}}
 }
 ```
 
