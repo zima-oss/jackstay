@@ -47,7 +47,7 @@ session, let pending messages expire silently, and had no outbox. Its bounds cou
 state file. Claude Code meanwhile ships cross-session messaging of its own: a per-session socket that
 wakes an idle session, `SendMessage` with `to`, `summary` and `notify_when_idle`, and the outcomes
 delivered, held and refused. The maintainer ruled on the shape of 0.6.0 (this part is about chat; the
-others concern compatibility, landing, the overview, the sandbox and review).
+others concern [compatibility](#compatibility), landing, the overview, the sandbox and review).
 
 ### Decision
 
