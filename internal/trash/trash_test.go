@@ -597,3 +597,45 @@ func TestDeleteRefusesTheTrashFolderUnderAnotherSpelling(t *testing.T) {
 		t.Fatal("the trash folder was deleted under another spelling")
 	}
 }
+
+// A home reached through a link is protected at its real place too.
+func TestDeleteRefusesTheRealParentOfALinkedHome(t *testing.T) {
+	real := filepath.Join(t.TempDir(), "old-project")
+	if err := os.MkdirAll(filepath.Join(real, ".jackstay"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), ".jackstay")
+	if err := os.Symlink(filepath.Join(real, ".jackstay"), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Delete(filepath.Join(link, ".trash"), real, "p", "s", "jst trash", time.Now()); err == nil {
+		t.Fatal("the real parent of the home was deleted")
+	}
+}
+
+// Each item's keep_days is read before the first moves: trashing jackstay.json first does not
+// shorten a later item's days.
+func TestTrashReadsEveryItemsDaysBeforeMoving(t *testing.T) {
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "jackstay.json"), []byte(`{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 30}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "output.dat"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	t.Chdir(project)
+	var out, errs strings.Builder
+	if status := Command([]string{"jackstay.json", "output.dat"}, nil, &out, &errs); status != 0 {
+		t.Fatalf("jst trash = %d: %s", status, errs.String())
+	}
+	folder, _ := Folder()
+	for _, entry := range Entries(folder) {
+		if entry.KeepDays == nil || *entry.KeepDays != 30 {
+			t.Fatalf("%s records %v days", entry.Path, entry.KeepDays)
+		}
+	}
+	if len(Entries(folder)) != 2 {
+		t.Fatalf("entries %+v", Entries(folder))
+	}
+}

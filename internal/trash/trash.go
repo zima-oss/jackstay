@@ -133,11 +133,18 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	// One setting for every path, from the project the command runs in, as the guard reads it.
 	working, _ := os.Getwd()
 	keep := Keeps(working)
+	// Each item's project and keep_days are read before the first moves: moving jackstay.json
+	// first must not change what a later item records.
+	origins := make([]string, len(paths))
+	projects, days := make([]string, len(paths)), make([]int, len(paths))
+	for index, given := range paths {
+		origins[index] = Origin(given)
+		projects[index], days[index] = ProjectOf(origins[index]), KeepDays(origins[index])
+	}
 	status := 0
-	for _, given := range paths {
-		origin := Origin(given)
+	for index, given := range paths {
 		if !keep {
-			deletion, err := Delete(folder, given, ProjectOf(origin), Session(), "jst trash", time.Now())
+			deletion, err := Delete(folder, given, projects[index], Session(), "jst trash", time.Now())
 			if err != nil {
 				fmt.Fprintln(stderr, "jst trash:", err)
 				status = 1
@@ -146,7 +153,7 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "jst trash: %s deleted, %s (logged: `jst trash list`)\n", deletion.Path, Measure(deletion))
 			continue
 		}
-		entry, err := Move(folder, given, ProjectOf(origin), Session(), KeepDays(origin), time.Now())
+		entry, err := Move(folder, given, projects[index], Session(), days[index], time.Now())
 		if err != nil {
 			fmt.Fprintln(stderr, "jst trash:", err)
 			status = 1
@@ -286,12 +293,18 @@ func holdsHome(folder, given, source string) error {
 		parent = resolved
 	}
 	item, itemErr := os.Lstat(filepath.Join(parent, filepath.Base(source)))
-	for place := home; ; place = filepath.Dir(place) {
-		if info, err := os.Stat(place); err == nil && itemErr == nil && item.IsDir() && os.SameFile(info, item) {
-			return fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
-		}
-		if place == filepath.Dir(place) {
-			break
+	homes := []string{home}
+	if resolved, err := filepath.EvalSymlinks(home); err == nil && resolved != home {
+		homes = append(homes, resolved) // a home moved elsewhere through a link: its real folders too
+	}
+	for _, start := range homes {
+		for place := start; ; place = filepath.Dir(place) {
+			if info, err := os.Stat(place); err == nil && itemErr == nil && item.IsDir() && os.SameFile(info, item) {
+				return fmt.Errorf("%s holds jackstay's own folder %s: not moved", given, home)
+			}
+			if place == filepath.Dir(place) {
+				break
+			}
 		}
 	}
 	trashInfo, err := os.Stat(folder)
