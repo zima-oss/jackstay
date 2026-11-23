@@ -26,7 +26,7 @@ const setupHelp = setupUsage + `
 Plan repairs from doctor findings. Available repairs add the installed bin folder to a supported
 POSIX shell profile, and let Claude Code's enabled sandbox write only the folders of the jackstay
 home jst writes from it (the journal, the lock, chat, jobs, the brief, ids, the trash), replacing
-an entry that names the whole home. Evidence (receipts, gate marks, review rounds, the run log)
+an entry that names the whole home. Evidence (receipts, review rounds, the run log)
 stays read-only to the sandbox; jst test and jst review run outside it.
   --plan          print the plan without changing files (also the nonterminal default)
   --json          print the plan as JSON; implies --plan
@@ -197,7 +197,7 @@ func planSandbox(report Report, finding Finding) SetupItem {
 	default:
 		item.Status = "ready"
 		item.Text = "let Claude Code's sandbox write only the jackstay folders jst writes from it (the journal, the lock, chat, " +
-			"jobs, the brief, ids, the trash); receipts, gate marks, review rounds and the run log stay read-only there, so " +
+			"jobs, the brief, ids, the trash); receipts, review rounds and the run log stay read-only there, so " +
 			"`jst test` and `jst review`, which record them, run outside the sandbox"
 		item.Fix = "change sandbox.filesystem.allowWrite in " + item.Path
 		item.Add = strings.Join(change.Added, "\n")
