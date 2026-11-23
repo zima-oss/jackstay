@@ -88,7 +88,7 @@ The install changes nothing outside its prefix. These steps are yours:
 | Step | Where | Needed for |
 |---|---|---|
 | Put `~/.local/bin` on `PATH` | your shell's profile; the script prints the line | running `jst` |
-| Let Claude Code's sandbox write `~/.jackstay` | `~/.claude/settings.json` ([Claude Code](claude-code.md#the-sandbox)) | records of runs in sandboxed sessions |
+| `jst setup`: let Claude Code's sandbox write the folders jst needs in `~/.jackstay` | `~/.claude/settings.json` ([Claude Code](claude-code.md#the-sandbox)) | the journal, locks, chat and jobs in sandboxed sessions |
 | `jst adopt --apply`, then commit what it wrote | each project ([Adopting a project](adopt.md)) | the guard hook and the `AGENTS.md` block |
 | Accept Claude Code's trust dialog | the first session in each project | Claude Code loading the hook |
 | Optional: install Codex or Claude Code and sign in | your terminal | review rounds ([Reviews](review.md)) |
@@ -119,11 +119,12 @@ The first command reads files only. The other commands apply **only** the select
 Running `jst setup` in a terminal offers apply, show and skip; with piped input it only prints
 the plan. The quick installer runs that interactive setup after a successful install only when both
 input and output are terminals. Before it starts, it says that setup first asks who merges and which
-reviewer runs (once per machine), then shows each change and asks before making it. Without a
-terminal it says that setup did not start and that `jst setup` runs it once `jst` is on your PATH. A
-release without `jst setup` is told apart, with `jst doctor` named instead. Before changing an existing shell profile or Claude Code settings,
-setup shows the change and saves the original content in a
-unique `*.jackstay-backup-*` file beside it and shows that path. It refuses a symlink, an
+reviewer runs (once per machine), then shows each change and asks before making it; Ctrl-C stops
+setup and leaves the install as it is. Without a terminal it says that setup did not start and that
+`jst setup` runs it once `jst` is on your PATH. A release without `jst setup` is told apart, with
+`jst doctor` named instead. Before changing an existing shell profile or Claude Code settings,
+setup shows the change, saves the original content in a unique `*.jackstay-backup-*` file beside
+it and shows that path. It refuses a symlink, an
 unusual file, a profile with a different jackstay PATH entry, malformed settings, or a sandbox
 deny rule that needs an owner's decision. A second run does not append the same entry again.
 Open a new shell or Claude Code session after a change, then run `jst doctor` again.
@@ -137,11 +138,10 @@ decides. The plan lists the current answers. To set one without being asked:
 jst setup --reviewer codex,claude-code
 ```
 
-`jst setup --chat` shows local session chat integration routes. The terminal can show steps for
-Codex, Claude Code and other MCP hosts. Use `jst setup --chat --plan --json` for the same
-read-only plan in JSON. See the [session chat guide](session-chat.md) to register a launcher.
-The managed Codex bridge can deliver into a running turn. Other local routes use inbox polling
-while their engine integration is unavailable.
+`jst setup --chat` shows the steps that connect Codex and Claude Code to the session chat, and
+whether each is on your `PATH`; `jst setup --chat --plan --json` gives them as JSON. It changes
+nothing. Claude Code is rung by its hooks; Codex reads its inbox with `chat.inbox`
+([Session chat](session-chat.md)).
 
 ## Other ways to install
 

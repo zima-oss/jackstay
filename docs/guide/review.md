@@ -83,8 +83,8 @@ out, and a symlink appears as a plain file holding its target. Beyond it, a revi
 rest of the machine, read-only, and use the network, your full `PATH`, your proxy and CA settings
 and its own provider's login. It cannot write outside its own temporary folder, read `~/.ssh`,
 `~/.aws`, `~/.config/gh` and the other credential folders, the keychain, the other reviewer's login
-or `.env` files (on Linux, Codex can read `.env` files: that part waits for a redesign), or see token-like environment variables other than its
-provider's. Claude Code uses `Read`, `Glob`, `Grep`, `WebFetch` and `WebSearch`; Codex has
+or `.env` files (on Linux, Codex can read `.env` files: that part waits for a redesign, issue
+#101), or see token-like environment variables other than its provider's. Claude Code uses `Read`, `Glob`, `Grep`, `WebFetch` and `WebSearch`; Codex has
 read-only shell navigation and search. Managed Claude Code policies, managed hooks included, still
 apply. The [design](../design/review.md#34-the-run) lists the profile whole.
 
@@ -128,7 +128,7 @@ any `review` section. Add the section to choose the default reviewers and tune t
 ```
 
 - `use`: the default reviewers for new rounds, and the required set for `jst review check`.
-  Without it, both are Codex. With an empty `use`, a round needs `--reviewer`, and
+  Without it, Codex is both. With an empty `use`, a round needs `--reviewer`, and
   `jst review check` still requires a recorded round at the requested commits and checks its
   policy and findings.
 - `reviewers`: optional settings per reviewer. `reviewers.codex.isolation` holds the flags that keep
@@ -138,7 +138,9 @@ any `review` section. Add the section to choose the default reviewers and tune t
   brief in the pinned source view. A change to a configured brief or template needs a fresh round.
 - `cite`: files and folders the reviewer is told to measure the change against.
 - `blocking`: which severities fail a round. With `triage` on (the default), each finding is rated
-  by likelihood and consequence, and a rare one is deferred instead of blocking.
+  `ordinary` or `unusual` (likely in ordinary work, or only with a hand-built setup or misuse) and
+  `severe` or `mild`. An `unusual` finding is rare, recorded but not blocking, when it is `mild`, or
+  when it is `severe` and its `ordinary_path` names no ordinary work by which its setup arises.
 - `repeat_rounds` (2): how many rounds running a place must draw a finding before it is due for
   redesign.
 - `keep_days`: how long rounds are kept; `jst review prune` removes older tasks now.

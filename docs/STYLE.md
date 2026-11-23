@@ -51,8 +51,10 @@ it.
    command prints, go in a block tagged `text`. Inline code in a sentence may name a placeholder
    (`jst trash PATH`). **Checked**: every `jst` command in the guide, `README.md`,
    `CONTRIBUTING.md`, `AGENTS.md` and the AGENTS block's golden files names a command `jst help`
-   lists and only flags its `--help` shows (`internal/cli/testdata/help.txt`); an `sh` block holds
-   no placeholder.
+   lists and only flags its `--help` shows (`internal/cli/testdata/help.txt`), or, in a table row
+   only, a command `internal/cli` lists as removed, named whole beside the replacement its advice
+   names; an
+   `sh` block holds no placeholder.
 
 7. **Agent-facing text says only what changes behaviour.** An agent reads every word, every
    session.

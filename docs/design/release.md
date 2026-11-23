@@ -7,7 +7,7 @@ no time-dependent tests), [W-017](../decisions/W-017-review-fixes-and-threat-mod
 is against accidents), [W-020](../decisions/W-020-version-tags.md) (one version, one commit, a tag
 never moved), [W-026](../decisions/W-026-release-scope-now-in-parallel.md) (the scope),
 [W-029](../decisions/W-029-queue-self-merge-configurable-go-last.md) (who merges the release pull
-request is a project setting), [W-034](../decisions/W-034-release-pr-is-a-request-app-commits.md)
+request is a project setting; its merge queue is not built), [W-034](../decisions/W-034-release-pr-is-a-request-app-commits.md)
 (the release pull request is a request; the writing App makes the release commit),
 [W-047](../decisions/W-047-release-redesign-fixed-settings-no-one-off-imports.md) (`jackstay.json`
 is fixed settings; prepare is a preview; no one-off imports). A sentence that rests on none of them
@@ -276,7 +276,7 @@ commit's message and the release pull request's description, under "Internal". N
 ```yaml
 on:
   push:
-    branches: [main]      # release.base; a squash merge, a queue landing and the App's release commit are pushes
+    branches: [main]      # release.base; a squash merge, a host's merge queue and the App's release commit push
   workflow_dispatch: {}   # rerun by hand: everything is derived from git, so a rerun is safe
 concurrency:
   group: jackstay-release
@@ -344,22 +344,24 @@ is designed, not built.
 ## 7. The checks in `jst lint pr`
 
 The one `Card:` check (`jst lint pr`, [implementation.md](implementation.md) section 4.1), which
-`card-line` calls and whose description rules `jst land` shares, gains the rules below. Its
-inputs are explicit:
+`card-line` calls, gains the rules below. `jst land` shares two of them: it judges the `Card:` line
+and D1 on the exact description it sends ([land.md](land.md) section 3.1). The inputs of
+`jst lint pr` are explicit:
 
-| Input | `card-line` (`--event`) | `jst land` (`--pr N`) | the queue's cut-off | by hand (`--body-file F`) |
-|---|---|---|---|---|
-| description | `pull_request.body` | GitHub's, read at that moment | GitHub's, read at the cut-off | the file |
-| head branch | `pull_request.head.ref` | GitHub's | GitHub's | the current branch |
-| base commit `b` | `pull_request.base.sha` | `release.base` (else `cards.branch`) as just fetched | the batch's `B` | `release.base` (else `cards.branch`, else `main`), local |
-| head commit `h` | `pull_request.head.sha` | the head it saw green | the pull request's head at the cut-off | `HEAD` |
-| tree judged by the tree's rules | the merge `card-line` checked out | the in-memory merge | the candidate's tree | the working tree |
+| Input | `card-line` (`--event`) | `--pr N` | by hand (`--body-file F`) |
+|---|---|---|---|
+| description | `pull_request.body` | GitHub's, read at that moment | the file |
+| head branch | `pull_request.head.ref` | GitHub's | the current branch |
+| base commit `b` | `pull_request.base.sha` | the pull request's base commit, as GitHub reports it | `release.base` (else `cards.branch`, else `main`), local |
+| head commit `h` | `pull_request.head.sha` | the pull request's head commit | `HEAD` |
+| tree judged by the tree's rules | the merge `card-line` checked out | the in-memory merge of `h` into `b` | the working tree |
 
 `--base`, `--head` and `--head-branch` set them by hand. A head in a fork is judged by the rules
 that need no head commit, and D1–D4 are red. `--pr N` asks GitHub as `github.account`
 ([implementation.md](implementation.md) section 8.1).
 
-**The queue's stack copies** (the queue is not built). A pull request whose head branch is under `jackstay-queue/` and
+**Queue copies.** jackstay keeps no merge queue of its own ([land.md](land.md)), but `jst lint pr`
+still resolves a queue's stack copy, as below. A pull request whose head branch is under `jackstay-queue/` and
 whose description has the line `Jackstay-Queue-Of: #n` is judged as `#n`: `jst lint pr` reads pull request
 `n` from GitHub and uses **its** head branch as the head-branch input — for D4, D1's exemptions and
 the owner-only rules alike — while everything judged stays the copy's own: its diff against its own
@@ -453,38 +455,15 @@ Once it lands, step 3 gives every yanked version whose tag is on its proven comm
 added to that version's heading in `changes.into`. Every step checks whether it is done, so a run
 stopped half-way is finished by the next.
 
-## 9. With the merge queue (not built)
+## 9. With a merge queue
 
-The merge queue is not built (an idea kept for later; W-029). What its design asks of
-this spec, and where it is met:
-
-| The queue's design asks | Here |
-|---|---|
-| the workflow runs on `push` to the base (queue landings are pushes) | section 6, `on: push` |
-| the release pull request is created or updated by branch, so a closed one is replaced | section 6, step 5 |
-| publication is bound to the landing of the release pull request, not to any commit that changes version files | sections 3 and 8: a release happens only when a request file, which only the release pull request writes (D3), has landed and agrees with the base; the release commit is then the workflow's own |
-| a version file changed by any other pull request is refused (`jst lint pr`) | section 7, D3 |
-| a tag that exists without its release is published again without moving the tag | section 8, step 1 |
-| in `agents` projects the release pull request lands in a batch of its own, as one commit | not needed: the release pull request changes one file, and the release commit is made after it lands, on whatever the base then is; the queue may land it with others |
-| the release branch's description is written by the workflow, so it is exempt from the description rules | section 7: listed or not, D4 applies; it carries a valid `Card: none` line |
-| the "change is documented" check is part of the one `Card:` check | section 7 |
-
-**What this means for the queue's design:**
-
-- The setting is `release.merge` and `release.branch` in the `release` section, and a change to that
-  section is owner-only policy, read from the tip.
-- A release is not "the landing of the release pull request, judged by its tree": the release
-  pull request lands a request; the **writing App then pushes one commit to the base**, the release
-  commit, made from the base's tip with a lease on it (section 8). For the queue this is an outside
-  push, like a release bot's: its watch tests the new tip. The release commit changes only release
-  values, changelogs and removes entries; a ruleset that restricts pushes to the base must let the
-  writing App through (the queue's real enforcement design).
-- D4 is advice, not a guard: a request that no longer agrees releases nothing, so the queue may take
-  the release pull request in any batch in an `agents` project.
-
-**A hold** (not built, like the queue) is not how the release pull request waits for the
-owner: the workflow, which runs on GitHub's runners and has no session state, sets the draft itself,
-and in an `owner` project the pull request stays a draft until the owner marks it ready.
+jackstay keeps no merge queue of its own; the local queue this section once fitted to is removed
+in 0.6.0, and a base that requires the host's native merge queue is landed through it by
+`jst land` ([land.md](land.md); [W-092](../decisions/W-092-thin-land-and-where-tests-run.md)).
+The release flow needs nothing of a queue: the workflow runs on every `push` to the base (a
+queue's landing is one, section 6), and a release happens only when the request file, which only
+the release pull request writes (D3), has landed and agrees with the base (sections 3 and 8). A
+ruleset that restricts pushes to the base must let the writing App push the release commit.
 
 ## 10. The writing App
 
@@ -498,8 +477,6 @@ A second GitHub App, made by the organisation's owner:
   organisation settings visible to those repositories only. Any workflow in a repository that
   sees the secret can make a token that writes to all of them;
 - its private key goes straight into the secret, never seen by a session.
-
-The queue, if built, does not use this App to push its landings.
 
 **Unproven, settled before a project adopts** by a test on a scratch repository: which of the App's
 writes GitHub refuses without `workflows` when the commits involved have workflow files unlike the
@@ -548,7 +525,7 @@ Each failure is stated where it happens; in short:
 |---|---|
 | `internal/changes` | the entry model, validation, the one renderer, `new`, `check`, `view`, the untyped `collect` |
 | `internal/release` | versions and bumps, the request, the last release and the proof (section 3), prepare (section 5), `override`, `notes`, `yank`, and the workflow's `pr` and `publish` (sections 6, 8) — the only code that writes to GitHub, in files of their own; the rest are pure functions over a repository interface |
-| `internal/lint` | `jst lint pr` and `lint tree`: D1–D4 and the queue's copies (section 7), its inputs as one struct; the `Card:` rules from `internal/cards` |
+| `internal/lint` | `jst lint pr` and `lint tree`: D1–D4 and queue copies (section 7), its inputs as one struct; the `Card:` rules from `internal/cards` |
 | `internal/config` | the `changes` and `release` keys |
 
 `internal/release` and `internal/lint` declare small interfaces for git (rev-parse, first-parent
