@@ -32,7 +32,7 @@ check:
     go run {{golangci}} run ./...
     shellcheck -s sh install.sh
 
-# Every Go test, with the race detector, and a build (jackstay.json scope x-go)
+# Every Go test, with the race detector, and a build (jackstay.json's x-go runs go test itself)
 go:
     sh tests/go.sh
 
@@ -42,7 +42,7 @@ security:
     go run {{govulncheck}} ./...
     go run {{gosec}} -quiet -severity high -confidence medium -exclude-dir=.claude ./...
 
-# The tests that need real git or processes (`//go:build integration`, a scope of their own; jackstay.json x-integration)
+# The tests that need real git or processes (`//go:build integration`; jackstay.json's x-go runs them with the unit tests)
 integration:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -77,8 +77,9 @@ darwin-smoke:
       -run 'Test(HookRefusesWithTheDocumentedAnswer|RealTheDeadlineStopsTheGroup|RealAHeldWriterIsNotStoppedUntilAsked|InstallStoppedAfterEachStep|ToolchainKeyUsesTheCommandsDirectoryAndEnvironment|TheScopeRunsOnACleanCopyOfTheCommitAndTheCopyGoes)$' \
       ./internal/guard ./internal/install ./internal/procs/background ./internal/receipts ./internal/testing
 
-# jackstay's own documents: relative links lead somewhere, every decision and every module's
-# licence is listed, everything is in English; and the site builds from them with no warning and no
+# The documentation site (jackstay.json scope x-docs; the documents' own Go tests, internal/docs:
+# relative links lead somewhere, every decision and every module's licence is listed, everything is
+# in English, run in x-go): the site builds with no warning and no
 # link that leads nowhere (site/layouts/_markup/render-link.html as the pages are made, then
 # cmd/jst-sitelinks over every page the build wrote: the menus and the home page's buttons and cards
 # too, at the Pages address's path); and a guide page has the sidebar beside it on a desktop (the
@@ -87,7 +88,6 @@ darwin-smoke:
 # every page has its Markdown, llms.txt lists each, llms-full.txt holds them with no link relative to
 # the repository
 docs:
-    go test -count=1 -v ./internal/docs
     folder="$(mktemp -d)" && trap 'rm -r "$folder"' EXIT && \
     go run {{hugo}} --source site --panicOnWarning --baseURL {{site_address}} --destination "$folder/public" --quiet && \
     go run ./cmd/jst-sitelinks "$folder/public" {{site_address}} && \
@@ -158,8 +158,8 @@ tla:
       echo "tla: $model holds"
     done
 
-# What a push needs (W-040): the Go checks, the integration tests, the security checks and the
-# docs check.
+# The recipes the gate scope runs, in order, for a quick local pass; what a push needs is
+# `jst test gate` (jackstay.json, W-040), and CI runs `jst test ci`.
 gate:
     #!/usr/bin/env bash
     set -euo pipefail

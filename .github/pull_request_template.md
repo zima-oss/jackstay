@@ -4,7 +4,7 @@
 
 ## Verification
 
-<!-- List commands run and their results. Before pushing, run `just gate` or `jst test gate`. -->
+<!-- List commands run and their results. Before pushing, run `jst test gate`. -->
 
 ## Documentation and release note
 

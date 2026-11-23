@@ -1,7 +1,7 @@
 # How jackstay's documentation is written
 
-This page is for anyone who writes a page, a help text or an item of the AGENTS block. `just docs`
-checks the rules marked **checked**; a reviewer checks the rest.
+This page is for anyone who writes a page, a help text or an item of the AGENTS block. The Go tests
+of `internal/docs` check the rules marked **checked**; a reviewer checks the rest.
 
 ## Who reads what
 
@@ -81,7 +81,9 @@ it.
 ## Before you push
 
 ```sh
+go test -count=1 ./internal/docs
 just docs
 ```
 
-It runs the checks above, the link checks, and builds the site.
+The Go tests run the checks above and the repository's link checks (the gate runs them in x-go);
+`just docs` builds the site and checks its links.

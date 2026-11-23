@@ -1,0 +1,71 @@
+# jackstay-adopt: card-line sha256:6705281cfba7 — written by `jst adopt`; change jackstay.json or the profile, not this file
+name: card-line
+
+# jackstay's Card line, changelog entry and tree rules on every pull request event (`jst lint pr`;
+# docs/design/release.md section 7). A workflow of its own: it listens for `edited`, since the
+# description is what is checked.
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+
+concurrency:
+  group: card-line-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  JACKSTAY_VERSION: "v0.6.0"
+
+jobs:
+  card-line:
+    # Only branches of this repository: a fork's code never runs here.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the pull request merged with the base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the rules read the merge base, the base's jackstay.json and when files were added
+      - name: Download jackstay's binary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JACKSTAY_PROVENANCE: ${{ vars.JACKSTAY_PROVENANCE }}
+          JACKSTAY_LINUX_AMD64_SHA256: ${{ vars.JACKSTAY_LINUX_AMD64_SHA256 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/jackstay"
+          cd "$RUNNER_TEMP/jackstay"
+          gh release download "$JACKSTAY_VERSION" -R zima-oss/jackstay -p 'jackstay_*_linux_amd64.tar.gz' -p checksums.txt
+          sha256sum --check --ignore-missing checksums.txt
+          archives=(jackstay_*_linux_amd64.tar.gz)
+          [ "${#archives[@]}" -eq 1 ] && [ -f "${archives[0]}" ] || { echo '::error::expected one jackstay archive'; exit 1; }
+          archive=${archives[0]}
+          if [ -n "$JACKSTAY_LINUX_AMD64_SHA256" ]; then
+            [[ "$JACKSTAY_LINUX_AMD64_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo '::error::invalid pinned SHA-256'; exit 1; }
+            [ "$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$JACKSTAY_LINUX_AMD64_SHA256" ] || { echo '::error::archive does not match pinned SHA-256'; exit 1; }
+          fi
+          case ${JACKSTAY_PROVENANCE:-checksum} in
+            checksum)
+              [ -n "$JACKSTAY_LINUX_AMD64_SHA256" ] || echo '::warning::jackstay archive checked for integrity only; set JACKSTAY_PROVENANCE=attestation or JACKSTAY_LINUX_AMD64_SHA256'
+              ;;
+            attestation)
+              gh attestation verify "$archive" --repo zima-oss/jackstay \
+                --signer-workflow zima-oss/jackstay/.github/workflows/release.yml \
+                --source-ref "refs/tags/$JACKSTAY_VERSION" >/dev/null || { echo '::error::jackstay archive attestation failed'; exit 1; }
+              ;;
+            *) echo '::error::JACKSTAY_PROVENANCE must be checksum or attestation'; exit 1 ;;
+          esac
+          tar -xzf "$archive"
+          echo "$RUNNER_TEMP/jackstay" >> "$GITHUB_PATH"
+      - name: The Card line, the changelog entry and the tree's rules
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: jst lint pr --event "$GITHUB_EVENT_PATH"
