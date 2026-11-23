@@ -84,16 +84,28 @@ func TestOneTraceAcrossProcesses(t *testing.T) {
 // A stopped `jst test` ends its spans as stopped, and still dies by the signal.
 func TestStoppedBySignal(t *testing.T) {
 	folder, home, env := project(t)
-	// A child that never ends by itself, on a timer or otherwise: only the signal ends the run.
-	command := exec.Command(binary, "test", "--", "tail", "-f", "/dev/null")
+	// A child that never ends by itself and says when it runs: it writes its pid, then waits forever.
+	ready := filepath.Join(t.TempDir(), "child.pid")
+	command := exec.Command(binary, "test", "--", "sh", "-c", `echo $$ > "$0.tmp" && mv "$0.tmp" "$0" && exec tail -f /dev/null`, ready)
 	command.Dir, command.Env = folder, env
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = command.Process.Kill() }()
+	// The child is in its own process group: whatever happens to jst, cleanup ends it by its pid.
+	defer func() {
+		if data, err := os.ReadFile(ready); err == nil { // #nosec G304 -- the test's own file
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	}()
 	// The child running means jackstay listens for the stop and has begun the run.
 	deadline := time.Now().Add(60 * time.Second)
-	for exec.Command("pgrep", "-P", strconv.Itoa(command.Process.Pid), "-x", "tail").Run() != nil {
+	for {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
 		if time.Now().After(deadline) {
 			t.Fatal("the child did not start")
 		}
