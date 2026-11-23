@@ -132,7 +132,7 @@ Every command runs afresh, even with a matching receipt. `--commit` is exit 2 (`
 an invalid commit, or a copy that cannot be made (Git's words included). The copy has no
 submodules and no ignored files: a step that needs them builds them. `internal/cleancopy` makes and
 removes it; `internal/pinned` holds what it shares with review's pinned trees (owner words,
-liveness, the random name).
+whether an owner is alive, the random name).
 
 ## 4. One git runner
 

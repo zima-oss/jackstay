@@ -4,7 +4,7 @@ Five commands replace the fetches, merges, worktree adds, clean-ups, CI polling 
 that sessions otherwise write by hand: `jst start`, `jst sync`, `jst tidy`, `jst checks` and
 `jst land`.
 
-All four use one remote: `github.remote` from `jackstay.json`, else `origin`, else the remote your
+All five use one remote: `github.remote` from `jackstay.json`, else `origin`, else the remote your
 local `main` (then `master`) tracks, else the only remote. The default branch is that remote's as
 fetched (`<remote>/HEAD`, else `main`, `master`).
 
@@ -172,7 +172,7 @@ checked and waits for it to merge.
 | `refused` | 1 | a required check failed or was cancelled; a draft; a conflict; an operation the host does not offer |
 | `invalid` | 2 | usage, configuration, no account, no `land` section |
 | `pending` | 3 | checks or the queue still pending at the deadline |
-| `moved` | 4 | the head, the base or the test merge moved: run it again |
+| `moved` | 4 | the head, the base, the test merge or the description moved: run it again |
 | `unexpected` | 5 | a host answer jackstay does not expect |
 | `ready for a person` | 6 | a person merges (above) |
 
@@ -205,8 +205,6 @@ accounts signed in to the GitHub CLI it never depends on, or changes, the active
 - `JACKSTAY_GITHUB_ACCOUNT` overrides the account for one call.
 - Outside Actions a `GH_TOKEN` in your environment is ignored, since it could belong to any
   account; inside Actions, `GH_TOKEN` is the only token used.
-- Without `github.account`, `jst checks`, `jst land` and `jst lint pr --pr` exit 2 and `jst tidy`
-  does not ask GitHub. Everything else keeps working.
 
 The account covers jackstay's API calls only. `jst land`'s push and the remote branch delete go
 through git, with git's own credentials. Every effective push URL of the selected remote must
@@ -219,19 +217,8 @@ Without `github.account`: `jst checks` and `jst land` exit 2, `jst tidy` does no
 
 ## Upgrading from 0.5.x
 
-jackstay 0.6.0 removes the commands below with no alias. A removed command is unknown: its error
-names the replacement and runs nothing.
-
-| Removed (after `jst`) | In 0.6.0 |
-|---|---|
-| `gh pr-land` | `jst land` (`--pr` is `--change`, `--dry-run` is `--plan`, `--no-merge` is `--prepare`) |
-| `gh pr-status`, `gh pr-find` | `jst land status`, `jst land find` |
-| `gh ci-wait`, `gh ci-status`, `gh run-wait` | `jst checks wait`, `jst checks status`, `jst checks run-wait` (same flags) |
-| `queue …` and the `queue` key (never released) | none: `jst land` uses the host's merge queue |
-| `receipts attest-ci`, `receipts verify-ci` (never released) | none: provenance stays in release and install |
-
-One behaviour changes: a check the base's rules do not require never blocks `jst land`. In 0.5.11
-any failing check stopped `pr-land`.
+The 0.5.x GitHub commands are gone in 0.6.0; each one and the `jst land` or `jst checks` command
+that replaces it: [Upgrading from 0.5.x](upgrading.md#what-was-removed).
 
 ## What can go wrong
 

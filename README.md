@@ -2,7 +2,8 @@
 
 jackstay gives you and your coding agents safe, recorded commands for work in a Git repository.
 Its one binary, `jst`, refuses shell commands that destroy work, runs tests and counts them, gives
-background processes a deadline, and helps finish branches, reviews and releases.
+background processes a deadline, reviews and lands changes, and lets parallel agent sessions see
+and message each other.
 
 ```sh
 script=$(curl -q --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/zima-oss/jackstay/main/install.sh) && sh -c "$script"
@@ -12,7 +13,8 @@ Then, in your project:
 
 ```sh
 jst doctor                            # is jackstay healthy on this machine
-jst adopt --apply                     # write jackstay.json, the AGENTS block and the guard hook
+jst adopt --apply                     # write jackstay.json, the AGENTS block and the guard hook;
+                                      # it asks who merges and who reviews
 jst guard check -- 'git reset --hard' # refused, with what to run instead
 ```
 

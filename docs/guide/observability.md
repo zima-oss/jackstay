@@ -81,6 +81,9 @@ It checks:
 - Claude Code's sandbox: whether it may write the folders jst needs there, and only those (no evidence);
 - the lock's folder;
 - inside a project, whether it is up to date with this jackstay (`jst adopt --plan`);
+- with a `land` section, the landing policy against the host's branch rules: the account, the
+  required checks (the `jst test ci (SYSTEM)` jobs among them), the merge method, and that the guard
+  refuses `gh pr merge`. Only this part asks the host;
 - on macOS, the signing setting and the live binary's signature.
 
 On a new machine `guard-never-called` is expected until a session with the hook makes its first
@@ -103,8 +106,8 @@ the checkout it runs in. Every flag and exit status: `jst owner --help`.
 ## What can go wrong
 
 - **`jst log` shows nothing for a session**: the session ran inside a sandbox that cannot write
-  the journal's folder, so its spans were lost; `jst setup` adds it. `jst doctor` says so (`sandbox-blocks-state`); the fix is
-  in [Claude Code](claude-code.md#the-sandbox).
+  the journal's folder, so its spans were lost. `jst doctor` says so (`sandbox-blocks-state`), and
+  `jst setup` adds the folder ([Claude Code](claude-code.md#the-sandbox)).
 - **Unreadable lines**: `jst log` and `jst stats` count lines they could not decode and say so on
   standard error.
 - **The journal holds command text.** Masked, local and 0600, but check what you paste from it.
