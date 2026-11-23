@@ -202,7 +202,8 @@ func (state *gateState) settle(asked []string, outcomes map[string]string) {
 	switch {
 	case slices.ContainsFunc(asked, func(name string) bool { return outcomes[name] == outcomeSkipped }):
 		state.outcome, state.status = outcomeSkipped, statusSkipped
-	case slices.ContainsFunc(asked, func(name string) bool { return outcomes[name] == receipts.OutcomeExited0 }):
+	case slices.ContainsFunc(state.steps, func(line step) bool { return line["outcome"] == receipts.OutcomeExited0 }):
+		// Any node that ran and counted nothing, also a dep under a passing scope: not evidence.
 		state.outcome = receipts.OutcomeExited0
 	default:
 		state.outcome = receipts.OutcomePassed
@@ -285,6 +286,11 @@ func (proj *project) compositeRequires(composite string) (string, *int) {
 
 // gateLine writes the run's line (each node's outcome, seconds and run id) and says its outcome.
 func (proj *project) gateLine(label, gateID string, began time.Time, state *gateState, split *partition) int {
+	if label == ciCommand && state.outcome == receipts.OutcomeExited0 {
+		// A required CI job is green only on a pass: a node that counted nothing and is no check fails it.
+		proj.say("a CI job passes only when every test scope counted its tests and every check exited 0; mark a linter or a build `\"kind\": \"check\"`")
+		state.status = receipts.StatusUnjudged
+	}
 	endedAt := proj.clock.Now()
 	seconds := secondsBetween(began, endedAt)
 	failure := slices.Contains(failureOrder, state.outcome)

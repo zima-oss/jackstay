@@ -228,7 +228,8 @@ jst test: outcome=passed (changed, 40 s; here: x-build=passed, x-ios=passed; ci:
   when the commit's `jackstay.json` gives some scope a `ci`.
 - `jst test ci` runs every scope covered on this system, each once, in graph order. Name the CI
   job `jst test ci (SYSTEM)` and require it in the base's rules; `jst doctor` reports a system
-  whose job they do not require.
+  whose job they do not require. It ends 77 on `exited-0`: a CI job is green only on a pass, so
+  mark each linter and build `"kind": "check"`.
 - jackstay schedules each scope once but cannot see inside a command: scopes CI runs on one system
   must test disjoint sets, or a test runs twice.
 - There is no cache in 0.6.0: a scope with deps runs every step each time. `jst adopt` does not

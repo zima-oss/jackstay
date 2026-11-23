@@ -248,7 +248,7 @@ func TestTheRunsOutcomeIsTheFirstInTheOrder(t *testing.T) {
 		{[]step{line("a", "not-run", 0), line("b", "not-started", 2)}, "not-started", 2},
 		{[]step{line("a", "skipped", 0)}, "skipped", statusSkipped},
 		{[]step{line("b", "passed", 0), line("a", "exited-0", 0)}, "exited-0", 0},
-		{[]step{line("b", "exited-0", 0), line("a", "passed", 0)}, "passed", 0},
+		{[]step{line("b", "exited-0", 0), line("a", "passed", 0)}, "exited-0", 0}, // a dep that counted nothing taints the run
 	} {
 		state := &gateState{steps: each.lines}
 		outcomes := map[string]string{}
@@ -440,4 +440,37 @@ func TestAGatePassesWhenItsChecksExitZeroAndItsTestsCount(t *testing.T) {
 	w = newWorld(t, undeclared, nil)
 	w.expectStatus(w.jst("gate"), 0)
 	w.expectLast("outcome=exited-0 (gate, ", "x-lint=exited-0")
+}
+
+// A dep that counted nothing taints the run even under a scope that passed.
+func TestAnUncountedDepUnderAPassingScopeIsNotAPass(t *testing.T) {
+	section := map[string]any{"scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-unit")},
+		"x-unit":  counting("x-unit", map[string]any{"deps": argv("x-smoke")}),
+		"x-smoke": map[string]any{"run": counted("x-smoke", "true"), "judge": "exit"},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectLast("outcome=exited-0 (gate, ", "x-smoke=exited-0, x-unit=passed")
+}
+
+// The required CI job fails on a run that is only exited-0.
+func TestCIFailsOnARunThatOnlyExitedZero(t *testing.T) {
+	section := whereSection()
+	scopes := section["scopes"].(map[string]any)
+	scopes["x-build"] = map[string]any{"run": counted("x-build", "true"), "judge": "exit"}
+	w := newWorld(t, section, nil)
+	w.system = "linux"
+	w.expectStatus(w.jst(ciCommand), receipts.StatusUnjudged)
+	w.expectLast("outcome=exited-0 (ci, ")
+}
+
+// A check is judged by its status even when the section's judge counts tests.
+func TestACheckIgnoresTheSectionsCountingJudge(t *testing.T) {
+	section := map[string]any{"judge": "go-json", "scopes": map[string]any{
+		"x-lint": map[string]any{"run": counted("x-lint", "true"), "kind": "check"},
+	}}
+	w := newWorld(t, section, nil)
+	w.expectStatus(w.jst("x-lint"), 0)
+	w.expectLast("outcome=passed (a check: it ended 0")
 }

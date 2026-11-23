@@ -274,16 +274,17 @@ store.
 | `deps` | scope or step names | `[]` | what must pass first, in the order given |
 | `ci` | systems | `[]`: not in CI | the systems whose CI job runs this scope (section 7.4) |
 | `systems` | systems | any | the systems the scope runs on at all |
+| `kind` | `test` or `check` | undeclared | a scope with `run`: `test` must count tests to pass, `check` passes on exit 0 (below) |
 
-A system is Go's name for it: `darwin`, `linux`. The three keys need `"jackstay_schema": 3`
+A system is Go's name for it: `darwin`, `linux`. The four keys need `"jackstay_schema": 3`
 ([W-090](../decisions/W-090-compatibility-of-0-6-0.md)). The cache's keys, `inputs` and `cache`
 (section 7.3), are not accepted in 0.6.0.
 
 ```json
 "scopes": {
-  "x-build": {"run": ["just", "build"], "judge": "exit"},
+  "x-build": {"run": ["just", "build"], "judge": "exit", "kind": "check"},
   "x-go":    {"run": ["just", "go"], "deps": ["x-build"], "ci": ["linux"]},
-  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "kind": "check", "ci": ["linux"]},
   "x-ios":   {"run": ["just", "ios"], "deps": ["x-build"], "systems": ["darwin"]},
   "gate":    {"deps": ["x-docs", "x-go", "x-ios"]}
 }
@@ -395,7 +396,7 @@ with its status:
 | 10 | `needs-other-system` | `jst test changed` (section 7.4) | 80 |
 | 11 | `skipped` | a scope asked for that is not eligible here | 79 |
 | 12 | `left-to-ci` | `jst test changed` or `jst test uncovered` with nothing to run here (section 7.4) | 0 |
-| 13 | `exited-0` | every scope asked for passed or ended `exited-0`, and one ended `exited-0`: a scope without `kind: check` that counted no tests, or a composite with such a dep | 0 |
+| 13 | `exited-0` | no failure, and a node that ran ended `exited-0` (a scope without `kind: check` that counted no tests), also a dep under a scope that passed | 0; 77 for `jst test ci`, whose job is green only on a pass |
 | 14 | `passed` | every scope asked for passed (a `check` that exited 0 is `passed`) | 0 |
 
 `not-run` is never the run's outcome: a node is `not-run` only after a failure higher in the order.
@@ -528,13 +529,14 @@ still leads to its tests: `needs-other-system`, never `left-to-ci`, when no CI c
 
 The **here** nodes run now through the graph (section 7.2), each with its deps from any group. The
 last line names the three groups:
-`jst test: outcome=passed (changed, 40 s; here: x-build=exited-0, x-ios=passed; ci: x-docs, x-go;
+`jst test: outcome=passed (changed, 40 s; here: x-build=passed, x-ios=passed; ci: x-docs, x-go;
 elsewhere: none)`. Its outcome, the first that applies:
 
 | outcome | when | exit | a pass? |
 |---|---|---|---|
 | a failure | a **here** node or a dep of one did not pass (section 7.2) | its own | no |
 | `needs-other-system` | `jst test changed`: **elsewhere** is not empty; the line names each system and its scopes | 80 | no |
+| `exited-0` | **here** is not empty, and a node that ran counted no tests and is no `check` | 0 | no |
 | `passed` | **here** is not empty and passed | 0 | yes |
 | `left-to-ci` | `jst test changed`: **here** and **elsewhere** are empty. `jst test uncovered`: **here** is empty | 0 | no |
 

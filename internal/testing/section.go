@@ -363,6 +363,9 @@ func judgeOf(section, entry map[string]any) string {
 	if judge, present := entry["judge"]; present {
 		return textOf(judge)
 	}
+	if entry["kind"] == config.StepKindCheck {
+		return "exit" // a check is judged by its status, never by the section's test judge
+	}
 	if judge, present := section["judge"]; present {
 		return textOf(judge)
 	}
