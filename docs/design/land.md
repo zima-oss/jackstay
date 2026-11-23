@@ -610,9 +610,9 @@ gate. Each scope with `ci` tests a set no other one does:
 "scopes": {
   "x-go":    {"run": ["go", "test", "-race", "-tags", "integration", "-json", "-count=1", "./..."],
               "judge": "go-json", "ci": ["linux"]},
-  "x-check": {"run": ["just", "check"], "judge": "exit", "ci": ["linux"]},
-  "x-sec":   {"run": ["just", "security"], "judge": "exit", "ci": ["linux"]},
-  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
+  "x-check": {"run": ["just", "check"], "judge": "exit", "kind": "check", "ci": ["linux"]},
+  "x-sec":   {"run": ["just", "security"], "judge": "exit", "kind": "check", "ci": ["linux"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "kind": "check", "ci": ["linux"]},
   "gate":    {"deps": ["x-check", "x-go", "x-sec", "x-docs"]}
 }
 ```
