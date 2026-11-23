@@ -17,6 +17,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/homedir"
 	"github.com/zima-oss/jackstay/internal/procs"
+	"github.com/zima-oss/jackstay/internal/trash"
 )
 
 func init() {
@@ -144,7 +145,7 @@ func environment() map[string]string {
 func (found project) settingsFor(folder string, scratch []string) Settings {
 	return Settings{Folder: folder, Environ: environment(), Scratch: scratch, Home: homedir.AccountHome(),
 		ProjectRoot: found.root, Guard: found.guard, Cards: found.cards, CardsBroken: found.broken, CardsAt: CardsOf,
-		Git: NewGit(CardRange)}
+		Git: NewGit(CardRange), TrashKeep: trash.Keeps(folder)}
 }
 
 // Refusal is the text a refusal gives the agent.

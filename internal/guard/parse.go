@@ -54,6 +54,7 @@ type Settings struct {
 	CardsAt     func(folder string) (map[string]any, bool) // the `cards` section of the project a folder is in
 	Git         Questions                                  // the questions to git
 	Deadline    time.Duration                              // the reading's budget; zero is readingDeadline
+	TrashKeep   bool                                       // the project keeps what jst trash and jst discard remove (`trash.keep` on)
 }
 
 // A Decision is the findings and warnings for one call.
@@ -90,7 +91,11 @@ func Decide(command string, settings Settings) (decision Decision) {
 		decision.Warnings = append(decision.Warnings, Warning{ID: warnNUL,
 			Text: "the command holds a NUL byte, which no shell takes; it was read without it and with a space in its place"})
 	}
-	defer func() { decision = applyLevels(decision, settings.Guard) }()
+	defer func() {
+		decision = applyLevels(decision, settings.Guard)
+		decision.Findings = keepWording(decision.Findings, settings.TrashKeep)
+		decision.Warned = keepWording(decision.Warned, settings.TrashKeep)
+	}()
 	for _, line := range readings {
 		reader := newReader(line, settings)
 		reader.read()

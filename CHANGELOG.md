@@ -119,6 +119,12 @@ that rings Claude Code, and puts what is going on in one `jst status`. Upgrading
 - State files go through one durable store: atomic writes, folders synced.
   [#74](https://github.com/zima-oss/jackstay/pull/74)
 
+- `jst trash` and `jst discard` delete at once and log each deletion (path, kind, size, SHA-256,
+  project, session, command); `jst trash list` shows the log. `"trash": {"keep": "on"}` keeps a copy
+  to restore for `keep_days`, as before, and is experimental. `jst trash list --json` is now
+  `{"kept": [...], "deleted": [...]}`. ([W-107](docs/decisions/W-107-trash-deletes-and-logs.md))
+  [#125](https://github.com/zima-oss/jackstay/pull/125)
+
 ### Removed
 
 - `jst gh`: use `jst land` and `jst checks` (the table below).
@@ -195,6 +201,7 @@ list it in `land.checks`.
 | `jst gh pr-status`, `jst gh pr-find` | `jst land status`, `jst land find` |
 | `jst gh ci-wait`, `ci-status`, `run-wait` | `jst checks wait`, `status`, `run-wait`, same flags |
 | `jst test gate --resume`, the `resume` key in `test.scopes` and `test.steps` | removed; `jst check` names the key to delete |
+| `jst trash`, `jst discard` keep what they remove for `trash.keep_days` | they delete it and log it; `"trash": {"keep": "on"}` (schema 3, experimental) keeps it |
 | `"jackstay_schema": 2` | 3 for the new keys; 0.5.10 and 0.5.11 refuse a schema-3 file |
 | chat tools `chat.self`, `chat.reply`, `chat.ack` | `chat.whoami`, `chat.send` with `reply_to`, `chat.ack` marks `acted`; the old names keep working through 0.6.x |
 

@@ -16,6 +16,7 @@ import (
 
 type world struct {
 	t      *testing.T
+	delete bool // trash.keep off: what is dropped is deleted and logged
 	repo   *testrepo.Repo
 	trash  string
 	out    bytes.Buffer
@@ -30,7 +31,7 @@ func newWorld(t *testing.T, files map[string]string) *world {
 func (w *world) discard(working string, args ...string) int {
 	w.out.Reset()
 	w.errors.Reset()
-	run := Run{Working: working, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Now: time.Now, Out: &w.out,
+	run := Run{Working: working, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Keep: !w.delete, Now: time.Now, Out: &w.out,
 		Errors: &w.errors}
 	return run.Discard(context.Background(), args)
 }
@@ -358,7 +359,7 @@ func TestAWorkingFileChangedAfterPlanningIsLeftAlone(t *testing.T) {
 	w.repo.Write(map[string]string{"a.txt": "staged\n"})
 	w.repo.Git("add", "a.txt")
 	w.repo.Write(map[string]string{"a.txt": "head\n"})
-	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Now: time.Now,
+	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 7, Keep: true, Now: time.Now,
 		Out: &w.out, Errors: &w.errors, repo: repository{top: w.repo.Root}}
 	ctx := context.Background()
 	planned, _, problem := run.plan(ctx, []string{"a.txt"})
@@ -381,7 +382,7 @@ func TestAWorkingFileChangedDuringTheMoveKeepsBothVersions(t *testing.T) {
 	w := newWorld(t, map[string]string{"a.txt": "head\n"})
 	w.repo.Write(map[string]string{"a.txt": "staged\n"})
 	w.repo.Git("add", "a.txt")
-	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 0,
+	run := Run{Working: w.repo.Root, Trash: w.trash, Project: "p", Session: "s", KeepDays: 0, Keep: true,
 		Now: func() time.Time {
 			w.repo.Write(map[string]string{"a.txt": "another session\n"})
 			return time.Now()
@@ -402,5 +403,74 @@ func TestAWorkingFileChangedDuringTheMoveKeepsBothVersions(t *testing.T) {
 	}
 	if kept := w.kept()["file"]; len(kept) != 1 || kept[0] != "another session\n" {
 		t.Fatalf("trash = %q, want the concurrent edit", kept)
+	}
+}
+
+// With trash.keep off, the edit and the staged version are deleted once the file is back, and each
+// deletion is logged with its size and digest.
+func TestWithoutKeepWhatIsDroppedIsDeletedAndLogged(t *testing.T) {
+	w := newWorld(t, map[string]string{"a.txt": "head\n"})
+	w.delete = true
+	w.repo.Write(map[string]string{"a.txt": "staged\n"})
+	w.repo.Git("add", "a.txt")
+	w.repo.Write(map[string]string{"a.txt": "mine\n"})
+	if code := w.discard(w.repo.Root, "a.txt"); code != 0 {
+		t.Fatalf("exit %d: %s", code, w.errors.String())
+	}
+	if w.read("a.txt") != "head\n" || w.status() != "" {
+		t.Fatalf("file %q status %q", w.read("a.txt"), w.status())
+	}
+	if entries := trash.Entries(w.trash); len(entries) != 0 {
+		t.Fatalf("kept %+v", entries)
+	}
+	deletions := trash.Deletions(w.trash)
+	kinds := map[string]trash.Deletion{}
+	for _, deletion := range deletions {
+		kinds[deletion.Kind] = deletion
+	}
+	if len(deletions) != 2 || kinds["file"].Size != 5 || kinds["staged"].Size != 7 || kinds["file"].Command != "jst discard" {
+		t.Fatalf("deletions %+v", deletions)
+	}
+	if !strings.Contains(w.out.String(), "what was on disk deleted") || strings.Contains(w.out.String(), "trash restore") {
+		t.Fatalf("out %s", w.out.String())
+	}
+}
+
+// Without keep, a new file HEAD does not have goes from the disk and the index, logged.
+func TestWithoutKeepANewFileIsDeletedAndLogged(t *testing.T) {
+	w := newWorld(t, map[string]string{"a.txt": "head\n"})
+	w.delete = true
+	w.repo.Write(map[string]string{"new.txt": "fresh\n"})
+	w.repo.Git("add", "new.txt")
+	if code := w.discard(w.repo.Root, "new.txt"); code != 0 {
+		t.Fatalf("exit %d: %s", code, w.errors.String())
+	}
+	if w.read("new.txt") != "<missing>" || w.status() != "" {
+		t.Fatalf("file %q status %q", w.read("new.txt"), w.status())
+	}
+	if deletions := trash.Deletions(w.trash); len(deletions) != 1 || deletions[0].Size != 6 {
+		t.Fatalf("deletions %+v", deletions)
+	}
+}
+
+// Each kept copy records its project's keep_days as planned, before any path changes: putting
+// jackstay.json back first does not shorten a later copy's days.
+func TestKeptDaysAreReadBeforeAnyPathChanges(t *testing.T) {
+	w := newWorld(t, map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 1}}`, "src/a.txt": "head\n"})
+	w.repo.Write(map[string]string{"jackstay.json": `{"jackstay_schema": 3, "project": "p", "trash": {"keep": "on", "keep_days": 30}}`, "src/a.txt": "mine\n"})
+	if code := w.discard(w.repo.Root, "jackstay.json", "src"); code != 0 {
+		t.Fatalf("exit %d: %s", code, w.errors.String())
+	}
+	found := false
+	for _, entry := range trash.Entries(w.trash) {
+		if strings.HasSuffix(entry.Path, "a.txt") {
+			found = true
+			if entry.KeepDays == nil || *entry.KeepDays != 30 {
+				t.Fatalf("the copy of a.txt records %v days", entry.KeepDays)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no copy of a.txt was kept")
 	}
 }

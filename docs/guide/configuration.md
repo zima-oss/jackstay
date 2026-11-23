@@ -40,7 +40,7 @@ jst check
 | Section | What it configures | Guide |
 |---|---|---|
 | `test`, `receipts`, `lock` | test scopes, their judges, receipts and the machine-wide lock | [Tests](tests.md) |
-| `guard`, `trash` | the guard's rules and levels, how long the trash keeps things | [The guard](guard.md) |
+| `guard`, `trash` | the guard's rules and levels, whether the trash keeps things | [The guard](guard.md) |
 | `procs` | the deadlines of background processes | [Background processes](background.md) |
 | `github`, `land` | the account and remote jackstay uses on GitHub; who merges a change, how, and which paths only a person lands | [Branches and GitHub](branches-and-github.md) |
 | `review` | reviewers, severities and rounds | [Reviews](review.md) |
