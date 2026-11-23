@@ -10,7 +10,8 @@ the same rules hold.
   shell commands (`.claude/settings.json`), and its tools are listed in the block at the end of this
   file. When the guard refuses a command, run what it names instead; never rephrase the command to
   get around it.
-- **The gate before a push**: `just gate` (or `jst test gate`), green. While working, run the tests
+- **The gate before a push**: `jst test gate`, green; CI runs the same scopes as
+  `jst test ci (linux)`. While working, run the tests
   of the package you change; `-tags integration` for the tests that start real processes or git.
 - **Tests**: every fix comes with the test that failed without it; no test depends on timing or on
   an idle machine.

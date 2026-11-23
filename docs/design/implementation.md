@@ -656,7 +656,7 @@ snapshot is unsigned; the release workflow refuses to run without all five secre
 only, on `ubuntu-latest` in the `release` environment (the secrets, the owner's approval), with
 `contents: write`, `id-token: write`, `attestations: write` and `artifact-metadata: write`. Actions
 are pinned by commit hash; GoReleaser runs pinned through `go run`, Go's build cache off. Before
-approving, the maintainer has run `just gate` on a Mac on the tagged commit
+approving, the maintainer has run `jst test gate` on a Mac on the tagged commit
 ([W-083](../decisions/W-083-no-macos-job-in-ci.md)). In order:
 
 1. Refuse a tag that is not annotated, not the commit checked out, not on main, or not
@@ -1234,22 +1234,21 @@ its version in a comment.
 (`//go:build integration`, real git or processes, `-race`), `security` (govulncheck; gosec at high
 severity and medium confidence, `.claude/` left out) and `docs` (links and anchors, every decision
 listed, the site built with no warning or broken link: section 6). **The gate**
-([W-040](../decisions/W-040-python-frozen-tests-by-change-readable-names.md)), `just gate` (the
-`gate` scope), runs `check`, `go`, `integration`, `security` and `docs` in order, stops at the first
-failure, and prints `Ran N tests`. Outside it: `terminal` (needs a terminal the sandbox refuses; run
+([W-040](../decisions/W-040-python-frozen-tests-by-change-readable-names.md)) is the `gate` scope
+of `jackstay.json`: a node whose `deps` are the scopes `x-check` (`just check`), `x-go` (every unit
+and integration test, once, with `-race`, judged from `go test -json`), `x-sec` (`just security`)
+and `x-docs` (`just docs`), run as a task graph ([land.md](land.md) section 7). `just gate` still
+runs the recipes in order for a quick local pass; it is not what CI runs. Outside it: `terminal` (needs a terminal the sandbox refuses; run
 before an install) and `guard-latency` (timing is no pass or fail on a shared machine). The justfile
 sets `GOCACHE`, `GOMODCACHE`, `GOLANGCI_LINT_CACHE` and `HUGO_CACHEDIR` for every recipe.
 
-**The workflow** `.github/workflows/gate.yml` runs `just gate` on `ubuntu-latest` for every pull
-request, push to `main` and by hand: Go from `go.mod`'s toolchain line, read-only permissions,
-credentials not kept, a 30-minute limit, a pull request's older run cancelled. `main` requires it.
+**The workflow** `.github/workflows/gate.yml` has one job, `jst test ci (linux)`, which runs
+`bin/jst test ci` (every scope whose `ci` names `linux`, each once) on `ubuntu-latest` for every
+pull request, push to `main` and by hand; `release.yml` runs the same before GoReleaser: Go from `go.mod`'s toolchain line, read-only permissions,
+credentials not kept, a 30-minute limit, a pull request's older run cancelled. `main` requires it, and `card-line`.
 The Vitest producer check runs separately. There is no macOS job
 ([W-083](../decisions/W-083-no-macos-job-in-ci.md)): `*_darwin.go` is checked by the maintainers'
-`just gate` on a Mac before an install and a release.
-
-This recipe set, the `just gate` workflow and the separate `go` and `integration` runs are the state
-before the migration to the scope graph; the 0.6.0 target (one Go scope with the integration tests,
-one `jst test ci (linux)` job) is [land.md](land.md) section 7.6.
+`jst test gate` on a Mac before an install and a release ([land.md](land.md) section 7.6).
 
 **Practices:**
 - The commit is injected at build (`-X …/internal/version.Commit`), else the build info's
