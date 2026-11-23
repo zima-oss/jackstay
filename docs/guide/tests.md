@@ -47,7 +47,8 @@ jst test last
 
 ## Declare scopes
 
-A scope is a named way to run your tests, declared in `jackstay.json`'s `test` section:
+A scope is a named way to run your tests, declared in `jackstay.json`'s `test` section (`kind`,
+like the graph keys, needs `"jackstay_schema": 3`):
 
 ```json
 "receipts": {"toolchain": []},
@@ -63,7 +64,7 @@ A scope is a named way to run your tests, declared in `jackstay.json`'s `test` s
     "gate":    {"steps": ["lint", "full"], "when": "before every pull request"}
   },
   "steps": {
-    "lint": {"run": ["ruff", "check", "."], "judge": "exit"}
+    "lint": {"run": ["ruff", "check", "."], "judge": "exit", "kind": "check"}
   }
 }
 ```
@@ -192,9 +193,9 @@ A scope's `ci` names the systems whose CI job runs it; `systems` the systems it 
 
 ```json
 "scopes": {
-  "x-build": {"run": ["just", "build"], "judge": "exit"},
+  "x-build": {"run": ["just", "build"], "judge": "exit", "kind": "check"},
   "x-go":    {"run": ["just", "go"], "deps": ["x-build"], "ci": ["linux"]},
-  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "ci": ["linux"]},
+  "x-docs":  {"run": ["just", "docs"], "judge": "exit", "kind": "check", "ci": ["linux"]},
   "x-ios":   {"run": ["just", "ios"], "deps": ["x-build"], "systems": ["darwin"]},
   "gate":    {"deps": ["x-docs", "x-go", "x-ios"]}
 }

@@ -886,6 +886,9 @@ func stepKindProblems(test map[string]any, kind, name string, entry map[string]a
 		return []string{fmt.Sprintf("`test.%s.%s.kind` must be \"test\" or \"check\": %q", kind, name, given)}
 	case !has(entry, "run"):
 		return []string{fmt.Sprintf("`test.%s.%s.kind` is for a scope with `run`; a composite passes by its deps", kind, name)}
+	case given == StepKindCheck && has(entry, "judge") && entry["judge"] != "exit":
+		return []string{fmt.Sprintf("`test.%s.%s.kind` is \"check\", which is judged by its exit status: "+
+			"its judge can only be `exit` (or none)", kind, name)}
 	case given == StepKindTest && effectiveJudge(test, entry) == "exit":
 		return []string{fmt.Sprintf("`test.%s.%s.kind` is \"test\", which must count tests to pass, and its judge is `exit`, "+
 			"which counts none: give it a judge that counts, or make it \"check\"", kind, name)}

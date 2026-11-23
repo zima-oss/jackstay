@@ -14,8 +14,8 @@ Nx names its targets, for the same reason.
 
 - A scope with `run` may declare `kind`: `test` or `check`.
 - A `test` scope must count tests to pass; its judge cannot be `exit`.
-- A `check` scope (a linter, an audit, a build) passes on exit 0, and is judged by its status
-  unless it names its own judge.
+- A `check` scope (a linter, an audit, a build) passes on exit 0: it is judged by its status, and
+  its judge can only be `exit`.
 - A gate or composite passes when every `test` scope passed and every `check` scope exited 0.
 - A scope that declares no `kind` and counts no tests stays `exited-0`: not evidence, as before,
   and so is a run that contains it. `jst test ci` fails on it, since a required job is green only

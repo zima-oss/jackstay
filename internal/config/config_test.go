@@ -252,6 +252,7 @@ func TestStepKindsAreChecked(t *testing.T) {
 		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"deps": ["b"], "kind": "check"}, "b": {"run": ["x"]}}}}`: "is for a scope with `run`",
 		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"run": ["true"], "kind": "test"}}}}`:                     "which counts none",
 		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"run": ["true"], "kind": "check"}}}}`:                    "",
+		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"run": ["go"], "judge": "go-json", "kind": "check"}}}}`:  "can only be `exit`",
 		`{"jackstay_schema": 3, "test": {"scopes": {"a": {"run": ["go"], "judge": "go-json", "kind": "test"}}}}`:   "",
 	} {
 		parsed, err := Parse([]byte(text))

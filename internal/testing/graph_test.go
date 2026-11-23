@@ -451,7 +451,7 @@ func TestAnUncountedDepUnderAPassingScopeIsNotAPass(t *testing.T) {
 	}}
 	w := newWorld(t, section, nil)
 	w.expectStatus(w.jst("gate"), 0)
-	w.expectLast("outcome=exited-0 (gate, ", "x-smoke=exited-0, x-unit=passed")
+	w.expectLast("outcome=exited-0 (gate, ", "x-smoke=exited-0, x-unit=passed, gate=exited-0")
 }
 
 // The required CI job fails on a run that is only exited-0.

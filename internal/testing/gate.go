@@ -131,6 +131,8 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		}
 	}
 	outcomes := map[string]string{}
+	// uncounted says a node ended exited-0 or has such a dep anywhere below it.
+	uncounted := map[string]bool{}
 	ended := false
 	for _, name := range order {
 		kind, entry := find(proj.section, name)
@@ -146,7 +148,7 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 			// A composite passes when every eligible dep passed; one that only exited 0 (a `test`
 			// or undeclared scope that counted nothing) makes it `exited-0`, not a pass.
 			outcome := receipts.OutcomePassed
-			if slices.ContainsFunc(depsOf(entry), func(dep string) bool { return outcomes[dep] == receipts.OutcomeExited0 }) {
+			if slices.ContainsFunc(depsOf(entry), func(dep string) bool { return uncounted[dep] }) {
 				outcome = receipts.OutcomeExited0
 			}
 			line = step{"step": name, "outcome": outcome, "seconds": 0, "composite": true}
@@ -158,6 +160,8 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		}
 		outcome := textOf(line["outcome"])
 		outcomes[name] = outcome
+		uncounted[name] = outcome == receipts.OutcomeExited0 ||
+			slices.ContainsFunc(depsOf(entry), func(dep string) bool { return uncounted[dep] })
 		state.steps = append(state.steps, line)
 		if !passing(outcome) && outcome != outcomeNotRun && !proj.options.keepGoing {
 			ended = true

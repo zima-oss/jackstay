@@ -300,8 +300,8 @@ did; a dep that ended `exited-0` makes it `exited-0`, not a pass.
 may say `kind`:
 
 - `test`: it must count tests to pass, so its judge cannot be `exit` (`jst check` refuses it).
-- `check` (a linter, an audit, a build): it passes on exit 0. Its node is `passed`, with no
-  receipt: there is no count to record.
+- `check` (a linter, an audit, a build): it passes on exit 0. Its judge can only be `exit`; its
+  node is `passed`, with no receipt: there is no count to record.
 
 A scope that does not say `kind` and counts no tests ends `exited-0`, not a pass, as before. So a
 gate passes when every `test` scope passed and every `check` scope exited 0. `kind` needs schema 3.
