@@ -3,13 +3,12 @@ package guard
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/zima-oss/jackstay/internal/config"
 	"github.com/zima-oss/jackstay/internal/homedir"
 )
 
@@ -21,42 +20,49 @@ const configUnusable = "jackstay.json cannot be used, so only the built-in rules
 // toldKeep is how long a session's mark is kept: longer than a working session.
 const toldKeep = 7 * 24 * time.Hour
 
-// configNews says whether the session is still to be told that the project's jackstay.json cannot
-// be used: once for each state of the file (its reason, size and time) in a session. It takes a mark
-// `<jackstay home>/<project>/guard-told/<digest>` that only one call can create, so two calls at once
-// tell once. A call without a session, or a mark that cannot be made, is told: saying it twice is
-// better than not at all.
-func configNews(session string, found project) bool {
-	if session == "" {
-		return true
+// stampOf is the path, size and time of the jackstay.json around a folder, or "".
+func stampOf(folder string) string {
+	_, place := config.Find(folder)
+	if place == "" {
+		return ""
 	}
-	state := session + "\x00" + found.problem + "\x00" + found.place
-	if info, err := os.Stat(found.place); err == nil {
-		state += "\x00" + strconv.FormatInt(info.Size(), 10) + "\x00" + strconv.FormatInt(info.ModTime().UnixNano(), 10)
-	}
-	sum := sha256.Sum256([]byte(state))
-	folder, err := homedir.ProjectPath(found.name, "guard-told")
+	info, err := os.Stat(place)
 	if err != nil {
-		return true
+		return place
 	}
-	if err := os.MkdirAll(folder, 0o700); err != nil {
-		return true
-	}
-	mark, err := os.OpenFile(filepath.Join(folder, hex.EncodeToString(sum[:16])), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) // #nosec G304 -- jackstay's own mark
-	if errors.Is(err, fs.ErrExist) {
-		return false
-	}
-	if err == nil {
-		_ = mark.Close()
-	}
-	return true
+	return place + "\x00" + strconv.FormatInt(info.Size(), 10) + "\x00" + strconv.FormatInt(info.ModTime().UnixNano(), 10)
 }
 
-// pruneTold removes marks older than toldKeep, so the folder holds about a week of sessions.
-func pruneTold(projectName string) {
-	folder, err := homedir.ProjectPath(projectName, "guard-told")
+// configNews says whether the session is still to be told that the project's jackstay.json cannot
+// be used: once for each state of the file (its reason, path, size and time) in a session. It gives
+// the mark `<jackstay home>/<project>/guard-told/<digest>` to take once the answer is written, so a
+// hook stopped before it answers tells again; two calls at once may both tell. A call without a
+// session is told every time.
+func configNews(session string, found project) (string, bool) {
+	if session == "" {
+		return "", true
+	}
+	sum := sha256.Sum256([]byte(session + "\x00" + found.problem + "\x00" + found.stamp))
+	folder, err := homedir.ProjectPath(found.name, "guard-told")
 	if err != nil {
+		return "", true
+	}
+	mark := filepath.Join(folder, hex.EncodeToString(sum[:16]))
+	if _, err := os.Lstat(mark); err == nil {
+		return "", false
+	}
+	return mark, true
+}
+
+// markTold takes the mark of a session that was told, and removes marks older than toldKeep, so
+// the folder holds about a week of sessions.
+func markTold(mark string) {
+	folder := filepath.Dir(mark)
+	if err := os.MkdirAll(folder, 0o700); err != nil {
 		return
+	}
+	if file, err := os.OpenFile(mark, os.O_WRONLY|os.O_CREATE, 0o600); err == nil { // #nosec G304 -- jackstay's own mark
+		_ = file.Close()
 	}
 	entries, err := os.ReadDir(folder)
 	if err != nil {

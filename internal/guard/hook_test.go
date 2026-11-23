@@ -298,3 +298,20 @@ func toldTheAgentOnly(out map[string]any, text string) bool {
 	context, _ := specific["additionalContext"].(string)
 	return !decided && specific["hookEventName"] == "PreToolUse" && strings.Contains(context, text)
 }
+
+// The mark is taken only once the answer is written: a hook stopped before that tells again.
+func TestASessionIsMarkedToldOnlyAfterTheAnswer(t *testing.T) {
+	t.Setenv("JACKSTAY_HOME", t.TempDir())
+	found := project{name: "demo", problem: "broken", stamp: "jackstay.json\x001\x002"}
+	mark, news := configNews("s", found)
+	if !news || mark == "" {
+		t.Fatalf("first: %q %v", mark, news)
+	}
+	if _, news := configNews("s", found); !news {
+		t.Fatal("a session whose answer was never written counts as told")
+	}
+	markTold(mark)
+	if _, news := configNews("s", found); news {
+		t.Fatal("a told session is told again")
+	}
+}

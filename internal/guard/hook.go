@@ -55,13 +55,13 @@ type project struct {
 	cards   map[string]any
 	broken  bool   // it declares `cards` and the section cannot be used
 	problem string // why its jackstay.json cannot be used, or ""
-	place   string // the path of that jackstay.json, when it cannot be used
+	stamp   string // the size and time of the jackstay.json found, read before it is: the state its problem is of
 }
 
 // projectOf reads the project around a folder: a broken section the guard does not read takes
 // nothing away; a jackstay.json that cannot be used takes the project's own rules away, not the built-in ones.
 func projectOf(folder string) project {
-	found := project{}
+	found := project{stamp: stampOf(folder)}
 	root, loaded, err := config.Load(folder, []string{"guard"})
 	if err != nil {
 		var problem *config.Error
@@ -70,7 +70,7 @@ func projectOf(folder string) project {
 		} else {
 			found.problem = err.Error()
 		}
-		root, found.place = config.Find(folder)
+		root, _ = config.Find(folder)
 		loaded = config.Config{}
 	}
 	found.root = root
@@ -385,7 +385,10 @@ func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
 		scratch = []string{place}
 	}
 	decision := Decide(commandText, found.settingsFor(folder, scratch))
-	toldConfig := found.problem != "" && configNews(given.text("session_id"), found)
+	toldMark, toldConfig := "", found.problem != ""
+	if toldConfig {
+		toldMark, toldConfig = configNews(given.text("session_id"), found)
+	}
 	if toldConfig {
 		decision.Warnings = append([]Warning{{ID: "config-unusable", Text: configUnusable}}, decision.Warnings...)
 	}
@@ -407,8 +410,8 @@ func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
 		answered.deny = Refusal(decision.Findings)
 	}
 	answered.write(stdout)
-	if toldConfig {
-		later = append(later, func() { pruneTold(found.name) })
+	if toldMark != "" {
+		later = append(later, func() { markTold(toldMark) })
 	}
 	later = append(later, func() {
 		others := len(decision.Warnings)
