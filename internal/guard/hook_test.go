@@ -198,8 +198,10 @@ func TestHookSaysAnUnusableConfigOnceInASession(t *testing.T) {
 	}
 	alone := bashCall("git status", folder)
 	delete(alone, "session_id")
-	if !said(alone) || !said(alone) {
-		t.Fatal("a call without a session was not told each time")
+	for range 2 {
+		if !said(alone) {
+			t.Fatal("a call without a session was not told each time")
+		}
 	}
 	for _, record := range readLog(t, home) {
 		if record["config_error"] == "" {
