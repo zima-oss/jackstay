@@ -199,7 +199,7 @@ go build -o .build/jst ./cmd/jst
 `jst install` from a checkout needs a pass of `jst test uncovered` for the same commit on this
 system, since jackstay's `jackstay.json` leaves some checks to CI. On Linux CI covers every check,
 so it ends `left-to-ci` at once; on macOS it runs them all, which needs the tools in
-[CONTRIBUTING.md](https://github.com/zima-oss/jackstay/blob/main/CONTRIBUTING.md) (just,
+[CONTRIBUTING.md](https://github.com/zima-oss/jackstay/blob/main/CONTRIBUTING.md) (`just`,
 ShellCheck) and takes several minutes.
 
 Run inside the checkout, `jst install` builds a private snapshot of the selected commit. Changes
