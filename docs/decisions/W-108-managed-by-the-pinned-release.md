@@ -26,7 +26,9 @@ version, not the one being built.
   change that adopts the new release and moves the pin to it. That change is the whole adoption at
   the new pin in one pull request a person merges (here: the pin, the workflows that download it,
   schema 3 and the `land` section), not the three-step split adopt plans for other projects: the
-  self-adoption test plans at the new pin and finds nothing pending only when all of it is there.
+  self-adoption test plans at the new pin and finds nothing pending (no change, conflict or
+  blocker) only when all of it is there. Its own `card-line` check refuses it, since rule D0 keeps
+  `jackstay.json` apart from other files: the person who merges it does so past that check.
 
 ## Consequences
 

@@ -40,4 +40,7 @@ func TestJackstayIsAdoptedByItself(t *testing.T) {
 	for _, conflict := range plan.Conflicts {
 		t.Errorf("conflict: %s: %s", conflict.ID, conflict.What)
 	}
+	for _, blocker := range plan.Blockers {
+		t.Errorf("blocker: %s (an adoption at the pin left part way)", blocker)
+	}
 }
