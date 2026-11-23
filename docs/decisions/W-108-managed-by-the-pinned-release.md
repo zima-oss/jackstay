@@ -23,7 +23,10 @@ version, not the one being built.
   whose own AGENTS block may be older; that the pinned release reads the file is checked by hand
   at each pin.
 - A release goes in this order: the version bump, the tag and the release, then the configuration
-  change that adopts the new release and moves the pin to it.
+  change that adopts the new release and moves the pin to it. That change is the whole adoption at
+  the new pin in one pull request a person merges (here: the pin, the workflows that download it,
+  schema 3 and the `land` section), not the three-step split adopt plans for other projects: the
+  self-adoption test plans at the new pin and finds nothing pending only when all of it is there.
 
 ## Consequences
 
