@@ -677,7 +677,8 @@ func TestAPinMoveLandsSettingsFirst(t *testing.T) {
 	var out bytes.Buffer
 	apply(t, newer)
 	writeApplied(&out, made, true)
-	if !strings.Contains(out.String(), "then, on the merged base, run `jst adopt --apply` as before") {
+	if !strings.Contains(out.String(), "run it again until it writes nothing") ||
+		!strings.Contains(out.String(), "then `jst adopt --apply` as before") {
 		t.Fatalf("no next step:\n%s", out.String())
 	}
 	if !strings.Contains(read(t, root, "jackstay.json"), `"v0.6.0"`) || !strings.Contains(read(t, root, ".github/workflows/release.yml"), "# edit") {
@@ -703,7 +704,7 @@ func TestAPlanOfBothPartsNamesTheSplitApply(t *testing.T) {
 	both := &Plan{Changes: []Change{{ID: "jackstay.json", Path: "jackstay.json"}, {ID: "agents-block", Path: "AGENTS.md"}}}
 	var out bytes.Buffer
 	writeText(&out, both)
-	if !strings.Contains(out.String(), "`jst adopt --apply --settings-only` writes jackstay.json alone") {
+	if !strings.Contains(out.String(), "`jst adopt --apply --settings-only` writes jackstay.json alone; on each merged base repeat it until it writes nothing") {
 		t.Fatalf("%s", out.String())
 	}
 	out.Reset()
@@ -711,7 +712,8 @@ func TestAPlanOfBothPartsNamesTheSplitApply(t *testing.T) {
 	if strings.Contains(out.String(), "--settings-only") {
 		t.Fatalf("a settings-only plan names the split: %s", out.String())
 	}
-	if !strings.Contains(upgradeSteps[2], "`jst adopt --apply --settings-only` writes jackstay.json alone") {
+	if !strings.Contains(upgradeSteps[2], "`jst adopt --apply --settings-only` writes jackstay.json alone") ||
+		!strings.Contains(upgradeSteps[2], "repeat it until it writes nothing") {
 		t.Fatalf("step 3: %s", upgradeSteps[2])
 	}
 }
