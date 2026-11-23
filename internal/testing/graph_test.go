@@ -474,3 +474,22 @@ func TestACheckIgnoresTheSectionsCountingJudge(t *testing.T) {
 	w.expectStatus(w.jst("x-lint"), 0)
 	w.expectLast("outcome=passed (a check: it ended 0")
 }
+
+// A skipped branch carries no uncounted dep up into a composite.
+func TestASkippedBranchDoesNotTaintAComposite(t *testing.T) {
+	section := map[string]any{"scopes": map[string]any{
+		"gate":    map[string]any{"deps": argv("x-smoke", "x-suite")},
+		"x-smoke": map[string]any{"run": counted("x-smoke", "true"), "judge": "exit"},
+		"x-suite": map[string]any{"deps": argv("x-unit", "x-mac")},
+		"x-unit":  counting("x-unit", nil),
+		"x-mac":   counting("x-mac", map[string]any{"deps": argv("x-smoke"), "systems": argv("darwin")}),
+	}}
+	w := newWorld(t, section, nil)
+	w.system = "linux"
+	w.expectStatus(w.jst("gate"), 0)
+	w.expectLast("outcome=exited-0 (gate, ", "x-mac=skipped")
+	// A composite that passed is not named on the line; one tainted would be.
+	if strings.Contains(w.lastLine(), "x-suite=exited-0") {
+		t.Fatalf("the skipped branch tainted x-suite: %s", w.lastLine())
+	}
+}

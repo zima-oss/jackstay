@@ -160,7 +160,8 @@ func (proj *project) gate(label string, asked []string, split *partition) int {
 		}
 		outcome := textOf(line["outcome"])
 		outcomes[name] = outcome
-		uncounted[name] = outcome == receipts.OutcomeExited0 ||
+		// A skipped node carries nothing up: a composite ignores it (section 7.2).
+		uncounted[name] = outcome == receipts.OutcomeExited0 || outcome != outcomeSkipped &&
 			slices.ContainsFunc(depsOf(entry), func(dep string) bool { return uncounted[dep] })
 		state.steps = append(state.steps, line)
 		if !passing(outcome) && outcome != outcomeNotRun && !proj.options.keepGoing {

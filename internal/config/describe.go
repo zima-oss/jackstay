@@ -181,7 +181,7 @@ var keyDescriptions = map[string]string{
 	"test.scopes.*.evidence":                   "Counts the tests a run passed from the lines this pattern matches (RE2, one group for the number); the `steps` judge needs it.",
 	"test.scopes.*.expect":                     "Lists the engines (`xctest`, `swift-testing`) whose markers a `swift-test` run must show (default `test.expect`, else `xctest`).",
 	"test.scopes.*.kind":                       "`test`: must count tests to pass (its judge cannot be `exit`); `check` (a linter, an audit, a build): passes on exit 0. Undeclared, a run that counts no tests ends `exited-0`, not a pass (schema 3).",
-	"test.scopes.*.judge":                      "Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`).",
+	"test.scopes.*.judge":                      "Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`). A scope with `kind: check` is always judged by `exit`.",
 	"test.scopes.*.lock":                       "Takes the machine-wide lock when `lock.enabled` is true (default true, false for `focused` and `quick`).",
 	"test.scopes.*.lock_wait":                  "Gives up waiting for the lock after this many seconds (default the scope's timeout).",
 	"test.scopes.*.report":                     "Names the report file a file-based judge reads; `{report}` in the words gives its path.",

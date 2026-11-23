@@ -1137,7 +1137,7 @@
                 "type": "array"
               },
               "judge": {
-                "description": "Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`).",
+                "description": "Says how the run's outcome is read: `swift-test`, `steps`, `exit`, `go-json`, `junit`, `jest-json`, `trx` or `xcresult-json` (default `test.judge`, else `exit`). A scope with `kind: check` is always judged by `exit`.",
                 "enum": [
                   "swift-test",
                   "steps",
