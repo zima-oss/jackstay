@@ -32,6 +32,8 @@ func runHookWithin(t *testing.T, within budgets, home string, payload any, raw s
 	hookBudgets = within
 	defer func() { hookBudgets = saved }()
 	t.Setenv("JACKSTAY_HOME", home)
+	// The journal is read back: Finish waits for its write however long a loaded machine takes.
+	t.Setenv(telemetry.FinishWaitVariable, telemetrytest.GenerousFinishWait)
 	telemetry.Reset()
 	t.Cleanup(telemetry.Reset)
 	telemetry.Begin("guard", nil)

@@ -158,6 +158,15 @@ func (found project) settingsFor(folder string, scratch []string) Settings {
 		Deadline: hookBudgets.reading}
 }
 
+// HookWithin is Hook with every budget set to within, for tests of other packages that run the hook
+// with real work and must not fail open on a loaded machine; Hook keeps the production budgets.
+func HookWithin(within time.Duration, stdin io.Reader, stdout, stderr io.Writer) int {
+	saved := hookBudgets
+	hookBudgets = budgets{answer: within, exit: within, reading: within, question: within, call: within}
+	defer func() { hookBudgets = saved }()
+	return Hook(stdin, stdout, stderr)
+}
+
 // Refusal is the text a refusal gives the agent.
 func Refusal(findings []Finding) string {
 	lines := []string{"jst guard refused this command; nothing was run."}
