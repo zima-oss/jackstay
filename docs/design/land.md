@@ -296,7 +296,7 @@ setting (`judge`, `timeout`, `lock_wait`, `lock`, `env`) belong to scopes with
 `run`. It passes when every dep eligible on this system (section 7.2) passed, and at least one
 did; a dep that ended `exited-0` makes it `exited-0`, not a pass.
 
-**Step kinds** (W-107, after Bazel's test and build targets and Nx's targets). A scope with `run`
+**Step kinds** ([W-107](../decisions/W-107-step-kinds.md), after Bazel's test and build targets and Nx's targets). A scope with `run`
 may say `kind`:
 
 - `test`: it must count tests to pass, so its judge cannot be `exit` (`jst check` refuses it).
