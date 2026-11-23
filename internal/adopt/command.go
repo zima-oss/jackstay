@@ -308,6 +308,10 @@ func writeText(out io.Writer, plan *Plan) {
 	for _, change := range plan.Changes {
 		fmt.Fprintf(&text, "  %-28s %s: %s\n", change.ID, change.Path, change.What)
 	}
+	if plan.SplitsSettings() {
+		fmt.Fprintf(&text, "  these touch %s and other files, which land apart (rule D0): `jst adopt --apply --settings-only` "+
+			"writes %s alone; on each merged base repeat it until it writes nothing, then `jst adopt --apply` writes the rest\n", config.Name, config.Name)
+	}
 	if len(plan.Conflicts) > 0 {
 		fmt.Fprintf(&text, "conflicts (%d) — nothing is written until each is settled:\n", len(plan.Conflicts))
 	} else {
@@ -398,8 +402,9 @@ func writeApplied(out io.Writer, plan *Plan, settingsOnly bool) {
 	switch {
 	case settingsOnly:
 		fmt.Fprintf(out, "jst adopt: %d change(s) written to %s alone. Land it in a pull request of its own (rule D0, merged "+
-			"by the owner); then, on the merged base, run `jst adopt --apply` as before (the same folder and profile, "+
-			"without --settings-only) for the other files\n", len(plan.Changes), config.Name)
+			"by the owner); then, on the merged base, run it again until it writes nothing (a terminal apply may record "+
+			"more answers), then `jst adopt --apply` as before (the same folder and profile, without --settings-only) "+
+			"for the other files\n", len(plan.Changes), config.Name)
 	case plan.SplitsSettings():
 		fmt.Fprintf(out, "jst adopt: %d change(s) written, to %s and other files: rule D0 refuses them in one pull request. "+
 			"Commit %s alone first, in a pull request of its own merged by the owner, then the other files in another "+

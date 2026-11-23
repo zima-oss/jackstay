@@ -143,6 +143,9 @@ that rings Claude Code, and puts what is going on in one `jst status`. Upgrading
 - The guard says an unusable `jackstay.json` in one short line that names `jst check`, about every
   10 minutes in a session and again when the file changes, not its whole reason on every call.
   [#123](https://github.com/zima-oss/jackstay/pull/123)
+- `jst adopt --plan` names `jst adopt --apply --settings-only` when the changes touch
+  `jackstay.json` and other files, and the upgrade's schema-3 step names it too, so nobody splits a
+  mixed write by hand. [#124](https://github.com/zima-oss/jackstay/pull/124)
 - GitHub check results and pull request identities, interrupted installs and deliveries, trash
   recovery and setup planning, from the release-range audit.
   [#53](https://github.com/zima-oss/jackstay/pull/53),
@@ -174,6 +177,13 @@ and `jst doctor`, then move each project the way `jst adopt --plan` plans it: th
 workflows that download 0.6.0, then config schema 3 with the `land` section, each a pull request a
 person merges. A step that changes `jackstay.json` is applied with `--settings-only` and lands
 alone (rule D0). The [upgrading guide](docs/guide/upgrading.md) has the steps.
+
+Keep that order: `jst adopt` refuses a key that needs schema 3 (`$schema`, `land`,
+`adopt.profile_sha256` …) until the workflows that download 0.6.0 are written, so CI's 0.5.x never
+reads a schema-3 file. Don't add such a key by hand before then, and don't carry `jackstay.json`
+onto a branch without the new workflows. Install 0.6.0 on every machine whose agents work in the
+project before step 3 merges: an older jst cannot use the schema-3 file, and its guard then
+applies only its built-in rules.
 
 `jst land` waits only for the checks the base's rules require and those `land.checks` lists, where
 `jst gh pr-land` stopped on any failed check: make a check that must block required on the host, or
