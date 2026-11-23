@@ -52,7 +52,7 @@ func guardCall(t *testing.T, home, session, command string, background bool) {
 	_ = os.MkdirAll(filepath.Join(home, "demo"), 0o700)
 	data, _ := json.Marshal(call)
 	process(t, home, "guard", nil, func() int {
-		return guard.Hook(bytes.NewReader(data), &bytes.Buffer{}, &bytes.Buffer{})
+		return guard.HookWithin(2*time.Minute, bytes.NewReader(data), &bytes.Buffer{}, &bytes.Buffer{}) // decisions, not speed
 	})
 }
 

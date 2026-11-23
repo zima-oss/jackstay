@@ -31,8 +31,8 @@ const (
 	maxConfigBytes = 1 << 20
 )
 
-// hookBudgets are the hook's time bounds (sections 3 and 7); a variable only so tests can give real
-// work room on a loaded machine.
+// hookBudgets are the hook's time bounds (sections 3 and 7). They are passed by value to each run,
+// so a test can give real work room on a loaded machine without a shared setting.
 var hookBudgets = budgets{answer: 5 * time.Second, exit: 8 * time.Second, reading: readingDeadline,
 	question: questionBudget, call: callBudget}
 
@@ -151,20 +151,17 @@ func environment() map[string]string {
 	return found
 }
 
-func (found project) settingsFor(folder string, scratch []string) Settings {
+func (found project) settingsFor(folder string, scratch []string, within budgets) Settings {
 	return Settings{Folder: folder, Environ: environment(), Scratch: scratch, Home: homedir.AccountHome(),
 		ProjectRoot: found.root, Guard: found.guard, Cards: found.cards, CardsBroken: found.broken, CardsAt: CardsOf,
-		Git: NewGitWithBudget(CardRange, hookBudgets.question, hookBudgets.call), TrashKeep: trash.Keeps(folder),
-		Deadline: hookBudgets.reading}
+		Git: NewGitWithBudget(CardRange, within.question, within.call), TrashKeep: trash.Keeps(folder),
+		Deadline: within.reading}
 }
 
 // HookWithin is Hook with every budget set to within, for tests of other packages that run the hook
 // with real work and must not fail open on a loaded machine; Hook keeps the production budgets.
 func HookWithin(within time.Duration, stdin io.Reader, stdout, stderr io.Writer) int {
-	saved := hookBudgets
-	hookBudgets = budgets{answer: within, exit: within, reading: within, question: within, call: within}
-	defer func() { hookBudgets = saved }()
-	return Hook(stdin, stdout, stderr)
+	return hookWith(budgets{answer: within, exit: within, reading: within, question: within, call: within}, stdin, stdout, stderr)
 }
 
 // Refusal is the text a refusal gives the agent.
@@ -294,8 +291,13 @@ const failedOpen = "jst guard failed and did NOT check this command (%s). The co
 // 0 always. Input it cannot read is refused; evidence it cannot get makes the rule that needed it
 // refuse; only a fault of its own fails open (section 7).
 func Hook(stdin io.Reader, stdout, stderr io.Writer) int {
+	return hookWith(hookBudgets, stdin, stdout, stderr)
+}
+
+// hookWith is Hook under the given budgets.
+func hookWith(within budgets, stdin io.Reader, stdout, stderr io.Writer) int {
 	started := time.Now()
-	answerBy, exitBy := hookBudgets.answer, hookBudgets.exit
+	answerBy, exitBy := within.answer, within.exit
 	done := make(chan func(), 1)
 	go func() {
 		var after func()
@@ -311,7 +313,7 @@ func Hook(stdin io.Reader, stdout, stderr io.Writer) int {
 			}
 			done <- after
 		}()
-		after = decideCall(stdin, stdout, stderr)
+		after = decideCall(within, stdin, stdout, stderr)
 	}()
 	var after func()
 	select {
@@ -341,7 +343,7 @@ func Hook(stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 // decideCall reads the call, writes the answer, and gives what is to be logged after it.
-func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
+func decideCall(within budgets, stdin io.Reader, stdout, stderr io.Writer) func() {
 	data, err := io.ReadAll(io.LimitReader(stdin, maxInputBytes+1))
 	given := call{fields: map[string]any{}}
 	if err == nil && len(data) > maxInputBytes {
@@ -412,7 +414,7 @@ func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
 	if place := given.text("scratchpad_dir"); place != "" {
 		scratch = []string{place}
 	}
-	decision := Decide(commandText, found.settingsFor(folder, scratch))
+	decision := Decide(commandText, found.settingsFor(folder, scratch, within))
 	toldMark, toldConfig := "", found.problem != ""
 	if toldConfig {
 		toldMark, toldConfig = configNews(given.text("session_id"), found, time.Now())
@@ -460,6 +462,11 @@ func decideCall(stdin io.Reader, stdout, stderr io.Writer) func() {
 
 // check is `jst guard check [--cwd DIR] -- COMMAND`: exit 0 allowed, 2 refused.
 func check(args []string, stdout, stderr io.Writer) int {
+	return checkWith(hookBudgets, args, stdout, stderr)
+}
+
+// checkWith is check under the given budgets.
+func checkWith(within budgets, args []string, stdout, stderr io.Writer) int {
 	folder, _ := os.Getwd()
 	if len(args) >= 2 && args[0] == "--cwd" {
 		folder, args = args[1], args[2:]
@@ -469,7 +476,7 @@ func check(args []string, stdout, stderr io.Writer) int {
 		return 64
 	}
 	found := projectOf(folder)
-	decision := Decide(args[1], found.settingsFor(folder, nil))
+	decision := Decide(args[1], found.settingsFor(folder, nil, within))
 	if found.problem != "" {
 		fmt.Fprintln(stderr, "jst guard: jackstay.json cannot be used, so only the built-in rules are applied ("+found.problem+")")
 	}

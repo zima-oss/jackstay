@@ -28,9 +28,6 @@ func runHook(t *testing.T, home string, payload any, raw string) (map[string]any
 // runHookWithin is runHook with the hook's budgets set to within for the run.
 func runHookWithin(t *testing.T, within budgets, home string, payload any, raw string) (map[string]any, string) {
 	t.Helper()
-	saved := hookBudgets
-	hookBudgets = within
-	defer func() { hookBudgets = saved }()
 	t.Setenv("JACKSTAY_HOME", home)
 	// The journal is read back: Finish waits for its write however long a loaded machine takes.
 	t.Setenv(telemetry.FinishWaitVariable, telemetrytest.GenerousFinishWait)
@@ -47,7 +44,7 @@ func runHookWithin(t *testing.T, within budgets, home string, payload any, raw s
 		text = string(data)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Hook(strings.NewReader(text), &stdout, &stderr); code != 0 {
+	if code := hookWith(within, strings.NewReader(text), &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	if stdout.Len() == 0 {
@@ -298,10 +295,10 @@ func TestHookFindsTheProjectFromTheWorkingFolder(t *testing.T) {
 
 func TestCheckCommand(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := check([]string{"--cwd", "/tmp", "--", "git clean -fd"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "git clean -n") {
+	if code := checkWith(generousBudgets, []string{"--cwd", "/tmp", "--", "git clean -fd"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "git clean -n") {
 		t.Fatalf("%d %q", code, stderr.String())
 	}
-	if code := check([]string{"--cwd", "/tmp", "--", "git clean -n"}, &stdout, &stderr); code != 0 {
+	if code := checkWith(generousBudgets, []string{"--cwd", "/tmp", "--", "git clean -n"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("%d", code)
 	}
 }
