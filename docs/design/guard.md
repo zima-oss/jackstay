@@ -430,18 +430,22 @@ differs; neither makes an entry. `on` (experimental): the item is kept as an ent
 below. The guard's advice and the AGENTS block name the same commands either way, and promise an
 undo only with `on`.
 
-- Each deletion is logged and synced before anything is removed, so none goes unlogged. Written
-  limit: a removal that then fails, or a command stopped part way, leaves a line for an item still
-  there, in whole or in part; the command's error says so.
+- Each deletion is logged and synced (the log's folder too, when the log is new or rolled over)
+  before anything is removed, so none goes unlogged. Written limits: a removal that then fails, or a
+  command stopped part way, leaves a line for an item still there, in whole or in part, and the
+  command's error says so; what a running job writes into an item after it was measured is deleted
+  with it, unmeasured.
 - The deletion log is `<jackstay home>/.trash/deleted.jsonl`, one JSON line each: `deleted_at`,
   `path`, `kind` (`file`, `link`, `folder`, or `staged` for an index version), `size`, `sha256` (of
   a file's bytes or a link's target; of a folder, of a listing of each entry's relative path, kind,
   mode and digest, so a folder is read whole; a pipe, socket or device is never read), `project`,
   `session` (`CLAUDE_CODE_SESSION_ID`) and `command`. Writers take `deleted.lock` for the size
-  check, the rollover and the append. At 1 MiB the log becomes `deleted.1.jsonl`, replacing the one
+  check, the rollover and the append; `jst trash list` reads both generations under it, shared. At 1 MiB the log becomes `deleted.1.jsonl`, replacing the one
   before; `jst trash list` reads both.
-- `trash.keep` is read from each item's own project (for `jst discard`, each path's), before the
-  item moves, as `keep_days` is; a jackstay.json that cannot be used reads as `off`. It needs `"jackstay_schema": 3`.
+- `trash.keep` is one setting for a whole command: that of the project the command runs in, read
+  before anything changes, as the guard reads it for its advice; a jackstay.json that cannot be used
+  reads as `off`. Written limit: a path inside a nested project with another setting follows the
+  outer one. `keep_days` is still the item's own. It needs `"jackstay_schema": 3`.
 
 - `jst trash PATH…` moves each item into `<jackstay home>/.trash/<time>-<n>/` beside `entry.json`
   (`path` absolute, `moved_at`, `project`, `session`, `kind`). On the same volume the move is a

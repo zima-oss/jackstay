@@ -130,10 +130,12 @@ func Command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	}
 	// Pruned first, so nothing this call moves is pruned by it, whatever keep_days says.
 	Prune(folder, time.Now())
+	// One setting for every path, from the project the command runs in, as the guard reads it.
+	working, _ := os.Getwd()
+	keep := Keeps(working)
 	status := 0
 	for _, given := range paths {
 		origin := Origin(given)
-		keep := Keeps(origin) // read before the move: a whole checkout carries its own setting away
 		if !keep {
 			deletion, err := Delete(folder, given, ProjectOf(origin), Session(), "jst trash", time.Now())
 			if err != nil {

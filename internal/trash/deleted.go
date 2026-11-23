@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/zima-oss/jackstay/internal/config"
+	"github.com/zima-oss/jackstay/internal/durable"
 	"github.com/zima-oss/jackstay/internal/telemetry"
 )
 
@@ -59,8 +60,9 @@ func Session() string {
 }
 
 // Delete deletes an item at its path for good (`trash.keep` off). Its deletion is logged and synced
-// first, so no deletion goes unlogged; written limit: a removal that then fails, or a command stopped
-// part way, leaves a line for an item still there, in whole or in part, and the command says so.
+// first, so no deletion goes unlogged. Written limits: a removal that then fails, or a command
+// stopped part way, leaves a line for an item still there, in whole or in part, and the command says
+// so; what is written into the item after it was measured is deleted with it, unmeasured.
 func Delete(folder, given, project, session, command string, now time.Time) (Deletion, error) {
 	source, err := filepath.Abs(given)
 	if err != nil {
@@ -181,24 +183,23 @@ func appendLog(folder string, deletion Deletion) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(folder, 0o700); err != nil {
+	if err := durable.MakeFolder(folder, 0o700); err != nil {
 		return err
 	}
-	lock, err := os.OpenFile(filepath.Join(folder, "deleted.lock"), os.O_WRONLY|os.O_CREATE, 0o600) // #nosec G304 -- jackstay's own lock
+	// One writer at a time, machine-wide: the size check, a rollover and the append are one step.
+	unlock, err := lockLog(folder, unix.LOCK_EX)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = lock.Close() }()
-	// One writer at a time, machine-wide: the size check, a rollover and the append are one step.
-	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil { // #nosec G115 -- a file descriptor
-		return err
-	}
+	defer unlock()
 	place := filepath.Join(folder, logName)
 	if info, err := os.Stat(place); err == nil && info.Size()+int64(len(line)) >= logLimit {
 		if err := os.Rename(place, filepath.Join(folder, oldLogName)); err != nil {
 			return err
 		}
 	}
+	_, statErr := os.Stat(place)
+	created := statErr != nil
 	file, err := os.OpenFile(place, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600) // #nosec G304 -- jackstay's own log
 	if err != nil {
 		return err
@@ -211,7 +212,26 @@ func appendLog(folder string, deletion Deletion) error {
 		_ = file.Close()
 		return err
 	}
-	return file.Close()
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if created {
+		return durable.SyncFolder(folder) // a new log's name, or a rollover, survives a crash
+	}
+	return nil
+}
+
+// lockLog takes the deletion log's lock (shared to read, exclusive to write) and gives its release.
+func lockLog(folder string, how int) (func(), error) {
+	lock, err := os.OpenFile(filepath.Join(folder, "deleted.lock"), os.O_WRONLY|os.O_CREATE, 0o600) // #nosec G304 -- jackstay's own lock
+	if err != nil {
+		return nil, err
+	}
+	if err := unix.Flock(int(lock.Fd()), how); err != nil { // #nosec G115 -- a file descriptor
+		_ = lock.Close()
+		return nil, err
+	}
+	return func() { _ = lock.Close() }, nil
 }
 
 // Deletions are the logged deletions, newest first.
@@ -224,6 +244,10 @@ func Deletions(folder string) []Deletion {
 // readLog is every line of both logs, oldest first; a line cut short by a crash is passed over.
 func readLog(folder string) []Deletion {
 	var found []Deletion
+	// Both generations under one shared lock: no rollover between the two reads.
+	if unlock, err := lockLog(folder, unix.LOCK_SH); err == nil {
+		defer unlock()
+	}
 	for _, name := range []string{oldLogName, logName} {
 		file, err := os.Open(filepath.Join(folder, name)) // #nosec G304 -- jackstay's own log
 		if err != nil {

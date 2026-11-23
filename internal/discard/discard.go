@@ -28,7 +28,7 @@ import (
 	"github.com/zima-oss/jackstay/internal/trash"
 )
 
-const usage = `usage: jst discard PATH...    put each path back to HEAD; what that drops is kept in jackstay's trash`
+const usage = `usage: jst discard PATH...    put each path back to HEAD; what that drops is deleted and logged (kept with trash.keep on)`
 
 // emptyTree is git's tree with nothing in it: HEAD of a repository with no commit yet.
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
@@ -62,7 +62,7 @@ func command(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	run := Run{Working: working, Trash: folder, Project: trash.ProjectOf(working), Session: trash.Session(),
-		KeepDays: trash.KeepDays(working), Now: time.Now, Out: stdout, Errors: stderr}
+		KeepDays: trash.KeepDays(working), Keep: trash.Keeps(working), Now: time.Now, Out: stdout, Errors: stderr}
 	return run.Discard(ctx, args)
 }
 
@@ -71,9 +71,9 @@ type Run struct {
 	Working, Trash   string
 	Project, Session string
 	KeepDays         int
-	// Keeps says whether a folder's project keeps what is dropped (`trash.keep` on); nil reads
-	// each path's own project.
-	Keeps       func(folder string) bool
+	// Keep keeps what is dropped (`trash.keep` on), read once from the project the command runs
+	// in, as the project name and keep_days are: one setting for every path it is given.
+	Keep        bool
 	Now         func() time.Time
 	Out, Errors io.Writer
 	repo        repository
@@ -311,7 +311,7 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 			return 0, err
 		}
 	}
-	keep := run.keeps(filepath.Dir(place))
+	keep := run.Keep
 	var dropped []trash.Deletion
 	if !keep {
 		// trash.keep off: what the change drops is logged first, then the replacement goes in over
@@ -371,7 +371,8 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 				err, entries[len(entries)-1])
 		}
 		if len(dropped) > 0 {
-			return len(entries), fmt.Errorf("%w; nothing was dropped, though the log already lists it", err)
+			return len(entries), fmt.Errorf("%w; the log already lists what this path was to drop, which may be in part "+
+				"still there: `git status` and `git diff` show what is", err)
 		}
 		return len(entries), err
 	}
@@ -391,14 +392,6 @@ func (run Run) putBack(ctx context.Context, each change) (int, error) {
 		}
 	}
 	return len(entries), nil
-}
-
-// keeps says whether the project of a folder keeps what discard drops (`trash.keep` on).
-func (run Run) keeps(folder string) bool {
-	if run.Keeps != nil {
-		return run.Keeps(folder)
-	}
-	return trash.Keeps(folder)
 }
 
 // logDropped logs what a change drops, the staged version and what is on disk, before it is dropped.

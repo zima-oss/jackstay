@@ -319,6 +319,10 @@ func TestTrashingAWholeCheckoutKeepsItsOwnDays(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(checkout, "jackstay.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// trash.keep is the setting of the project the command runs in.
+	if err := os.WriteFile(filepath.Join(parent, "jackstay.json"), []byte(`{"jackstay_schema": 3, "project": "outer", "trash": {"keep": "on"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("JACKSTAY_HOME", t.TempDir())
 	t.Chdir(parent)
 	var out, errs strings.Builder
