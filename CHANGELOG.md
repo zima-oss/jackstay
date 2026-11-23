@@ -140,6 +140,9 @@ that rings Claude Code, and puts what is going on in one `jst status`. Upgrading
   [#62](https://github.com/zima-oss/jackstay/pull/62)
 - `jst procs stop` no longer says a running job "had ended already" when its supervisor answers
   between two checks. [#115](https://github.com/zima-oss/jackstay/pull/115)
+- The guard says an unusable `jackstay.json` in one short line that names `jst check`, about every
+  10 minutes in a session and again when the file changes, not its whole reason on every call.
+  [#123](https://github.com/zima-oss/jackstay/pull/123)
 - GitHub check results and pull request identities, interrupted installs and deliveries, trash
   recovery and setup planning, from the release-range audit.
   [#53](https://github.com/zima-oss/jackstay/pull/53),
