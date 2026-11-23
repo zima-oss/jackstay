@@ -136,7 +136,8 @@ Input the guard cannot read is refused; evidence it cannot get (git does not ans
 rule that needed it refuse; only a fault of its own code fails open, because a guard that blocked
 on its own bug would stop every session at once. Every outcome is the table of section 7; beside
 it, an unusable `jackstay.json` turns off the project's `deny` rules, regenerable names and levels
-(`config-unusable` on every answer), one bad entry is passed over and said (`regenerable-ignored`,
+(`config-unusable`: a short line naming `jst check`, which gives the reason, said to a session
+at most every 10 minutes and again when the file changes; the span carries the reason on every call), one bad entry is passed over and said (`regenerable-ignored`,
 `project-rule-unreadable`, `guard-exception-not-applied`), and a binary that cannot start ends 126
 or 127, which Claude Code shows and runs the command (`jst doctor` reports it, `implementation.md`
 section 7.7). `failed_open` must stay at zero; `jst doctor` reports each project's 7-day count.
@@ -383,7 +384,7 @@ uses it). Every outcome, in order:
 | `tool_input` present but not readable, or `command` not a string | deny (`unreadable-call`) | `refused` | 0 |
 | no command, or only spaces | nothing | — | 0 |
 | a background call not through `jst bg` | (goes on) | the journal event `jackstay.bg.requested_outside` | — |
-| jackstay.json unusable | built-in rules only; `systemMessage` says so — **except the Card push rule**, which follows the next row | `jackstay.guard.config_error` on the span | 0 |
+| jackstay.json unusable | built-in rules only; `systemMessage` says so, to a session at most every 10 minutes and again when the file changes (a mark under `<jackstay home>/<project>/guard-told/`, touched once the answer is written in full; two calls at once may both say it) — **except the Card push rule**, which follows the next row | `jackstay.guard.config_error` on the span | 0 |
 | the project **declares** `cards` but the section cannot be used (a broken section, or a jackstay.json that does not parse while its text holds a `"cards"` member name, or cannot be read at all) | the Card push rule stays on and refuses every `git push` that could move a remote branch (it cannot judge them: `card-push-unreadable-config`); nothing else changes | `refused` when it refuses | 0 |
 | findings | deny with the reasons | `refused` | 0 |
 | warnings only, or findings of rules set to `warn` | `systemMessage` to the person, `additionalContext` to the agent | `warned` | 0 |

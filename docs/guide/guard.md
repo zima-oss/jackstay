@@ -95,7 +95,8 @@ Every rule refuses by default, except `zsh-glob`, which warns. A project sets le
   say a command cannot be judged; they take no level.
 
 Check the section with `jst check`. A `guard` section that cannot be used turns off your rules and
-levels (the built-in rules stay on), and every answer says so.
+levels (the built-in rules stay on). The guard says so to each session about every 10 minutes
+(two calls at once may both say it), and again when the file changes; `jst check` gives the reason.
 
 ### What it cannot see
 
