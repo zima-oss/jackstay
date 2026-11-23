@@ -2,7 +2,7 @@
 
 Status: built in 0.6.0, except what section 14 defers to jackstay 1 (the Codex bridge's push
 among it); its open questions were decided in W-091 (section 16). It records
-[W-090](../decisions/W-090-agent-chat.md) and replaces the 0.5.x chat, whose store 0.6.0 removes
+[W-090](../decisions/W-090-the-shape-of-0-6-0.md#agent-chat) and replaces the 0.5.x chat, whose store 0.6.0 removes
 (section 1). How to use it is the [session chat guide](../guide/session-chat.md). It follows [W-008](../decisions/W-008-state-in-dot-jackstay.md) (state in `~/.jackstay`, `.all` for
 what is shared), [W-013](../decisions/W-013-quality-testing-declarative.md) (no timing in tests,
 everything general) and [W-017](../decisions/W-017-review-fixes-and-threat-model.md) (protection
@@ -1145,7 +1145,7 @@ new sends and events, while every receipt and notice already owed stays correct.
 
 ### 7.5 What the store promises, and what it does not
 
-Each mechanism has a plain behaviour and stated limits ([W-096](../decisions/W-096-clear-limits-over-more-machinery.md)); the store does not chase
+Each mechanism has a plain behaviour and stated limits ([W-096](../decisions/W-096-clear-limits-and-the-task-graph.md#clear-limits)); the store does not chase
 every combination of faults.
 
 Promised:
@@ -1354,7 +1354,7 @@ shown to the session it is owed to, without being stored as a message, in the `n
 notices wait, and how many; it shows none of them.
 
 A notice is shown **at least once**
-([W-096](../decisions/W-096-clear-limits-over-more-machinery.md)): `chat.inbox` returns the notices
+([W-096](../decisions/W-096-clear-limits-and-the-task-graph.md#clear-limits)): `chat.inbox` returns the notices
 of its page and marks none of them; its caller marks them `shown` (`MarkShown`) only after the
 result is handed over: the MCP server once its response is written, `jst chat inbox` once it has
 printed. A stop before that mark, or a mark that cannot be written, leaves the notices owed, and
@@ -1556,7 +1556,7 @@ Under `jackstay_schema: 3` the `chat` section of `jackstay.json` has two keys:
   store), a separate choice from registering the server, and setup names it as such.
 - `related` (default absent: unrestricted): the list of section 2, at most 32 channel addresses.
 
-The `chat` section needs `"jackstay_schema": 3` ([W-090, compatibility](../decisions/W-090-compatibility-of-0-6-0.md), already on
+The `chat` section needs `"jackstay_schema": 3` ([W-090, compatibility](../decisions/W-090-the-shape-of-0-6-0.md#compatibility), already on
 `main`), which also made the 0.5.x limit keys (`max_message_bytes`, `max_pending`,
 `max_pending_per_session`, `max_sessions`, `retention_hours`, `codex_bridge.poll_interval_ms`,
 `codex_bridge.ack_timeout_seconds`) constants. This redesign removes the two keys left beside
@@ -1830,7 +1830,7 @@ record goes into the pull request that lands the native layer.
 ## 16. Decided (W-091)
 
 The questions this spec left open were decided by the maintainer in W-091, summarised in
-[W-090's record](../decisions/W-090-agent-chat.md#the-open-questions-decided-w-091). Each answer is now
+[W-090's record](../decisions/W-090-the-shape-of-0-6-0.md#the-open-questions-decided-w-091). Each answer is now
 part of the body:
 
 | question | decided | where |

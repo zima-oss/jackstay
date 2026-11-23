@@ -91,4 +91,4 @@ is now `jst hook claude`; `jst chat claude-hook` is its old name.
 - **Compaction briefs**, portable receipts, adoption profiles as bundles, and an editor schema for
   `jackstay.json`.
 
-Why 0.6.0 works this way: [W-090](../decisions/W-090-compatibility-of-0-6-0.md).
+Why 0.6.0 works this way: [W-090](../decisions/W-090-the-shape-of-0-6-0.md#compatibility).

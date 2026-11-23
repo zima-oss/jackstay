@@ -191,7 +191,7 @@ round's report merges their findings by `place`.
 
 ### 3.4 The run
 
-- **The reviewer's access profile** ([W-090](../decisions/W-090-review-of-0-6-0.md)), the same for Codex and Claude Code (`internal/review/access`).
+- **The reviewer's access profile** ([W-090](../decisions/W-090-the-shape-of-0-6-0.md#review)), the same for Codex and Claude Code (`internal/review/access`).
   The reviewer's task is to read and report, so it is given everything it may need to read, and
   denied only what it clearly does not need:
   - **reads everywhere**, read-only. Codex: a permission profile `":root"="read"`. Claude Code:
@@ -334,7 +334,7 @@ old lock.
 a killed run leaves a failed attempt and the next run still takes N. An attempt where some reviewers
 failed is not a round (exit 5); its successful answers stay readable.
 
-**Only the missing answers are paid for again** ([W-090](../decisions/W-090-review-of-0-6-0.md)). `attempt.json` records the attempt's
+**Only the missing answers are paid for again** ([W-090](../decisions/W-090-the-shape-of-0-6-0.md#review)). `attempt.json` records the attempt's
 **binding**: a digest of the round number, the task, the commits (base, head, previous), the review
 policy and content policy, each selected reviewer's settings (command, model, effort, isolation; not its deadline),
 and the digests of the prompt, the verdict schema and the `--brief` file. The prompt holds the open ledger and `--focus`, so one binding is one question. Before
