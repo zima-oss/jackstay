@@ -16,9 +16,12 @@ version, not the one being built.
 - jackstay's repository is managed by its pinned release (`adopt.pin`), not by the version in its
   source. The pin is declared in `jackstay.json` like a toolchain line: the release before the
   first pinned one is declared too (`v0.5.11`, the release the repository was managed by when
-  this was decided).
+  this was decided). The file stays one the pinned release reads: schema 2, without `$schema`,
+  until the configuration change that moves the pin to 0.6.0 raises it.
 - The self-adoption test plans with the pinned version, not with `version.Version`; without a pin
-  it fails.
+  it fails. Written limit: it runs this source's adopt at that version, not the released binary,
+  whose own AGENTS block may be older; that the pinned release reads the file is checked by hand
+  at each pin.
 - A release goes in this order: the version bump, the tag and the release, then the configuration
   change that adopts the new release and moves the pin to it.
 
