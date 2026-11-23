@@ -94,5 +94,8 @@
     "default_minutes": 30,
     "max_minutes": 240
   },
-  "review": {}
+  "review": {},
+  "adopt": {
+    "pin": "v0.5.11"
+  }
 }
