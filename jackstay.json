@@ -1,5 +1,6 @@
 {
-  "jackstay_schema": 2,
+  "$schema": "./schemas/jackstay.schema.json",
+  "jackstay_schema": 3,
   "project": "jackstay",
   "receipts": {
     "inputs": [
@@ -30,56 +31,67 @@
     "judge": "steps",
     "timeout": 1800,
     "scopes": {
-      "gate": {
-        "run": [
-          "just",
-          "gate"
-        ],
-        "when": "before a finished step is pushed (W-040) and before an install: the Go checks, the integration tests, the security checks, the docs check",
-        "evidence": "Ran ([0-9]+) tests?",
-        "veto": "^FAILED"
-      },
       "x-go": {
         "run": [
-          "just",
-          "go"
+          "go",
+          "test",
+          "-race",
+          "-tags",
+          "integration",
+          "-json",
+          "-count=1",
+          "./..."
         ],
-        "when": "after any change to cmd/, internal/ or go.mod",
-        "evidence": "Ran ([0-9]+) tests?",
-        "veto": "^FAILED"
-      },
-      "x-integration": {
-        "run": [
-          "just",
-          "integration"
-        ],
-        "when": "with x-go: the tests that need real git (//go:build integration; docs/design/implementation.md section 10)",
-        "evidence": "Ran ([0-9]+) tests?",
-        "veto": "^FAILED"
+        "when": "after any change to cmd/, internal/ or go.mod: every unit and integration test, once, with the race detector",
+        "judge": "go-json",
+        "ci": [
+          "linux"
+        ]
       },
       "x-check": {
         "run": [
           "just",
           "check"
         ],
-        "when": "with x-go: gofmt, go vet, golangci-lint (docs/design/implementation.md section 10)",
-        "judge": "exit"
+        "when": "with x-go: gofmt, go vet, golangci-lint, shellcheck; no test (docs/design/implementation.md section 10)",
+        "judge": "exit",
+        "kind": "check",
+        "ci": [
+          "linux"
+        ]
       },
       "x-sec": {
         "run": [
           "just",
           "security"
         ],
-        "when": "before an install: govulncheck and gosec",
-        "judge": "exit"
+        "when": "before an install: govulncheck and gosec; no test",
+        "judge": "exit",
+        "kind": "check",
+        "ci": [
+          "linux"
+        ]
       },
       "x-docs": {
         "run": [
           "just",
           "docs"
         ],
-        "when": "after a change to documents: links lead somewhere, every decision is listed",
-        "judge": "exit"
+        "when": "after a change to documents: the site builds and its links lead somewhere; no Go test (x-go runs internal/docs)",
+        "judge": "exit",
+        "kind": "check",
+        "ci": [
+          "linux"
+        ]
+      },
+      "gate": {
+        "deps": [
+          "x-check",
+          "x-go",
+          "x-sec",
+          "x-docs"
+        ],
+        "when": "before a finished step is pushed (W-040): every scope; on a Mac it also tests the *_darwin.go code no CI job reaches. Before an install or a tag, `jst test uncovered` runs the same on a Mac and records the pass the install needs"
       }
     }
   },
@@ -94,7 +106,14 @@
     "max_minutes": 240
   },
   "review": {},
+  "land": {
+    "host": "github",
+    "autonomy": "merge-when-green",
+    "method": "squash",
+    "checks": [],
+    "human_paths": []
+  },
   "adopt": {
-    "pin": "v0.5.11"
+    "pin": "v0.6.0"
   }
 }

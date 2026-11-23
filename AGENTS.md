@@ -10,7 +10,8 @@ the same rules hold.
   shell commands (`.claude/settings.json`), and its tools are listed in the block at the end of this
   file. When the guard refuses a command, run what it names instead; never rephrase the command to
   get around it.
-- **The gate before a push**: `just gate` (or `jst test gate`), green. While working, run the tests
+- **The gate before a push**: `jst test gate`, green; CI runs the same scopes as
+  `jst test ci (linux)`. While working, run the tests
   of the package you change; `-tags integration` for the tests that start real processes or git.
 - **Tests**: every fix comes with the test that failed without it; no test depends on timing or on
   an idle machine.
@@ -31,7 +32,7 @@ the same rules hold.
 - **Public evidence**: use synthetic fixture identities and neutral paths. Keep personal account
   identifiers and private pilot repository references out of tracked files and commit metadata.
 
-<!-- jackstay-adopt: begin agents-block sha256:d7997a017d6f — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
+<!-- jackstay-adopt: begin agents-block sha256:06ebeca4ab3c — written by `jst adopt` from jackstay.json and the profile; change those, not this text -->
 ## jst: the tools for working on this project
 
 `jst` is installed here; use it before a hand-written shell loop. `jst help` lists the commands,
@@ -45,6 +46,8 @@ the same rules hold.
   output file).
   Before a pull request: `jst test gate --commit HEAD` (on a clean copy of the commit). No scope fits: `jst test -- COMMAND`.
   `jst test` records evidence the agent sandbox may only read: run it outside the sandbox.
+- **Where tests run**: CI runs x-check, x-docs, x-go, x-sec on Linux and is the gate. Before an
+  install or a tag: `jst test uncovered`.
 - **Instead of `sleep N`**, run `jst wait … --timeout S`: until a process ends, a file appears or a
   log line matches.
 - **Instead of `git worktree add` or `remove`**, run `jst start NAME` and, once it is merged,
@@ -60,6 +63,10 @@ the same rules hold.
   the expected digest, revision and key from a trusted source, never from the receipt.
 - **When the guard refuses** a command, run what it names instead, never a workaround. Read a
   `jst guard let this command run, with a warning` line before going on.
+- **Land a change**: `jst land --title T` pushes, opens the change request, waits for the required
+  checks and merges. It stops at `jst land: ready for a person` for `jackstay.json`, CI workflows,
+  `.claude/settings.json` and `land.human_paths`: say so and stop; never merge on the host
+  (`gh pr merge` is refused), never run `--confirm`.
 - **Review**, outside the agent sandbox (it records the round): `jst review BASE..REV --task NAME`
   (the project's reviewers; `--reviewer claude-code` or `codex,claude-code` for others);
   `--background` returns at once and the result comes as a chat

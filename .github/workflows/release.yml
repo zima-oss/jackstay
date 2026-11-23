@@ -5,8 +5,9 @@ name: release
 # this repository's GitHub Releases. The job runs in the `release` environment, which holds the
 # macOS signing and notarisation secrets (MACOS_SIGN_P12, MACOS_SIGN_PASSWORD, MACOS_NOTARY_KEY,
 # MACOS_NOTARY_KEY_ID, MACOS_NOTARY_ISSUER_ID) and requires the owner's approval. It checks the tag,
-# runs the gate on the tagged tree, lets GoReleaser build without publishing, then creates the
-# release itself as a draft and fills, checks and publishes that one release by its id.
+# runs the Linux CI job on the tagged tree (`jst test ci`, as gate.yml's `jst test ci (linux)`; a
+# failure stops the release), lets GoReleaser build without publishing, then creates the release
+# itself as a draft and fills, checks and publishes that one release by its id.
 
 on:
   push:
@@ -29,7 +30,7 @@ jobs:
     if: github.repository == 'zima-oss/jackstay'
     runs-on: ubuntu-latest
     environment: release
-    # The gate (about half an hour), the builds, and a notarisation wait of at most 18 minutes.
+    # The CI job (about half an hour), the builds, and a notarisation wait of at most 18 minutes.
     timeout-minutes: 90
     defaults:
       run:
@@ -80,8 +81,8 @@ jobs:
           git config --global user.name "gate"
           git config --global user.email "gate@example.invalid"
           git config --global init.defaultBranch main
-      - name: just gate (on the tagged tree)
-        run: just gate
+      - name: jst test ci (on the tagged tree, jst built from it; the job gate.yml runs)
+        run: bin/jst test ci
       - name: GoReleaser builds, signs and notarises; it publishes nothing
         env:
           MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
